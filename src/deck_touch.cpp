@@ -139,9 +139,9 @@ void touchTask(void*) {
           // Finger moving left reveals the next page.
           const int d = dx < 0 ? 1 : -1;
           Src a, b;
-          int so;
-          if (uiTryBeginSwipe(d, a, b, so)) {
-            if (compBeginDrag(a, b, so)) {
+          int so, pageA;
+          if (uiTryBeginSwipe(d, a, b, so, pageA)) {
+            if (compBeginDrag(a, b, so, pageA)) {
               state = G_DRAG;
               dir = d;
               startOff = so;

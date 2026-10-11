@@ -67,14 +67,23 @@ void IRAM_ATTR teIsr(void*) {
 SemaphoreHandle_t s_lvReady = nullptr;
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
+enum Kind : uint8_t { KIND_HSTRIP = 0, KIND_PANEL };
+
+// Page dots: shown while a horizontal slide owns the screen, then held and
+// faded out over LVGL frames by this task (LVGL never draws them).
+constexpr int64_t DOTS_HOLD_US = 1200000;
+constexpr int64_t DOTS_FADE_US = 300000;
+
 struct State {
   bool lvPending = false;
   int lvIdx = 0;
   uint32_t lvGen = 0;
   int lvLatest = -1;
   CompMode mode = COMP_NONE;
+  Kind kind = KIND_HSTRIP;
   Src a = {nullptr, 0, true};
   Src b = {nullptr, 0, true};
+  int pageA = 0;
   int off = 0;
   int lastSentOff = 0;
   bool sentAny = false;
@@ -86,19 +95,29 @@ struct State {
   uint32_t holdGen = UINT32_MAX;
   bool landedPending = false;
   int8_t landed = 0;
+  // pager / dots
+  int pageCount = 1;
+  int pageActive = 0;
+  bool dotsForce = false;
+  int64_t dotsUntil = 0;
+  uint8_t lastSentDots = 0;
 };
 State s;
 
 // A frame to send, resolved under the lock so the build never reads shared
-// state: either one LVGL framebuffer or a composed A|B strip.
+// state: one LVGL framebuffer, a horizontal A|B strip, or a panel pulled down
+// over a (dimmed) page. Plus the page-dot overlay.
 struct Frame {
   bool comp;
   bool releaseLv;
   uint8_t rot;
-  int w;
+  int w, h;
   const uint16_t* lv;
+  Kind kind;
   Src a, b;
   int off;
+  uint8_t dim;
+  uint8_t dotCount, dotActive, dotAlpha;
 };
 
 // --- Stats (approximate, single writer) ----------------------------------------
@@ -208,55 +227,149 @@ inline void logicalSize(uint8_t rot, int& w, int& h) {
 }
 
 // --- Chunk build ----------------------------------------------------------------
-// Copy n logical pixels starting at s (walking +1 or -1) to d (walking dstep).
-template <bool SWAP, int DIR>
+// Dim levels for the page under a pulled-down panel, applied in little-endian
+// RGB565: 1 = 75 %, 2 = 50 % (matches LVGL's 50 % black scrim).
+template <uint8_t DIM>
+inline uint16_t dimLE(uint16_t c) {
+  if (DIM == 1) return (uint16_t)(c - ((c >> 2) & 0x39E7));
+  if (DIM == 2) return (uint16_t)((c >> 1) & 0x7BEF);
+  return c;
+}
+
+// Copy n logical pixels (read ascending from s) to d, walking dstep.
+template <bool SWAP, uint8_t DIM>
 inline void copyRun(uint16_t* d, int dstep, const uint16_t* s, int n) {
   for (int k = 0; k < n; k++) {
-    uint16_t c = s[DIR * k];
+    uint16_t c = s[k];
+    if (DIM) {
+      if (!SWAP) c = __builtin_bswap16(c);
+      c = dimLE<DIM>(c);
+      if (!SWAP) c = __builtin_bswap16(c);
+    }
     d[k * dstep] = SWAP ? __builtin_bswap16(c) : c;
   }
 }
 
-inline void copyAny(uint16_t* d, int dstep, const uint16_t* s, int dir, int n, bool swap) {
+inline void copyAny(uint16_t* d, int dstep, const uint16_t* s, int n, bool swap, uint8_t dim) {
   if (swap) {
-    if (dir > 0) copyRun<true, 1>(d, dstep, s, n);
-    else         copyRun<true, -1>(d, dstep, s, n);
+    if (dim == 0) copyRun<true, 0>(d, dstep, s, n);
+    else if (dim == 1) copyRun<true, 1>(d, dstep, s, n);
+    else copyRun<true, 2>(d, dstep, s, n);
   } else {
-    if (dir > 0) copyRun<false, 1>(d, dstep, s, n);
-    else         copyRun<false, -1>(d, dstep, s, n);
+    if (dim == 0) copyRun<false, 0>(d, dstep, s, n);
+    else if (dim == 1) copyRun<false, 1>(d, dstep, s, n);
+    else copyRun<false, 2>(d, dstep, s, n);
   }
 }
 
-// Emit n pixels of logical row ly, starting at logical x0 and walking dir.
-void emitRow(const Frame& f, int ly, int x0, int dir, int n, uint16_t* d, int dstep) {
+// Emit n pixels of logical row ly starting at logical x0 (ascending). PSRAM
+// is always read forward; mirrored rotations walk the destination backwards.
+inline void emitRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int dstep) {
   if (!f.comp) {
-    copyAny(d, dstep, f.lv + ly * f.w + x0, dir, n, true);
+    copyAny(d, dstep, f.lv + ly * f.w + x0, n, true, 0);
+    return;
+  }
+  if (f.kind == KIND_PANEL) {
+    if (ly < f.off) {
+      const int py = ly + f.a.h - f.off;
+      copyAny(d, dstep, f.a.px + py * f.a.stride + x0, n, f.a.swap, 0);
+    } else {
+      copyAny(d, dstep, f.b.px + ly * f.b.stride + x0, n, f.b.swap, f.dim);
+    }
     return;
   }
   while (n > 0) {
     const int vx = x0 + f.off;  // position in the A|B strip
-    const Src* src = vx < f.w ? &f.a : &f.b;
+    const Src& src = vx < f.w ? f.a : f.b;
     const int sx = vx < f.w ? vx : vx - f.w;
-    int run = dir > 0 ? f.w - sx : sx + 1;
+    int run = f.w - sx;
     if (run > n) run = n;
-    copyAny(d, dstep, src->px + ly * src->stride + sx, dir, run, src->swap);
-    x0 += dir * run;
+    copyAny(d, dstep, src.px + ly * src.stride + sx, run, src.swap, 0);
+    x0 += run;
     d += dstep * run;
     n -= run;
   }
 }
 
-// Fill one native chunk (rows ny0 .. ny0+ROWS-1). The inner loops always walk
-// along a logical row, which keeps PSRAM reads sequential. Mapping per user
-// rotation (identical to LovyanGFX's sprite rotation):
+// Logical (lx, ly) to native (nx, ny) for the user rotation.
+inline void toNative(uint8_t rot, int lx, int ly, int& nx, int& ny) {
+  switch (rot) {
+    case 1:  nx = NATIVE_W - 1 - ly; ny = lx;                 break;
+    case 2:  nx = NATIVE_W - 1 - lx; ny = NATIVE_H - 1 - ly;  break;
+    case 3:  nx = ly;                ny = NATIVE_H - 1 - lx;  break;
+    default: nx = lx;                ny = ly;                 break;
+  }
+}
+
+inline uint16_t blendLE(uint16_t bg, uint16_t fg, uint32_t a) {
+  if (a >= 255) return fg;
+  const uint32_t ia = 255 - a;
+  const uint32_t r = (((bg >> 11) & 0x1F) * ia + ((fg >> 11) & 0x1F) * a) / 255;
+  const uint32_t g = (((bg >> 5) & 0x3F) * ia + ((fg >> 5) & 0x3F) * a) / 255;
+  const uint32_t b = ((bg & 0x1F) * ia + (fg & 0x1F) * a) / 255;
+  return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+inline float clamp01(float v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
+
+// Page dots on a translucent pill, bottom centre, drawn into the native chunk
+// (panel byte order) after it was built.
+void overlayDots(const Frame& f, uint16_t* dst, int ny0) {
+  const int n = f.dotCount;
+  if (n < 2 || !f.dotAlpha) return;
+  constexpr int SPACING = 14;
+  constexpr float DOT_R = 3.5f;
+  constexpr float PILL_R = 8.0f;
+  const float cy = (float)f.h - 14.0f;
+  const float cx = (float)f.w * 0.5f;
+  const float half = (float)(n - 1) * SPACING * 0.5f;  // pill segment half length
+  const int bx0 = (int)(cx - half - PILL_R) - 1, bx1 = (int)(cx + half + PILL_R) + 1;
+  const int by0 = (int)(cy - PILL_R) - 1, by1 = (int)(cy + PILL_R) + 1;
+  // Quick reject: does the box touch the native rows of this chunk?
+  int nxa, nya, nxb, nyb;
+  toNative(f.rot, bx0, by0, nxa, nya);
+  toNative(f.rot, bx1, by1, nxb, nyb);
+  const int lo = nya < nyb ? nya : nyb, hi = nya < nyb ? nyb : nya;
+  if (hi < ny0 || lo >= ny0 + ROWS) return;
+  const float fade = f.dotAlpha / 255.0f;
+  for (int ly = by0; ly <= by1; ly++) {
+    for (int lx = bx0; lx <= bx1; lx++) {
+      int nx, ny;
+      toNative(f.rot, lx, ly, nx, ny);
+      if (ny < ny0 || ny >= ny0 + ROWS || nx < 0 || nx >= NATIVE_W) continue;
+      const float px = lx + 0.5f, py = ly + 0.5f;
+      float sx = px - cx;
+      if (sx < -half) sx += half; else if (sx > half) sx -= half; else sx = 0;
+      const float dy = py - cy;
+      const float pill = clamp01(PILL_R + 0.5f - sqrtf(sx * sx + dy * dy));
+      if (pill <= 0) continue;
+      uint16_t& out = dst[(ny - ny0) * NATIVE_W + nx];
+      uint16_t c = __builtin_bswap16(out);
+      c = blendLE(c, 0x0000, (uint32_t)(150 * pill * fade));
+      const int i = (int)lroundf((px - (cx - half)) / SPACING);
+      if (i >= 0 && i < n) {
+        const float dx = px - (cx - half + i * SPACING);
+        const float dot = clamp01(DOT_R + 0.5f - sqrtf(dx * dx + dy * dy));
+        if (dot > 0) {
+          const uint16_t col = i == f.dotActive ? 0xFFFF : 0x8C71;
+          c = blendLE(c, col, (uint32_t)(255 * dot * fade));
+        }
+      }
+      out = __builtin_bswap16(c);
+    }
+  }
+}
+
+// Fill one native chunk (rows ny0 .. ny0+ROWS-1). Mapping per user rotation
+// (identical to LovyanGFX's sprite rotation):
 //   0: lx = nx,        ly = ny
 //   1: lx = ny,        ly = 319 - nx
 //   2: lx = 319 - nx,  ly = 479 - ny
 //   3: lx = 479 - ny,  ly = nx
 void buildChunk(const Frame& f, uint16_t* dst, int ny0) {
   if (!f.comp && (f.rot & 1)) {
-    // Plain landscape LVGL frame: the hot path, kept free of the per-run
-    // bookkeeping emitRow() needs for composed strips.
+    // Plain landscape LVGL frame: the hot path, free of the per-run
+    // bookkeeping emitRow() needs for composed frames.
     const uint16_t* lv = f.lv;
     if (f.rot == 1) {
       for (int ly = 0; ly < NATIVE_W; ly++) {
@@ -266,51 +379,47 @@ void buildChunk(const Frame& f, uint16_t* dst, int ny0) {
       }
     } else {
       for (int ly = 0; ly < NATIVE_W; ly++) {
-        const uint16_t* s = lv + ly * NATIVE_H + (NATIVE_H - 1 - ny0);
-        uint16_t* d = dst + ly;
-        for (int k = 0; k < ROWS; k++) d[k * NATIVE_W] = __builtin_bswap16(s[-k]);
+        const uint16_t* s = lv + ly * NATIVE_H + (NATIVE_H - ROWS - ny0);
+        uint16_t* d = dst + (ROWS - 1) * NATIVE_W + ly;
+        for (int k = 0; k < ROWS; k++) d[-k * NATIVE_W] = __builtin_bswap16(s[k]);
       }
     }
-    return;
-  }
-  if (!f.comp) {
-    // Plain portrait LVGL frame: whole logical rows, forward or reversed.
-    for (int k = 0; k < ROWS; k++) {
-      uint16_t* d = dst + k * NATIVE_W;
-      if (f.rot == 0) {
-        const uint16_t* s = f.lv + (ny0 + k) * NATIVE_W;
-        for (int x = 0; x < NATIVE_W; x++) d[x] = __builtin_bswap16(s[x]);
-      } else {
-        const uint16_t* s = f.lv + (NATIVE_H - 1 - (ny0 + k)) * NATIVE_W + (NATIVE_W - 1);
-        for (int x = 0; x < NATIVE_W; x++) d[x] = __builtin_bswap16(s[-x]);
-      }
+  } else {
+    switch (f.rot) {
+      case 1:
+        for (int ly = 0; ly < NATIVE_W; ly++)
+          emitRow(f, ly, ny0, ROWS, dst + (NATIVE_W - 1 - ly), NATIVE_W);
+        break;
+      case 3:
+        for (int ly = 0; ly < NATIVE_W; ly++)
+          emitRow(f, ly, NATIVE_H - ROWS - ny0, ROWS,
+                  dst + (ROWS - 1) * NATIVE_W + ly, -NATIVE_W);
+        break;
+      case 2:
+        for (int k = 0; k < ROWS; k++)
+          emitRow(f, NATIVE_H - 1 - (ny0 + k), 0, NATIVE_W,
+                  dst + k * NATIVE_W + (NATIVE_W - 1), -1);
+        break;
+      default:
+        for (int k = 0; k < ROWS; k++)
+          emitRow(f, ny0 + k, 0, NATIVE_W, dst + k * NATIVE_W, 1);
+        break;
     }
-    return;
   }
-  switch (f.rot) {
-    case 1:
-      for (int ly = 0; ly < NATIVE_W; ly++)
-        emitRow(f, ly, ny0, 1, ROWS, dst + (NATIVE_W - 1 - ly), NATIVE_W);
-      break;
-    case 3:
-      for (int ly = 0; ly < NATIVE_W; ly++)
-        emitRow(f, ly, NATIVE_H - 1 - ny0, -1, ROWS, dst + ly, NATIVE_W);
-      break;
-    case 2:
-      for (int k = 0; k < ROWS; k++)
-        emitRow(f, NATIVE_H - 1 - (ny0 + k), NATIVE_W - 1, -1, NATIVE_W,
-                dst + k * NATIVE_W, 1);
-      break;
-    default:
-      for (int k = 0; k < ROWS; k++)
-        emitRow(f, ny0 + k, 0, 1, NATIVE_W, dst + k * NATIVE_W, 1);
-      break;
-  }
+  overlayDots(f, dst, ny0);
 }
 
 inline float easeOutCubic(float p) {
   const float q = 1.0f - p;
   return 1.0f - q * q * q;
+}
+
+inline uint8_t dotsAlphaAt(int64_t now) {
+  if (s.dotsForce) return 255;
+  if (now >= s.dotsUntil) return 0;
+  const int64_t left = s.dotsUntil - now;
+  if (left >= DOTS_FADE_US) return 255;
+  return (uint8_t)(255 * left / DOTS_FADE_US);
 }
 
 // Pick the next frame. Returns false when there is nothing new to show.
@@ -324,7 +433,10 @@ bool decide(Frame& f) {
   logicalSize(rot, w, h);
   f.rot = rot;
   f.w = w;
+  f.h = h;
   f.releaseLv = false;
+  f.dotCount = (uint8_t)s.pageCount;
+  f.dotActive = (uint8_t)s.pageActive;
   if (s.lvPending) {
     s.lvPending = false;
     if (s.mode == COMP_HOLD && s.lvGen >= s.holdGen) s.mode = COMP_NONE;
@@ -351,6 +463,11 @@ bool decide(Frame& f) {
         s.holdGen = UINT32_MAX;
         s.landed = s.landing;
         s.landedPending = true;
+        if (s.kind == KIND_HSTRIP) {
+          s.dotsForce = false;
+          s.dotsUntil = now + DOTS_HOLD_US + DOTS_FADE_US;
+          if (s.landing) s.pageActive = s.pageA + (s.landing > 0 ? 1 : 0);
+        }
       } else {
         const float p = t <= 0 ? 0.0f : (float)t / (float)s.durUs;
         off = s.fromOff + (int)((s.toOff - s.fromOff) * easeOutCubic(p));
@@ -359,16 +476,38 @@ bool decide(Frame& f) {
     }
     if ((!s.sentAny || off != s.lastSentOff) && s.lvLatest >= 0) {
       f.comp = true;
+      f.kind = s.kind;
       f.a = s.a;
       f.b = s.b;
       const uint16_t* cur = s_fb[s.lvLatest];
-      if (!f.a.px) f.a = {cur, (uint16_t)w, true};
-      if (!f.b.px) f.b = {cur, (uint16_t)w, true};
-      f.off = off < 0 ? 0 : (off > w ? w : off);
+      if (!f.a.px) f.a = {cur, (uint16_t)w, true, (uint16_t)h};
+      if (!f.b.px) f.b = {cur, (uint16_t)w, true, (uint16_t)h};
+      if (s.kind == KIND_HSTRIP) {
+        f.off = off < 0 ? 0 : (off > w ? w : off);
+        f.dotActive = (uint8_t)(s.pageA + (f.off * 2 >= w ? 1 : 0));
+        f.dim = 0;
+      } else {
+        const int ph = f.a.h;
+        f.off = off < 0 ? 0 : (off > ph ? ph : off);
+        f.dim = f.off * 3 >= ph * 2 ? 2 : (f.off * 3 >= ph ? 1 : 0);
+      }
       s.lastSentOff = off;
       s.sentAny = true;
       have = true;
     }
+  }
+  const bool panelOwns = s.kind == KIND_PANEL && s.mode != COMP_NONE;
+  const uint8_t dots = panelOwns ? 0 : dotsAlphaAt(now);
+  if (!have && s.mode == COMP_NONE && s.lvLatest >= 0 && dots != s.lastSentDots) {
+    // Dots fading over a static LVGL screen: resend the latest complete frame.
+    // Safe: LVGL only ever renders into the other buffer.
+    f.comp = false;
+    f.lv = s_fb[s.lvLatest];
+    have = true;
+  }
+  if (have) {
+    f.dotAlpha = dots;
+    s.lastSentDots = dots;
   }
   portEXIT_CRITICAL(&s_mux);
   if (give) xSemaphoreGive(s_lvReady);
@@ -586,20 +725,49 @@ bool panelWaitLvReady(uint32_t timeoutMs) {
   return xSemaphoreTake(s_lvReady, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
 }
 
-bool compBeginDrag(const Src& a, const Src& b, int off) {
+bool compBeginDrag(const Src& a, const Src& b, int off, int pageA) {
   bool ok = false;
   portENTER_CRITICAL(&s_mux);
   if (s.mode == COMP_NONE && s.lvLatest >= 0) {
     s.mode = COMP_DRAG;
+    s.kind = KIND_HSTRIP;
     s.a = a;
     s.b = b;
+    s.pageA = pageA;
     s.off = off;
     s.sentAny = false;
     s.landedPending = false;
+    s.dotsForce = true;
     ok = true;
   }
   portEXIT_CRITICAL(&s_mux);
   return ok;
+}
+
+bool compBeginPanel(const Src& panel, const Src& page, int off) {
+  bool ok = false;
+  portENTER_CRITICAL(&s_mux);
+  if (s.mode == COMP_NONE && s.lvLatest >= 0 && panel.px && panel.h) {
+    s.mode = COMP_DRAG;
+    s.kind = KIND_PANEL;
+    s.a = panel;
+    s.b = page;
+    s.off = off;
+    s.sentAny = false;
+    s.landedPending = false;
+    s.dotsForce = false;
+    s.dotsUntil = 0;
+    ok = true;
+  }
+  portEXIT_CRITICAL(&s_mux);
+  return ok;
+}
+
+void panelSetPager(int count, int active) {
+  portENTER_CRITICAL(&s_mux);
+  s.pageCount = count;
+  s.pageActive = active;
+  portEXIT_CRITICAL(&s_mux);
 }
 
 void compDrag(int off) {
@@ -658,6 +826,7 @@ void compCancel() {
   portENTER_CRITICAL(&s_mux);
   s.mode = COMP_NONE;
   s.landedPending = false;
+  s.dotsForce = false;
   portEXIT_CRITICAL(&s_mux);
 }
 

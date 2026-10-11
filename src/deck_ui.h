@@ -40,7 +40,8 @@ namespace deck {
 // Touch task: claim a swipe toward dir (+1 next page, -1 previous page).
 // Fills the strip sources and the starting offset; false when there is no
 // page that way, its image is not ready, or swiping is locked.
-bool uiTryBeginSwipe(int dir, Src& a, Src& b, int& startOff);
+// pageA is the pager index of the strip's left page.
+bool uiTryBeginSwipe(int dir, Src& a, Src& b, int& startOff, int& pageA);
 // The compositor refused the drag after uiTryBeginSwipe() succeeded.
 void uiSwipeAborted();
 }  // namespace deck

@@ -258,6 +258,7 @@ void buildPages() {
   sh.active = active;
   portEXIT_CRITICAL(&s_mux);
 
+  panelSetPager(s_count, active);
   // Inactive pages wait just off the right edge: they keep their layout and
   // can be snapshotted, but their invalidations are clipped away.
   for (int i = 0; i < s_count; i++) lv_obj_set_pos(s_pages[i].root, i == active ? 0 : w, 0);
@@ -288,6 +289,7 @@ void switchTo(int page) {
   portENTER_CRITICAL(&s_mux);
   sh.active = page;
   portEXIT_CRITICAL(&s_mux);
+  panelSetPager(s_count, page);
   s_gen++;
   // New neighbours; cheap to re-take, and the page we left changed state.
   for (int i = 0; i < s_count; i++) s_pages[i].stale = true;
@@ -503,9 +505,9 @@ void deckApplyRotation(uint8_t rotation) {
 bool deckTestSwipe(int dir) {
   if (!s_disp || (dir != 1 && dir != -1)) return false;
   Src a, b;
-  int so;
-  if (!uiTryBeginSwipe(dir, a, b, so)) return false;
-  if (!compBeginDrag(a, b, so)) {
+  int so, pageA;
+  if (!uiTryBeginSwipe(dir, a, b, so, pageA)) return false;
+  if (!compBeginDrag(a, b, so, pageA)) {
     releaseSwipe();
     return false;
   }
@@ -515,7 +517,7 @@ bool deckTestSwipe(int dir) {
 
 namespace deck {
 
-bool uiTryBeginSwipe(int dir, Src& a, Src& b, int& startOff) {
+bool uiTryBeginSwipe(int dir, Src& a, Src& b, int& startOff, int& pageA) {
   bool ok = false;
   portENTER_CRITICAL(&s_mux);
   const int target = sh.active + dir;
@@ -528,10 +530,12 @@ bool uiTryBeginSwipe(int dir, Src& a, Src& b, int& startOff) {
       a = cur;
       b = sh.src[target];
       startOff = 0;
+      pageA = sh.active;
     } else {
       a = sh.src[target];
       b = cur;
       startOff = logicalW();
+      pageA = target;
     }
     ok = true;
   }

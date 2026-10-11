@@ -30,6 +30,7 @@ struct Src {
   const uint16_t* px;
   uint16_t stride;
   bool swap;
+  uint16_t h = 0;  // rows; only needed for a panel image shorter than the screen
 };
 
 // Bus, panel init, a black first frame, TE interrupt and the flush task.
@@ -63,11 +64,18 @@ bool panelWaitLvReady(uint32_t timeoutMs);
 // advances animations.
 enum CompMode : uint8_t { COMP_NONE = 0, COMP_DRAG, COMP_ANIM, COMP_HOLD };
 
-bool compBeginDrag(const Src& a, const Src& b, int off);
+// Horizontal page strip; pageA is the pager index of A (for the page dots).
+bool compBeginDrag(const Src& a, const Src& b, int off, int pageA);
+// Vertical: `panel` (panel.h rows, full width) pulled down over `page`, which
+// is dimmed as the panel opens. off = visible panel rows, 0..panel.h.
+bool compBeginPanel(const Src& panel, const Src& page, int off);
+// Page count and the page LVGL shows, for the page dots the flush task draws
+// during and shortly after a horizontal slide.
+void panelSetPager(int count, int active);
 void compDrag(int off);
-// Animate to `toOff` over durMs. landing != 0 means the slide ends on the
-// other page (the strip stays frozen until LVGL shows it, see compSetHoldGen),
-// landing == 0 means it returns to the page it started from.
+// Animate to `toOff` over durMs. landing != 0 means the gesture ends in a new
+// state (another page, panel open/closed): the last frame stays frozen until
+// LVGL shows that state (see compSetHoldGen). landing == 0 = back to start.
 void compRelease(int toOff, uint32_t durMs, int8_t landing);
 CompMode compMode();
 // True while LVGL must not render (drag or animation in progress).
