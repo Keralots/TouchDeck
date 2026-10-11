@@ -11,6 +11,9 @@
 #include "fonts.h"
 #include "config.h"
 #include "web_pages.h"
+#if defined(BOARD_IS_JC3248W535)
+#include "deck_ui.h"
+#endif
 #include <WebServer.h>
 #include <ArduinoJson.h>
 #include <Update.h>
@@ -1629,6 +1632,69 @@ static void handleScreenshot() {
   if (!capPsram) spr.deleteSprite();
 }
 
+#if defined(BOARD_IS_JC3248W535)
+// ---------------------------------------------------------------------------
+//  Live frame (GET /screen_live.bmp, JC3248W535 only)
+//  Streams the framebuffer the deck pipeline last sent to the panel, i.e. what
+//  is really on the glass (deck pages included), unlike /screen.bmp, which
+//  re-renders the metric face. LVGL runs in this same loop task, so the
+//  buffer cannot change while the handler streams it.
+// ---------------------------------------------------------------------------
+static void handleLiveScreenshot() {
+  const uint16_t* fb = deck::panelLatestLvFrame();
+  if (!fb) {
+    server.send(503, "text/plain", "No frame yet");
+    return;
+  }
+  const int w = deck::logicalW();
+  const int h = deck::logicalH();
+  const uint32_t rowBytes = (uint32_t)w * 3;
+  const uint32_t imgBytes = rowBytes * (uint32_t)h;
+  const uint32_t fileBytes = 54 + imgBytes;
+  uint8_t* row = (uint8_t*)malloc(rowBytes);
+  if (!row) {
+    server.send(503, "text/plain", "Not enough RAM for row buffer");
+    return;
+  }
+  uint8_t hdr[54] = {0};
+  hdr[0] = 'B'; hdr[1] = 'M';
+  hdr[2] = fileBytes & 0xFF; hdr[3] = (fileBytes >> 8) & 0xFF;
+  hdr[4] = (fileBytes >> 16) & 0xFF; hdr[5] = (fileBytes >> 24) & 0xFF;
+  hdr[10] = 54;
+  hdr[14] = 40;
+  hdr[18] = w & 0xFF; hdr[19] = (w >> 8) & 0xFF;
+  hdr[22] = h & 0xFF; hdr[23] = (h >> 8) & 0xFF;
+  hdr[26] = 1;
+  hdr[28] = 24;
+  hdr[34] = imgBytes & 0xFF; hdr[35] = (imgBytes >> 8) & 0xFF;
+  hdr[36] = (imgBytes >> 16) & 0xFF; hdr[37] = (imgBytes >> 24) & 0xFF;
+  server.setContentLength(fileBytes);
+  server.send(200, "image/bmp", "");
+  WiFiClient client = server.client();
+  bool ok = writeClientAll(client, hdr, sizeof(hdr));
+  for (int y = h - 1; y >= 0 && ok; y--) {
+    const uint16_t* src = fb + (size_t)y * w;
+    for (int x = 0; x < w; x++) {
+      const uint16_t c = src[x];
+      row[x * 3 + 0] = (uint8_t)(((c & 0x1F) * 255) / 31);
+      row[x * 3 + 1] = (uint8_t)((((c >> 5) & 0x3F) * 255) / 63);
+      row[x * 3 + 2] = (uint8_t)((((c >> 11) & 0x1F) * 255) / 31);
+    }
+    ok = writeClientAll(client, row, rowBytes);
+    esp_task_wdt_reset();
+  }
+  if (!ok) client.stop();
+  free(row);
+}
+
+// POST /api/deck/swipe?dir=1|-1 - bench hook, one full page slide.
+static void handleDeckSwipe() {
+  const int dir = server.hasArg("dir") ? server.arg("dir").toInt() : 1;
+  const bool ok = deckTestSwipe(dir);
+  sendJsonMessage(ok ? 200 : 409, ok, ok ? "Swipe started" : "Swipe not possible now");
+}
+#endif
+
 // ---------------------------------------------------------------------------
 //  OTA (multipart upload to /ota/upload)
 // ---------------------------------------------------------------------------
@@ -1758,6 +1824,10 @@ void initWebServer() {
   server.on("/api/factory-reset", HTTP_POST, handleFactoryReset);
   server.on("/api/status", HTTP_GET, handleApiStatus);
   server.on("/screen.bmp", HTTP_GET, handleScreenshot);
+#if defined(BOARD_IS_JC3248W535)
+  server.on("/screen_live.bmp", HTTP_GET, handleLiveScreenshot);
+  server.on("/api/deck/swipe", HTTP_POST, handleDeckSwipe);
+#endif
   server.on("/ota/upload", HTTP_POST, handleOtaFinish, handleOtaUpload);
 
   const char* headers[] = { "X-MD5" };

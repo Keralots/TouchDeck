@@ -1,0 +1,49 @@
+// Guition JC3248W535 deck UI: LVGL 9 on top of deck_panel. Page 0 is the
+// StatNode metric screen (the existing faces, rendered by renderer.cpp into a
+// LovyanGFX sprite that LVGL shows as a canvas); the pages after it are deck
+// pages. Swiping between pages is done by the compositor in deck_panel from
+// cached page images, so LVGL never renders a full-screen transition.
+//
+// Threading: every LVGL call happens in the Arduino loop task (deckTick and
+// the functions below), the same task that renders the faces and serves the
+// portal, so no LVGL locking is needed. The touch task only calls the two
+// thread-safe swipe functions at the bottom.
+#ifndef DECK_UI_H
+#define DECK_UI_H
+
+#if defined(BOARD_IS_JC3248W535)
+
+#include <LovyanGFX.hpp>
+#include "deck_panel.h"
+
+// Brings up the panel, the face canvas, LVGL, the pages and touch. `face` is
+// the sprite the renderer draws into (tft_ptr); it is (re)created here at the
+// logical size of the rotation, always with LovyanGFX rotation 0.
+bool deckBegin(lgfx::LGFX_Sprite* face, uint8_t rotation);
+// Once per loop pass (flushFrame() on this board): slide landings, the touch
+// wake, the face canvas, LVGL, page-image refresh.
+void deckTick();
+// The renderer drew into the face sprite.
+void deckFaceDirty();
+// Gate for updateDisplay(): false while a swipe owns the screen (the face
+// sprite may be on screen as a page image) and, while another page is shown,
+// except about once a second so the face stays current for the next swipe.
+bool deckFaceMayRender();
+bool deckFacePageActive();
+// Rotation changed in the portal: re-layout everything at the new size.
+void deckApplyRotation(uint8_t rotation);
+// Bench hook (/api/deck/swipe): run one full page slide toward dir as if a
+// finger had flung it. False when that page is not reachable right now.
+bool deckTestSwipe(int dir);
+
+namespace deck {
+// Touch task: claim a swipe toward dir (+1 next page, -1 previous page).
+// Fills the strip sources and the starting offset; false when there is no
+// page that way, its image is not ready, or swiping is locked.
+bool uiTryBeginSwipe(int dir, Src& a, Src& b, int& startOff);
+// The compositor refused the drag after uiTryBeginSwipe() succeeded.
+void uiSwipeAborted();
+}  // namespace deck
+
+#endif  // BOARD_IS_JC3248W535
+#endif  // DECK_UI_H

@@ -3,10 +3,6 @@
 
 #include <LovyanGFX.hpp>
 
-// Forward-declare the panel type so callers can use the pointer without
-// pulling in the full header (which includes Arduino_GFX headers).
-namespace lgfx { inline namespace v1 { class Panel_AXS15231B_AGFX; } }
-
 // Screen states for the PC monitor. No printer/MQTT states - the device is a
 // passive UDP receiver. SCREEN_MONITOR shows the gauge grid; SCREEN_CLOCK is
 // the idle screen shown when the PC has gone offline (no UDP packets).
@@ -23,14 +19,10 @@ enum ScreenState {
 
 extern lgfx::LovyanGFX* tft_ptr;
 // Macro (NOT a reference) so callers' `tft.method()` always dereferences the
-// current value of `tft_ptr`. On JC3248W535 we retarget this pointer to a
-// PSRAM sprite at runtime; a C++ reference would have been permanently bound
+// current value of `tft_ptr`. The /screen.bmp capture retargets it to an
+// off-screen sprite while it renders; a C++ reference would have been permanently bound
 // to the panel at static-init time, defeating the redirection.
 #define tft (*tft_ptr)
-
-// Direct pointer to the AXS15231B panel wrapper; only non-null on
-// BOARD_IS_JC3248W535 builds.
-extern lgfx::Panel_AXS15231B_AGFX* g_axs_panel;
 
 void initDisplay();
 void setBacklight(uint8_t level);
@@ -101,11 +93,11 @@ uint16_t rawStatusChanges();
 uint16_t acceptedRelayouts();
 uint16_t acceptedStatusFlips();
 
-// Flush the off-screen framebuffer sprite to the panel (JC3248W535 only; no-op
-// elsewhere). Call once per loop tick after UI draws.
+// JC3248W535: run the deck UI tick (LVGL, page slides, touch wake) and show
+// what the renderer drew. No-op elsewhere. Call once per loop pass after
+// updateDisplay(), and from any blocking loop that keeps the screen alive.
 void flushFrame();
-// Mark the framebuffer sprite dirty so the next flushFrame() pushes (JC3248W535
-// only; no-op elsewhere).
+// JC3248W535: the renderer drew into the face sprite. No-op elsewhere.
 void markFrameDirty();
 
 #endif // DISPLAY_UI_H

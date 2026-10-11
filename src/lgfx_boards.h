@@ -390,27 +390,11 @@ static LGFX_WS350 _tft_instance;
 
 #elif defined(BOARD_IS_JC3248W535)
 // --- Guition JC3248W535 + AXS15231B 320x480 ---------------------------------
-// Panel_AXS15231B_AGFX wraps moononournation/Arduino_GFX's Arduino_AXS15231B
-// driver inside a LovyanGFX Panel_Device subclass. Mainline LovyanGFX has
-// neither an AXS15231B panel class nor a QSPI bus, and a hand-rolled custom
-// driver didn't produce correct pixels on this hardware. Arduino_GFX does —
-// this wrapper lets the whole codebase keep calling the LovyanGFX API on
-// `tft` while the physical QSPI traffic is handled by Arduino_GFX.
-// Backlight is a simple GPIO-high (LEDC PWM not required for on/off).
-#include "lgfx_panel_axs15231b_agfx.hpp"
-class LGFX_JC3248W535 : public lgfx::LGFX_Device {
-  lgfx::Panel_AXS15231B_AGFX _panel;
-public:
-  LGFX_JC3248W535() {
-    // Panel_AXS15231B_AGFX owns the Arduino_GFX bus+panel internally. Pins
-    // are hard-coded in its constructor to the verified JC3248W535 map
-    // (CS=45, SCK=47, D0=21, D1=48, D2=40, D3=39) since Arduino_GFX's
-    // databus class hard-codes them at construction anyway.
-    setPanel(&_panel);
-  }
-  lgfx::Panel_AXS15231B_AGFX* panelAXS() { return &_panel; }
-};
-static LGFX_JC3248W535 _tft_instance;
+// The panel is not a LovyanGFX device here: deck_panel.cpp drives the QSPI
+// bus itself (async DMA, software rotation, TE sync) and LVGL composes the
+// screen. LovyanGFX only provides the off-screen canvas the faces are drawn
+// into, so the "instance" is that sprite; deckBegin() allocates its buffer.
+static lgfx::LGFX_Sprite _tft_instance;
 #elif defined(BOARD_IS_C3)
 // --- ESP32-C3 Super Mini + ST7789 240x240 ------------------------------------
 class LGFX_C3 : public lgfx::LGFX_Device {

@@ -192,6 +192,8 @@
 
 #if defined(DISPLAY_CYD)
 #define LED_DEFAULT_PIN 22    // CYD: GPIO 22 on P3 connector
+#elif defined(BOARD_IS_JC3248W535)
+#define LED_DEFAULT_PIN 17    // Guition: extended IO header (single source, meter it before wiring)
 #else
 #define LED_DEFAULT_PIN 0     // other boards: user must configure
 #endif

@@ -60,6 +60,8 @@ bool ledPinAllowed(uint8_t pin) {
       pin == 45 || pin == 47 || pin == 48) return false;  // display QSPI
   if (pin == 38) return false;                // display TE
   if (pin == 4 || pin == 8) return false;     // touch I2C
+  if (pin == 3) return false;                 // touch INT
+  if (pin == 5) return false;                 // battery sense ADC
   if (pin == 2 || pin == 41 || pin == 42) return false;   // NS4168 I2S audio
   if (pin == 19 || pin == 20) return false;   // USB CDC D-/D+
   if (pin >= 26 && pin <= 37) return false;   // SPI flash + PSRAM (qio_opi)

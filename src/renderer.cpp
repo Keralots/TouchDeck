@@ -19,6 +19,9 @@
 #include "renderer_internal.h"
 #include "glass_surface.h"
 #include <WiFi.h>
+#if defined(BOARD_IS_JC3248W535)
+#include "deck_ui.h"
+#endif
 #include <math.h>
 
 static ScreenState currentScreen = SCREEN_SPLASH;
@@ -200,6 +203,12 @@ static void drawIdleClock() {
 //  Frame entry point
 // ---------------------------------------------------------------------------
 void updateDisplay() {
+#if defined(BOARD_IS_JC3248W535)
+  // The face sprite can be on screen as a page image during a swipe, and is
+  // only refreshed slowly while a deck page is showing. Pending redraw flags
+  // stay set, so a skipped call is simply picked up by a later one.
+  if (!gCaptureRender && !deckFaceMayRender()) return;
+#endif
   unsigned long now = millis();
   bool fr = forceRedraw;
 
