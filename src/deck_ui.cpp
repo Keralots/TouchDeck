@@ -2,28 +2,31 @@
 #if defined(BOARD_IS_JC3248W535)
 
 #include "deck_ui.h"
+#include "deck_config.h"
 #include "deck_touch.h"
 #include "display_ui.h"
 #include "settings.h"
+#include <WiFi.h>
 #include <lvgl.h>
 #include <time.h>
+#include <vector>
 
 using namespace deck;
 
 namespace {
 
-constexpr int MAX_PAGES = 6;
-constexpr int FACE_PAGE = 0;
+constexpr int MAX_PAGES = MAX_DECK_PAGES + 1;  // + the face page if inserted
 constexpr int HEADER_H = 30;
 // While a deck page is showing, the face is still redrawn about this often so
 // a swipe back to it does not reveal stale numbers.
 constexpr uint32_t HIDDEN_FACE_MS = 1000;
 // Page images are refreshed one per pass, at most this often (each costs
-// ~25 ms of loop time at 480x320).
+// ~40 ms of loop time at 480x320).
 constexpr uint32_t SNAP_SPACING_MS = 40;
 constexpr uint32_t STATS_MS = 10000;
+constexpr uint32_t SLIDE_MS = 280;
 
-// Mockup A ("default theme") colours.
+// Mockup A ("Midnight", the default theme) colours.
 constexpr uint32_t C_BG = 0x0D0F13;
 constexpr uint32_t C_TILE = 0x1A1D23;
 constexpr uint32_t C_TILE_PRESSED = 0x2A2F38;
@@ -32,37 +35,56 @@ constexpr uint32_t C_TEXT = 0xE6E8EC;
 constexpr uint32_t C_TEXT_ON = 0x221602;
 constexpr uint32_t C_TITLE = 0xF1F2F4;
 constexpr uint32_t C_CLOCK = 0xC9CDD6;
+constexpr uint32_t C_OK = 0x5CC9A7;
+constexpr uint32_t C_DIM = 0x596070;
 
 struct Page {
   lv_obj_t* root;
   lv_obj_t* clock;
+  lv_obj_t* wifi;
   lv_draw_buf_t* snap;
+  const PageDef* def;
   bool isFace;
   bool stale;
+};
+
+// One tile on screen. LVGL user data holds the index into s_tiles.
+struct TileRt {
+  const TileDef* def;
+  int page;
+  lv_obj_t* obj;
+  lv_obj_t* sub;
+  bool on;
 };
 
 lgfx::LGFX_Sprite* s_face = nullptr;
 lv_display_t* s_disp = nullptr;
 lv_indev_t* s_indev = nullptr;
 lv_obj_t* s_canvas = nullptr;
+DeckConfig s_cfg;
 Page s_pages[MAX_PAGES];
+std::vector<TileRt> s_tiles;
 int s_count = 0;
+int s_facePage = 0;
 uint32_t s_gen = 1;
 bool s_faceDirty = true;
 uint32_t s_lastHiddenFace = 0;
 uint32_t s_lastSnapMs = 0;
 uint32_t s_lastClockCheck = 0;
 int s_lastMinute = -1;
+int s_lastWifi = -1;
 uint32_t s_lastStats = 0;
 uint32_t s_waitTimeouts = 0;
 uint32_t s_snapUsMax = 0;
+lv_style_transition_dsc_t s_pressTrans;
 
 // Shared with the touch task, guarded by s_mux. `active` is only written by
 // the loop task.
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 struct Shared {
-  int active = FACE_PAGE;
+  int active = 0;
   int count = 0;
+  int facePage = 0;
   bool swipeEnabled = false;
   bool owned = false;      // a swipe owns the screen until its landing is handled
   bool faceBusy = false;   // the renderer is drawing into the face sprite
@@ -99,88 +121,131 @@ void indevRead(lv_indev_t*, lv_indev_data_t* data) {
   data->state = p.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
 }
 
+// --- Tile look ------------------------------------------------------------------------
+String entityDomain(const String& entity) {
+  const int dot = entity.indexOf('.');
+  return dot > 0 ? entity.substring(0, dot) : String();
+}
+
+uint32_t domainColor(const String& domain) {
+  if (domain == "light") return 0xF6C56B;
+  if (domain == "switch" || domain == "fan" || domain == "input_boolean") return 0x5CC9A7;
+  if (domain == "scene" || domain == "script") return 0xB3A6FF;
+  if (domain == "lock" || domain == "cover") return 0x9DB8FF;
+  return 0x7DB5FF;
+}
+
+// Material Design Icons names (what HA uses) mapped onto the LVGL symbol font
+// until the MDI subset font lands with the Home Assistant work.
+const char* iconSymbol(const TileDef& t) {
+  struct Map { const char* name; const char* sym; };
+  static const Map kMap[] = {
+    {"lightbulb", LV_SYMBOL_EYE_OPEN}, {"ceiling-light", LV_SYMBOL_EYE_OPEN},
+    {"television-ambient-light", LV_SYMBOL_IMAGE}, {"fan", LV_SYMBOL_REFRESH},
+    {"weather-night", LV_SYMBOL_IMAGE}, {"eye", LV_SYMBOL_EYE_OPEN},
+    {"printer-3d", LV_SYMBOL_CHARGE}, {"speaker", LV_SYMBOL_AUDIO},
+    {"lock", LV_SYMBOL_HOME}, {"power", LV_SYMBOL_POWER}, {"power-sleep", LV_SYMBOL_POWER},
+    {"chevron-right", LV_SYMBOL_RIGHT}, {"chevron-left", LV_SYMBOL_LEFT},
+    {"microphone-off", LV_SYMBOL_MUTE}, {"image", LV_SYMBOL_IMAGE},
+    {"skip-previous", LV_SYMBOL_PREV}, {"skip-next", LV_SYMBOL_NEXT},
+    {"play", LV_SYMBOL_PLAY}, {"pause", LV_SYMBOL_PAUSE},
+    {"console", LV_SYMBOL_KEYBOARD}, {"volume-high", LV_SYMBOL_VOLUME_MAX},
+    {"volume-off", LV_SYMBOL_MUTE}, {"wifi", LV_SYMBOL_WIFI}, {"cog", LV_SYMBOL_SETTINGS},
+    {"bell", LV_SYMBOL_BELL}, {"home", LV_SYMBOL_HOME},
+  };
+  String name = t.icon;
+  if (name.startsWith("mdi:")) name = name.substring(4);
+  for (const Map& m : kMap)
+    if (name == m.name) return m.sym;
+  const String d = entityDomain(t.entity);
+  if (d == "light") return LV_SYMBOL_EYE_OPEN;
+  if (d == "fan") return LV_SYMBOL_REFRESH;
+  if (d == "lock") return LV_SYMBOL_HOME;
+  if (d == "media_player") return LV_SYMBOL_PLAY;
+  return LV_SYMBOL_POWER;
+}
+
+String tileLabel(const TileDef& t) {
+  if (t.label.length()) return t.label;
+  const int dot = t.entity.indexOf('.');
+  if (dot > 0) return t.entity.substring(dot + 1);
+  return t.id.length() ? t.id : String("Tile");
+}
+
+String tileSub(const TileRt& r) {
+  const TileDef& t = *r.def;
+  if (t.sub.length()) return t.sub;
+  if (t.type == TILE_TOGGLE) return r.on ? "On" : "Off";
+  const String d = entityDomain(t.entity);
+  if (d == "scene") return "Scene";
+  if (d == "script") return "Script";
+  if (d == "button" || d == "input_button") return "Press";
+  return "";
+}
+
+void markPageStale(int page) {
+  if (page >= 0 && page < s_count) s_pages[page].stale = true;
+}
+
+// --- Navigation -------------------------------------------------------------------------
+void switchTo(int page);
+void releaseSwipe();
+
+// Slide one page toward dir through the compositor, as a fling would.
+bool slideBy(int dir) {
+  Src a, b;
+  int so, pageA;
+  if (!uiTryBeginSwipe(dir, a, b, so, pageA)) return false;
+  if (!compBeginDrag(a, b, so, pageA)) {
+    releaseSwipe();
+    return false;
+  }
+  compRelease(dir > 0 ? logicalW() : 0, SLIDE_MS, (int8_t)dir);
+  return true;
+}
+
+void goToPage(const String& id) {
+  for (int i = 0; i < s_count; i++) {
+    if (!s_pages[i].def || s_pages[i].def->id != id) continue;
+    const int d = i - sh.active;
+    if (d == 0) return;
+    if ((d == 1 || d == -1) && slideBy(d)) return;
+    switchTo(i);  // not adjacent (or images not ready): jump
+    return;
+  }
+}
+
+// --- Tile events ------------------------------------------------------------------------
+void runAction(TileRt& r, const TileAction& a) {
+  switch (a.kind) {
+    case ACT_TOGGLE:
+      // Local until Home Assistant is connected (Phase 3).
+      r.on = !r.on;
+      if (r.on) lv_obj_add_state(r.obj, LV_STATE_CHECKED);
+      else lv_obj_remove_state(r.obj, LV_STATE_CHECKED);
+      lv_label_set_text(r.sub, tileSub(r).c_str());
+      markPageStale(r.page);
+      break;
+    case ACT_PAGE:
+      goToPage(a.page);
+      break;
+    default:
+      break;
+  }
+}
+
+void tileEvent(lv_event_t* e) {
+  const size_t idx = (size_t)(uintptr_t)lv_event_get_user_data(e);
+  if (idx >= s_tiles.size()) return;
+  TileRt& r = s_tiles[idx];
+  const lv_event_code_t code = lv_event_get_code(e);
+  // SHORT_CLICKED, not CLICKED: CLICKED also fires on the release after a
+  // long press, which would run the tap action as well as the hold action.
+  if (code == LV_EVENT_SHORT_CLICKED) runAction(r, r.def->tap);
+  else if (code == LV_EVENT_LONG_PRESSED) runAction(r, r.def->hold);
+}
+
 // --- Pages -----------------------------------------------------------------------------
-struct TileDef {
-  const char* name;
-  const char* state;
-  const char* sym;
-  bool on;
-  uint32_t accent;
-};
-
-// Phase 1 placeholder content (local toggles only). Phase 2 replaces it with
-// pages built from deck.json, Phase 3 binds tiles to Home Assistant.
-const TileDef kDeskPage[12] = {
-  {"Desk lamp", "80%", LV_SYMBOL_IMAGE, true, 0xF6C56B},
-  {"Ceiling", "Off", LV_SYMBOL_POWER, false, 0xF6C56B},
-  {"Bias light", "Warm", LV_SYMBOL_EYE_OPEN, true, 0xF6C56B},
-  {"Fan", "Off", LV_SYMBOL_REFRESH, false, 0x5CC9A7},
-  {"Evening", "Scene", LV_SYMBOL_IMAGE, false, 0xB3A6FF},
-  {"Focus", "Scene", LV_SYMBOL_EYE_OPEN, false, 0xB3A6FF},
-  {"Printer", "On", LV_SYMBOL_CHARGE, true, 0x5CC9A7},
-  {"Speakers", "Off", LV_SYMBOL_VOLUME_MAX, false, 0x5CC9A7},
-  {"Play", "Spotify", LV_SYMBOL_PLAY, false, 0x7DB5FF},
-  {"Front door", "Locked", LV_SYMBOL_HOME, true, 0x9DB8FF},
-  {"All off", "Script", LV_SYMBOL_POWER, false, 0xFF8A7A},
-  {"PC", "Page", LV_SYMBOL_RIGHT, false, 0x7DB5FF},
-};
-const TileDef kPcPage[12] = {
-  {"Mute mic", "Hotkey", LV_SYMBOL_MUTE, false, 0x7DB5FF},
-  {"Screenshot", "Hotkey", LV_SYMBOL_IMAGE, false, 0x7DB5FF},
-  {"Previous", "Media", LV_SYMBOL_PREV, false, 0x7DB5FF},
-  {"Play", "Media", LV_SYMBOL_PLAY, false, 0x7DB5FF},
-  {"Next", "Media", LV_SYMBOL_NEXT, false, 0x7DB5FF},
-  {"Lock PC", "Win+L", LV_SYMBOL_HOME, false, 0x9DB8FF},
-  {"Terminal", "Companion", LV_SYMBOL_KEYBOARD, false, 0x5CC9A7},
-  {"Browser", "Companion", LV_SYMBOL_LIST, false, 0x5CC9A7},
-  {"Volume -", "Media", LV_SYMBOL_VOLUME_MID, false, 0x7DB5FF},
-  {"Volume +", "Media", LV_SYMBOL_VOLUME_MAX, false, 0x7DB5FF},
-  {"Sleep PC", "Companion", LV_SYMBOL_POWER, false, 0xFF8A7A},
-  {"Desk", "Page", LV_SYMBOL_LEFT, false, 0x7DB5FF},
-};
-
-void tileChanged(lv_event_t*) {
-  // The live framebuffer is the source for the page being shown; its cached
-  // image is only needed once it becomes a neighbour, so just mark it.
-  s_pages[sh.active].stale = true;
-}
-
-void makeTile(lv_obj_t* parent, int col, int row, const TileDef& d) {
-  lv_obj_t* t = lv_obj_create(parent);
-  lv_obj_set_grid_cell(t, LV_GRID_ALIGN_STRETCH, col, 1, LV_GRID_ALIGN_STRETCH, row, 1);
-  lv_obj_remove_flag(t, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_flag(t, LV_OBJ_FLAG_CHECKABLE);
-  lv_obj_set_style_radius(t, 16, 0);
-  lv_obj_set_style_border_width(t, 0, 0);
-  lv_obj_set_style_pad_all(t, 9, 0);
-  lv_obj_set_style_bg_color(t, lv_color_hex(C_TILE), 0);
-  lv_obj_set_style_bg_color(t, lv_color_hex(d.accent), LV_STATE_CHECKED);
-  lv_obj_set_style_bg_color(t, lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
-  lv_obj_set_style_text_color(t, lv_color_hex(C_TEXT), 0);
-  lv_obj_set_style_text_color(t, lv_color_hex(C_TEXT_ON), LV_STATE_CHECKED);
-  if (d.on) lv_obj_add_state(t, LV_STATE_CHECKED);
-  lv_obj_add_event_cb(t, tileChanged, LV_EVENT_VALUE_CHANGED, nullptr);
-
-  lv_obj_t* chip = lv_obj_create(t);
-  lv_obj_remove_flag(chip, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-  lv_obj_set_size(chip, 30, 30);
-  lv_obj_set_style_radius(chip, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_border_width(chip, 0, 0);
-  lv_obj_set_style_pad_all(chip, 0, 0);
-  lv_obj_set_style_bg_color(chip, lv_color_hex(C_CHIP), 0);
-  lv_obj_t* ic = lv_label_create(chip);
-  lv_label_set_text(ic, d.sym);
-  lv_obj_center(ic);
-
-  lv_obj_t* name = lv_label_create(t);
-  lv_label_set_text(name, d.name);
-  lv_obj_align(name, LV_ALIGN_BOTTOM_LEFT, 0, -14);
-  lv_obj_t* st = lv_label_create(t);
-  lv_label_set_text(st, d.state);
-  lv_obj_set_style_text_opa(st, LV_OPA_70, 0);
-  lv_obj_align(st, LV_ALIGN_BOTTOM_LEFT, 0, 2);
-}
-
 lv_obj_t* makeRoot(int w, int h) {
   lv_obj_t* r = lv_obj_create(lv_screen_active());
   lv_obj_remove_style_all(r);
@@ -191,15 +256,69 @@ lv_obj_t* makeRoot(int w, int h) {
   return r;
 }
 
-void addDeckPage(const char* title, const TileDef* defs) {
+void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, int w, int h) {
+  const String domain = entityDomain(def.entity);
+  const uint32_t accent = def.hasColor ? def.color : domainColor(domain);
+
+  lv_obj_t* t = lv_obj_create(grid);
+  lv_obj_set_grid_cell(t, LV_GRID_ALIGN_STRETCH, col, w, LV_GRID_ALIGN_STRETCH, row, h);
+  lv_obj_remove_flag(t, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_radius(t, 16, 0);
+  lv_obj_set_style_border_width(t, 0, 0);
+  lv_obj_set_style_pad_all(t, 9, 0);
+  lv_obj_set_style_bg_color(t, lv_color_hex(C_TILE), 0);
+  lv_obj_set_style_bg_color(t, lv_color_hex(accent), LV_STATE_CHECKED);
+  lv_obj_set_style_text_color(t, lv_color_hex(C_TEXT), 0);
+  lv_obj_set_style_text_color(t, lv_color_hex(C_TEXT_ON), LV_STATE_CHECKED);
+  // Press feedback: the card darkens and shrinks a little, eased in 90 ms.
+  lv_obj_set_style_bg_color(t, lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(t, lv_color_mix(lv_color_hex(accent), lv_color_black(), 200),
+                            LV_STATE_PRESSED | LV_STATE_CHECKED);
+  lv_obj_set_style_transform_width(t, -3, LV_STATE_PRESSED);
+  lv_obj_set_style_transform_height(t, -3, LV_STATE_PRESSED);
+  lv_obj_set_style_transition(t, &s_pressTrans, 0);
+  lv_obj_set_style_transition(t, &s_pressTrans, LV_STATE_PRESSED);
+
+  lv_obj_t* chip = lv_obj_create(t);
+  lv_obj_remove_flag(chip, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+  lv_obj_set_size(chip, 30, 30);
+  lv_obj_set_style_radius(chip, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_border_width(chip, 0, 0);
+  lv_obj_set_style_pad_all(chip, 0, 0);
+  lv_obj_set_style_bg_color(chip, lv_color_hex(C_CHIP), 0);
+  lv_obj_set_style_text_color(chip, lv_color_hex(accent), 0);
+  lv_obj_t* ic = lv_label_create(chip);
+  lv_label_set_text(ic, iconSymbol(def));
+  lv_obj_center(ic);
+
+  lv_obj_t* name = lv_label_create(t);
+  lv_label_set_text(name, tileLabel(def).c_str());
+  lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_width(name, lv_pct(100));
+  lv_obj_align(name, LV_ALIGN_BOTTOM_LEFT, 0, -14);
+  lv_obj_t* sub = lv_label_create(t);
+  lv_obj_set_style_text_opa(sub, LV_OPA_70, 0);
+  lv_obj_align(sub, LV_ALIGN_BOTTOM_LEFT, 0, 2);
+
+  TileRt r = {&def, page, t, sub, false};
+  lv_label_set_text(sub, tileSub(r).c_str());
+  const size_t idx = s_tiles.size();
+  s_tiles.push_back(r);
+  lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
+  lv_obj_add_event_cb(t, tileEvent, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)idx);
+}
+
+void addTilesPage(const PageDef& def) {
   const int w = logicalW(), h = logicalH();
-  const bool landscape = w > h;
+  const int orient = w > h ? ORIENT_LANDSCAPE : ORIENT_PORTRAIT;
+  const int page = s_count;
   Page& p = s_pages[s_count];
   p = {};
+  p.def = &def;
   p.root = makeRoot(w, h);
 
   lv_obj_t* t = lv_label_create(p.root);
-  lv_label_set_text(t, title);
+  lv_label_set_text(t, def.name.length() ? def.name.c_str() : def.id.c_str());
   lv_obj_set_style_text_font(t, &lv_font_montserrat_20, 0);
   lv_obj_set_style_text_color(t, lv_color_hex(C_TITLE), 0);
   lv_obj_set_pos(t, 12, 5);
@@ -207,54 +326,123 @@ void addDeckPage(const char* title, const TileDef* defs) {
   lv_label_set_text(p.clock, "");
   lv_obj_set_style_text_color(p.clock, lv_color_hex(C_CLOCK), 0);
   lv_obj_align(p.clock, LV_ALIGN_TOP_RIGHT, -12, 8);
+  p.wifi = lv_label_create(p.root);
+  lv_label_set_text(p.wifi, LV_SYMBOL_WIFI);
+  lv_obj_set_style_text_color(p.wifi, lv_color_hex(C_DIM), 0);
+  lv_obj_align(p.wifi, LV_ALIGN_TOP_RIGHT, -62, 8);
 
-  static const int32_t colsL[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-  static const int32_t rowsL[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-  static const int32_t colsP[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-  static const int32_t rowsP[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+  const int cols = def.cols[orient], rows = def.rows[orient];
+  // Static descriptor arrays per page (LVGL keeps the pointers).
+  static int32_t colDsc[MAX_PAGES][8];
+  static int32_t rowDsc[MAX_PAGES][8];
+  for (int i = 0; i < cols; i++) colDsc[page][i] = LV_GRID_FR(1);
+  colDsc[page][cols] = LV_GRID_TEMPLATE_LAST;
+  for (int i = 0; i < rows; i++) rowDsc[page][i] = LV_GRID_FR(1);
+  rowDsc[page][rows] = LV_GRID_TEMPLATE_LAST;
+
   lv_obj_t* grid = lv_obj_create(p.root);
   lv_obj_remove_style_all(grid);
   lv_obj_set_pos(grid, 0, HEADER_H);
   lv_obj_set_size(grid, w, h - HEADER_H);
   lv_obj_remove_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_layout(grid, LV_LAYOUT_GRID);
-  lv_obj_set_grid_dsc_array(grid, landscape ? colsL : colsP, landscape ? rowsL : rowsP);
+  lv_obj_set_grid_dsc_array(grid, colDsc[page], rowDsc[page]);
   lv_obj_set_style_pad_all(grid, 8, 0);
   lv_obj_set_style_pad_top(grid, 2, 0);
   lv_obj_set_style_pad_row(grid, 7, 0);
   lv_obj_set_style_pad_column(grid, 7, 0);
-  const int cols = landscape ? 4 : 3;
-  for (int i = 0; i < 12; i++) makeTile(grid, i % cols, i / cols, defs[i]);
+
+  // Explicit positions first, then the rest flow into free cells.
+  bool used[6][6] = {};
+  auto fits = [&](int x, int y, int tw, int th) {
+    if (x + tw > cols || y + th > rows) return false;
+    for (int yy = y; yy < y + th; yy++)
+      for (int xx = x; xx < x + tw; xx++)
+        if (used[yy][xx]) return false;
+    return true;
+  };
+  auto take = [&](int x, int y, int tw, int th) {
+    for (int yy = y; yy < y + th; yy++)
+      for (int xx = x; xx < x + tw; xx++) used[yy][xx] = true;
+  };
+  std::vector<bool> placed(def.tiles.size(), false);
+  for (size_t i = 0; i < def.tiles.size(); i++) {
+    const TilePos& ps = def.tiles[i].pos[orient];
+    if (ps.set && fits(ps.x, ps.y, ps.w, ps.h)) {
+      take(ps.x, ps.y, ps.w, ps.h);
+      makeTile(grid, def.tiles[i], page, ps.x, ps.y, ps.w, ps.h);
+      placed[i] = true;
+    }
+  }
+  for (size_t i = 0; i < def.tiles.size(); i++) {
+    if (placed[i]) continue;
+    const TilePos& ps = def.tiles[i].pos[orient];
+    const int tw = ps.set ? ps.w : 1, th = ps.set ? ps.h : 1;
+    bool done = false;
+    for (int y = 0; y < rows && !done; y++)
+      for (int x = 0; x < cols && !done; x++)
+        if (fits(x, y, tw, th)) {
+          take(x, y, tw, th);
+          makeTile(grid, def.tiles[i], page, x, y, tw, th);
+          done = true;
+        }
+    if (!done) Serial.printf("Deck: page '%s' has no room for tile '%s'\n",
+                             def.id.c_str(), def.tiles[i].id.c_str());
+  }
 
   p.snap = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
   p.stale = true;
   s_count++;
 }
 
-void buildPages() {
+void addFacePage() {
   const int w = logicalW(), h = logicalH();
-  s_count = 0;
-
-  Page& f = s_pages[s_count++];
+  Page& f = s_pages[s_count];
   f = {};
   f.isFace = true;
   f.root = makeRoot(w, h);
   s_canvas = lv_canvas_create(f.root);
   lv_canvas_set_buffer(s_canvas, s_face->getBuffer(), w, h, LV_COLOR_FORMAT_RGB565_SWAPPED);
   lv_obj_set_pos(s_canvas, 0, 0);
+  s_facePage = s_count;
+  s_count++;
+}
 
-  addDeckPage("Desk", kDeskPage);
-  addDeckPage("PC", kPcPage);
+void buildPages() {
+  const int w = logicalW(), h = logicalH();
+  s_count = 0;
+  s_tiles.clear();
+  s_tiles.reserve(64);
+  bool haveFace = false;
+  for (const PageDef& pd : s_cfg.pages) {
+    if (s_count >= MAX_PAGES) break;
+    if (pd.metrics) {
+      if (!haveFace) { addFacePage(); s_pages[s_count - 1].def = &pd; haveFace = true; }
+    } else {
+      addTilesPage(pd);
+    }
+  }
+  if (!haveFace) {
+    // The metric page is part of the product: put it first if the config
+    // forgot it. Shift what was built one slot right.
+    for (int i = s_count; i > 0; i--) s_pages[i] = s_pages[i - 1];
+    for (TileRt& t : s_tiles) t.page++;
+    const int n = s_count;
+    s_count = 0;
+    addFacePage();
+    s_count = n + 1;
+  }
 
   portENTER_CRITICAL(&s_mux);
   sh.count = s_count;
+  sh.facePage = s_facePage;
   sh.owned = false;
   for (int i = 0; i < MAX_PAGES; i++) { sh.valid[i] = false; sh.busy[i] = false; }
   // The face page is shown straight from the renderer's sprite (already in
   // panel byte order) instead of a snapshot.
-  sh.valid[FACE_PAGE] = true;
-  sh.src[FACE_PAGE] = {(const uint16_t*)s_face->getBuffer(), (uint16_t)w, false};
-  const int active = sh.active < s_count ? sh.active : FACE_PAGE;
+  sh.valid[s_facePage] = true;
+  sh.src[s_facePage] = {(const uint16_t*)s_face->getBuffer(), (uint16_t)w, false};
+  const int active = sh.active < s_count ? sh.active : s_facePage;
   sh.active = active;
   portEXIT_CRITICAL(&s_mux);
 
@@ -263,6 +451,7 @@ void buildPages() {
   // can be snapshotted, but their invalidations are clipped away.
   for (int i = 0; i < s_count; i++) lv_obj_set_pos(s_pages[i].root, i == active ? 0 : w, 0);
   s_lastMinute = -1;
+  s_lastWifi = -1;
   s_faceDirty = true;
 }
 
@@ -273,6 +462,7 @@ void destroyPages() {
     s_pages[i] = {};
   }
   s_count = 0;
+  s_tiles.clear();
   s_canvas = nullptr;
   portENTER_CRITICAL(&s_mux);
   sh.count = 0;
@@ -293,7 +483,7 @@ void switchTo(int page) {
   s_gen++;
   // New neighbours; cheap to re-take, and the page we left changed state.
   for (int i = 0; i < s_count; i++) s_pages[i].stale = true;
-  if (page == FACE_PAGE) s_faceDirty = true;
+  if (page == s_facePage) s_faceDirty = true;
 }
 
 void releaseSwipe() {
@@ -340,10 +530,21 @@ void refreshOneSnapshot() {
   s_lastSnapMs = millis();
 }
 
-void updateClocks() {
+// Header clock and WiFi indicator, checked once a second; page images are
+// only marked stale when something visible changed.
+void updateHeaders() {
   const uint32_t now = millis();
   if (now - s_lastClockCheck < 1000) return;
   s_lastClockCheck = now;
+  const int wifi = WiFi.status() == WL_CONNECTED ? 1 : 0;
+  if (wifi != s_lastWifi) {
+    s_lastWifi = wifi;
+    for (int i = 0; i < s_count; i++) {
+      if (!s_pages[i].wifi) continue;
+      lv_obj_set_style_text_color(s_pages[i].wifi, lv_color_hex(wifi ? C_OK : C_DIM), 0);
+      s_pages[i].stale = true;
+    }
+  }
   const time_t epoch = time(nullptr);
   if (epoch < 1609459200) return;  // not synced yet
   struct tm lt;
@@ -395,6 +596,10 @@ bool deckBegin(lgfx::LGFX_Sprite* face, uint8_t rotation) {
   if (!panelBegin(rotation)) return false;
   createFaceSprite();
 
+  String source, err;
+  deckConfigLoad(s_cfg, &source, &err);
+  Serial.printf("Deck: config from %s, %u pages\n", source.c_str(), (unsigned)s_cfg.pages.size());
+
   lv_init();
   lv_tick_set_cb(tickCb);
   s_disp = lv_display_create(logicalW(), logicalH());
@@ -407,6 +612,11 @@ bool deckBegin(lgfx::LGFX_Sprite* face, uint8_t rotation) {
   s_indev = lv_indev_create();
   lv_indev_set_type(s_indev, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(s_indev, indevRead);
+  lv_indev_set_long_press_time(s_indev, 450);
+
+  static const lv_style_prop_t kPressProps[] = {
+    LV_STYLE_TRANSFORM_WIDTH, LV_STYLE_TRANSFORM_HEIGHT, LV_STYLE_BG_COLOR, LV_STYLE_PROP_INV};
+  lv_style_transition_dsc_init(&s_pressTrans, kPressProps, lv_anim_path_ease_out, 90, 0, nullptr);
 
   lv_obj_t* scr = lv_screen_active();
   lv_obj_set_style_bg_color(scr, lv_color_hex(C_BG), 0);
@@ -444,10 +654,10 @@ void deckTick() {
   // visible whatever page was showing.
   const ScreenState sc = getScreenState();
   const bool systemScreen = !(sc == SCREEN_MONITOR || sc == SCREEN_CLOCK || sc == SCREEN_OFF);
-  if (systemScreen && sh.active != FACE_PAGE) {
+  if (systemScreen && sh.active != s_facePage) {
     compCancel();
     releaseSwipe();
-    switchTo(FACE_PAGE);
+    switchTo(s_facePage);
   }
   portENTER_CRITICAL(&s_mux);
   sh.swipeEnabled = !systemScreen && s_count > 1;
@@ -458,9 +668,9 @@ void deckTick() {
 
   if (s_faceDirty) {
     s_faceDirty = false;
-    if (sh.active == FACE_PAGE && s_canvas) lv_obj_invalidate(s_canvas);
+    if (sh.active == s_facePage && s_canvas) lv_obj_invalidate(s_canvas);
   }
-  updateClocks();
+  updateHeaders();
   lv_timer_handler();
   refreshOneSnapshot();
   logStats();
@@ -471,7 +681,7 @@ void deckFaceDirty() { s_faceDirty = true; }
 bool deckFaceMayRender() {
   if (!s_disp) return true;  // before deckBegin (or if it failed)
   if (compOwnsScreen()) return false;
-  if (sh.active != FACE_PAGE) {
+  if (sh.active != s_facePage) {
     const uint32_t now = millis();
     if (now - s_lastHiddenFace < HIDDEN_FACE_MS) return false;
     s_lastHiddenFace = now;
@@ -483,7 +693,7 @@ bool deckFaceMayRender() {
   return ok;
 }
 
-bool deckFacePageActive() { return !s_disp || sh.active == FACE_PAGE; }
+bool deckFacePageActive() { return !s_disp || sh.active == s_facePage; }
 
 void deckApplyRotation(uint8_t rotation) {
   if (!s_disp) return;
@@ -504,15 +714,7 @@ void deckApplyRotation(uint8_t rotation) {
 
 bool deckTestSwipe(int dir) {
   if (!s_disp || (dir != 1 && dir != -1)) return false;
-  Src a, b;
-  int so, pageA;
-  if (!uiTryBeginSwipe(dir, a, b, so, pageA)) return false;
-  if (!compBeginDrag(a, b, so, pageA)) {
-    releaseSwipe();
-    return false;
-  }
-  compRelease(dir > 0 ? logicalW() : 0, 280, (int8_t)dir);
-  return true;
+  return slideBy(dir);
 }
 
 namespace deck {
@@ -523,7 +725,7 @@ bool uiTryBeginSwipe(int dir, Src& a, Src& b, int& startOff, int& pageA) {
   const int target = sh.active + dir;
   if (sh.swipeEnabled && !sh.owned && target >= 0 && target < sh.count &&
       sh.valid[target] && !sh.busy[target] &&
-      !(target == FACE_PAGE && sh.faceBusy)) {
+      !(target == sh.facePage && sh.faceBusy)) {
     sh.owned = true;
     const Src cur = {nullptr, 0, true};  // the live LVGL frame
     if (dir > 0) {
