@@ -170,6 +170,13 @@ bool ensureSprite(lgfx::LGFX_Sprite& spr, int16_t& curW, int16_t& curH,
   if (curW == w && curH == h) return true;
   spr.deleteSprite();
   spr.setColorDepth(16);
+#if defined(BOARD_IS_JC3248W535)
+  // These compose sprites are only ever pushed into the PSRAM face sprite,
+  // never to a DMA bus, and internal RAM here is held by the display
+  // pipeline's DMA staging buffers and WiFi. Internal allocations left the
+  // portal with ~12 KB of heap once a face with cards and charts was live.
+  spr.setPsram(true);
+#endif
   if (spr.createSprite(w, h)) { curW = w; curH = h; return true; }
   curW = curH = 0;
   return false;
@@ -692,6 +699,9 @@ void drawSparkline(const SlotHistory& hist, uint8_t slotIdx,
   if (gSparkW != w || gSparkH != h) {
     gSparkSpr.deleteSprite();
     gSparkSpr.setColorDepth(16);
+#if defined(BOARD_IS_JC3248W535)
+    gSparkSpr.setPsram(true);  // see ensureSprite()
+#endif
     if (gSparkSpr.createSprite(w, h)) { gSparkW = w; gSparkH = h; }
     else { gSparkW = gSparkH = 0; gSparkFails++; }
   }
