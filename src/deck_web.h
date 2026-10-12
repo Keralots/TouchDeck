@@ -21,6 +21,16 @@ const CSS=`
 .dk-tsub{font:11px var(--mono);color:var(--dim);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dk-tact{display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.dk-tact select{width:auto;padding:6px 8px;font-size:12px}.dk-tact .btn{padding:6px 9px}
 .dk-cap{font:12px var(--mono);color:var(--dim);margin:10px 0 0}.dk-cap.over{color:var(--err)}
+.dk-tile.sel{border-color:var(--accent)}
+.dk-grid{display:grid;gap:6px;padding:6px;width:100%;max-width:560px;margin:12px 0 6px;background:var(--card-2);border:1px solid var(--line);border-radius:var(--r-md);user-select:none}.dk-grid.pt{max-width:300px}
+.dk-cell{border:1px dashed var(--line);border-radius:8px}
+.dk-gt{position:relative;display:flex;flex-direction:column;justify-content:space-between;gap:4px;min-width:0;min-height:0;overflow:hidden;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);cursor:grab;touch-action:none}
+.dk-gt.sel{outline:2px solid var(--accent);outline-offset:1px}.dk-gt.drag{z-index:5;opacity:.85;cursor:grabbing;box-shadow:0 8px 20px rgba(0,0,0,.35)}
+.dk-gt i{font:20px dkmdi;font-style:normal;line-height:1}.dk-gt i.tx{font:600 11px var(--mono)}
+.dk-gt b{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dk-rs{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 55%,var(--mute) 55%);opacity:.7}
+.dk-ghost{z-index:4;border:2px solid var(--ok);border-radius:8px;background:rgba(92,201,167,.15);pointer-events:none}.dk-ghost.bad{border-color:var(--err);background:rgba(229,83,75,.15)}
+.dk-tray{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}.dk-tray .dk-gt{width:120px;height:60px}
 .dk-save{position:sticky;bottom:0;display:flex;align-items:center;gap:12px;margin:18px -24px -22px;padding:12px 24px;background:var(--card);border-top:1px solid var(--line);border-radius:0 0 var(--r-lg) var(--r-lg)}
 .dk-save .dk-msg{margin-right:auto;font:12px var(--mono);color:var(--dim)}
 .dk-modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:flex-start;justify-content:center;z-index:90;padding:5vh 12px}
@@ -71,13 +81,13 @@ const SENSOR=['sensor','binary_sensor','weather','sun','person','device_tracker'
 const autoType=d=>TOGGLE.includes(d)?'toggle':SENSOR.includes(d)?'sensor':'action';
 const DOMS=[['','All'],['light','Lights'],['switch','Switches'],['fan','Fans'],['scene','Scenes'],['script','Scripts'],['lock','Locks'],['cover','Covers'],['media_player','Media'],['climate','Climate'],['button','Buttons'],['input_boolean','Helpers'],['automation','Automations'],['sensor','Sensors'],['binary_sensor','Binary sensors']];
 const COL={light:'#F6C56B',switch:'#5CC9A7',fan:'#5CC9A7',input_boolean:'#5CC9A7',scene:'#B3A6FF',script:'#B3A6FF',lock:'#9DB8FF',cover:'#9DB8FF'};
-let deck=null,cur=0,ents=null,entMap={},dirty=false,pickFor=-1,dom='',pcm=[];
+let deck=null,cur=0,ents=null,entMap={},dirty=false,pickFor=-1,dom='',pcm=[],ori=null,sel=-1;
 const PAL=['#3987E5','#00A35C','#D55181','#C98500','#199E70','#D95926','#9085E9','#E66767'];
-async function loadPc(){try{const c=await api('/api/config');pcm=(c.metrics||[]).slice().sort((a,b)=>a.id-b.id);}catch(e){pcm=[];}}
+async function loadPc(){try{const c=await api('/api/config');pcm=(c.metrics||[]).slice().sort((a,b)=>a.id-b.id);if(!ori&&c.display)ori=c.display.rotation%2?'landscape':'portrait';}catch(e){pcm=[];}}
 function metricRow(t,i){const m=pcm.find(x=>x.id===t.metric);const col=t.color||PAL[((t.metric||1)-1)%8];
   const opts=pcm.map(x=>'<option value="'+x.id+'"'+(x.id===t.metric?' selected':'')+'>'+esc(x.name)+' ('+esc(Math.round(x.value*10)/10)+' '+esc(x.unit)+')</option>').join('')+(m?'':'<option value="'+t.metric+'" selected>#'+t.metric+' (not in the last packet)</option>');
-  return '<div class="dk-tile"><div class="dk-ic" style="background:'+col+'">PC</div><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(m?m.name:'Metric')+'"><div class="dk-tsub">PC metric #'+t.metric+(m?' - '+esc(Math.round(m.value*10)/10)+' '+esc(m.unit):'')+'</div></div>'+
-  '<div class="dk-tact"><select data-m="'+i+'">'+opts+'</select><select data-st="'+i+'">'+[['number','Number'],['chart','Chart'],['bar','Bar']].map(o=>'<option value="'+o[0]+'"'+((t.style||'number')===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select><select data-s="'+i+'">'+['1x1','2x1','1x2','2x2'].map(v=>'<option'+(v===tileSize(t)?' selected':'')+'>'+v+'</option>').join('')+'</select><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div></div>';}
+  return '<div class="dk-tile'+(i===sel?' sel':'')+'"><div class="dk-ic" style="background:'+col+'">PC</div><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(m?m.name:'Metric')+'"><div class="dk-tsub">PC metric #'+t.metric+(m?' - '+esc(Math.round(m.value*10)/10)+' '+esc(m.unit):'')+'</div></div>'+
+  '<div class="dk-tact"><select data-m="'+i+'">'+opts+'</select><select data-st="'+i+'">'+[['number','Number'],['chart','Chart'],['bar','Bar']].map(o=>'<option value="'+o[0]+'"'+((t.style||'number')===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>'+sizeSel(t,i)+'<button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div></div>';}
 async function api(p,o){const r=await fetch(p,o);const t=await r.text();let j=null;try{j=JSON.parse(t);}catch(e){}if(!r.ok)throw new Error((j&&(j.message||j.error))||t||('HTTP '+r.status));return j;}
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const domainOf=e=>{const i=(e||'').indexOf('.');return i>0?e.slice(0,i):'';};
@@ -91,26 +101,79 @@ $('dkHaSave').onclick=async()=>{const b=new URLSearchParams();b.set('url',$('dkH
 $('dkHaForget').onclick=async()=>{if(!confirm('Remove the Home Assistant address and token from the device?'))return;try{await api('/api/ha/forget',{method:'POST'});haStatus();}catch(e){alert(e.message);}};
 
 /* pages and tiles */
-const tileSize=t=>{const p=t.pos&&t.pos.landscape;return p?((p.w||1)+'x'+(p.h||1)):'1x1';};
-function setSize(t,v){const [w,h]=v.split('x').map(Number);if(w===1&&h===1){delete t.pos;return;}t.pos={landscape:{w:w,h:h}};}
-const grid=p=>{const l=(p.layouts&&p.layouts.landscape)||{};return [l.cols||4,l.rows||3];};
+/* Grid and positions are per orientation (ori is the one being edited). */
+const DEF={landscape:[4,3],portrait:[3,4]};
+const grid=p=>{const l=(p.layouts&&p.layouts[ori])||{};return [l.cols||DEF[ori][0],l.rows||DEF[ori][1]];};
+const tpos=t=>(t.pos&&t.pos[ori])||{};
+const cl=(v,a,b)=>Math.min(b,Math.max(a,v==null?a:Math.round(v)));
+const tdim=t=>{const q=tpos(t);return [cl(q.w,1,6),cl(q.h,1,6)];};
+const tileSize=t=>tdim(t).join('x');
+const cell=(x,y,w,h)=>{const q={x:x,y:y};if(w>1)q.w=w;if(h>1)q.h=h;return q;};
+function setPos(t,q){t.pos=t.pos||{};if(Object.keys(q).length)t.pos[ori]=q;else delete t.pos[ori];if(!Object.keys(t.pos).length)delete t.pos;}
+function setSize(t,v){const [w,h]=v.split('x').map(Number);const q=Object.assign({},tpos(t));delete q.w;delete q.h;if(w>1)q.w=w;if(h>1)q.h=h;setPos(t,q);}
+const sizeSel=(t,i)=>{const s=tileSize(t),o=['1x1','2x1','1x2','2x2'];if(!o.includes(s))o.push(s);return '<select data-s="'+i+'">'+o.map(v=>'<option'+(v===s?' selected':'')+'>'+v+'</option>').join('')+'</select>';};
+/* Where each tile lands, by the firmware's rule: explicit cells first, then
+   the rest flow into the first free place that fits. null = not shown. */
+function layout(p){const [c,r]=grid(p);const used=[...Array(r)].map(()=>Array(c).fill(false));const at=p.tiles.map(()=>null);
+  const fits=(x,y,w,h)=>{if(x+w>c||y+h>r)return false;for(let j=y;j<y+h;j++)for(let i=x;i<x+w;i++)if(used[j][i])return false;return true;};
+  const put=(k,x,y,w,h)=>{for(let j=y;j<y+h;j++)for(let i=x;i<x+w;i++)used[j][i]=true;at[k]={x:x,y:y,w:w,h:h};};
+  p.tiles.forEach((t,k)=>{const q=tpos(t),[w,h]=tdim(t);if(Number.isInteger(q.x)&&Number.isInteger(q.y)){const x=cl(q.x,0,15),y=cl(q.y,0,15);if(fits(x,y,w,h))put(k,x,y,w,h);}});
+  p.tiles.forEach((t,k)=>{if(at[k])return;const [w,h]=tdim(t);for(let y=0;y<r&&!at[k];y++)for(let x=0;x<c&&!at[k];x++)if(fits(x,y,w,h))put(k,x,y,w,h);});
+  return at;}
+/* Pin every placed tile where it shows, so a drag changes only what moved. */
+function pinAll(p,at){p.tiles.forEach((t,k)=>{const a=at[k];if(a)setPos(t,cell(a.x,a.y,a.w,a.h));});}
+const free=(at,k,q,c,r)=>q.x>=0&&q.y>=0&&q.x+q.w<=c&&q.y+q.h<=r&&at.every((o,j)=>j===k||!o||o.x>=q.x+q.w||o.x+o.w<=q.x||o.y>=q.y+q.h||o.y+o.h<=q.y);
+function gtile(t,k,a){const m=t.type==='metric',mm=m&&pcm.find(x=>x.id===t.metric),en=entMap[t.entity],d=domainOf(t.entity);
+  const col=t.color||(m?PAL[((t.metric||1)-1)%8]:(COL[d]||'#7DB5FF')),cp=m?0:tileCp(t);
+  const nm=t.label||(m?(mm?mm.name:'Metric #'+t.metric):(en&&en.name)||t.entity||'Tile');
+  return '<div class="dk-gt'+(k===sel?' sel':'')+'" data-g="'+k+'"'+(a?' style="grid-area:'+(a.y+1)+'/'+(a.x+1)+'/span '+a.h+'/span '+a.w+'"':'')+'><i style="color:'+col+'"'+(cp?'':' class="tx"')+'>'+(cp?String.fromCodePoint(cp):(m?'PC':esc((d||'?').slice(0,2).toUpperCase())))+'</i><b>'+esc(nm)+'</b>'+(a?'<span class="dk-rs" data-rs="'+k+'"></span>':'')+'</div>';}
+/* Drag a tile to a free place or onto a tile of its size (swap); the corner
+   handle resizes. A press without movement selects the tile. */
+function gdrag(e,p,at,k,size){if(e.button>0)return;e.preventDefault();e.stopPropagation();
+  const n=e.currentTarget,tile=size?n.parentElement:n,g=$('dkGrid'),gh=$('dkGhost'),[c,r]=grid(p);
+  const b=g.getBoundingClientRect(),cs=getComputedStyle(g),pad=parseFloat(cs.paddingLeft)||0,gap=parseFloat(cs.columnGap)||0;
+  const sx=(b.width-2*pad+gap)/c,sy=(b.height-2*pad+gap)/r;
+  const a=at[k],[tw,th]=tdim(p.tiles[k]),tb=tile.getBoundingClientRect();
+  const ox=a?e.clientX-tb.left:sx/2,oy=a?e.clientY-tb.top:sy/2;
+  let moved=false,tgt=null;n.setPointerCapture(e.pointerId);
+  n.onpointermove=ev=>{const dx=ev.clientX-e.clientX,dy=ev.clientY-e.clientY;if(!moved&&Math.abs(dx)+Math.abs(dy)<6)return;moved=true;tile.classList.add('drag');
+    if(size)tgt={x:a.x,y:a.y,w:cl(Math.round((ev.clientX-b.left-pad)/sx)-a.x,1,Math.min(6,c-a.x)),h:cl(Math.round((ev.clientY-b.top-pad)/sy)-a.y,1,Math.min(6,r-a.y))};
+    else{tile.style.transform='translate('+dx+'px,'+dy+'px)';if(tw>c||th>r){tgt=null;gh.hidden=true;return;}
+      tgt={x:cl((ev.clientX-ox-b.left-pad)/sx,0,c-tw),y:cl((ev.clientY-oy-b.top-pad)/sy,0,r-th),w:tw,h:th};}
+    tgt.j=-1;tgt.ok=free(at,k,tgt,c,r);
+    if(!tgt.ok&&!size&&a){tgt.j=at.findIndex((o,j)=>j!==k&&o&&o.x===tgt.x&&o.y===tgt.y&&o.w===tw&&o.h===th);tgt.ok=tgt.j>=0;}
+    gh.hidden=false;gh.className='dk-ghost'+(tgt.ok?'':' bad');gh.style.gridArea=(tgt.y+1)+'/'+(tgt.x+1)+'/span '+tgt.h+'/span '+tgt.w;};
+  n.onpointerup=n.onpointercancel=ev=>{n.onpointermove=n.onpointerup=n.onpointercancel=null;
+    if(!moved){sel=k;renderPage();const row=document.querySelector('.dk-tile.sel');if(row)row.scrollIntoView({block:'nearest',behavior:'smooth'});return;}
+    if(ev.type==='pointerup'&&tgt&&tgt.ok){pinAll(p,at);if(tgt.j>=0)setPos(p.tiles[tgt.j],cell(a.x,a.y,tw,th));setPos(p.tiles[k],cell(tgt.x,tgt.y,tgt.w,tgt.h));sel=k;setDirty(true);}
+    renderPage();};}
 function renderTabs(){const ps=pages();if(cur>=ps.length)cur=Math.max(0,ps.length-1);$('dkTabs').innerHTML=ps.map((p,i)=>'<button type="button" class="chip page-tab'+(i===cur?' on':'')+'" data-i="'+i+'">'+(stackedAt(ps,i)?'&#8595; ':'')+esc(p.name||p.id)+'</button>').join('')+'<button type="button" class="chip page-tab" id="dkAddPage">+ Page</button>';
-  $('dkTabs').querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>{cur=+b.dataset.i;render();});$('dkAddPage').onclick=()=>{deck.pages.push({id:'p'+Date.now().toString(36),name:'New page',layouts:{landscape:{cols:4,rows:3}},tiles:[]});cur=pages().length-1;setDirty(true);render();};}
+  $('dkTabs').querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>{cur=+b.dataset.i;sel=-1;render();});$('dkAddPage').onclick=()=>{deck.pages.push({id:'p'+Date.now().toString(36),name:'New page',layouts:{landscape:{cols:4,rows:3}},tiles:[]});cur=pages().length-1;setDirty(true);render();};}
 /* A page stacked below the one before it (same group) is in its column. */
 const stackedAt=(ps,i)=>i>0&&!!ps[i].group&&ps[i].group===ps[i-1].group;
 function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.innerHTML='<p class="dk-empty">No deck pages. Add one with "+ Page".</p>';return;}
-  const p=ps[cur];const [c,r]=grid(p);let used=0;p.tiles.forEach(t=>{const [w,h]=tileSize(t).split('x').map(Number);used+=w*h;});
-  let h='<div class="grid-2"><div class="field"><label class="field-label">Page name</label><input type="text" id="dkPName" value="'+esc(p.name||'')+'"></div><div class="field"><label class="field-label">Grid (columns x rows)</label><div class="dk-row"><select id="dkPCols" style="width:auto">'+[2,3,4,5,6].map(n=>'<option'+(n===c?' selected':'')+'>'+n+'</option>').join('')+'</select><span>x</span><select id="dkPRows" style="width:auto">'+[2,3,4].map(n=>'<option'+(n===r?' selected':'')+'>'+n+'</option>').join('')+'</select><button type="button" class="btn btn-danger" id="dkPDel" style="margin-left:auto">Delete page</button></div></div></div>';
+  const p=ps[cur];const [c,r]=grid(p),land=ori==='landscape',at=layout(p),lost=p.tiles.map((t,k)=>k).filter(k=>!at[k]);let cells=0;at.forEach(a=>{if(a)cells+=a.w*a.h;});
+  let h='<div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Layout</span>'+[['landscape','Landscape'],['portrait','Portrait']].map(o=>'<button type="button" class="chip page-tab'+(o[0]===ori?' on':'')+'" data-o="'+o[0]+'">'+o[1]+'</button>').join('')+'</div>';
+  h+='<div class="grid-2"><div class="field"><label class="field-label">Page name</label><input type="text" id="dkPName" value="'+esc(p.name||'')+'"></div><div class="field"><label class="field-label">Grid (columns x rows)</label><div class="dk-row"><select id="dkPCols" style="width:auto">'+(land?[2,3,4,5,6]:[2,3,4]).map(n=>'<option'+(n===c?' selected':'')+'>'+n+'</option>').join('')+'</select><span>x</span><select id="dkPRows" style="width:auto">'+(land?[2,3,4]:[2,3,4,5,6]).map(n=>'<option'+(n===r?' selected':'')+'>'+n+'</option>').join('')+'</select><button type="button" class="btn btn-danger" id="dkPDel" style="margin-left:auto">Delete page</button></div></div></div>';
   h+='<label class="check-row standalone"><input type="checkbox" id="dkPStack"'+(stackedAt(ps,cur)?' checked':'')+(cur===0?' disabled':'')+'><span class="check-box"></span><span class="check-text"><strong>Below the previous page</strong><span class="ct-hint">Stacked pages form one column: swipe up and down between them, left and right to the next column.</span></span></label>';
+  let g='';for(let y=0;y<r;y++)for(let x=0;x<c;x++)g+='<div class="dk-cell" style="grid-area:'+(y+1)+'/'+(x+1)+'"></div>';
+  const hd=$('dkHeader').checked?30:0;
+  h+='<div class="dk-grid'+(land?'':' pt')+'" id="dkGrid" style="grid-template-columns:repeat('+c+',minmax(0,1fr));grid-template-rows:repeat('+r+',minmax(0,1fr));aspect-ratio:'+(land?480:320)+'/'+((land?320:480)-hd)+'">'+g+p.tiles.map((t,k)=>at[k]?gtile(t,k,at[k]):'').join('')+'<div class="dk-ghost" id="dkGhost" hidden></div></div>';
+  if(lost.length)h+='<p class="dk-cap over">No room on the page for these: drag one to a free place, make it smaller or remove it.</p><div class="dk-tray">'+lost.map(k=>gtile(p.tiles[k],k,null)).join('')+'</div>';
+  h+='<p class="field-hint">Drag a tile to move it, or onto a tile of the same size to swap them; the corner handle resizes. Tap a tile to find it in the list.</p>';
   h+='<div class="dk-tiles">'+p.tiles.map((t,i)=>{if(t.type==='metric')return metricRow(t,i);const d=domainOf(t.entity);const en=entMap[t.entity];const nm=en&&en.name?en.name:(t.entity||'No entity');
     const cp=tileCp(t);
-    return '<div class="dk-tile"><button type="button" class="dk-ic'+(cp?' mdi':'')+'" data-ic="'+i+'" title="'+esc(cp?(t.icon||(en&&en.icon)||'automatic'):'Choose an icon')+'" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+(cp?String.fromCodePoint(cp):esc((d||'?').slice(0,2).toUpperCase()))+'</button><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="dk-tsub">'+esc(t.entity||'no entity')+(en&&en.state?' - '+esc(en.state)+(en.unit?' '+esc(en.unit):''):'')+'</div></div>'+
-    '<div class="dk-tact"><select data-t="'+i+'"><option value="toggle"'+(t.type==='toggle'?' selected':'')+'>Switch</option><option value="action"'+(t.type==='action'?' selected':'')+'>Button</option><option value="sensor"'+(t.type==='sensor'?' selected':'')+'>Sensor</option></select><select data-s="'+i+'">'+['1x1','2x1','1x2','2x2'].map(v=>'<option'+(v===tileSize(t)?' selected':'')+'>'+v+'</option>').join('')+'</select><button type="button" class="btn" data-e="'+i+'">Entity</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div></div>';}).join('')+'</div>';
-  h+='<p class="dk-cap'+(used>c*r?' over':'')+'">'+used+' of '+(c*r)+' cells used'+(used>c*r?' - tiles that do not fit are not shown':'')+'</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button></div><p class="field-hint">Chart and Bar need a 2x1 or bigger tile; a 1x1 tile shows the number.</p>';
+    return '<div class="dk-tile'+(i===sel?' sel':'')+'"><button type="button" class="dk-ic'+(cp?' mdi':'')+'" data-ic="'+i+'" title="'+esc(cp?(t.icon||(en&&en.icon)||'automatic'):'Choose an icon')+'" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+(cp?String.fromCodePoint(cp):esc((d||'?').slice(0,2).toUpperCase()))+'</button><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="dk-tsub">'+esc(t.entity||'no entity')+(en&&en.state?' - '+esc(en.state)+(en.unit?' '+esc(en.unit):''):'')+'</div></div>'+
+    '<div class="dk-tact"><select data-t="'+i+'"><option value="toggle"'+(t.type==='toggle'?' selected':'')+'>Switch</option><option value="action"'+(t.type==='action'?' selected':'')+'>Button</option><option value="sensor"'+(t.type==='sensor'?' selected':'')+'>Sensor</option></select>'+sizeSel(t,i)+'<button type="button" class="btn" data-e="'+i+'">Entity</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div></div>';}).join('')+'</div>';
+  h+='<p class="dk-cap">'+cells+' of '+(c*r)+' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button></div><p class="field-hint">Chart and Bar need a 2x1 or bigger tile; a 1x1 tile shows the number.</p>';
   el.innerHTML=h;
   $('dkPName').oninput=e=>{p.name=e.target.value;setDirty(true);renderTabs();};
-  $('dkPCols').onchange=e=>{p.layouts=p.layouts||{};p.layouts.landscape={cols:+e.target.value,rows:grid(p)[1]};setDirty(true);renderPage();};
-  $('dkPRows').onchange=e=>{p.layouts=p.layouts||{};p.layouts.landscape={cols:grid(p)[0],rows:+e.target.value};setDirty(true);renderPage();};
+  const setGrid=(gc,gr)=>{p.layouts=p.layouts||{};p.layouts[ori]={cols:gc,rows:gr};setDirty(true);renderPage();};
+  $('dkPCols').onchange=e=>setGrid(+e.target.value,r);
+  $('dkPRows').onchange=e=>setGrid(c,+e.target.value);
+  el.querySelectorAll('[data-o]').forEach(b=>b.onclick=()=>{ori=b.dataset.o;sel=-1;renderPage();});
+  el.querySelectorAll('[data-g]').forEach(n=>n.onpointerdown=e=>gdrag(e,p,at,+n.dataset.g,false));
+  el.querySelectorAll('[data-rs]').forEach(n=>n.onpointerdown=e=>gdrag(e,p,at,+n.dataset.rs,true));
   /* The page and the pages stacked under it move together. */
   $('dkPStack').onchange=e=>{const prev=ps[cur-1];if(!prev)return;let end=cur+1;while(end<ps.length&&stackedAt(ps,end))end++;const run=ps.slice(cur,end);
     if(e.target.checked){const g=prev.group||prev.id;prev.group=g;run.forEach(x=>x.group=g);}else if(run.length>1)run.forEach(x=>x.group=p.id);else delete p.group;setDirty(true);renderTabs();};
@@ -120,8 +183,8 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   el.querySelectorAll('[data-s]').forEach(x=>x.onchange=e=>{setSize(p.tiles[+x.dataset.s],e.target.value);setDirty(true);renderPage();});
   el.querySelectorAll('[data-e]').forEach(x=>x.onclick=()=>openPicker(+x.dataset.e));
   el.querySelectorAll('[data-ic]').forEach(x=>x.onclick=()=>openIcons(+x.dataset.ic));
-  el.querySelectorAll('[data-u]').forEach(x=>x.onclick=()=>{const i=+x.dataset.u;if(i<1)return;const t=p.tiles.splice(i,1)[0];p.tiles.splice(i-1,0,t);setDirty(true);renderPage();});
-  el.querySelectorAll('[data-x]').forEach(x=>x.onclick=()=>{p.tiles.splice(+x.dataset.x,1);setDirty(true);renderPage();});
+  el.querySelectorAll('[data-u]').forEach(x=>x.onclick=()=>{const i=+x.dataset.u;if(i<1)return;const t=p.tiles.splice(i,1)[0];p.tiles.splice(i-1,0,t);sel=-1;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-x]').forEach(x=>x.onclick=()=>{p.tiles.splice(+x.dataset.x,1);sel=-1;setDirty(true);renderPage();});
   $('dkAddTile').onclick=()=>openPicker(-1);
   $('dkAddPc').onclick=async()=>{if(!pcm.length)await loadPc();const usedIds=p.tiles.filter(t=>t.type==='metric').map(t=>t.metric);const m=pcm.find(x=>!usedIds.includes(x.id))||pcm[0];if(!m){alert('No PC metrics yet - start the companion app on the PC.');return;}p.tiles.push({id:'m'+Date.now().toString(36),type:'metric',metric:m.id,style:'number'});setDirty(true);renderPage();};
   el.querySelectorAll('[data-m]').forEach(x=>x.onchange=e=>{p.tiles[+x.dataset.m].metric=+e.target.value;setDirty(true);renderPage();});
@@ -187,7 +250,7 @@ $('dkSave').onclick=async()=>{try{await api('/api/deck',{method:'POST',headers:{
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
 
 (async function init(){haStatus();icRefresh();setInterval(()=>{if(visible())haStatus();},3000);
-  await loadPc();
+  await loadPc();ori=ori||'landscape';
   try{const r=await api('/api/deck');deck=r.deck;deck.pages=deck.pages.filter(p=>p.type!=='metrics');$('dkHeader').checked=r.header!==false;render();}catch(e){$('dkPage').innerHTML='<p class="dk-empty">'+esc(e.message)+'</p>';}
   try{await loadEnts();}catch(e){}})();
 })();)JS";
