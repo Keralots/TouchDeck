@@ -28,6 +28,10 @@ constexpr float FLING_PX_PER_MS = 0.25f;
 constexpr uint32_t VELOCITY_WINDOW_MS = 90;
 constexpr uint32_t SLIDE_MAX_MS = 280;
 constexpr uint32_t SLIDE_MIN_MS = 90;
+// The quick panel is pulled down from this band at the top edge (the page
+// header), and opens or closes after this share of its height.
+constexpr int EDGE_PX = 30;
+constexpr float PANEL_COMMIT_FRACTION = 0.3f;
 
 TaskHandle_t s_task = nullptr;
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -41,7 +45,15 @@ enum GestureState : uint8_t { G_IDLE, G_PENDING, G_PASS, G_DRAG };
 
 struct Sample {
   uint32_t ms;
-  int16_t x;
+  int16_t x, y;
+};
+
+// One compositor drag, horizontal (pages) or vertical (quick panel), in
+// compositor offset units: off runs from startOff toward commitOff.
+struct Drag {
+  bool vertical;
+  int startOff, commitOff, range, off;
+  int8_t landing;  // reported when the drag commits
 };
 constexpr int NSAMPLES = 8;
 
@@ -105,7 +117,7 @@ void touchTask(void*) {
   GestureState state = G_IDLE;
   int16_t x0 = 0, y0 = 0, lastX = 0, lastY = 0;
   uint32_t lastMs = 0;
-  int dir = 0, startOff = 0, off = 0;
+  Drag drag = {};
   Sample samples[NSAMPLES];
   int nsamples = 0;
 
@@ -131,7 +143,7 @@ void touchTask(void*) {
         memmove(samples, samples + 1, sizeof(Sample) * (NSAMPLES - 1));
         nsamples--;
       }
-      samples[nsamples++] = {now, x};
+      samples[nsamples++] = {now, x, y};
 
       if (state == G_PENDING && !s_suppress) {
         const int dx = x - x0, dy = y - y0;
@@ -143,8 +155,8 @@ void touchTask(void*) {
           if (uiTryBeginSwipe(d, a, b, so, pageA)) {
             if (compBeginDrag(a, b, so, pageA)) {
               state = G_DRAG;
-              dir = d;
-              startOff = so;
+              const int w = logicalW();
+              drag = {false, so, d > 0 ? w : 0, w, so, (int8_t)d};
               s_swipeStarted = true;
             } else {
               uiSwipeAborted();
@@ -153,15 +165,31 @@ void touchTask(void*) {
           } else {
             state = G_PASS;
           }
-        } else if (abs(dy) >= SLOP_PX) {
+        } else if (abs(dy) >= SLOP_PX && abs(dy) > abs(dx)) {
+          // Pull the quick panel down from the top edge, or push an open
+          // one back up from anywhere.
+          const bool open = uiPanelIsOpen();
           state = G_PASS;
+          if ((!open && dy > 0 && y0 < EDGE_PX) || (open && dy < 0)) {
+            Src panel, page;
+            int so, ph;
+            if (uiTryBeginPanel(!open, panel, page, so, ph)) {
+              if (compBeginPanel(panel, page, so)) {
+                state = G_DRAG;
+                drag = {true, so, open ? 0 : ph, ph, so, (int8_t)(open ? -1 : 1)};
+                s_swipeStarted = true;
+              } else {
+                uiSwipeAborted();
+              }
+            }
+          }
         }
       }
       if (state == G_DRAG) {
-        const int w = logicalW();
-        off = startOff - (x - x0);
+        int off = drag.vertical ? drag.startOff + (y - y0) : drag.startOff - (x - x0);
         if (off < 0) off = 0;
-        if (off > w) off = w;
+        if (off > drag.range) off = drag.range;
+        drag.off = off;
         compDrag(off);
       }
       publish(x, y, state != G_DRAG && !s_suppress);
@@ -170,21 +198,27 @@ void touchTask(void*) {
 
     if (s_down && now - lastMs >= RELEASE_MS) {
       if (state == G_DRAG) {
-        const int w = logicalW();
-        float v = 0.0f;  // px per ms, positive = finger moving right
+        // Offset velocity (px/ms) over the last samples. Horizontal offsets
+        // grow as the finger moves left, vertical ones as it moves down.
+        float v = 0.0f;
         int first = nsamples - 1;
         while (first > 0 && lastMs - samples[first - 1].ms <= VELOCITY_WINDOW_MS) first--;
         const uint32_t dt = samples[nsamples - 1].ms - samples[first].ms;
-        if (dt >= 15) v = (float)(samples[nsamples - 1].x - samples[first].x) / (float)dt;
-        const float toward = -v * (float)dir;       // speed toward the new page
-        const int progress = abs(off - startOff);
+        if (dt >= 15) {
+          const Sample& a = samples[first];
+          const Sample& b = samples[nsamples - 1];
+          v = drag.vertical ? (float)(b.y - a.y) / dt : -(float)(b.x - a.x) / dt;
+        }
+        const float toward = drag.commitOff > drag.startOff ? v : -v;
+        const int progress = abs(drag.off - drag.startOff);
+        const float fraction = drag.vertical ? PANEL_COMMIT_FRACTION : COMMIT_FRACTION;
         bool commit;
         if (toward > FLING_PX_PER_MS) commit = true;
         else if (toward < -FLING_PX_PER_MS) commit = false;
-        else commit = progress > (int)(w * COMMIT_FRACTION);
-        const int target = commit ? (dir > 0 ? w : 0) : startOff;
-        const int remaining = abs(target - off);
-        uint32_t dur = (uint32_t)remaining * SLIDE_MAX_MS / (uint32_t)w;
+        else commit = progress > (int)(drag.range * fraction);
+        const int target = commit ? drag.commitOff : drag.startOff;
+        const int remaining = abs(target - drag.off);
+        uint32_t dur = (uint32_t)remaining * SLIDE_MAX_MS / (uint32_t)drag.range;
         const float speed = fabsf(v);
         if (commit && speed > FLING_PX_PER_MS) {
           const uint32_t flingDur = (uint32_t)(remaining / speed * 1.6f);
@@ -192,7 +226,7 @@ void touchTask(void*) {
         }
         if (dur < SLIDE_MIN_MS) dur = SLIDE_MIN_MS;
         if (dur > SLIDE_MAX_MS) dur = SLIDE_MAX_MS;
-        compRelease(target, dur, commit ? (int8_t)dir : 0);
+        compRelease(target, dur, commit ? drag.landing : 0);
       }
       s_down = false;
       s_suppress = false;

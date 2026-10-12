@@ -48,6 +48,7 @@ static bool g_time_valid = false;
 static bool g_offline_tracking = false;
 static bool g_backlight_refresh = true;
 static bool g_manual_display_off = false;
+static bool g_manual_night = false;
 static uint32_t g_offline_since_ms = 0;
 static uint32_t g_last_backlight_check_ms = 0;
 static uint32_t g_touch_wake_until_ms = 0;
@@ -64,6 +65,12 @@ bool nightBrightnessActive() { return g_night_active; }
 bool offlineDisplaySleeping() { return g_offline_sleeping; }
 bool backlightTimeValid() { return g_time_valid; }
 bool manualDisplayOff() { return g_manual_display_off; }
+bool manualNightActive() { return g_manual_night; }
+
+void setManualNight(bool on) {
+  g_manual_night = on;
+  refreshBacklightControl();
+}
 bool displaySleepingForTouch() {
   return g_manual_display_off || g_offline_sleeping;
 }
@@ -110,7 +117,7 @@ void updateBacklightControl() {
     if (start < end) nightWindow = minute >= start && minute < end;
     else if (start > end) nightWindow = minute >= start || minute < end;
   }
-  g_night_active = backlightSettings.nightEnabled && nightWindow;
+  g_night_active = (backlightSettings.nightEnabled && nightWindow) || g_manual_night;
 
   const ScreenState screen = getScreenState();
   bool sleepEligible = screen == SCREEN_MONITOR || screen == SCREEN_CLOCK;

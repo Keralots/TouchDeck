@@ -36,6 +36,10 @@ bool offlineDisplaySleeping();
 bool backlightTimeValid();
 void setManualDisplayOff(bool off);
 bool manualDisplayOff();
+// Night level on demand (deck quick panel), on top of the schedule. Not
+// persisted: a reboot returns to the schedule alone.
+void setManualNight(bool on);
+bool manualNightActive();
 bool displaySleepingForTouch();
 void wakeDisplayFromTouch();
 void applyDisplaySettings();  // re-apply rotation, bg, force redraw

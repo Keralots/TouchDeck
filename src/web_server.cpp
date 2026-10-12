@@ -1693,6 +1693,13 @@ static void handleDeckSwipe() {
   const bool ok = deckTestSwipe(dir);
   sendJsonMessage(ok ? 200 : 409, ok, ok ? "Swipe started" : "Swipe not possible now");
 }
+
+// POST /api/deck/panel?open=1|0 - bench hook, quick panel slide.
+static void handleDeckPanel() {
+  const bool open = !server.hasArg("open") || server.arg("open") != "0";
+  const bool ok = deckTestPanel(open);
+  sendJsonMessage(ok ? 200 : 409, ok, ok ? "Panel slide started" : "Panel slide not possible now");
+}
 #endif
 
 // ---------------------------------------------------------------------------
@@ -1827,6 +1834,7 @@ void initWebServer() {
 #if defined(BOARD_IS_JC3248W535)
   server.on("/screen_live.bmp", HTTP_GET, handleLiveScreenshot);
   server.on("/api/deck/swipe", HTTP_POST, handleDeckSwipe);
+  server.on("/api/deck/panel", HTTP_POST, handleDeckPanel);
 #endif
   server.on("/ota/upload", HTTP_POST, handleOtaFinish, handleOtaUpload);
 
