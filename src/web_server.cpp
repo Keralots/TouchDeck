@@ -938,6 +938,19 @@ static void handleDeckCard() {
   sendJsonMessage(ok ? 200 : 404, ok, ok ? "Card open" : "No such tile");
 }
 
+// POST /api/deck/tap?tile=<id>[&hold=1] - bench hook, a tap or hold on a tile
+// (runs its action, or opens the confirm card).
+static void handleDeckTap() {
+  const bool ok = deckTestTap(server.arg("tile"), server.arg("hold") == "1");
+  sendJsonMessage(ok ? 200 : 404, ok, ok ? "Tapped" : "No such tile");
+}
+
+// POST /api/deck/confirm?ok=1|0 - bench hook, answer the open confirm card.
+static void handleDeckConfirm() {
+  const bool ok = deckTestConfirm(server.arg("ok") == "1");
+  sendJsonMessage(ok ? 200 : 409, ok, ok ? "OK" : "No confirm card open");
+}
+
 // POST /api/deck/edit?op=open|move|remove|done|cancel[&tile=<index>&x=&y=&w=&h=]
 // - bench hook, drives the on-device edit mode.
 static void handleDeckEdit() {
@@ -1138,6 +1151,8 @@ void initWebServer() {
   server.on("/api/deck/swipe", HTTP_POST, handleDeckSwipe);
   server.on("/api/deck/panel", HTTP_POST, handleDeckPanel);
   server.on("/api/deck/card", HTTP_POST, handleDeckCard);
+  server.on("/api/deck/tap", HTTP_POST, handleDeckTap);
+  server.on("/api/deck/confirm", HTTP_POST, handleDeckConfirm);
   server.on("/api/deck/edit", HTTP_POST, handleDeckEdit);
   server.on("/api/deck/screen", HTTP_POST, handleDeckScreen);
   server.on("/deck", HTTP_GET, handleDeckPage);

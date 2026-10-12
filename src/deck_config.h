@@ -18,6 +18,9 @@
 // A PC metric tile: { "type": "metric", "metric": <companion id>,
 //   "style": "number" | "chart" | "bar", "scaleMax": 0 (= by unit) }.
 //
+// "confirm": "off" | "always" (optional, tap and hold actions): ask on the
+// device before turning the tile off, or before any action it runs.
+//
 // label / icon null = take them from Home Assistant later (Phase 3); until
 // then the entity id stands in. `sub` is an optional fixed second line.
 // Positions are keyed by orientation; a tile without one for the current
@@ -47,6 +50,7 @@ enum ActionKind : uint8_t {
   ACT_PAGE,          // {page: id}
   ACT_MORE_INFO,     // detail popup
 };
+enum ConfirmMode : uint8_t { CONFIRM_NONE = 0, CONFIRM_OFF, CONFIRM_ALWAYS };
 
 struct TileAction {
   ActionKind kind = ACT_NONE;
@@ -69,6 +73,7 @@ struct TileDef {
   uint32_t color = 0;
   TilePos pos[2];
   TileAction tap, hold;
+  ConfirmMode confirm = CONFIRM_NONE;
   uint8_t metric = 0;  // TILE_METRIC: companion metric id
   MetricStyle style = METRIC_NUMBER;
   uint16_t scaleMax = 0;  // 0 = full scale by unit

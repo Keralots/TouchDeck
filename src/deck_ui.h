@@ -38,6 +38,10 @@ bool deckHeaderVisible();
 bool deckTestSwipe(int dir, bool vertical);
 // Bench hook (/api/deck/card): open the detail card of the tile with this id.
 bool deckTestCard(const String& tileId);
+// Bench hooks (/api/deck/tap, /api/deck/confirm): tap or hold a tile, answer
+// its confirm card.
+bool deckTestTap(const String& tileId, bool hold);
+bool deckTestConfirm(bool ok);
 // Bench hook (/api/deck/panel): open or close the quick panel with its slide.
 bool deckTestPanel(bool open);
 // Bench hook (/api/deck/edit): drive the on-device edit mode. op = open |
