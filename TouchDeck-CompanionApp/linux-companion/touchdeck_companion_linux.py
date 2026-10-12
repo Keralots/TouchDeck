@@ -89,10 +89,20 @@ def load_config():
     if not os.path.exists(CONFIG_FILE):
         return None
     try:
-        with open(CONFIG_FILE, "r") as f:
-            return json.load(f)
+        # utf-8-sig: a BOM is otherwise a parse error on a good config.
+        with open(CONFIG_FILE, "r", encoding="utf-8-sig") as f:
+            config = json.load(f)
+        if not isinstance(config, dict):
+            raise ValueError("top level is %s, not an object" % type(config).__name__)
+        return config
     except Exception as e:
-        print("Error loading config: %s" % e)
+        # Keep a copy before defaults take over: the next save would otherwise
+        # overwrite the damaged file and the whole setup would be unrecoverable.
+        try:
+            from config_model import quarantine_unreadable_config
+            quarantine_unreadable_config(CONFIG_FILE, e)
+        except Exception:
+            print("Error loading config: %s" % e)
         return None
 
 
@@ -195,7 +205,9 @@ def collect_metrics(config, snapshot, last_good_values=None, status_code=STATUS_
     elif stale_count > 0 and stale_count >= total * 0.5 and status_code == STATUS_OK:
         status_code = STATUS_API_ERROR
     payload["status"] = status_code
-    payload["timestamp"] = datetime.now().strftime("%H:%M") if has_fresh_data else ""
+    # Stamp a time only for fresh AND healthy data (see the Windows core).
+    payload["timestamp"] = (datetime.now().strftime("%H:%M")
+                            if has_fresh_data and status_code == STATUS_OK else "")
     return payload, values_by_id, has_fresh_data, last_good_values, stale_count
 
 

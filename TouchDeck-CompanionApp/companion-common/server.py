@@ -418,14 +418,25 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"success": False, "message": str(exc)}, 500)
 
 
-def make_server(core, state, host="127.0.0.1", port=8750):
+DEFAULT_UI_PORT = 8750
+
+
+class _UiServer(ThreadingHTTPServer):
+    # Windows SO_REUSEADDR lets a second process bind a port another process is
+    # already serving and silently take the connections, so bind() never fails
+    # and the fallback below never runs. Two companions then answer on one port
+    # and each window can end up driving the other app.
+    allow_reuse_address = False
+
+
+def make_server(core, state, host="127.0.0.1", port=DEFAULT_UI_PORT):
     """Build the local server, using an ephemeral port if the preferred one is busy."""
     _Handler.CORE = core
     _Handler.STATE = state
     try:
-        httpd = ThreadingHTTPServer((host, port), _Handler)
+        httpd = _UiServer((host, port), _Handler)
     except OSError:
-        httpd = ThreadingHTTPServer((host, 0), _Handler)
+        httpd = _UiServer((host, 0), _Handler)
         port = httpd.server_address[1]
     httpd.daemon_threads = True
     return httpd, port

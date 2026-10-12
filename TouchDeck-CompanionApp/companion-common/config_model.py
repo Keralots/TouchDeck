@@ -1,7 +1,10 @@
 """TouchDeck companion configuration normalization and metric identity."""
 
 import copy
+import os
+import shutil
 import socket
+import time
 import uuid
 
 from constants import MAX_METRICS
@@ -11,6 +14,35 @@ CONFIG_VERSION = "4.1"
 MAX_METRIC_ID = 255
 MAX_STREAM_LABEL = 15
 MAX_PC_NAME = 23  # the firmware keeps 24 bytes
+
+
+def quarantine_unreadable_config(path, err):
+    """Copy a config that will not parse to a dated sidecar. Returns its path.
+
+    Without this the next save silently overwrites the damaged file and the
+    user's whole setup is gone with no copy anywhere.
+    """
+    dst = "%s.corrupt-%s.json" % (os.path.splitext(path)[0], time.strftime("%Y%m%d-%H%M%S"))
+    try:
+        shutil.copy2(path, dst)
+    except Exception:
+        dst = ""
+    print("")
+    print("!" * 60)
+    print("  CONFIGURATION COULD NOT BE READ")
+    print("!" * 60)
+    print("  %s" % path)
+    print("  %s" % err)
+    if dst:
+        print("  A copy was kept as:")
+        print("    %s" % dst)
+        print("  Starting with defaults. Your old settings are in that copy.")
+    else:
+        print("  The file could NOT be copied aside - do not save until you")
+        print("  have backed it up yourself, or the settings will be lost.")
+    print("!" * 60)
+    print("")
+    return dst
 
 
 def clean_pc_name(value):

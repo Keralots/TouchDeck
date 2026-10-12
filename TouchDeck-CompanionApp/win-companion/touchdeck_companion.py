@@ -1786,8 +1786,13 @@ def load_config():
         return None
 
     try:
-        with open(CONFIG_FILE, 'r') as f:
+        # utf-8-sig: a BOM (an editor, a PowerShell redirect) is otherwise a
+        # parse error that would quarantine a perfectly good config.
+        with open(CONFIG_FILE, 'r', encoding='utf-8-sig') as f:
             config = json.load(f)
+        if not isinstance(config, dict):
+            raise ValueError("top level is %s, not an object"
+                             % type(config).__name__)
 
         # Version check - force reconfiguration for old versions
         config_version = config.get("version", "1.0")
@@ -1828,7 +1833,13 @@ def load_config():
         print(f"  Selected metrics: {len(config.get('metrics', []))}")
         return config
     except Exception as e:
-        print(f"\n✗ Error loading config: {e}")
+        # Keep a copy before defaults take over: the next save would otherwise
+        # overwrite the damaged file and the whole setup would be unrecoverable.
+        try:
+            from config_model import quarantine_unreadable_config
+            quarantine_unreadable_config(CONFIG_FILE, e)
+        except Exception:
+            print(f"\n✗ Error loading config: {e}")
         return None
 
 
@@ -3581,8 +3592,11 @@ def collect_metrics(config, snapshot, last_good_values=None, status_code=STATUS_
             status_code = STATUS_API_ERROR
     payload["status"] = status_code
 
-    # Empty timestamp signals the ESP32 that data may be stale.
-    payload["timestamp"] = datetime.now().strftime('%H:%M') if has_fresh_data else ""
+    # Empty timestamp signals the ESP32 that data may be stale. Only stamp a
+    # time when data is fresh AND status is healthy: psutil keeps returning
+    # fresh values while LHM is down, so the device's last-OK time would track now.
+    payload["timestamp"] = (datetime.now().strftime('%H:%M')
+                            if has_fresh_data and status_code == STATUS_OK else "")
     return payload, values_by_id, has_fresh_data, last_good_values, stale_count
 
 

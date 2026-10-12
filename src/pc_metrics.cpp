@@ -122,12 +122,12 @@ static void parsePacket(const char* json, IPAddress from) {
   d.status = doc["status"] | PC_STATUS_OK;
 
   const char* ts = doc["timestamp"];
-  if (ts && ts[0]) {
+  if (ts && ts[0] && d.status == PC_STATUS_OK) {
     strncpy(d.timestamp, ts, sizeof(d.timestamp) - 1);
     d.timestamp[sizeof(d.timestamp) - 1] = '\0';
   }
-  // Empty timestamp = stale frame from the companion (LHM recovering); keep the
-  // previous one rather than blanking it.
+  // Empty timestamp (stale frame) or an unhealthy status: keep the last-OK time
+  // rather than tracking the current one.
 
   JsonArray arr = doc["metrics"];
   d.count = 0;

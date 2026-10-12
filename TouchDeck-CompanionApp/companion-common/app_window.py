@@ -285,7 +285,7 @@ def run(core, start_hidden=False, notify_startup=False):
         core.save_config(config)
     _state = AppState(config)
 
-    _httpd, port = srv.make_server(core, _state, port=8750)
+    _httpd, port = srv.make_server(core, _state)
     srv.serve(_httpd)
     url = "http://127.0.0.1:%d/" % port
     print("Config UI at %s" % url)
