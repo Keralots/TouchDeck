@@ -74,17 +74,17 @@ class CompanionServerModel(unittest.TestCase):
 
     def test_connection_test_reads_firmware_status_without_udp_probe(self):
         with mock.patch.object(server, "_fetch_device_json", return_value={
-            "product": "StatNode", "version": "1.0.0", "board": "esp32c3"
+            "product": "TouchDeck", "version": "1.0.0", "board": "esp32c3"
         }) as fetch:
             result = server.do_test(self.state, {"esp32_ip": ["192.168.0.69"]})
         self.assertTrue(result["compatible"])
         fetch.assert_called_once()
 
     def test_connection_address_strips_web_scheme(self):
-        self.assertEqual("statnode.local",
-                         server._device_address("http://statnode.local/"))
+        self.assertEqual("touchdeck.local",
+                         server._device_address("http://touchdeck.local/"))
         with self.assertRaises(ValueError):
-            server._device_address("statnode.local:8080")
+            server._device_address("touchdeck.local:8080")
 
     def test_import_migrates_old_layout_and_duplicate_ids(self):
         old = {"version": "4.0", "metrics": [

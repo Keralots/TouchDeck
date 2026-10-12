@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#161512">
-  <title>StatNode Companion</title>
+  <title>TouchDeck Companion</title>
   <script>(function(){try{var a=localStorage.getItem('sn_accent')||'green';var m=localStorage.getItem('sn_mode')||'dark';document.documentElement.dataset.accent=a;document.documentElement.dataset.mode=m;}catch(e){}})();</script>
   <link rel="stylesheet" href="/portal.css?v=1">
   <style>
@@ -41,7 +41,7 @@
 <div class="app">
   <header class="topbar">
     <button class="hamburger" id="navToggle" aria-label="Menu" aria-expanded="false"><span></span></button>
-    <div class="tb-brand"><span class="brand-mark"></span><span class="tb-name">StatNode</span><span class="tb-ver">Companion <b id="topVersion">4.1</b></span></div>
+    <div class="tb-brand"><span class="brand-mark"></span><span class="tb-name">TouchDeck</span><span class="tb-ver">Companion <b id="topVersion">4.1</b></span></div>
     <span class="tb-sep"></span><span class="tb-crumb" id="crumb">Connection</span>
     <div class="tb-right">
       <div class="acc-pick"><span class="lab">Accent</span><button class="acc-sw on" data-acc="green" aria-label="Green"><i></i></button><button class="acc-sw" data-acc="amber" aria-label="Amber"><i></i></button></div>
@@ -63,14 +63,14 @@
         <div class="sr-head"><span class="sr-led offline" id="srLed"></span><span class="sr-title" id="srTitle">Device offline</span></div>
         <dl class="sr-rows"><div class="sr-row"><dt>device</dt><dd id="srDevice">-</dd></div><div class="sr-row"><dt>source</dt><dd id="srSource">-</dd></div><div class="sr-row"><dt>stream</dt><dd id="srCount">0 metrics</dd></div></dl>
       </div></div>
-      <div class="about"><span class="line">StatNode Companion <b>v<span id="aboutVersion">4.1</span></b></span><span class="line">Close the window to keep it in the tray</span></div>
+      <div class="about"><span class="line">TouchDeck Companion <b>v<span id="aboutVersion">4.1</span></b></span><span class="line">Close the window to keep it in the tray</span></div>
     </aside>
     <main class="content"><div class="content-inner">
       <section class="page active" data-page="connection">
-        <div class="page-header"><h1 class="page-h1">Connection</h1><p class="page-lede">Choose the StatNode device that receives sensor readings. An IP address or local hostname is accepted.</p></div>
+        <div class="page-header"><h1 class="page-h1">Connection</h1><p class="page-lede">Choose the TouchDeck device that receives sensor readings. An IP address or local hostname is accepted.</p></div>
         <div class="card"><h2 class="card-title">Device stream <span class="tag">UDP 2.2</span></h2>
           <form id="connectionForm">
-            <div class="grid-2"><div class="field"><label class="field-label" for="esp32_ip">Device address</label><input type="text" id="esp32_ip" name="esp32_ip" placeholder="statnode.local" autocomplete="off"><p class="field-hint">Use the address shown by the device portal, for example 192.168.0.69.</p></div><div class="field"><label class="field-label" for="udp_port">UDP port</label><input type="number" id="udp_port" name="udp_port" value="4210" min="1" max="65535"></div></div>
+            <div class="grid-2"><div class="field"><label class="field-label" for="esp32_ip">Device address</label><input type="text" id="esp32_ip" name="esp32_ip" placeholder="touchdeck.local" autocomplete="off"><p class="field-hint">Use the address shown by the device portal, for example 192.168.0.69.</p></div><div class="field"><label class="field-label" for="udp_port">UDP port</label><input type="number" id="udp_port" name="udp_port" value="4210" min="1" max="65535"></div></div>
             <div class="field"><label class="field-label" for="update_interval">Update interval (seconds)</label><input type="number" id="update_interval" name="update_interval" value="3" min="0.5" step="0.5"><p class="field-hint">Three seconds is a calm default. Shorter intervals make the display more responsive and create more sensor traffic.</p></div>
             <div class="field hidden" id="sourceField"><label class="field-label" for="sensor_source">Sensor source</label><div class="select-wrap"><select id="sensor_source" name="sensor_source"><option value="auto">Auto: REST, then WMI</option><option value="rest">REST API only</option><option value="wmi">WMI only</option></select></div><p class="field-hint">Auto prefers LibreHardwareMonitor's REST API and falls back to WMI.</p></div>
           </form>
@@ -87,12 +87,12 @@
       </section>
 
       <section class="page" data-page="device">
-        <div class="page-header"><h1 class="page-h1">Device</h1><p class="page-lede">Live information comes from the StatNode firmware. The preview is captured by the real display renderer.</p></div>
+        <div class="page-header"><h1 class="page-h1">Device</h1><p class="page-lede">Live information comes from the TouchDeck firmware. The preview is captured by the real display renderer.</p></div>
         <div class="page-actions" style="margin-top:0;margin-bottom:18px"><button type="button" class="btn btn-accent" id="openDeviceBtn"><span class="gl"></span>Open device interface</button><button type="button" class="btn" id="refreshDeviceBtn">Refresh status</button></div>
         <div class="device-grid"><div>
           <div class="card"><h2 class="card-title">Firmware status <span class="tag" id="deviceStateTag">offline</span></h2><dl class="fact-grid"><div class="fact"><dt>Product</dt><dd id="devProduct">-</dd></div><div class="fact"><dt>Firmware</dt><dd id="devVersion">-</dd></div><div class="fact"><dt>Board</dt><dd id="devBoard">-</dd></div><div class="fact"><dt>Address</dt><dd id="devAddress">-</dd></div><div class="fact"><dt>PC stream</dt><dd id="devStream">-</dd></div><div class="fact"><dt>Live metrics</dt><dd id="devMetrics">-</dd></div><div class="fact"><dt>Screen style</dt><dd id="devStyle">-</dd></div><div class="fact"><dt>WiFi signal</dt><dd id="devRssi">-</dd></div><div class="fact"><dt>Backlight</dt><dd id="devBacklight">-</dd></div><div class="fact"><dt>Device uptime</dt><dd id="devUptime">-</dd></div></dl><div class="note device-note" id="deviceMessage"><span class="note-k">Device</span><span>Waiting for status.</span></div></div>
           <div class="card"><h2 class="card-title">Configuration ownership</h2><p class="field-hint">The companion selects sensors and sends their values. The device portal controls screen slots, per-slot labels, styles, colors, brightness, clock, touch input, WiFi, and firmware updates.</p></div>
-        </div><div class="device-preview-column"><div class="card"><div class="card-head"><h2 class="card-title">Live screen</h2><span class="tag" id="previewTag">waiting</span></div><div class="device-preview"><img id="devicePreview" class="offline" alt="StatNode screen preview"><div class="preview-empty" id="previewEmpty">Connect to a StatNode device to load its screen.</div></div><div class="page-actions"><button type="button" class="btn" id="refreshPreviewBtn">Refresh preview</button></div></div></div></div>
+        </div><div class="device-preview-column"><div class="card"><div class="card-head"><h2 class="card-title">Live screen</h2><span class="tag" id="previewTag">waiting</span></div><div class="device-preview"><img id="devicePreview" class="offline" alt="TouchDeck screen preview"><div class="preview-empty" id="previewEmpty">Connect to a TouchDeck device to load its screen.</div></div><div class="page-actions"><button type="button" class="btn" id="refreshPreviewBtn">Refresh preview</button></div></div></div></div>
       </section>
 
       <section class="page" data-page="backup">

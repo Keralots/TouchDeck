@@ -1036,7 +1036,7 @@ class MetricSelectorGUI:
     """
     def __init__(self, root, existing_config=None):
         self.root = root
-        self.root.title("StatNode v2.0 - Linux Configuration")
+        self.root.title("TouchDeck v2.0 - Linux Configuration")
         self.root.geometry("1200x850")
         self.root.resizable(False, False)
 
@@ -1064,7 +1064,7 @@ class MetricSelectorGUI:
 
         title_label = tk.Label(
             title_frame,
-            text="StatNode Configuration - Linux",
+            text="TouchDeck Configuration - Linux",
             font=("Arial", 18, "bold"),
             bg="#1e1e1e",
             fg="#00d4ff"
@@ -1640,7 +1640,7 @@ def configure_cli_mode(existing_config=None):
         print("Step 3: Custom Labels (Optional)")
         print("=" * 70)
         print("You can assign custom labels (max 10 characters) to each metric.")
-        print("Custom labels will be sent to the StatNode device.")
+        print("Custom labels will be sent to the TouchDeck device.")
 
         configure_labels = input("\nConfigure custom labels? (y/n) [n]: ").strip().lower()
 
@@ -2102,7 +2102,7 @@ def main():
             except ImportError:
                 print("\n✗ Error: tkinter is not installed!")
                 print("  On headless systems, use CLI mode instead:")
-                print("  python3 statnode_companion_linux.py --cli")
+                print("  python3 touchdeck_companion_linux.py --cli")
                 print("\n  To install tkinter:")
                 print("  apt install python3-tk")
                 return

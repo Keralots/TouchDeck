@@ -9,10 +9,10 @@ sensor backend is vendored as linux_sensors.py (the proven v2 Linux discovery).
 
 Run from source (no build step):
     pip install psutil pywebview pynvml      # pynvml optional (NVIDIA)
-    python3 statnode_companion_linux.py
+    python3 touchdeck_companion_linux.py
 A native window needs the GTK/WebKit libs (Debian/Ubuntu:
     sudo apt install gir1.2-webkit2-4.1 python3-gi); without them the UI opens
-in the default browser at http://127.0.0.1:8740 .
+in the default browser at http://127.0.0.1:8750 .
 """
 
 import argparse
@@ -55,15 +55,7 @@ SUPPORTS_SOURCE_SELECT = False
 # ---------------------------------------------------------------------------
 def get_data_dir():
     base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    d = os.path.join(base, "StatNode")
-    # Pre-rename installs stored data under the old product name; adopt that
-    # folder so the config and log survive the upgrade.
-    old = os.path.join(base, "PCMonitorColor")
-    if os.path.isdir(old) and not os.path.isdir(d):
-        try:
-            os.rename(old, d)
-        except Exception:
-            pass
+    d = os.path.join(base, "TouchDeck")
     try:
         os.makedirs(d, exist_ok=True)
     except Exception:
@@ -210,7 +202,7 @@ def collect_metrics(config, snapshot, last_good_values=None, status_code=STATUS_
 # ---------------------------------------------------------------------------
 # Autostart (systemd --user unit)
 # ---------------------------------------------------------------------------
-_SERVICE_NAME = "statnode-companion.service"
+_SERVICE_NAME = "touchdeck-companion.service"
 
 
 def _service_path():
@@ -229,7 +221,7 @@ def setup_autostart(enable=True):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             unit = (
                 "[Unit]\n"
-                "Description=StatNode Companion\n"
+                "Description=TouchDeck Companion\n"
                 "After=graphical-session.target\n\n"
                 "[Service]\n"
                 "Type=simple\n"
@@ -273,8 +265,8 @@ def create_tray_icon():
 # Single-instance coordination (socket lock + IPC) - same as the Windows core
 # ---------------------------------------------------------------------------
 SINGLE_INSTANCE_HOST = "127.0.0.1"
-SINGLE_INSTANCE_PORT = 42110
-_SINGLE_INSTANCE_MAGIC = b"STND1"
+SINGLE_INSTANCE_PORT = 42120
+_SINGLE_INSTANCE_MAGIC = b"TDECK1"
 _single_instance_sock = None
 _reload_event = threading.Event()
 _show_event = threading.Event()
@@ -353,7 +345,7 @@ def signal_primary_show():
 # Entry point
 # ---------------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(description="StatNode Companion (Linux)")
+    parser = argparse.ArgumentParser(description="TouchDeck Companion (Linux)")
     parser.add_argument("--configure", action="store_true", help="Open the configuration window")
     parser.add_argument("--edit", action="store_true", help="Open the configuration window")
     parser.add_argument("--autostart", choices=["enable", "disable"], help="Enable/disable systemd autostart")
@@ -371,12 +363,12 @@ def main():
         return
 
     print("\n" + "=" * 60)
-    print("  STATNODE COMPANION (Linux) - web UI + tray")
+    print("  TOUCHDECK COMPANION (Linux) - web UI + tray")
     print("=" * 60 + "\n")
 
     role = acquire_single_instance()
     if role == "secondary":
-        print("StatNode Companion is already running - showing its window.")
+        print("TouchDeck Companion is already running - showing its window.")
         signal_primary_show()
         return
     if role == "primary":

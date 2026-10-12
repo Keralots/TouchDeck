@@ -1,4 +1,4 @@
-"""Local HTTP server for the StatNode desktop companion."""
+"""Local HTTP server for the TouchDeck desktop companion."""
 
 import copy
 import json
@@ -123,7 +123,7 @@ def _device_url(address, path):
 def _fetch_device(address, path, timeout=2.0):
     req = urllib_request.Request(
         _device_url(address, path),
-        headers={"User-Agent": "StatNode-Companion/%s" % CONFIG_VERSION},
+        headers={"User-Agent": "TouchDeck-Companion/%s" % CONFIG_VERSION},
     )
     with _DIRECT_HTTP.open(req, timeout=timeout) as response:
         return response.read(), response.headers.get("Content-Type", "application/octet-stream")
@@ -141,14 +141,14 @@ def device_status(state, address=None, timeout=2.0):
         address = _device_address(address)
         data = _fetch_device_json(address, timeout=timeout)
         product = data.get("product", "")
-        compatible = product == "StatNode"
+        compatible = product == "TouchDeck"
         state.set_reachable(True)
         result = dict(data)
         result.update({
             "reachable": True,
             "compatible": compatible,
             "address": address,
-            "message": ("StatNode is online." if compatible else
+            "message": ("TouchDeck is online." if compatible else
                         "A web device responded, but it reports product '%s'." % (product or "unknown")),
         })
         return result
@@ -158,7 +158,7 @@ def device_status(state, address=None, timeout=2.0):
             "reachable": False,
             "compatible": False,
             "address": address or "",
-            "message": "Could not read StatNode status: %s" % exc,
+            "message": "Could not read TouchDeck status: %s" % exc,
         }
 
 
@@ -413,7 +413,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"success": False, "message": str(exc)}, 500)
 
 
-def make_server(core, state, host="127.0.0.1", port=8740):
+def make_server(core, state, host="127.0.0.1", port=8750):
     """Build the local server, using an ephemeral port if the preferred one is busy."""
     _Handler.CORE = core
     _Handler.STATE = state

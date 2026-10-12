@@ -1,4 +1,4 @@
-# Runtime dependencies for statnode_companion_linux.py (Linux)
+# Runtime dependencies for touchdeck_companion_linux.py (Linux)
 #
 #   python3 -m pip install -r requirements.txt
 #
@@ -15,5 +15,5 @@ pillow          # tray icon image (used by pystray)
 # A NATIVE window via pywebview needs the system GTK/WebKit libraries, e.g. on
 # Debian/Ubuntu:   sudo apt install gir1.2-webkit2-4.1 python3-gi
 # Without them the app still works - it opens the UI in your default browser at
-# http://127.0.0.1:8740 . lm-sensors (`sudo apt install lm-sensors && sensors-detect`)
+# http://127.0.0.1:8750 . lm-sensors (`sudo apt install lm-sensors && sensors-detect`)
 # improves temperature/fan coverage.

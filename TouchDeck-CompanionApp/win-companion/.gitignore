@@ -2,7 +2,7 @@
 build/
 dist/
 splash.png
-StatNodeCompanion.spec
+TouchDeckCompanion.spec
 
 # Python cache
 __pycache__/

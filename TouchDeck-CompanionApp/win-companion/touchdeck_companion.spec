@@ -15,7 +15,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['statnode_companion.py'],
+    ['touchdeck_companion.py'],
     pathex=['..\\companion-common'],
     binaries=binaries,
     datas=datas,
@@ -34,7 +34,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='StatNodeCompanion',
+    name='TouchDeckCompanion',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

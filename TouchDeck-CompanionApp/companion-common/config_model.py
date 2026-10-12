@@ -1,4 +1,4 @@
-"""StatNode companion configuration normalization and metric identity."""
+"""TouchDeck companion configuration normalization and metric identity."""
 
 import copy
 
@@ -38,7 +38,7 @@ def _next_metric_id(used):
 
 
 def normalize_config(config):
-    """Migrate a copied SmallOLED/v4 config into the StatNode schema.
+    """Migrate a copied SmallOLED/v4 config into the TouchDeck schema.
 
     Existing valid metric IDs win so installed layouts keep their bindings.
     A persistent sensor-key map then remembers IDs while sensors are deselected,
@@ -91,7 +91,7 @@ def normalize_config(config):
     out["metrics"] = metrics
     out["metric_ids"] = id_map
     # OLED layout state is deliberately not part of the color companion. The
-    # StatNode device portal owns screen slots, aliases, styles, and theme.
+    # TouchDeck device portal owns screen slots, aliases, styles, and theme.
     out.pop("layout", None)
     return out
 

@@ -1,4 +1,4 @@
-"""StatNode Companion for Windows."""
+"""TouchDeck Companion for Windows."""
 
 import psutil
 import socket
@@ -74,21 +74,13 @@ def get_data_dir():
     """
     Per-user writable directory for the config file and log.
 
-    Frozen .exe -> %APPDATA%\\StatNode so the config survives the .exe
+    Frozen .exe -> %APPDATA%\\TouchDeck so the config survives the .exe
     living in a read-only spot (Program Files) and survives the .exe being
     moved. Plain script -> next to the .py, matching the original behavior.
     """
     if IS_FROZEN:
         base = os.environ.get("APPDATA") or APP_DIR
-        data_dir = os.path.join(base, "StatNode")
-        # Pre-rename builds stored data under the old product name; adopt that
-        # folder so the config and log survive the upgrade.
-        old_dir = os.path.join(base, "PCMonitorColor")
-        if os.path.isdir(old_dir) and not os.path.isdir(data_dir):
-            try:
-                os.rename(old_dir, data_dir)
-            except Exception:
-                pass
+        data_dir = os.path.join(base, "TouchDeck")
     else:
         data_dir = APP_DIR
     try:
@@ -1856,15 +1848,7 @@ def save_config(config):
 
 # Windows "run at login" registry location (per-user, no admin needed).
 AUTOSTART_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-AUTOSTART_VALUE_NAME = "StatNodeCompanion"
-
-# Legacy Startup-folder shortcut from older script-based installs. We clean it
-# up when toggling autostart so users don't end up launching twice.
-_LEGACY_SHORTCUT_NAME = "PCMonitorColor Companion.lnk"
-
-# Run value written by pre-rename (PCMonitorColor) builds; cleaned up when
-# toggling autostart so login doesn't chase a deleted .exe.
-_LEGACY_VALUE_NAME = "PCMonitorColorCompanion"
+AUTOSTART_VALUE_NAME = "TouchDeckCompanion"
 
 
 def _autostart_command():
@@ -1879,30 +1863,6 @@ def _autostart_command():
         return f'"{EXE_PATH}" --minimized --startup-delay 10'
     pythonw = sys.executable.replace("python.exe", "pythonw.exe")
     return f'"{pythonw}" "{EXE_PATH}" --minimized --startup-delay 10'
-
-
-def _remove_legacy_shortcut():
-    """Best-effort removal of the old Startup-folder .lnk, if winshell is present."""
-    try:
-        import winshell
-        old = os.path.join(winshell.startup(), _LEGACY_SHORTCUT_NAME)
-        if os.path.exists(old):
-            os.remove(old)
-            print(f"  Removed legacy startup shortcut: {old}")
-    except Exception:
-        pass  # winshell not installed / nothing to clean - that's fine
-
-
-def _remove_legacy_run_value():
-    """Best-effort removal of the Run value written by pre-rename builds."""
-    import winreg
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REG_KEY, 0,
-                            winreg.KEY_SET_VALUE) as key:
-            winreg.DeleteValue(key, _LEGACY_VALUE_NAME)
-        print(f"  Removed legacy autostart entry: {_LEGACY_VALUE_NAME}")
-    except Exception:
-        pass  # value not present - that's fine
 
 
 def is_autostart_enabled():
@@ -1933,8 +1893,6 @@ def setup_autostart(enable=True):
         command = _autostart_command()
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REG_KEY) as key:
             winreg.SetValueEx(key, AUTOSTART_VALUE_NAME, 0, winreg.REG_SZ, command)
-        _remove_legacy_shortcut()
-        _remove_legacy_run_value()
         print(f"\n✓ Autostart enabled!")
         print(f"  Registry: HKCU\\{AUTOSTART_REG_KEY}\\{AUTOSTART_VALUE_NAME}")
         print(f"  Command:  {command}")
@@ -1948,8 +1906,6 @@ def setup_autostart(enable=True):
             print(f"\n✓ Autostart disabled!")
         except FileNotFoundError:
             print("\n✓ Autostart was not enabled (nothing to remove)")
-        _remove_legacy_shortcut()
-        _remove_legacy_run_value()
         return True
 
 
@@ -1962,7 +1918,7 @@ class MetricSelectorGUI:
     """
     def __init__(self, root, existing_config=None):
         self.root = root
-        self.root.title("StatNode v3.0 - Configuration")
+        self.root.title("TouchDeck v3.0 - Configuration")
         # Dark window background so the padding/margins around the themed frames
         # don't show the default light grey (the white gaps between sections).
         self.root.configure(bg="#1e1e1e")
@@ -2001,7 +1957,7 @@ class MetricSelectorGUI:
 
         title_label = tk.Label(
             title_frame,
-            text="StatNode Configuration",
+            text="TouchDeck Configuration",
             font=("Arial", 18, "bold"),
             bg="#1e1e1e",
             fg="#00d4ff"
@@ -2762,7 +2718,7 @@ class MetricSelectorGUI:
         (metrics + ip/port). The dialog calls collect() on its worker thread once
         per second to feed its in-dialog 1:1 preview, and uses esp_ip for the OK
         push / Pull-from-device requests. This retired dialog is not used by the
-        StatNode web interface."""
+        TouchDeck web interface."""
         def collect(last_good):
             snapshot = build_snapshot(config, force=True)  # keep trying; self-recover
             payload, values, _fresh, lg, _stale = collect_metrics(config, snapshot, last_good)
@@ -3140,7 +3096,7 @@ class MetricSelectorGUI:
         messagebox.showinfo(
             "Saved - running in the background",
             f"Configuration saved! {len(self.selected_metrics)} metric(s) will be monitored.\n\n"
-            "StatNode now runs in the background. Look for its icon in the "
+            "TouchDeck now runs in the background. Look for its icon in the "
             "system tray (the up-arrow ^ area next to the clock) - right-click "
             "it to reconfigure or quit.\n\n"
             "There is no need to launch it again; double-clicking the app while "
@@ -3159,7 +3115,7 @@ class MetricSelectorGUI:
         if config is None:
             return
 
-        default_name = f"statnode_companion_{datetime.now().strftime('%Y%m%d')}.json"
+        default_name = f"touchdeck_companion_{datetime.now().strftime('%Y%m%d')}.json"
         path = filedialog.asksaveasfilename(
             title="Export Configuration",
             defaultextension=".json",
@@ -3207,7 +3163,7 @@ class MetricSelectorGUI:
         if not isinstance(config, dict) or "metrics" not in config:
             messagebox.showerror(
                 "Import Failed",
-                "This file does not look like a StatNode configuration "
+                "This file does not look like a TouchDeck configuration "
                 "(no \"metrics\" section found)."
             )
             return
@@ -3784,7 +3740,7 @@ def run_minimized(config, notify_startup=False):
     icon = pystray.Icon(
         "pc_monitor",
         create_tray_icon(),
-        "StatNode",
+        "TouchDeck",
         menu=pystray.Menu(
             pystray.MenuItem("Configure", on_show_config),
             pystray.MenuItem("Quit", on_quit)
@@ -3804,7 +3760,7 @@ def run_minimized(config, notify_startup=False):
                 icon.notify(
                     "Monitoring your PC in the background. Right-click this icon "
                     "to reconfigure or quit.",
-                    "StatNode is running"
+                    "TouchDeck is running"
                 )
             except Exception:
                 pass
@@ -3911,8 +3867,8 @@ SINGLE_INSTANCE_HOST = "127.0.0.1"
 # (the dynamic range) so it avoids Windows' reserved WinNAT/Hyper-V port blocks,
 # which can otherwise make bind() fail with WSAEACCES. If it is ever unavailable,
 # acquire_single_instance() falls back to "standalone" and the app still runs.
-SINGLE_INSTANCE_PORT = 42110
-_SINGLE_INSTANCE_MAGIC = b"STND1"
+SINGLE_INSTANCE_PORT = 42120
+_SINGLE_INSTANCE_MAGIC = b"TDECK1"
 
 # Held for the process lifetime so the OS keeps the lock; released on exit.
 _single_instance_sock = None
@@ -4143,7 +4099,7 @@ def detect_source(state):
 
 def main():
     """Main entry point (v4: pywebview web UI + system tray, single process)."""
-    parser = argparse.ArgumentParser(description='StatNode Companion')
+    parser = argparse.ArgumentParser(description='TouchDeck Companion')
     parser.add_argument('--configure', action='store_true', help='Open the configuration window')
     parser.add_argument('--edit', action='store_true', help='Open the configuration window')
     parser.add_argument('--autostart', choices=['enable', 'disable'], help='Enable/disable autostart')
@@ -4175,14 +4131,14 @@ def main():
         return
 
     print("\n" + "=" * 60)
-    print("  STATNODE COMPANION - web UI + system tray")
+    print("  TOUCHDECK COMPANION - web UI + system tray")
     print("=" * 60 + "\n")
 
     # Single running instance: if our monitor is already up, bring its window
     # forward instead of spawning a duplicate tray icon / monitor.
     role = acquire_single_instance()
     if role == "secondary":
-        print("StatNode Companion is already running - showing its window.")
+        print("TouchDeck Companion is already running - showing its window.")
         signal_primary_show()
         _splash_close()
         return

@@ -1,6 +1,6 @@
 @echo off
 REM ---------------------------------------------------------------------------
-REM  Build the standalone StatNode Companion with PyInstaller.
+REM  Build the standalone TouchDeck Companion with PyInstaller.
 REM
 REM  One-time setup (installs runtime deps + PyInstaller):
 REM    python -m pip install -r requirements.txt
@@ -8,12 +8,12 @@ REM    python -m pip install pyinstaller
 REM
 REM  Then double-click this file, or run it from a terminal in this folder.
 REM  Output lands in:
-REM    dist\StatNodeCompanion.exe
+REM    dist\TouchDeckCompanion.exe
 REM
 REM  Notes:
 REM   * --windowed  -> no console window flashes at login (this is a background
 REM                    app that lives in the system tray). print() output is
-REM                    redirected to %APPDATA%\StatNode\companion.log.
+REM                    redirected to %APPDATA%\TouchDeck\companion.log.
 REM   * --add-data "webui;webui" bundles the web UI (index.html/portal.css/js).
 REM     At runtime server.webui_dir() resolves it from sys._MEIPASS.
 REM   * --collect-all webview / pythonnet pulls in the pywebview EdgeChromium
@@ -50,7 +50,7 @@ if exist dist  rmdir /s /q dist
 %PYI% ^
   --onefile ^
   --windowed ^
-  --name StatNodeCompanion ^
+  --name TouchDeckCompanion ^
   --paths "..\companion-common" ^
   --add-data "..\companion-common\webui;webui" ^
   --hidden-import server ^
@@ -70,7 +70,7 @@ if exist dist  rmdir /s /q dist
   --hidden-import win32api ^
   --hidden-import win32con ^
   --hidden-import win32timezone ^
-  statnode_companion.py
+  touchdeck_companion.py
 
 if errorlevel 1 (
   echo.
@@ -82,7 +82,7 @@ if errorlevel 1 (
 echo.
 echo ---------------------------------------------------------------
 echo  BUILD OK
-echo  Output: %CD%\dist\StatNodeCompanion.exe
+echo  Output: %CD%\dist\TouchDeckCompanion.exe
 echo ---------------------------------------------------------------
 echo.
 echo Test it by double-clicking the .exe in dist\ .

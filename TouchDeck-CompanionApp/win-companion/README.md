@@ -1,6 +1,6 @@
-# StatNode Companion for Windows
+# TouchDeck Companion for Windows
 
-The Windows companion selects PC sensors, sends them to StatNode over
+The Windows companion selects PC sensors, sends them to TouchDeck over
 UDP, and remains available from the system tray. Its configuration window uses
 WebView2 through pywebview.
 
@@ -10,20 +10,20 @@ Python 3.10 or newer is recommended.
 
 ```bat
 python -m pip install -r requirements.txt
-python statnode_companion.py
+python touchdeck_companion.py
 ```
 
 Useful options:
 
 ```bat
-python statnode_companion.py --minimized
-python statnode_companion.py --autostart enable
-python statnode_companion.py --autostart disable
+python touchdeck_companion.py --minimized
+python touchdeck_companion.py --autostart enable
+python touchdeck_companion.py --autostart disable
 ```
 
 When pywebview is unavailable, the companion opens its local interface in the
-default browser. The preferred local address is `http://127.0.0.1:8740/`; an
-available fallback port is selected automatically when 8740 is busy.
+default browser. The preferred local address is `http://127.0.0.1:8750/`; an
+available fallback port is selected automatically when 8750 is busy.
 
 ## LibreHardwareMonitor
 
@@ -38,16 +38,16 @@ The Auto source mode prefers the REST API and falls back to WMI.
 
 ## Configuration and logs
 
-The packaged application stores its files in `%APPDATA%\StatNode\`:
+The packaged application stores its files in `%APPDATA%\TouchDeck\`:
 
 - `companion_config.json`
 - `companion.log`
 
-Source mode stores these files next to `statnode_companion.py`. This path is
+Source mode stores these files next to `touchdeck_companion.py`. This path is
 separate from the SmallOLED companion, so both applications can coexist.
 
 Autostart uses the per-user registry value
-`HKCU\Software\Microsoft\Windows\CurrentVersion\Run\StatNodeCompanion`.
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run\TouchDeckCompanion`.
 It does not require administrator rights.
 
 ## Build the executable
@@ -57,7 +57,7 @@ python -m pip install pyinstaller
 build_exe.bat
 ```
 
-The output is `dist\StatNodeCompanion.exe`. WebView2 is included with
+The output is `dist\TouchDeckCompanion.exe`. WebView2 is included with
 Windows 11 and can be installed separately on Windows 10.
 
 ## Configuration ownership

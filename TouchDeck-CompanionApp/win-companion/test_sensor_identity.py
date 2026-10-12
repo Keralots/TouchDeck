@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "companion-common"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import statnode_companion as core
+import touchdeck_companion as core
 
 
 # A trimmed copy of the LibreHardwareMonitor REST tree: root, computer, device,

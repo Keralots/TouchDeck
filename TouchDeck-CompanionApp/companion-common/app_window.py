@@ -230,7 +230,7 @@ def _make_tray():
         gui_quit()
 
     return core.pystray.Icon(
-        "statnode_companion", img, "StatNode Companion",
+        "touchdeck_companion", img, "TouchDeck Companion",
         menu=core.pystray.Menu(
             core.pystray.MenuItem("Configure", on_configure, default=True),
             core.pystray.MenuItem("Quit", on_quit),
@@ -265,7 +265,7 @@ def _tray_ready(icon, notify_startup):
         icon.visible = True
         if notify_startup:
             icon.notify("Monitoring your PC in the background. Right-click to configure or quit.",
-                        "StatNode Companion is running")
+                        "TouchDeck Companion is running")
     except Exception:
         pass
 
@@ -283,7 +283,7 @@ def run(core, start_hidden=False, notify_startup=False):
         core.save_config(config)
     _state = AppState(config)
 
-    _httpd, port = srv.make_server(core, _state, port=8740)
+    _httpd, port = srv.make_server(core, _state, port=8750)
     srv.serve(_httpd)
     url = "http://127.0.0.1:%d/" % port
     print("Config UI at %s" % url)
@@ -307,7 +307,7 @@ def run(core, start_hidden=False, notify_startup=False):
 
     tray_icon = _make_tray()
     _window = webview.create_window(
-        "StatNode Companion", url,
+        "TouchDeck Companion", url,
         width=1180, height=820, min_size=(900, 600), hidden=start_hidden,
         js_api=_JsApi())
 
