@@ -25,7 +25,9 @@ WebSocket API and receives PC metrics over UDP on the LAN.
 - **Edit on the device:** long press an empty spot of a page (or Edit in the
   quick panel) to move, resize or remove its tiles; Done saves the layout.
 - **Night schedule** for the backlight and an optional status / filament LED
-  on a PWM pin.
+  on a PWM pin. The LED's day brightness can follow a Home Assistant
+  input_boolean, input_number or light, and the quick panel's Light slider
+  sets that entity.
 - **System screens** for start-up, WiFi setup (with a QR code to join the
   setup network), connecting, and a firmware update screen with progress.
 

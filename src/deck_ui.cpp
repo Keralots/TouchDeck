@@ -410,12 +410,17 @@ void applyHaToTile(TileRt& r, bool force) {
 
 uint32_t s_haSeen = 0;
 
-// The LED's day level from its HA entity. A state that is not a level
+// The LED's day level from its HA entity, when that entity changed (force:
+// also when not, to undo a refused slider write). A state that is not a level
 // (unavailable, unknown) keeps the last one, as does a lost link.
-void ledFromHa() {
+uint32_t s_ledSeen = 0;  // entity version last applied, 0 = none
+
+void ledFromHa(bool force) {
   if (!s_cfg.ledEntity.length()) return;
   HaEntity e;
   if (!haGetEntity(s_cfg.ledEntity, e) || !e.known) return;
+  if (!force && e.version == s_ledSeen) return;  // other entities changed
+  s_ledSeen = e.version;
   const String d = entityDomain(s_cfg.ledEntity);
   int16_t level;
   if (d == "input_number") {
@@ -446,9 +451,18 @@ bool ledToHa(uint8_t v) {
     HaEntity e;
     haGetEntity(id, e);
     const float lo = isnan(e.numMin) ? 0 : e.numMin, hi = isnan(e.numMax) ? 100 : e.numMax;
+    if (hi <= lo) return false;
     float val = lo + (hi - lo) * v / 255.0f;
-    if (e.numStep > 0) val = lo + lroundf((val - lo) / e.numStep) * e.numStep;
-    ok = haCallService("input_number", "set_value", id, "{\"value\":" + String(val, 3) + "}");
+    if (e.numStep > 0) {
+      val = lo + lroundf((val - lo) / e.numStep) * e.numStep;
+      if (val > hi) val -= e.numStep;  // HA refuses values past max
+    }
+    val = constrain(val, lo, hi);
+    char num[24];
+    snprintf(num, sizeof num, "%.7g", val);
+    ok = haCallService("input_number", "set_value", id, String("{\"value\":") + num + "}");
+    // The level of the value sent: HA sends nothing back when it is unchanged.
+    v = (uint8_t)lroundf((val - lo) / (hi - lo) * 255);
   } else if (d == "light") {
     ok = v ? haCallService("light", "turn_on", id, "{\"brightness\":" + String(v) + "}")
            : haCallService("light", "turn_off", id, "");
@@ -470,7 +484,7 @@ void haSync() {
     s_haSeen = v;
     for (TileRt& r : s_tiles) applyHaToTile(r, false);
     refreshModal();
-    ledFromHa();
+    ledFromHa(false);
   }
   String ent, msg;
   while (haTakeFailure(ent, msg)) {
@@ -479,6 +493,7 @@ void haSync() {
       r.pending = false;
       applyHaToTile(r, true);
     }
+    if (ent == s_cfg.ledEntity) ledFromHa(true);  // back to what HA has
     deckToastShow(msg.c_str(), 2500);
   }
   const uint32_t now = millis();
@@ -496,6 +511,7 @@ void collectEntities() {
     if (r.def->entity.length()) ids.push_back(r.def->entity);
   if (s_cfg.ledEntity.length()) ids.push_back(s_cfg.ledEntity);
   else ledSetHaLevel(LED_HA_NONE);
+  s_ledSeen = 0;
   haSetEntities(ids);
   s_haSeen = 0;  // re-apply everything to the new widgets
   for (TileRt& r : s_tiles) applyHaToTile(r, true);
@@ -819,6 +835,7 @@ void buildQuickPanel() {
   lv_label_set_text(lightLbl, "Light");
   lv_obj_set_pos(lightLbl, 16, y0 + 98);
   s_qp.lightSlider = qpSlider(box, slX, y0 + 103, slW, C_LIGHT_ACCENT);
+  lv_slider_set_range(s_qp.lightSlider, 0, 255);  // 0 = LED off (or the HA entity off)
   s_qp.lightVal = lv_label_create(box);
   lv_obj_set_pos(s_qp.lightVal, w - valW - 10, y0 + 98);
   lv_obj_add_event_cb(s_qp.lightSlider, onLightSlider, LV_EVENT_VALUE_CHANGED, nullptr);
