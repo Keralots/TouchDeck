@@ -21,6 +21,8 @@ WebSocket API and receives PC metrics over UDP on the LAN.
 - **Confirm before acting:** a tile can ask on the device before it turns
   something off (a printer mid-print) or before every action. Set it under
   the tile's "more options" button in the portal.
+- **HTTP buttons:** a button can send an HTTP request to a device on the LAN
+  (Tasmota, Node-RED, your own projects) instead of calling Home Assistant.
 - **PC stats:** metric tiles fed by the StatNode Companion; values, units,
   history chart and an amber warning colour above a set share of the scale.
 - **Quick panel:** pull down from the top edge for screen and LED brightness,
@@ -58,6 +60,34 @@ In **Pages & tiles**, enter the Home Assistant address (for example
 `http://192.168.0.7:8123`) and a long-lived access token (HA profile,
 Security tab). The token is stored only on the device. Then add tiles from the
 entity picker.
+
+## HTTP buttons
+
+A button tile can send an HTTP request instead of calling Home Assistant, for
+devices and services on the LAN that take commands over plain http (Tasmota,
+Node-RED, your own ESP projects). In **Pages & tiles**, use "+ Add HTTP
+button", or open a button's "more options" and set "On tap" to "HTTP
+request". Fill in the method, URL and optionally a body and headers; "Test"
+sends the request from the device and shows the answer. On the device a tap
+shows a short toast: "OK" for a 2xx answer, otherwise the status code or why
+it failed.
+
+Example, toggling a Tasmota relay
+([Tasmota docs](https://tasmota.github.io/docs/Commands/), spaces as `%20`):
+
+```json
+{ "id": "plug", "type": "action", "label": "Plug", "icon": "mdi:power",
+  "confirm": "always",
+  "tap": { "action": "http", "url": "http://192.168.0.50/cm?cmnd=Power%20Toggle" } }
+```
+
+The full action: `"method"` (GET, POST, PUT, PATCH, DELETE; GET by default,
+POST when there is a body), `"url"` (http only, no https), `"body"` (text,
+or a JSON object), `"contentType"` (automatic: a body starting with `{` or `[`
+is sent as application/json, other text as text/plain) and `"headers"`
+(`{ "Name": "value" }`). The request lives in the deck configuration, which
+anyone on your network can read through the portal, so keep important
+passwords out of it.
 
 ## PC stats: StatNode Companion
 

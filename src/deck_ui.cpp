@@ -2,6 +2,7 @@
 #include "deck_ui.h"
 #include "deck_config.h"
 #include "deck_ha.h"
+#include "deck_http.h"
 #include "deck_icons.h"
 #include "deck_sys.h"
 #include "deck_touch.h"
@@ -528,6 +529,16 @@ void haSync() {
   }
 }
 
+// Finished HTTP tile actions: a short toast either way.
+void httpSync() {
+  HttpOutcome o;
+  while (httpTakeResult(o)) {
+    const bool ok = o.code >= 200 && o.code < 300;
+    const String t = o.label + ": " + (ok ? String("OK") : o.code > 0 ? "HTTP " + String(o.code) : o.err);
+    deckToastShow(t.c_str(), ok ? 1200 : 2500);
+  }
+}
+
 void collectEntities() {
   std::vector<String> ids;
   for (const TileRt& r : s_tiles)
@@ -579,6 +590,9 @@ void runAction(TileRt& r, const TileAction& a) {
     case ACT_MORE_INFO:
       openModal((int)(&r - &s_tiles[0]));
       break;
+    case ACT_HTTP:
+      if (!httpSend(a, tileLabel(*r.def))) deckToastShow("Busy, try again", 1500);
+      break;
     case ACT_CALL_SERVICE:
       if (!haUp) deckToastShow("Home Assistant is offline", 1800);
       else if (!haCallService(a.domain, a.service, entity, a.data))
@@ -619,6 +633,7 @@ const char* actionVerb(const TileRt& r, const TileAction& a) {
     if (domain == "button" || domain == "input_button") return "Press";
     return r.on ? "Turn off" : "Turn on";
   }
+  if (a.kind == ACT_HTTP) return "Send";
   if (a.kind == ACT_CALL_SERVICE) {
     if (a.service == "turn_off") return "Turn off";
     if (a.service == "turn_on") return "Turn on";
@@ -1041,7 +1056,7 @@ void deckToastShow(const char* text, uint32_t holdMs) {
     lv_obj_set_style_radius(s_toast, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_pad_hor(s_toast, 16, 0);
     lv_obj_set_style_pad_ver(s_toast, 9, 0);
-    lv_obj_set_style_text_color(s_toast, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_color(s_toast, lv_color_hex(0xE6E8EC), 0);  // dark pill on both themes
     lv_obj_remove_flag(s_toast, LV_OBJ_FLAG_CLICKABLE);
     lv_label_create(s_toast);
   }
@@ -2425,6 +2440,7 @@ void deckTick() {
   updateHeaders();
   qpUpdateStatus(false);
   haSync();
+  httpSync();
   pcSync(false);
   lv_timer_handler();
   if (!systemScreen) refreshOneSnapshot();

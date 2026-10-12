@@ -21,6 +21,11 @@
 // "confirm": "off" | "always" (optional, tap and hold actions): ask on the
 // device before turning the tile off, or before any action it runs.
 //
+// An HTTP request as a tap or hold action (plain http on the LAN only):
+// { "action": "http", "method": "POST", "url": "http://host/path",
+//   "body": "text" | { json }, "contentType": "...", "headers": { "K": "v" } }.
+// method defaults to GET, or POST with a body.
+//
 // label / icon null = take them from Home Assistant later (Phase 3); until
 // then the entity id stands in. `sub` is an optional fixed second line.
 // Positions are keyed by orientation; a tile without one for the current
@@ -49,6 +54,7 @@ enum ActionKind : uint8_t {
   ACT_CALL_SERVICE,  // {domain, service, data}
   ACT_PAGE,          // {page: id}
   ACT_MORE_INFO,     // detail popup
+  ACT_HTTP,          // {method, url, body, contentType, headers}
 };
 enum ConfirmMode : uint8_t { CONFIRM_NONE = 0, CONFIRM_OFF, CONFIRM_ALWAYS };
 
@@ -56,6 +62,8 @@ struct TileAction {
   ActionKind kind = ACT_NONE;
   String domain, service, data;  // data = service_data as JSON text
   String page;
+  String method, url, body, ctype;  // ACT_HTTP
+  String headers;                   // ACT_HTTP: "Name: value\n" lines
 };
 
 // set = an explicit cell (x, y). w and h always apply: a tile with only a
@@ -102,6 +110,8 @@ bool deckConfigLoad(DeckConfig& out, String* source, String* err);
 // Parse and validate a JSON document. Used by the loader and, later, by the
 // portal before anything is written.
 bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err);
+// One tap/hold action object on its own (the portal's HTTP Test button).
+bool deckActionParse(const char* json, size_t len, TileAction& out, String* err);
 // The stored /deck.json text, or the built-in default.
 void deckConfigText(String& out);
 // Validate and store as /deck.json (written to a temp file, then renamed, so a
