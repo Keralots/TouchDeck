@@ -3595,6 +3595,8 @@ def send_metrics(sock, config, last_good_values=None, status_code=STATUS_OK):
     snapshot = build_snapshot(config)
     payload, _values, has_fresh_data, last_good_values, stale_count = collect_metrics(
         config, snapshot, last_good_values, status_code)
+    payload["pc_id"] = config.get("pc_id", "")
+    payload["pc_name"] = config.get("pc_name", "")
 
     try:
         message = json.dumps(payload).encode('utf-8')

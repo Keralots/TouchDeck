@@ -177,6 +177,8 @@ def _monitor_loop():
         try:
             snapshot = core.build_snapshot(cfg)
             payload, values, _fresh, last_good, _stale = core.collect_metrics(cfg, snapshot, last_good, status)
+            payload["pc_id"] = cfg.get("pc_id", "")
+            payload["pc_name"] = cfg.get("pc_name", "")
             sock.sendto(json.dumps(payload).encode("utf-8"), (cfg["esp32_ip"], cfg["udp_port"]))
             _state.update_values(values)
         except Exception as e:

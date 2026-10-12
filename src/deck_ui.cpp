@@ -909,7 +909,8 @@ void qpUpdateStatus(bool force) {
   const bool wifi = WiFi.status() == WL_CONNECTED;
   const int rssi = wifi ? (WiFi.RSSI() / 5) * 5 : 0;
   setChip(s_qp.wifi, wifi ? String(LV_SYMBOL_WIFI " ") + rssi + " dBm" : String(LV_SYMBOL_WIFI " offline"), wifi);
-  setChip(s_qp.pc, pcData.online ? "PC online" : "PC offline", pcData.online);
+  const int pcs = pcOnlineCount();
+  setChip(s_qp.pc, pcs > 1 ? String(pcs) + " PCs online" : pcs ? String("PC online") : String("PC offline"), pcs > 0);
   const HaLink hl = haLink();
   setChip(s_qp.ha, String("HA ") + haLinkName(hl), hl == HA_CONNECTED);
   setChip(s_qp.ip, wifi ? WiFi.localIP().toString() : String("-"), wifi);
@@ -1605,11 +1606,12 @@ void setText(lv_obj_t* l, const char* text) {
 // Pull the latest companion packet into one metric tile.
 void applyPcToTile(TileRt& r) {
   const TileDef& d = *r.def;
-  const PcMetric* m = pcData.online ? pcMetricFindById(d.metric) : nullptr;
+  const PcSource* pc = pcSource(d.pc);
+  const PcMetric* m = pcMetricFind(pc, d.metric);
   if (!m) {
     setText(r.sub, "--");
     setText(r.unit, "");
-    if (!d.label.length()) setText(r.name, "PC offline");
+    if (!d.label.length()) setText(r.name, pc ? (String(pc->name) + " offline").c_str() : "PC offline");
     lv_obj_set_style_opa(r.obj, LV_OPA_50, 0);
     return;
   }
@@ -1645,7 +1647,7 @@ void applyPcToTile(TileRt& r) {
     lv_obj_set_style_bg_color(r.viz, lv_color_hex(accent), LV_PART_INDICATOR);
   } else if (r.viz && r.pts) {
     // History as tenths, oldest first, padded on the left while it fills.
-    const SlotHistory& hs = pcHistoryById[d.metric];
+    const SlotHistory& hs = pc->hist[d.metric <= MAX_METRICS ? d.metric : 0];
     const int n = hs.metricId == d.metric ? hs.count : 0;
     float lo = 1e9f, hi = -1e9f;
     for (int i = 0; i < n; i++) {
@@ -1741,13 +1743,11 @@ void makeMetricContent(TileRt& r, lv_obj_t* t, int w, int h) {
 }
 
 uint32_t s_pcSeen = 0;
-bool s_pcOnline = false;
 
-// New companion packet or a change of the online flag: refresh metric tiles.
+// A companion packet or an online change of any PC: refresh metric tiles.
 void pcSync(bool force) {
-  if (!force && pcData.lastReceived == s_pcSeen && pcData.online == s_pcOnline) return;
-  s_pcSeen = pcData.lastReceived;
-  s_pcOnline = pcData.online;
+  if (!force && pcVersion() == s_pcSeen) return;
+  s_pcSeen = pcVersion();
   for (TileRt& r : s_tiles) {
     if (r.def->type != TILE_METRIC) continue;
     applyPcToTile(r);
@@ -2562,7 +2562,7 @@ String edTileName(const TileDef& d) {
   for (const TileRt& r : s_tiles)
     if (r.def == &d && r.name && *lv_label_get_text(r.name)) return lv_label_get_text(r.name);
   if (d.type != TILE_METRIC || d.label.length()) return tileLabel(d);
-  const PcMetric* m = pcMetricFindById(d.metric);
+  const PcMetric* m = pcMetricFind(pcSource(d.pc), d.metric);
   return m ? String(m->name) : "PC metric " + String(d.metric);
 }
 

@@ -16,6 +16,7 @@
 // day level follows an input_boolean, input_number or light.
 //
 // A PC metric tile: { "type": "metric", "metric": <companion id>,
+//   "pc": "<companion pc_id>" (optional, default the first known PC),
 //   "style": "number" | "chart" | "bar", "scaleMax": 0 (= by unit) }.
 //
 // "type": "slider": the tile is a level control (light brightness, cover
@@ -87,6 +88,7 @@ struct TileDef {
   TileAction tap, hold;
   ConfirmMode confirm = CONFIRM_NONE;
   uint8_t metric = 0;  // TILE_METRIC: companion metric id
+  String pc;           // TILE_METRIC: companion pc_id, "" = the first known PC
   MetricStyle style = METRIC_NUMBER;
   uint16_t scaleMax = 0;  // 0 = full scale by unit
 };

@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlparse
 from config_model import (
     CONFIG_VERSION,
     MAX_STREAM_LABEL,
+    clean_pc_name,
     clean_stream_label,
     metric_id_for,
     normalize_config,
@@ -218,6 +219,7 @@ def apply_connection(core, state, form):
         port = int(field("udp_port", "4210"))
         interval = float(field("update_interval", "3"))
         source = field("sensor_source", "auto").lower()
+        pc_name = clean_pc_name(field("pc_name", ""))
         if port < 1 or port > 65535:
             raise ValueError("Port must be between 1 and 65535.")
         if interval < 0.5:
@@ -231,6 +233,8 @@ def apply_connection(core, state, form):
     config["esp32_ip"] = address
     config["udp_port"] = port
     config["update_interval"] = interval
+    if pc_name:
+        config["pc_name"] = pc_name
     if supports_source:
         config["sensor_source"] = source
     if not core.save_config(config):
@@ -362,6 +366,7 @@ class _Handler(BaseHTTPRequestHandler):
                     "ip": config.get("esp32_ip", ""),
                     "udp_port": config.get("udp_port", 4210),
                     "update_interval": config.get("update_interval", 3),
+                    "pc_name": config.get("pc_name", ""),
                     "source_select": bool(getattr(core, "SUPPORTS_SOURCE_SELECT", False)),
                     "sensor_source": config.get("sensor_source", "auto"),
                     "max_metrics": MAX_METRICS,

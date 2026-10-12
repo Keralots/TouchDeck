@@ -240,6 +240,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
           return false;
         }
         t.metric = (uint8_t)m;
+        t.pc = (const char*)(tv["pc"] | "");
         const char* st = tv["style"] | "number";
         t.style = !strcmp(st, "chart") ? METRIC_CHART : !strcmp(st, "bar") ? METRIC_BAR : METRIC_NUMBER;
         t.scaleMax = (uint16_t)constrain((int)(tv["scaleMax"] | 0), 0, 65535);

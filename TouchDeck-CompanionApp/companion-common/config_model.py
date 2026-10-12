@@ -1,6 +1,8 @@
 """TouchDeck companion configuration normalization and metric identity."""
 
 import copy
+import socket
+import uuid
 
 from constants import MAX_METRICS
 
@@ -8,6 +10,13 @@ from constants import MAX_METRICS
 CONFIG_VERSION = "4.1"
 MAX_METRIC_ID = 255
 MAX_STREAM_LABEL = 15
+MAX_PC_NAME = 23  # the firmware keeps 24 bytes
+
+
+def clean_pc_name(value):
+    """A printable PC name for the device's PC list and metric tiles."""
+    text = "" if value is None else str(value)
+    return "".join(ch for ch in text if 32 <= ord(ch) <= 126).strip()[:MAX_PC_NAME]
 
 
 def sensor_key(sensor):
@@ -50,6 +59,11 @@ def normalize_config(config):
     out.setdefault("udp_port", 4210)
     out.setdefault("update_interval", 3)
     out.setdefault("metrics", [])
+    # Identifies this PC to the device (several PCs can feed one TouchDeck).
+    pc_id = str(out.get("pc_id") or "")
+    if not (len(pc_id) == 12 and all(c in "0123456789abcdef" for c in pc_id)):
+        out["pc_id"] = uuid.uuid4().hex[:12]
+    out["pc_name"] = clean_pc_name(out.get("pc_name")) or clean_pc_name(socket.gethostname()) or "PC"
 
     old_map = out.get("metric_ids")
     if not isinstance(old_map, dict):

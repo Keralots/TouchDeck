@@ -1,5 +1,5 @@
-// PC stats ingest: a WiFiUDP listener that decodes the companion's V2.1 JSON
-// push packets into pcData. Parse logic ported from SmallOLED-PCMonitor
+// PC stats ingest: a WiFiUDP listener that decodes the companions' V2.1 JSON
+// push packets, one PcSource per PC. Parse logic ported from SmallOLED-PCMonitor
 // network.cpp parseStatsV2, slimmed to the color project's metric model.
 //
 // WiFiUDP (not AsyncUDP) on purpose: AsyncUDP froze on ESP32 in the sibling
@@ -7,18 +7,57 @@
 #include "pc_metrics.h"
 #include <WiFiUdp.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
+#include <esp_heap_caps.h>
 
-PcMetricData pcData = {};
-SlotHistory pcHistoryById[MAX_METRICS + 1] = {};
+PcSource* pcSources = nullptr;
 
 static WiFiUDP udp;
+static uint32_t s_version = 1;
+
+// Known PCs in NVS: "deckpc"/"list" = [{"id","name"}], first = default.
+static void saveKnown() {
+  JsonDocument doc;
+  JsonArray a = doc.to<JsonArray>();
+  for (int i = 0; i < MAX_PCS; i++) {
+    if (!pcSources[i].used) continue;
+    JsonObject o = a.add<JsonObject>();
+    o["id"] = pcSources[i].id;
+    o["name"] = pcSources[i].name;
+  }
+  String out;
+  serializeJson(doc, out);
+  Preferences p;
+  if (p.begin("deckpc", false)) {
+    p.putString("list", out);
+    p.end();
+  }
+}
+
+static void loadKnown() {
+  Preferences p;
+  String s;
+  if (p.begin("deckpc", true)) {
+    s = p.getString("list", "");
+    p.end();
+  }
+  JsonDocument doc;
+  if (!s.length() || deserializeJson(doc, s)) return;
+  int n = 0;
+  for (JsonObject o : doc.as<JsonArray>()) {
+    if (n == MAX_PCS) break;
+    PcSource& pc = pcSources[n++];
+    pc.used = true;
+    strlcpy(pc.id, o["id"] | "", sizeof(pc.id));
+    strlcpy(pc.name, o["name"] | "PC", sizeof(pc.name));
+  }
+}
 
 void pcMetricsBegin() {
-  pcData.count = 0;
-  pcData.online = false;
-  pcData.status = PC_STATUS_OK;
-  pcData.lastReceived = 0;
-  pcData.timestamp[0] = '\0';
+  pcSources = (PcSource*)heap_caps_calloc(MAX_PCS, sizeof(PcSource), MALLOC_CAP_SPIRAM);
+  if (!pcSources) pcSources = (PcSource*)calloc(MAX_PCS, sizeof(PcSource));
+  for (int i = 0; i < MAX_PCS; i++) pcSources[i].data.status = PC_STATUS_OK;
+  loadKnown();
   udp.begin(UDP_PORT);
   Serial.printf("pc_metrics: UDP listening on port %u\n", (unsigned)UDP_PORT);
 }
@@ -34,29 +73,67 @@ static void trimTrailingSpaces(char* s) {
   while (n > 0 && s[n - 1] == ' ') s[--n] = '\0';
 }
 
-static void parsePacket(const char* json) {
+// The PC a packet belongs to; a new id takes a free slot (and is remembered).
+static PcSource* sourceForPacket(const char* id, const char* name) {
+  PcSource* free = nullptr;
+  for (int i = 0; i < MAX_PCS; i++) {
+    PcSource& pc = pcSources[i];
+    if (!pc.used) {
+      if (!free) free = &pc;
+      continue;
+    }
+    if (strcmp(pc.id, id)) continue;
+    if (name[0] && strcmp(pc.name, name)) {
+      strlcpy(pc.name, name, sizeof(pc.name));
+      saveKnown();
+    }
+    return &pc;
+  }
+  if (!free) {
+    static uint32_t lastLog = 0;
+    if (millis() - lastLog > 60000) {
+      lastLog = millis();
+      Serial.printf("pc_metrics: no room for PC '%s' (%d known), forget one in the portal\n", id, MAX_PCS);
+    }
+    return nullptr;
+  }
+  memset(free, 0, sizeof(PcSource));
+  free->used = true;
+  free->data.status = PC_STATUS_OK;
+  strlcpy(free->id, id, sizeof(free->id));
+  strlcpy(free->name, name[0] ? name : "PC", sizeof(free->name));
+  saveKnown();
+  Serial.printf("pc_metrics: new PC '%s' (%s)\n", free->name, free->id);
+  return free;
+}
+
+static void parsePacket(const char* json, IPAddress from) {
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, json);
   if (err) {
     Serial.printf("pc_metrics: JSON parse error: %s\n", err.c_str());
     return;
   }
+  PcSource* pc = sourceForPacket(doc["pc_id"] | "", doc["pc_name"] | "");
+  if (!pc) return;
+  pc->ip = from;
+  PcMetricData& d = pc->data;
 
-  pcData.status = doc["status"] | PC_STATUS_OK;
+  d.status = doc["status"] | PC_STATUS_OK;
 
   const char* ts = doc["timestamp"];
   if (ts && ts[0]) {
-    strncpy(pcData.timestamp, ts, sizeof(pcData.timestamp) - 1);
-    pcData.timestamp[sizeof(pcData.timestamp) - 1] = '\0';
+    strncpy(d.timestamp, ts, sizeof(d.timestamp) - 1);
+    d.timestamp[sizeof(d.timestamp) - 1] = '\0';
   }
   // Empty timestamp = stale frame from the companion (LHM recovering); keep the
   // previous one rather than blanking it.
 
   JsonArray arr = doc["metrics"];
-  pcData.count = 0;
+  d.count = 0;
   for (JsonObject mo : arr) {
-    if (pcData.count >= MAX_METRICS) break;
-    PcMetric& m = pcData.metrics[pcData.count];
+    if (d.count >= MAX_METRICS) break;
+    PcMetric& m = d.metrics[d.count];
 
     m.id = mo["id"] | 0;
 
@@ -81,7 +158,7 @@ static void parsePacket(const char* json) {
 
     // Throughput arrives PRE-MULTIPLIED BY TEN. The Windows companion packs
     // NIC readings as an integer number of tenths of a KB/s so one decimal
-    // survives the wire (see _parse_rest_value in statnode_companion.py: "the
+    // survives the wire (see _parse_rest_value in touchdeck_companion.py: "the
     // ESP32 divides by 10 when showing"), and this firmware never did - so a
     // 366.8 KB/s link rendered as "3668 KB/s". Undo it once, here, so the
     // history rings and the metric tiles see real KB/s.
@@ -91,20 +168,21 @@ static void parsePacket(const char* json) {
     // stay correct.
     if (strcmp(m.unit, "KB/s") == 0) m.value /= 10.0f;
 
-    pcData.count++;
+    d.count++;
   }
 
-  pcData.lastReceived = millis();
-  pcData.online = true;
+  d.lastReceived = millis();
+  d.online = true;
+  s_version++;
 
   // One history sample per METRIC per packet. Rings are keyed by metric id, so
   // nothing here needs invalidating when a slot is rebound or the metric page
   // changes - the ring follows the metric. A metric missing from this packet
   // simply does not advance, leaving a gap rather than a fake sample.
-  for (uint8_t i = 0; i < pcData.count; i++) {
-    const PcMetric& m = pcData.metrics[i];
+  for (uint8_t i = 0; i < d.count; i++) {
+    const PcMetric& m = d.metrics[i];
     if (m.id == 0 || m.id > MAX_METRICS) continue;
-    SlotHistory& h = pcHistoryById[m.id];
+    SlotHistory& h = pc->hist[m.id];
     h.metricId = m.id;
     h.samples[h.head] = m.value;
     h.head = (uint8_t)((h.head + 1) % PC_HISTORY_LEN);
@@ -126,31 +204,58 @@ bool pcMetricsHandle() {
       int len = udp.read(buffer, sizeof(buffer) - 1);
       if (len > 0) {
         buffer[len] = '\0';
-        parsePacket(buffer);
+        parsePacket(buffer, udp.remoteIP());
         parsed = true;
       }
     }
   }
 
   // Liveness: drop to offline when no packet has arrived for the stale window.
-  if (pcData.online && (millis() - pcData.lastReceived > PC_STALE_TIMEOUT_MS)) {
-    pcData.online = false;
-    Serial.println("pc_metrics: PC offline (no packets within stale window)");
+  for (int i = 0; i < MAX_PCS; i++) {
+    PcMetricData& d = pcSources[i].data;
+    if (pcSources[i].used && d.online && millis() - d.lastReceived > PC_STALE_TIMEOUT_MS) {
+      d.online = false;
+      s_version++;
+      Serial.printf("pc_metrics: PC '%s' offline (no packets within stale window)\n", pcSources[i].name);
+    }
   }
   return parsed;
 }
 
-const PcMetric* pcMetricFindById(uint8_t id) {
-  for (uint8_t i = 0; i < pcData.count; i++) {
-    if (pcData.metrics[i].id == id) return &pcData.metrics[i];
-  }
+PcSource* pcSource(const String& id) {
+  if (!pcSources) return nullptr;
+  if (!id.length()) return pcSources[0].used ? &pcSources[0] : nullptr;
+  for (int i = 0; i < MAX_PCS; i++)
+    if (pcSources[i].used && id == pcSources[i].id) return &pcSources[i];
   return nullptr;
 }
 
-const PcMetric* pcMetricFindByName(const char* name) {
-  if (!name) return nullptr;
-  for (uint8_t i = 0; i < pcData.count; i++) {
-    if (strcmp(pcData.metrics[i].name, name) == 0) return &pcData.metrics[i];
+int pcOnlineCount() {
+  int n = 0;
+  for (int i = 0; pcSources && i < MAX_PCS; i++) n += pcSources[i].used && pcSources[i].data.online;
+  return n;
+}
+
+bool pcAnyOnline() { return pcOnlineCount() > 0; }
+
+uint32_t pcVersion() { return s_version; }
+
+bool pcForget(const String& id) {
+  for (int i = 0; i < MAX_PCS; i++) {
+    if (!pcSources[i].used || id != pcSources[i].id) continue;
+    // Keep the order (the first one is the default): close the gap.
+    for (int j = i; j + 1 < MAX_PCS; j++) memcpy(&pcSources[j], &pcSources[j + 1], sizeof(PcSource));
+    memset(&pcSources[MAX_PCS - 1], 0, sizeof(PcSource));
+    saveKnown();
+    s_version++;
+    return true;
   }
+  return false;
+}
+
+const PcMetric* pcMetricFind(const PcSource* pc, uint8_t id) {
+  if (!pc || !pc->data.online) return nullptr;
+  for (uint8_t i = 0; i < pc->data.count; i++)
+    if (pc->data.metrics[i].id == id) return &pc->data.metrics[i];
   return nullptr;
 }

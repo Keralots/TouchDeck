@@ -192,13 +192,29 @@ static void handleApiConfig() {
   network["subnet"] = netSettings.subnet;
   network["dns"] = netSettings.dns;
 
+  // "metrics": the default PC's (older portals), "pcs": every known PC.
   JsonArray metrics = doc["metrics"].to<JsonArray>();
-  for (uint8_t i = 0; i < pcData.count; i++) {
-    JsonObject metric = metrics.add<JsonObject>();
-    metric["id"] = pcData.metrics[i].id;
-    metric["name"] = pcData.metrics[i].name;
-    metric["value"] = pcData.metrics[i].value;
-    metric["unit"] = pcData.metrics[i].unit;
+  JsonArray pcs = doc["pcs"].to<JsonArray>();
+  for (int p = 0; p < MAX_PCS; p++) {
+    const PcSource& src = pcSources[p];
+    if (!src.used) continue;
+    JsonObject pc = pcs.add<JsonObject>();
+    pc["id"] = src.id;
+    pc["name"] = src.name;
+    pc["online"] = src.data.online;
+    if (src.data.online) pc["ip"] = src.ip.toString();
+    JsonArray list = pc["metrics"].to<JsonArray>();
+    for (uint8_t i = 0; i < src.data.count; i++) {
+      const PcMetric& m = src.data.metrics[i];
+      for (JsonArray a : {list, p == 0 ? metrics : JsonArray()}) {
+        if (a.isNull()) continue;
+        JsonObject metric = a.add<JsonObject>();
+        metric["id"] = m.id;
+        metric["name"] = m.name;
+        metric["value"] = m.value;
+        metric["unit"] = m.unit;
+      }
+    }
   }
 
   String out;
@@ -680,8 +696,10 @@ static void handleApiStatus() {
   doc["board"]   = BOARD_VARIANT;
   doc["ip"]      = WiFi.localIP().toString();
   doc["screen"]  = screenName(getScreenState());
-  doc["pc_online"] = pcData.online;
-  doc["pc_status"] = pcData.status;
+  const PcSource* pc0 = pcSource("");
+  doc["pc_online"] = pcAnyOnline();
+  doc["pc_status"] = pc0 ? pc0->data.status : PC_STATUS_OK;
+  doc["pcs_online"] = pcOnlineCount();
   doc["ha_link"] = deck::haLinkName(deck::haLink());
   doc["backlight"] = currentBacklightLevel();
   doc["night_active"] = nightBrightnessActive();
@@ -698,8 +716,8 @@ static void handleApiStatus() {
   doc["reset_reason"] = resetReasonName();
   doc["wifi_disconnects"]     = wifiDisconnectCount();
   doc["wifi_last_disc_reason"] = wifiLastDisconnectReason();
-  doc["metric_count"] = pcData.count;
-  doc["timestamp"] = pcData.timestamp;
+  doc["metric_count"] = pc0 ? pc0->data.count : 0;
+  doc["timestamp"] = pc0 ? pc0->data.timestamp : "";
   doc["hostname"] = netSettings.hostname;
   doc["rssi"] = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
   doc["uptime_seconds"] = millis() / 1000UL;
@@ -972,6 +990,12 @@ static void handleHttpTestGet() {
   server.send(200, "application/json", out);
 }
 
+// POST /api/pc/forget?id=<pc_id> - drop a PC from the known list.
+static void handlePcForget() {
+  const bool ok = pcForget(server.arg("id"));
+  sendJsonMessage(ok ? 200 : 404, ok, ok ? "PC removed" : "No such PC");
+}
+
 // POST /api/deck/tap?tile=<id>[&hold=1] - bench hook, a tap or hold on a tile
 // (runs its action, or opens the confirm card).
 static void handleDeckTap() {
@@ -1193,6 +1217,7 @@ void initWebServer() {
   server.on("/api/deck/panel", HTTP_POST, handleDeckPanel);
   server.on("/api/deck/card", HTTP_POST, handleDeckCard);
   server.on("/api/deck/tap", HTTP_POST, handleDeckTap);
+  server.on("/api/pc/forget", HTTP_POST, handlePcForget);
   server.on("/api/deck/http-test", HTTP_POST, handleHttpTestPost);
   server.on("/api/deck/http-test", HTTP_GET, handleHttpTestGet);
   server.on("/api/deck/confirm", HTTP_POST, handleDeckConfirm);

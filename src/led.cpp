@@ -193,6 +193,6 @@ void ledTick() {
   // One test covers manual off and a night brightness of 0: whatever put the
   // panel out, the LED goes with it.
   if (ledSettings.followDisplay && currentBacklightLevel() == 0) duty = 0;
-  if (ledSettings.offlineOff && !pcData.online) duty = 0;
+  if (ledSettings.offlineOff && !pcAnyOnline()) duty = 0;
   writeDuty(duty);
 }

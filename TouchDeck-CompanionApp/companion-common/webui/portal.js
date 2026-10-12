@@ -27,7 +27,7 @@ qa('.nav-item').forEach(function(button){button.addEventListener('click',functio
 $('navToggle').addEventListener('click',function(){var open=document.documentElement.classList.toggle('nav-open');this.setAttribute('aria-expanded',String(open))});
 $('navScrim').addEventListener('click',function(){document.documentElement.classList.remove('nav-open');$('navToggle').setAttribute('aria-expanded','false')});
 
-async function loadInfo(){var info=await api('/api/info');app.info=info;app.maxMetrics=info.max_metrics||20;setText('topVersion',info.version);setText('aboutVersion',info.version);$('esp32_ip').value=info.ip||'';$('udp_port').value=info.udp_port||4210;$('update_interval').value=info.update_interval||3;$('sourceField').classList.toggle('hidden',!info.source_select);$('sensor_source').value=info.sensor_source||'auto';setText('srDevice',info.ip||'-')}
+async function loadInfo(){var info=await api('/api/info');app.info=info;app.maxMetrics=info.max_metrics||20;setText('topVersion',info.version);setText('aboutVersion',info.version);$('esp32_ip').value=info.ip||'';$('udp_port').value=info.udp_port||4210;$('update_interval').value=info.update_interval||3;$('pc_name').value=info.pc_name||'';$('sourceField').classList.toggle('hidden',!info.source_select);$('sensor_source').value=info.sensor_source||'auto';setText('srDevice',info.ip||'-')}
 
 function selectedSensors(){var byKey={};app.sensors.forEach(function(sensor){byKey[sensor.key]=sensor});return app.selectedKeys.map(function(key){return byKey[key]}).filter(Boolean)}
 function valueText(sensor){var live=app.live[sensor.metric_id];var value=live&&live.value!=null?live.value:sensor.current_value;return value==null?'-':String(value)+' '+(sensor.unit||'')}

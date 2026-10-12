@@ -2,6 +2,7 @@
 #define PC_METRICS_H
 
 #include <Arduino.h>
+#include <IPAddress.h>
 #include "config.h"
 
 // One metric as pushed by the PC companion (V2.1 protocol). Metric tiles bind
@@ -23,11 +24,9 @@ struct PcMetricData {
   uint32_t lastReceived;   // millis() of the last valid packet
 };
 
-extern PcMetricData pcData;
-
 // Value history for the chart tiles, one sample per received packet, keyed by
 // metric id. Every metric in the packet is sampled, so a new chart tile starts
-// warm. ~8 KB of static RAM.
+// warm.
 #define PC_HISTORY_LEN 60
 
 struct SlotHistory {
@@ -37,24 +36,47 @@ struct SlotHistory {
   float   samples[PC_HISTORY_LEN];
 };
 
-// Indexed by metric id. Index 0 is the permanently empty ring.
-extern SlotHistory pcHistoryById[MAX_METRICS + 1];
-
 // Sample oldest->newest: i in [0, count).
 static inline float pcHistoryAt(const SlotHistory& h, uint8_t i) {
   return h.samples[(uint8_t)((h.head + PC_HISTORY_LEN - h.count + i) % PC_HISTORY_LEN)];
 }
 
-// Start the UDP listener on UDP_PORT.
+// One PC running the companion. Packets carry "pc_id" and "pc_name"; a
+// companion without them is the PC with id "". The list of known PCs (id,
+// name, in the order first seen) is kept in NVS "deckpc", so tiles bound to
+// a PC survive reboots; the first one is the default PC.
+#define MAX_PCS 4
+
+struct PcSource {
+  bool     used;
+  char     id[17];
+  char     name[24];
+  IPAddress ip;          // where its last packet came from
+  PcMetricData data;
+  SlotHistory hist[MAX_METRICS + 1];  // by metric id; index 0 stays empty
+};
+
+// MAX_PCS entries, in PSRAM (each holds ~8 KB of history).
+extern PcSource* pcSources;
+
+// Start the UDP listener on UDP_PORT and load the known PCs.
 void pcMetricsBegin();
-// Service the socket: parse any pending packet, refresh the online flag.
+// Service the socket: parse any pending packet, refresh the online flags.
 // Returns true if a new packet was parsed this call.
 bool pcMetricsHandle();
 // Re-bind the socket after a WiFi reconnect (old fd goes stale).
 void pcMetricsRestartUdp();
 
-// Lookups for the metric tiles.
-const PcMetric* pcMetricFindById(uint8_t id);
-const PcMetric* pcMetricFindByName(const char* name);
+// The PC a tile names: id "" = the default (first known) PC. Null when none.
+PcSource* pcSource(const String& id);
+bool pcAnyOnline();
+int pcOnlineCount();
+// Bumps on every packet and online change of any PC.
+uint32_t pcVersion();
+// Drop a PC from the known list (portal). False when it is not known.
+bool pcForget(const String& id);
+
+// Lookup for the metric tiles. Null when the PC is offline or lacks the id.
+const PcMetric* pcMetricFind(const PcSource* pc, uint8_t id);
 
 #endif // PC_METRICS_H
