@@ -243,7 +243,7 @@ function openIcons(i){if(!mdi){alert('Install the icon font first (Icons card ab
 $('dkIcQ').oninput=renderIcons;$('dkIcAuto').onclick=()=>setIcon('');$('dkIcClose').onclick=()=>$('dkIcPick').classList.remove('show');
 $('dkIcPick').onclick=e=>{if(e.target===$('dkIcPick'))$('dkIcPick').classList.remove('show');};
 
-$('dkHeader').onchange=async e=>{const b=new URLSearchParams();b.set('header',e.target.checked?'1':'0');try{await api('/api/deck/prefs',{method:'POST',body:b});}catch(x){alert(x.message);}};
+$('dkHeader').onchange=async e=>{const b=new URLSearchParams();b.set('header',e.target.checked?'1':'0');try{await api('/api/deck/prefs',{method:'POST',body:b});}catch(x){alert(x.message);}if(deck)renderPage();};
 
 /* save */
 $('dkSave').onclick=async()=>{try{await api('/api/deck',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(deck)});setDirty(false);}catch(e){alert('Not saved: '+e.message);}};
