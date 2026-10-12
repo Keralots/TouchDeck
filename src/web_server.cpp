@@ -12,6 +12,7 @@
 #include "deck_ui.h"
 #include "deck_config.h"
 #include "deck_ha.h"
+#include "deck_http.h"
 #include "deck_web.h"
 #include "deck_icons.h"
 #include "deck_sys.h"
@@ -938,6 +939,39 @@ static void handleDeckCard() {
   sendJsonMessage(ok ? 200 : 404, ok, ok ? "Card open" : "No such tile");
 }
 
+// POST /api/deck/http-test, body = an "http" action object: queue it, answer
+// {ticket}. GET /api/deck/http-test?ticket=N: {done, code, err, body}.
+static void handleHttpTestPost() {
+  String err;
+  deck::TileAction a;
+  const String& body = server.arg("plain");
+  if (!deck::deckActionParse(body.c_str(), body.length(), a, &err) || a.kind != deck::ACT_HTTP) {
+    sendJsonMessage(400, false, err.length() ? err.c_str() : "Not an http action");
+    return;
+  }
+  const uint32_t t = deck::httpTestStart(a);
+  if (!t) {
+    sendJsonMessage(503, false, "Busy, try again");
+    return;
+  }
+  server.send(200, "application/json", String("{\"ticket\":") + t + "}");
+}
+
+static void handleHttpTestGet() {
+  int code = 0;
+  String err, body;
+  JsonDocument doc;
+  doc["done"] = deck::httpTestResult((uint32_t)server.arg("ticket").toInt(), code, err, body);
+  if (doc["done"]) {
+    doc["code"] = code;
+    doc["err"] = err;
+    doc["body"] = body;
+  }
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
 // POST /api/deck/tap?tile=<id>[&hold=1] - bench hook, a tap or hold on a tile
 // (runs its action, or opens the confirm card).
 static void handleDeckTap() {
@@ -1152,6 +1186,8 @@ void initWebServer() {
   server.on("/api/deck/panel", HTTP_POST, handleDeckPanel);
   server.on("/api/deck/card", HTTP_POST, handleDeckCard);
   server.on("/api/deck/tap", HTTP_POST, handleDeckTap);
+  server.on("/api/deck/http-test", HTTP_POST, handleHttpTestPost);
+  server.on("/api/deck/http-test", HTTP_GET, handleHttpTestGet);
   server.on("/api/deck/confirm", HTTP_POST, handleDeckConfirm);
   server.on("/api/deck/edit", HTTP_POST, handleDeckEdit);
   server.on("/api/deck/screen", HTTP_POST, handleDeckScreen);

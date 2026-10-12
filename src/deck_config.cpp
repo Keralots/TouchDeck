@@ -78,6 +78,49 @@ bool parseAction(JsonVariantConst v, TileAction& a, String* err, const String& w
       if (err) *err = where + ": page action without a page id";
       return false;
     }
+  } else if (!strcmp(kind, "http")) {
+    a.kind = ACT_HTTP;
+    a.url = (const char*)(v["url"] | "");
+    if (a.url.startsWith("https://")) {
+      if (err) *err = where + ": https is not supported, use http on the LAN";
+      return false;
+    }
+    if (!a.url.startsWith("http://") || a.url.length() < 8 || a.url.length() > 512) {
+      if (err) *err = where + ": http action needs an http:// url (max 512 characters)";
+      return false;
+    }
+    // A JSON body may be given as an object; it is sent as application/json.
+    JsonVariantConst body = v["body"];
+    if (body.is<const char*>()) a.body = (const char*)body;
+    else if (!body.isNull()) {
+      serializeJson(body, a.body);
+      a.ctype = "application/json";
+    }
+    if (a.body.length() > 2048) {
+      if (err) *err = where + ": http body too long (max 2048)";
+      return false;
+    }
+    if (v["contentType"].is<const char*>()) a.ctype = (const char*)v["contentType"];
+    if (!a.ctype.length() && a.body.length())
+      a.ctype = a.body[0] == '{' || a.body[0] == '[' ? "application/json" : "text/plain";
+    a.method = (const char*)(v["method"] | (a.body.length() ? "POST" : "GET"));
+    a.method.toUpperCase();
+    if (a.method != "GET" && a.method != "POST" && a.method != "PUT" && a.method != "PATCH" &&
+        a.method != "DELETE") {
+      if (err) *err = where + ": unknown http method '" + a.method + "'";
+      return false;
+    }
+    // "headers": { "Name": "value" } -> "Name: value\n" lines.
+    for (JsonPairConst kv : v["headers"].as<JsonObjectConst>()) {
+      const String name = kv.key().c_str();
+      const String val = kv.value().as<const char*>() ? kv.value().as<const char*>() : "";
+      if (!name.length() || name.indexOf(':') >= 0 || (name + val).indexOf('\n') >= 0 ||
+          (name + val).indexOf('\r') >= 0) {
+        if (err) *err = where + ": bad http header '" + name + "'";
+        return false;
+      }
+      a.headers += name + ": " + val + "\n";
+    }
   } else if (!strcmp(kind, "call-service")) {
     a.kind = ACT_CALL_SERVICE;
     a.domain = (const char*)(v["domain"] | "");
@@ -226,6 +269,16 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
   }
   out = cfg;
   return true;
+}
+
+bool deckActionParse(const char* json, size_t len, TileAction& out, String* err) {
+  JsonDocument doc;
+  const DeserializationError de = deserializeJson(doc, json, len);
+  if (de) {
+    if (err) *err = String("JSON: ") + de.c_str();
+    return false;
+  }
+  return parseAction(doc.as<JsonVariantConst>(), out, err, "action");
 }
 
 bool deckFsReady() { return mountFs(); }

@@ -92,9 +92,30 @@ function metricRow(t,i){const m=pcm.find(x=>x.id===t.metric);const col=t.color||
   const opts=pcm.map(x=>'<option value="'+x.id+'"'+(x.id===t.metric?' selected':'')+'>'+esc(x.name)+' ('+esc(Math.round(x.value*10)/10)+' '+esc(x.unit)+')</option>').join('')+(m?'':'<option value="'+t.metric+'" selected>#'+t.metric+' (not in the last packet)</option>');
   return '<div class="dk-tile'+(i===sel?' sel':'')+'"><div class="dk-ic" style="background:'+col+'">PC</div><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(m?m.name:'Metric')+'"><div class="dk-tsub">PC metric #'+t.metric+(m?' - '+esc(Math.round(m.value*10)/10)+' '+esc(m.unit):'')+'</div></div>'+
   '<div class="dk-tact"><select data-m="'+i+'">'+opts+'</select><select data-st="'+i+'">'+[['number','Number'],['chart','Chart'],['bar','Bar']].map(o=>'<option value="'+o[0]+'"'+((t.style||'number')===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>'+sizeSel(t,i)+'<button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div></div>';}
-/* A tile's "more options" panel. */
+/* A tile's "more options" panel: confirm, and for buttons the tap action. */
+const opt=(v,l,on)=>'<option value="'+esc(v)+'"'+(on?' selected':'')+'>'+esc(l)+'</option>';
+const isHttp=t=>!!(t.tap&&t.tap.action==='http');
+const tapName=a=>a.action==='page'?'Open page '+a.page:a.action==='call-service'?'Service '+a.domain+'.'+a.service:a.action;
+const hdrText=h=>Object.keys(h||{}).map(k=>k+': '+h[k]).join('\n');
 function moreRow(t,i){const cf=t.confirm||'';
-  return '<div class="dk-more"><div class="field"><label class="field-label">Confirm on the device</label><select data-cf="'+i+'">'+[['','No'],['off','Before turning off'],['always','Before every action']].map(o=>'<option value="'+o[0]+'"'+(cf===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select></div></div>';}
+  let h='<div class="dk-more"><div class="field"><label class="field-label">Confirm on the device</label><select data-cf="'+i+'">'+[['','No'],['off','Before turning off'],['always','Before every action']].map(o=>opt(o[0],o[1],cf===o[0])).join('')+'</select></div>';
+  if(t.type==='action'){const tp=t.tap||{},k=isHttp(t)?'http':(t.tap?'keep':'');
+    h+='<div class="field"><label class="field-label">On tap</label><select data-ak="'+i+'">'+opt('','Home Assistant entity',k==='')+opt('http','HTTP request',k==='http')+(k==='keep'?opt('keep',tapName(tp),true):'')+'</select></div>';
+    if(k==='http'){const body=typeof tp.body==='object'&&tp.body!==null?JSON.stringify(tp.body):(tp.body||'');
+      h+='<div class="field"><label class="field-label">Method</label><select data-hm="'+i+'">'+['GET','POST','PUT','PATCH','DELETE'].map(m=>opt(m,m,(tp.method||'GET')===m)).join('')+'</select></div>'+
+      '<div class="field wide"><label class="field-label">URL</label><input type="text" data-hu="'+i+'" value="'+esc(tp.url||'')+'" placeholder="http://192.168.0.50/cm?cmnd=Power%20Toggle" spellcheck="false"></div>'+
+      '<div class="field"><label class="field-label">Body (optional)</label><textarea data-hb="'+i+'" spellcheck="false">'+esc(body)+'</textarea></div>'+
+      '<div class="field"><label class="field-label">Headers (Name: value)</label><textarea data-hh="'+i+'" spellcheck="false" placeholder="Authorization: Bearer ...">'+esc(hdrText(tp.headers))+'</textarea></div>'+
+      '<div class="field"><label class="field-label">Content type</label><input type="text" data-hc="'+i+'" value="'+esc(tp.contentType||'')+'" placeholder="automatic" spellcheck="false"></div>'+
+      '<div class="field wide"><div class="dk-row"><button type="button" class="btn" data-ht="'+i+'">Test</button><span class="dk-tsub" id="dkHt'+i+'" style="margin:0;white-space:normal;flex:1">Sends the request from the device and shows the answer.</span></div></div>'+
+      '<p class="field-hint wide" style="margin:0">Plain http on the local network. A body that starts with { or [ goes out as application/json, other text as text/plain. The request is stored in the deck configuration, which anyone on your network can read through this portal: avoid putting important passwords in it.</p>';}}
+  return h+'</div>';}
+function parseHdrs(s){const o={};s.split('\n').forEach(l=>{const c=l.indexOf(':');if(c>0){const k=l.slice(0,c).trim(),v=l.slice(c+1).trim();if(k)o[k]=v;}});return o;}
+async function testHttp(t,i){const out=$('dkHt'+i);out.textContent='Sending...';
+  try{const r=await api('/api/deck/http-test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(t.tap)});
+    for(let n=0;n<30;n++){await new Promise(z=>setTimeout(z,400));const s=await api('/api/deck/http-test?ticket='+r.ticket);
+      if(s.done){out.textContent=s.code?('HTTP '+s.code+(s.body?' - '+s.body.slice(0,300):'')):(s.err||'No answer');return;}}
+    out.textContent='No result yet - check the URL';}catch(e){out.textContent=e.message;}}
 async function api(p,o){const r=await fetch(p,o);const t=await r.text();let j=null;try{j=JSON.parse(t);}catch(e){}if(!r.ok)throw new Error((j&&(j.message||j.error))||t||('HTTP '+r.status));return j;}
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const domainOf=e=>{const i=(e||'').indexOf('.');return i>0?e.slice(0,i):'';};
@@ -173,9 +194,9 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   h+='<p class="field-hint">Drag a tile to move it, or onto a tile of the same size to swap them; the corner handle resizes. Tap a tile to find it in the list.</p>';
   h+='<div class="dk-tiles">'+p.tiles.map((t,i)=>{if(t.type==='metric')return metricRow(t,i);const d=domainOf(t.entity);const en=entMap[t.entity];const nm=en&&en.name?en.name:(t.entity||'No entity');
     const cp=tileCp(t);
-    return '<div class="dk-tile'+(i===sel?' sel':'')+'"><button type="button" class="dk-ic'+(cp?' mdi':'')+'" data-ic="'+i+'" title="'+esc(cp?(t.icon||(en&&en.icon)||'automatic'):'Choose an icon')+'" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+(cp?String.fromCodePoint(cp):esc((d||'?').slice(0,2).toUpperCase()))+'</button><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="dk-tsub">'+esc(t.entity||'no entity')+(en&&en.state?' - '+esc(en.state)+(en.unit?' '+esc(en.unit):''):'')+'</div></div>'+
+    return '<div class="dk-tile'+(i===sel?' sel':'')+'"><button type="button" class="dk-ic'+(cp?' mdi':'')+'" data-ic="'+i+'" title="'+esc(cp?(t.icon||(en&&en.icon)||'automatic'):'Choose an icon')+'" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+(cp?String.fromCodePoint(cp):esc((d||'?').slice(0,2).toUpperCase()))+'</button><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="dk-tsub">'+esc(t.entity||(isHttp(t)?'HTTP '+(t.tap.method||'GET')+' '+(t.tap.url||''):'no entity'))+(en&&en.state?' - '+esc(en.state)+(en.unit?' '+esc(en.unit):''):'')+'</div></div>'+
     '<div class="dk-tact"><select data-t="'+i+'"><option value="toggle"'+(t.type==='toggle'?' selected':'')+'>Switch</option><option value="action"'+(t.type==='action'?' selected':'')+'>Button</option><option value="sensor"'+(t.type==='sensor'?' selected':'')+'>Sensor</option></select>'+sizeSel(t,i)+'<button type="button" class="btn" data-e="'+i+'">Entity</button><button type="button" class="btn'+(i===more?' on':'')+'" data-mo="'+i+'" title="More options">&#8943;</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div>'+(i===more?moreRow(t,i):'')+'</div>';}).join('')+'</div>';
-  h+='<p class="dk-cap">'+cells+' of '+(c*r)+' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button></div><p class="field-hint">Chart and Bar need a 2x1 or bigger tile (a 1x1 tile shows the number), so picking one makes a 1x1 tile 2x1.</p>';
+  h+='<p class="dk-cap">'+cells+' of '+(c*r)+' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button></div><p class="field-hint">Chart and Bar need a 2x1 or bigger tile (a 1x1 tile shows the number), so picking one makes a 1x1 tile 2x1.</p>';
   el.innerHTML=h;
   $('dkPName').oninput=e=>{p.name=e.target.value;setDirty(true);renderTabs();};
   const setGrid=(gc,gr)=>{p.layouts=p.layouts||{};p.layouts[ori]={cols:gc,rows:gr};setDirty(true);renderPage();};
@@ -198,6 +219,15 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   el.querySelectorAll('[data-mo]').forEach(x=>x.onclick=()=>{const i=+x.dataset.mo;more=more===i?-1:i;renderPage();});
   el.querySelectorAll('[data-cf]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.cf];if(e.target.value)t.confirm=e.target.value;else delete t.confirm;setDirty(true);});
   $('dkAddTile').onclick=()=>openPicker(-1);
+  $('dkAddHttp').onclick=()=>{p.tiles.push({id:'h'+Date.now().toString(36),type:'action',label:'HTTP',icon:'mdi:web',tap:{action:'http',method:'GET',url:'http://'}});more=p.tiles.length-1;setDirty(true);renderPage();};
+  const tapOf=x=>p.tiles[+(x.dataset.ak||x.dataset.hm||x.dataset.hu||x.dataset.hb||x.dataset.hh||x.dataset.hc||x.dataset.ht)];
+  el.querySelectorAll('[data-ak]').forEach(x=>x.onchange=e=>{const t=tapOf(x),v=e.target.value;if(v==='keep')return;if(v==='http')t.tap={action:'http',method:'GET',url:'http://'};else delete t.tap;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-hm]').forEach(x=>x.onchange=e=>{tapOf(x).tap.method=e.target.value;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-hu]').forEach(x=>x.oninput=e=>{tapOf(x).tap.url=e.target.value.trim();setDirty(true);});
+  el.querySelectorAll('[data-hb]').forEach(x=>x.oninput=e=>{const a=tapOf(x).tap;if(e.target.value)a.body=e.target.value;else delete a.body;setDirty(true);});
+  el.querySelectorAll('[data-hh]').forEach(x=>x.oninput=e=>{const a=tapOf(x).tap,o=parseHdrs(e.target.value);if(Object.keys(o).length)a.headers=o;else delete a.headers;setDirty(true);});
+  el.querySelectorAll('[data-hc]').forEach(x=>x.oninput=e=>{const a=tapOf(x).tap,v=e.target.value.trim();if(v)a.contentType=v;else delete a.contentType;setDirty(true);});
+  el.querySelectorAll('[data-ht]').forEach(x=>x.onclick=()=>testHttp(tapOf(x),+x.dataset.ht));
   $('dkAddPc').onclick=async()=>{if(!pcm.length)await loadPc();const usedIds=p.tiles.filter(t=>t.type==='metric').map(t=>t.metric);const m=pcm.find(x=>!usedIds.includes(x.id))||pcm[0];if(!m){alert('No PC metrics yet - start the companion app on the PC.');return;}p.tiles.push({id:'m'+Date.now().toString(36),type:'metric',metric:m.id,style:'number'});setDirty(true);renderPage();};
   el.querySelectorAll('[data-m]').forEach(x=>x.onchange=e=>{p.tiles[+x.dataset.m].metric=+e.target.value;setDirty(true);renderPage();});
   el.querySelectorAll('[data-st]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.st];if(e.target.value==='number')delete t.style;else{t.style=e.target.value;if(tileSize(t)==='1x1')setSize(t,'2x1');}setDirty(true);renderPage();});}
