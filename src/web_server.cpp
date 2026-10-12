@@ -13,6 +13,9 @@
 #include "web_pages.h"
 #if defined(BOARD_IS_JC3248W535)
 #include "deck_ui.h"
+#include "deck_config.h"
+#include "deck_ha.h"
+#include "deck_web.h"
 #endif
 #include <WebServer.h>
 #include <ArduinoJson.h>
@@ -212,6 +215,9 @@ static void handleApiConfig() {
   doc["isCyd"] = true;
 #else
   doc["isCyd"] = false;
+#endif
+#if defined(BOARD_IS_JC3248W535)
+  doc["deck"] = true;
 #endif
 
   JsonObject display = doc["display"].to<JsonObject>();
@@ -1694,6 +1700,78 @@ static void handleDeckSwipe() {
   sendJsonMessage(ok ? 200 : 409, ok, ok ? "Swipe started" : "Swipe not possible now");
 }
 
+// --- Deck page and its API ----------------------------------------------------
+static void handleDeckPage() {
+  streamAsset(DECK_HTML, sizeof(DECK_HTML) - 1, "text/html; charset=utf-8", "no-cache");
+}
+
+// GET /api/deck -> {"source": "...", "deck": <deck.json>}
+static void handleDeckGet() {
+  String text;
+  deck::deckConfigText(text);
+  String out;
+  out.reserve(text.length() + 48);
+  out += "{\"source\":\"";
+  out += "device";
+  out += "\",\"deck\":";
+  out += text;
+  out += "}";
+  server.send(200, "application/json", out);
+}
+
+// POST /api/deck (JSON body) - validate, store, rebuild the pages.
+static void handleDeckPost() {
+  String err;
+  if (!server.hasArg("plain")) {
+    sendJsonMessage(400, false, "Empty body");
+    return;
+  }
+  if (!deckApplyConfig(server.arg("plain"), err)) {
+    sendJsonMessage(400, false, err.c_str());
+    return;
+  }
+  sendJsonMessage(200, true, "Deck saved");
+}
+
+// GET /api/ha/status - never includes the token.
+static void handleHaStatus() {
+  JsonDocument doc;
+  doc["url"] = deck::haUrl();
+  doc["has_token"] = deck::haHasToken();
+  doc["link"] = deck::haLinkName(deck::haLink());
+  doc["error"] = deck::haLastError();
+  doc["version"] = deck::haServerVersion();
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+// POST /api/ha/config (url, token) - an empty token keeps the stored one.
+static void handleHaConfig() {
+  const String url = server.arg("url");
+  if (!url.length()) {
+    sendJsonMessage(400, false, "Address is required");
+    return;
+  }
+  deck::haSetCredentials(url, server.arg("token"));
+  sendJsonMessage(200, true, "Saved, connecting");
+}
+
+static void handleHaForget() {
+  deck::haClearCredentials();
+  sendJsonMessage(200, true, "Removed");
+}
+
+// GET /api/ha/entities - picker list, fetched from HA on demand.
+static void handleHaEntities() {
+  String out, err;
+  if (!deck::haFetchEntityList(out, err)) {
+    sendJsonMessage(502, false, err.c_str());
+    return;
+  }
+  server.send(200, "application/json", out);
+}
+
 // POST /api/deck/panel?open=1|0 - bench hook, quick panel slide.
 static void handleDeckPanel() {
   const bool open = !server.hasArg("open") || server.arg("open") != "0";
@@ -1835,6 +1913,13 @@ void initWebServer() {
   server.on("/screen_live.bmp", HTTP_GET, handleLiveScreenshot);
   server.on("/api/deck/swipe", HTTP_POST, handleDeckSwipe);
   server.on("/api/deck/panel", HTTP_POST, handleDeckPanel);
+  server.on("/deck", HTTP_GET, handleDeckPage);
+  server.on("/api/deck", HTTP_GET, handleDeckGet);
+  server.on("/api/deck", HTTP_POST, handleDeckPost);
+  server.on("/api/ha/status", HTTP_GET, handleHaStatus);
+  server.on("/api/ha/config", HTTP_POST, handleHaConfig);
+  server.on("/api/ha/forget", HTTP_POST, handleHaForget);
+  server.on("/api/ha/entities", HTTP_GET, handleHaEntities);
 #endif
   server.on("/ota/upload", HTTP_POST, handleOtaFinish, handleOtaUpload);
 
