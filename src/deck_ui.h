@@ -25,6 +25,8 @@ bool deckBegin(lgfx::LGFX_Sprite* face, uint8_t rotation);
 void deckTick();
 // The renderer drew into the face sprite.
 void deckFaceDirty();
+// Short message pill above the page dots (loop task only).
+void deckToast(const char* text);
 // Gate for updateDisplay(): false while a swipe owns the screen (the face
 // sprite may be on screen as a page image) and, while another page is shown,
 // except about once a second so the face stays current for the next swipe.

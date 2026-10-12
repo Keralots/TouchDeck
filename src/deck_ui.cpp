@@ -96,6 +96,7 @@ struct Shared {
   // What the current compositor gesture is, for its landing.
   enum Gesture : uint8_t { GEST_PAGE, GEST_PANEL_OPEN, GEST_PANEL_CLOSE } gesture = GEST_PAGE;
   bool panelOpen = false;
+  bool modalOpen = false;  // detail card up: no swipes or panel
   bool panelValid = false;
   bool panelBusy = false;
   Src panelSrc = {};
@@ -224,6 +225,10 @@ void goToPage(const String& id) {
 }
 
 // --- Tile events ------------------------------------------------------------------------
+void openModal(int tileIdx);
+void refreshModal();
+void deckToastShow(const char* text, uint32_t holdMs);
+
 void runAction(TileRt& r, const TileAction& a) {
   switch (a.kind) {
     case ACT_TOGGLE:
@@ -237,7 +242,14 @@ void runAction(TileRt& r, const TileAction& a) {
     case ACT_PAGE:
       goToPage(a.page);
       break;
+    case ACT_MORE_INFO:
+      openModal((int)(&r - &s_tiles[0]));
+      break;
+    case ACT_CALL_SERVICE:
+      deckToastShow("Home Assistant is not set up yet", 1800);
+      break;
     default:
+      deckToastShow("No action set for this tile", 1500);
       break;
   }
 }
@@ -584,6 +596,166 @@ void closePanelAnimated() {
   showPanel(false);  // images not ready: close without the slide
 }
 
+// --- Toast and detail card ------------------------------------------------------------
+lv_obj_t* s_toast = nullptr;
+lv_obj_t* s_modalScrim = nullptr;
+lv_obj_t* s_modalCard = nullptr;
+int s_modalTile = -1;
+
+void setModalOpen(bool open) {
+  portENTER_CRITICAL(&s_mux);
+  sh.modalOpen = open;
+  portEXIT_CRITICAL(&s_mux);
+}
+
+void toastOpa(void* obj, int32_t v) { lv_obj_set_style_opa((lv_obj_t*)obj, (lv_opa_t)v, 0); }
+void toastDone(lv_anim_t* a) {
+  if (lv_obj_get_style_opa((lv_obj_t*)a->var, LV_PART_MAIN) == LV_OPA_TRANSP)
+    lv_obj_add_flag((lv_obj_t*)a->var, LV_OBJ_FLAG_HIDDEN);
+}
+
+void deckToastShow(const char* text, uint32_t holdMs) {
+  if (!s_toast) {
+    s_toast = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_toast);
+    lv_obj_set_size(s_toast, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(s_toast, lv_color_hex(0x2A2F38), 0);
+    lv_obj_set_style_bg_opa(s_toast, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_toast, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_pad_hor(s_toast, 16, 0);
+    lv_obj_set_style_pad_ver(s_toast, 9, 0);
+    lv_obj_set_style_text_color(s_toast, lv_color_hex(C_TEXT), 0);
+    lv_obj_remove_flag(s_toast, LV_OBJ_FLAG_CLICKABLE);
+    lv_label_create(s_toast);
+  }
+  lv_label_set_text(lv_obj_get_child(s_toast, 0), text);
+  // Above the page dots, which the flush task draws at the very bottom.
+  lv_obj_align(s_toast, LV_ALIGN_BOTTOM_MID, 0, -34);
+  lv_obj_remove_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
+  lv_anim_delete(s_toast, toastOpa);
+  lv_anim_t in;
+  lv_anim_init(&in);
+  lv_anim_set_var(&in, s_toast);
+  lv_anim_set_exec_cb(&in, toastOpa);
+  lv_anim_set_values(&in, lv_obj_get_style_opa(s_toast, LV_PART_MAIN), LV_OPA_COVER);
+  lv_anim_set_duration(&in, 120);
+  lv_anim_start(&in);
+  lv_anim_t out;
+  lv_anim_init(&out);
+  lv_anim_set_var(&out, s_toast);
+  lv_anim_set_exec_cb(&out, toastOpa);
+  lv_anim_set_values(&out, LV_OPA_COVER, LV_OPA_TRANSP);
+  lv_anim_set_delay(&out, 120 + holdMs);
+  lv_anim_set_duration(&out, 250);
+  lv_anim_set_completed_cb(&out, toastDone);
+  lv_anim_start(&out);
+}
+
+void closeModal() {
+  if (s_modalCard) lv_obj_delete(s_modalCard);
+  if (s_modalScrim) lv_obj_delete(s_modalScrim);
+  s_modalCard = s_modalScrim = nullptr;
+  s_modalTile = -1;
+  setModalOpen(false);
+}
+
+void runAction(TileRt& r, const TileAction& a);
+void refreshModal();
+
+void onModalScrim(lv_event_t*) { closeModal(); }
+
+void onModalPrimary(lv_event_t*) {
+  if (s_modalTile < 0 || s_modalTile >= (int)s_tiles.size()) return;
+  TileRt& r = s_tiles[s_modalTile];
+  runAction(r, r.def->tap);
+  refreshModal();
+}
+
+lv_obj_t* s_modalState = nullptr;
+lv_obj_t* s_modalBtnLbl = nullptr;
+
+void refreshModal() {
+  if (s_modalTile < 0 || !s_modalCard) return;
+  const TileRt& r = s_tiles[s_modalTile];
+  lv_label_set_text(s_modalState, tileSub(r).c_str());
+  if (r.def->type == TILE_TOGGLE)
+    lv_label_set_text(s_modalBtnLbl, r.on ? "Turn off" : "Turn on");
+}
+
+// Detail card for a tile (hold action "more-info"). Phase 3 adds the HA
+// attributes here (brightness, colour, position...).
+void openModal(int tileIdx) {
+  closeModal();
+  const TileRt& r = s_tiles[tileIdx];
+  const TileDef& d = *r.def;
+  const int w = logicalW(), h = logicalH();
+  const uint32_t accent = d.hasColor ? d.color : domainColor(entityDomain(d.entity));
+
+  s_modalScrim = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_modalScrim);
+  lv_obj_set_size(s_modalScrim, w, h);
+  lv_obj_set_style_bg_color(s_modalScrim, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(s_modalScrim, LV_OPA_50, 0);
+  lv_obj_add_event_cb(s_modalScrim, onModalScrim, LV_EVENT_CLICKED, nullptr);
+
+  const int cw = w - 40 < 360 ? w - 40 : 360;
+  lv_obj_t* c = lv_obj_create(lv_layer_top());
+  s_modalCard = c;
+  lv_obj_remove_style_all(c);
+  lv_obj_set_size(c, cw, 214);
+  lv_obj_center(c);
+  lv_obj_set_style_bg_color(c, lv_color_hex(C_PANEL), 0);
+  lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(c, 22, 0);
+  lv_obj_set_style_text_color(c, lv_color_hex(C_TEXT), 0);
+  lv_obj_add_flag(c, LV_OBJ_FLAG_CLICKABLE);  // taps on the card stay on the card
+  lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* chip = lv_obj_create(c);
+  lv_obj_remove_style_all(chip);
+  lv_obj_set_size(chip, 48, 48);
+  lv_obj_set_pos(chip, 18, 18);
+  lv_obj_set_style_radius(chip, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(chip, lv_color_hex(C_CHIP), 0);
+  lv_obj_set_style_bg_opa(chip, LV_OPA_COVER, 0);
+  lv_obj_set_style_text_color(chip, lv_color_hex(accent), 0);
+  lv_obj_set_style_text_font(chip, &lv_font_montserrat_20, 0);
+  lv_obj_t* ic = lv_label_create(chip);
+  lv_label_set_text(ic, iconSymbol(d));
+  lv_obj_center(ic);
+
+  lv_obj_t* name = lv_label_create(c);
+  lv_label_set_text(name, tileLabel(d).c_str());
+  lv_obj_set_style_text_font(name, &lv_font_montserrat_20, 0);
+  lv_obj_set_pos(name, 80, 20);
+  lv_obj_set_width(name, cw - 96);
+  lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_t* ent = lv_label_create(c);
+  lv_label_set_text(ent, d.entity.length() ? d.entity.c_str() : "No entity");
+  lv_obj_set_style_text_color(ent, lv_color_hex(C_DIM), 0);
+  lv_obj_set_pos(ent, 80, 46);
+
+  s_modalState = lv_label_create(c);
+  lv_obj_set_style_text_font(s_modalState, &lv_font_montserrat_28, 0);
+  lv_obj_set_pos(s_modalState, 18, 84);
+
+  const int bw = (cw - 18 * 2 - 10) / 2;
+  lv_obj_t* primary = qpButton(c, 18, 214 - 18 - 44, bw, "", false);
+  lv_obj_set_height(primary, 44);
+  lv_obj_set_style_bg_color(primary, lv_color_hex(accent), 0);
+  lv_obj_set_style_text_color(primary, lv_color_hex(C_TEXT_ON), 0);
+  s_modalBtnLbl = lv_obj_get_child(primary, 0);
+  lv_label_set_text(s_modalBtnLbl, d.type == TILE_TOGGLE ? "" : "Run");
+  lv_obj_add_event_cb(primary, onModalPrimary, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* close = qpButton(c, 18 + bw + 10, 214 - 18 - 44, bw, "Close", false);
+  lv_obj_set_height(close, 44);
+  lv_obj_add_event_cb(close, onModalScrim, LV_EVENT_CLICKED, nullptr);
+
+  s_modalTile = tileIdx;
+  setModalOpen(true);
+  refreshModal();
+}
+
 // --- Pages -----------------------------------------------------------------------------
 lv_obj_t* makeRoot(int w, int h) {
   lv_obj_t* r = lv_obj_create(lv_screen_active());
@@ -796,6 +968,7 @@ void buildPages() {
 }
 
 void destroyPages() {
+  closeModal();
   destroyQuickPanel();
   for (int i = 0; i < s_count; i++) {
     if (s_pages[i].root) lv_obj_delete(s_pages[i].root);
@@ -1011,6 +1184,7 @@ void deckTick() {
     compCancel();
     releaseSwipe();
     hidePanelNow();
+    closeModal();
     switchTo(s_facePage);
   }
   portENTER_CRITICAL(&s_mux);
@@ -1032,6 +1206,10 @@ void deckTick() {
 }
 
 void deckFaceDirty() { s_faceDirty = true; }
+
+void deckToast(const char* text) {
+  if (s_disp) deckToastShow(text, 1800);
+}
 
 bool deckFaceMayRender() {
   if (!s_disp) return true;  // before deckBegin (or if it failed)
@@ -1095,7 +1273,8 @@ bool uiTryBeginSwipe(int dir, Src& a, Src& b, int& startOff, int& pageA) {
   bool ok = false;
   portENTER_CRITICAL(&s_mux);
   const int target = sh.active + dir;
-  if (sh.swipeEnabled && !sh.owned && !sh.panelOpen && target >= 0 && target < sh.count &&
+  if (sh.swipeEnabled && !sh.owned && !sh.panelOpen && !sh.modalOpen &&
+      target >= 0 && target < sh.count &&
       sh.valid[target] && !sh.busy[target] &&
       !(target == sh.facePage && sh.faceBusy)) {
     sh.owned = true;
@@ -1124,7 +1303,7 @@ bool uiTryBeginPanel(bool opening, Src& panel, Src& page, int& startOff, int& pa
   bool ok = false;
   portENTER_CRITICAL(&s_mux);
   const int a = sh.active;
-  if (sh.swipeEnabled && !sh.owned && sh.panelValid && !sh.panelBusy &&
+  if (sh.swipeEnabled && !sh.owned && !sh.modalOpen && sh.panelValid && !sh.panelBusy &&
       sh.panelOpen != opening) {
     if (opening) {
       page = {nullptr, 0, true};  // the live LVGL frame, no panel in it yet
