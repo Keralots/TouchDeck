@@ -87,4 +87,7 @@ void initDisplay() {
   setBacklight(brightness);
 }
 
-void applyDisplaySettings() { deckApplyRotation(dispSettings.rotation); }
+void applyDisplaySettings() {
+  deckApplyTheme(dispSettings.theme);
+  deckApplyRotation(dispSettings.rotation);
+}

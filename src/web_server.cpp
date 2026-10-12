@@ -151,6 +151,7 @@ static void handleApiConfig() {
   display["tempScale"] = dispSettings.tempScaleMax;
   display["powerScale"] = dispSettings.powerScaleW;
   display["warnThreshold"] = dispSettings.warnThresholdPct;
+  display["theme"] = dispSettings.theme;
 
   JsonObject backlight = doc["backlight"].to<JsonObject>();
   backlight["nightEnabled"] = backlightSettings.nightEnabled != 0;
@@ -230,6 +231,7 @@ static void handleConfigExport() {
   display["tempScale"] = dispSettings.tempScaleMax;
   display["powerScale"] = dispSettings.powerScaleW;
   display["warnThreshold"] = dispSettings.warnThresholdPct;
+  display["theme"] = dispSettings.theme;
 
   JsonObject backlight = doc["backlight"].to<JsonObject>();
   backlight["nightEnabled"] = backlightSettings.nightEnabled != 0;
@@ -402,6 +404,7 @@ static void handleConfigImport() {
   READ_INT(display, "tempScale", 1, 500, nextDisplay.tempScaleMax, uint16_t);
   READ_INT(display, "powerScale", 1, 65535, nextDisplay.powerScaleW, uint16_t);
   READ_INT(display, "warnThreshold", 0, 100, nextDisplay.warnThresholdPct, uint8_t);
+  READ_INT(display, "theme", 0, 1, nextDisplay.theme, uint8_t);
 
   READ_BOOL(backlight, "nightEnabled", nextBacklight.nightEnabled);
   READ_INT(backlight, "nightBrightness", 0, 255, nextBacklight.nightBrightness, uint8_t);
@@ -538,6 +541,8 @@ static void handleLedPreview() {
 
 static void handleSaveDisplay() {
   const uint8_t oldRotation = dispSettings.rotation;
+  const uint8_t oldTheme = dispSettings.theme;
+  dispSettings.theme = (uint8_t)clampedArg("theme", dispSettings.theme, 0, 1);
   dispSettings.rotation = (uint8_t)clampedArg("rotation", dispSettings.rotation, 0, 3);
   brightness = (uint8_t)clampedArg("brightness", brightness, 0, 255);
   dispSettings.tempScaleMax = (uint16_t)clampedArg("tempScale", dispSettings.tempScaleMax, 1, 500);
@@ -554,7 +559,7 @@ static void handleSaveDisplay() {
 
   saveSettings();
   refreshBacklightControl();
-  if (dispSettings.rotation != oldRotation) applyDisplaySettings();
+  if (dispSettings.rotation != oldRotation || dispSettings.theme != oldTheme) applyDisplaySettings();
   sendJsonMessage(200, true, "Display settings applied.");
 }
 

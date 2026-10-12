@@ -34,7 +34,11 @@ struct DisplaySettings {
   uint16_t tempScaleMax;      // C, default full scale of temperature tiles
   uint16_t powerScaleW;       // W, default full scale of power tiles
   uint8_t  warnThresholdPct;  // metric tiles turn amber at >= this % of scale; 0 = off
+  uint8_t  theme;             // THEME_MIDNIGHT or THEME_DAYLIGHT
 };
+
+constexpr uint8_t THEME_MIDNIGHT = 0;
+constexpr uint8_t THEME_DAYLIGHT = 1;
 
 // Network settings. NVS blob "net", layout shared with StatNode.
 struct NetworkSettings {

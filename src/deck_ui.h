@@ -22,6 +22,8 @@ void deckToast(const char* text);
 void deckRefreshNow();
 // Rotation changed in the portal: re-layout everything at the new size.
 void deckApplyRotation(uint8_t rotation);
+// Switch the colour theme (THEME_MIDNIGHT / THEME_DAYLIGHT); rebuilds the pages.
+void deckApplyTheme(uint8_t theme);
 // Portal save: validate, store /deck.json and rebuild the pages in place.
 bool deckApplyConfig(const String& text, String& err);
 // Portal upload: load the MDI font stored at uploaded, keep it as the icon

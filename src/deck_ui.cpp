@@ -30,17 +30,39 @@ constexpr uint32_t SNAP_SPACING_MS = 40;
 constexpr uint32_t STATS_MS = 10000;
 constexpr uint32_t SLIDE_MS = 280;
 
-// Mockup A ("Midnight", the default theme) colours.
-constexpr uint32_t C_BG = 0x0D0F13;
-constexpr uint32_t C_TILE = 0x1A1D23;
-constexpr uint32_t C_TILE_PRESSED = 0x2A2F38;
-constexpr uint32_t C_CHIP = 0x272B33;
-constexpr uint32_t C_TEXT = 0xE6E8EC;
-constexpr uint32_t C_TEXT_ON = 0x221602;
-constexpr uint32_t C_TITLE = 0xF1F2F4;
-constexpr uint32_t C_CLOCK = 0xC9CDD6;
-constexpr uint32_t C_OK = 0x5CC9A7;
-constexpr uint32_t C_DIM = 0x596070;
+// Theme colours (D11): Midnight (mockup A, default) or Daylight, set by
+// setPalette() before the pages are built.
+uint8_t s_theme = 0;
+uint32_t C_BG, C_TILE, C_TILE_PRESSED, C_TILE_LINE, C_CHIP, C_TEXT, C_TEXT_ON, C_TITLE,
+    C_CLOCK, C_OK, C_DIM, C_PANEL, C_TRACK, C_BUTTON;
+
+void setPalette(uint8_t theme) {
+  s_theme = theme == THEME_DAYLIGHT ? THEME_DAYLIGHT : THEME_MIDNIGHT;
+  const bool day = s_theme == THEME_DAYLIGHT;
+  C_BG = day ? 0xECEFF3 : 0x0D0F13;
+  C_TILE = day ? 0xFFFFFF : 0x1A1D23;
+  C_TILE_PRESSED = day ? 0xDFE3E9 : 0x2A2F38;
+  C_TILE_LINE = day ? 0xD9DDE4 : 0x1A1D23;
+  C_CHIP = day ? 0xE9ECF1 : 0x272B33;
+  C_TEXT = day ? 0x1D2129 : 0xE6E8EC;
+  C_TEXT_ON = 0x221602;
+  C_TITLE = day ? 0x161A20 : 0xF1F2F4;
+  C_CLOCK = day ? 0x4A5160 : 0xC9CDD6;
+  C_OK = day ? 0x23966F : 0x5CC9A7;
+  C_DIM = day ? 0x8D95A3 : 0x596070;
+  C_PANEL = day ? 0xF8F9FB : 0x161A20;
+  C_TRACK = day ? 0xD9DEE5 : 0x2E333C;
+  C_BUTTON = day ? 0xDFE3E9 : 0x272B33;
+}
+
+// An icon in its round chip: on Daylight a light tint of the accent behind a
+// darker accent, since pale accents (amber, yellow) vanish on white.
+void styleIconChip(lv_obj_t* chip, uint32_t accent) {
+  const lv_color_t a = lv_color_hex(accent);
+  const bool day = s_theme == THEME_DAYLIGHT;
+  lv_obj_set_style_bg_color(chip, day ? lv_color_mix(a, lv_color_white(), 60) : lv_color_hex(C_CHIP), 0);
+  lv_obj_set_style_text_color(chip, day ? lv_color_mix(a, lv_color_black(), 165) : a, 0);
+}
 
 struct Page {
   lv_obj_t* root;
@@ -592,7 +614,6 @@ void tileEvent(lv_event_t* e) {
 // rounded corners; the compositor skips those rows.
 constexpr int QP_H = 196;
 constexpr int QP_LIP = 20;
-constexpr uint32_t C_PANEL = 0x161A20;
 constexpr uint32_t C_SCREEN_ACCENT = 0xF6C56B;
 constexpr uint32_t C_LIGHT_ACCENT = 0xFFB35C;
 
@@ -701,7 +722,7 @@ lv_obj_t* qpSlider(lv_obj_t* parent, int x, int y, int w, uint32_t accent) {
   lv_obj_set_pos(sl, x, y);
   lv_obj_set_size(sl, w, 8);
   lv_slider_set_range(sl, 5, 255);
-  lv_obj_set_style_bg_color(sl, lv_color_hex(C_CHIP), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(sl, lv_color_hex(C_TRACK), LV_PART_MAIN);
   lv_obj_set_style_bg_color(sl, lv_color_hex(accent), LV_PART_INDICATOR);
   lv_obj_set_style_bg_color(sl, lv_color_hex(0xFFFFFF), LV_PART_KNOB);
   lv_obj_set_style_pad_all(sl, 6, LV_PART_KNOB);
@@ -771,7 +792,7 @@ lv_obj_t* qpButton(lv_obj_t* parent, int x, int y, int w, const char* text, bool
   lv_obj_set_size(b, w, 40);
   lv_obj_set_style_radius(b, 14, 0);
   lv_obj_set_style_shadow_width(b, 0, 0);
-  lv_obj_set_style_bg_color(b, lv_color_hex(C_CHIP), 0);
+  lv_obj_set_style_bg_color(b, lv_color_hex(C_BUTTON), 0);
   lv_obj_set_style_bg_color(b, lv_color_hex(0xB3A6FF), LV_STATE_CHECKED);
   lv_obj_set_style_text_color(b, lv_color_hex(C_TEXT), 0);
   lv_obj_set_style_text_color(b, lv_color_hex(C_TEXT_ON), LV_STATE_CHECKED);
@@ -1118,9 +1139,8 @@ void openModal(int tileIdx) {
   lv_obj_set_size(chip, 44, 44);
   lv_obj_set_pos(chip, 16, 16);
   lv_obj_set_style_radius(chip, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_bg_color(chip, lv_color_hex(C_CHIP), 0);
   lv_obj_set_style_bg_opa(chip, LV_OPA_COVER, 0);
-  lv_obj_set_style_text_color(chip, lv_color_hex(accent), 0);
+  styleIconChip(chip, accent);
   lv_obj_set_style_text_font(chip, &deck_font_20, 0);
   lv_obj_remove_flag(chip, LV_OBJ_FLAG_CLICKABLE);
   s_modalIcon = lv_label_create(chip);
@@ -1159,7 +1179,7 @@ void openModal(int tileIdx) {
     lv_obj_set_pos(sl, 26, 128);
     lv_obj_set_size(sl, cw - 52, 14);
     lv_slider_set_range(sl, 1, 100);
-    lv_obj_set_style_bg_color(sl, lv_color_hex(0x2E333C), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(C_TRACK), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(sl, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(sl, lv_color_hex(accent), LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(sl, LV_OPA_COVER, LV_PART_INDICATOR);
@@ -1327,7 +1347,7 @@ void makeMetricContent(TileRt& r, lv_obj_t* t, int w, int h) {
     lv_obj_set_size(r.viz, lv_pct(100), 8);
     lv_obj_align(r.viz, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_bar_set_range(r.viz, 0, 100);
-    lv_obj_set_style_bg_color(r.viz, lv_color_hex(0x2E333C), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(r.viz, lv_color_hex(C_TRACK), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(r.viz, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(r.viz, lv_color_hex(accent), LV_PART_INDICATOR);
     return;
@@ -1375,7 +1395,9 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_grid_cell(t, LV_GRID_ALIGN_STRETCH, col, w, LV_GRID_ALIGN_STRETCH, row, h);
   lv_obj_remove_flag(t, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_radius(t, 16, 0);
-  lv_obj_set_style_border_width(t, 0, 0);
+  // Daylight tiles get a hairline, white on light grey is too soft alone.
+  lv_obj_set_style_border_width(t, s_theme == THEME_DAYLIGHT ? 1 : 0, 0);
+  lv_obj_set_style_border_color(t, lv_color_hex(C_TILE_LINE), 0);
   lv_obj_set_style_pad_all(t, 9, 0);
   lv_obj_set_style_bg_color(t, lv_color_hex(C_TILE), 0);
   lv_obj_set_style_bg_color(t, lv_color_hex(accent), LV_STATE_CHECKED);
@@ -1407,8 +1429,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_radius(chip, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_border_width(chip, 0, 0);
   lv_obj_set_style_pad_all(chip, 0, 0);
-  lv_obj_set_style_bg_color(chip, lv_color_hex(C_CHIP), 0);
-  lv_obj_set_style_text_color(chip, lv_color_hex(accent), 0);
+  styleIconChip(chip, accent);
   lv_obj_t* ic = lv_label_create(chip);
   lv_obj_center(ic);
 
@@ -1848,7 +1869,7 @@ void edOpen(int page) {
       lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
       lv_obj_set_style_radius(o, 12, 0);
       lv_obj_set_style_border_width(o, 1, 0);
-      lv_obj_set_style_border_color(o, lv_color_hex(C_CHIP), 0);
+      lv_obj_set_style_border_color(o, lv_color_hex(C_TRACK), 0);
       edPlace(o, Cell{true, x, y, 1, 1});
     }
 
@@ -2176,6 +2197,7 @@ bool deckBegin(uint8_t rotation) {
     LV_STYLE_TRANSFORM_WIDTH, LV_STYLE_TRANSFORM_HEIGHT, LV_STYLE_BG_COLOR, LV_STYLE_PROP_INV};
   lv_style_transition_dsc_init(&s_pressTrans, kPressProps, lv_anim_path_ease_out, 90, 0, nullptr);
 
+  setPalette(dispSettings.theme);
   lv_obj_t* scr = lv_screen_active();
   lv_obj_set_style_bg_color(scr, lv_color_hex(C_BG), 0);
   lv_obj_set_style_text_font(scr, &deck_font_14, 0);
@@ -2270,6 +2292,18 @@ void deckApplyRotation(uint8_t rotation) {
                          LV_DISPLAY_RENDER_MODE_DIRECT);
   buildPages();
   sysScreenRelayout();
+  s_gen++;
+  lv_obj_invalidate(lv_screen_active());
+}
+
+void deckApplyTheme(uint8_t theme) {
+  if (!s_disp || theme == s_theme) return;
+  panelQuiesce();
+  releaseSwipe();
+  destroyPages();
+  setPalette(theme);
+  lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(C_BG), 0);
+  buildPages();
   s_gen++;
   lv_obj_invalidate(lv_screen_active());
 }
