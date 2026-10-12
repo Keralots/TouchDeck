@@ -73,7 +73,13 @@ const SENSOR=['sensor','binary_sensor','weather','sun','person','device_tracker'
 const autoType=d=>TOGGLE.includes(d)?'toggle':SENSOR.includes(d)?'sensor':'action';
 const DOMS=[['','All'],['light','Lights'],['switch','Switches'],['fan','Fans'],['scene','Scenes'],['script','Scripts'],['lock','Locks'],['cover','Covers'],['media_player','Media'],['climate','Climate'],['button','Buttons'],['input_boolean','Helpers'],['automation','Automations'],['sensor','Sensors'],['binary_sensor','Binary sensors']];
 const COL={light:'#F6C56B',switch:'#5CC9A7',fan:'#5CC9A7',input_boolean:'#5CC9A7',scene:'#B3A6FF',script:'#B3A6FF',lock:'#9DB8FF',cover:'#9DB8FF'};
-let deck=null,cur=0,ents=null,entMap={},dirty=false,pickFor=-1,dom='';
+let deck=null,cur=0,ents=null,entMap={},dirty=false,pickFor=-1,dom='',pcm=[];
+const PAL=['#3987E5','#00A35C','#D55181','#C98500','#199E70','#D95926','#9085E9','#E66767'];
+async function loadPc(){try{const c=await api('/api/config');pcm=(c.metrics||[]).slice().sort((a,b)=>a.id-b.id);}catch(e){pcm=[];}}
+function metricRow(t,i){const m=pcm.find(x=>x.id===t.metric);const col=t.color||PAL[((t.metric||1)-1)%8];
+  const opts=pcm.map(x=>'<option value="'+x.id+'"'+(x.id===t.metric?' selected':'')+'>'+esc(x.name)+' ('+esc(Math.round(x.value*10)/10)+' '+esc(x.unit)+')</option>').join('')+(m?'':'<option value="'+t.metric+'" selected>#'+t.metric+' (not in the last packet)</option>');
+  return '<div class="dk-tile"><div class="dk-ic" style="background:'+col+'">PC</div><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(m?m.name:'Metric')+'"><div class="dk-tsub">PC metric #'+t.metric+(m?' - '+esc(Math.round(m.value*10)/10)+' '+esc(m.unit):'')+'</div></div>'+
+  '<div class="dk-tact"><select data-m="'+i+'">'+opts+'</select><select data-st="'+i+'">'+[['number','Number'],['chart','Chart'],['bar','Bar']].map(o=>'<option value="'+o[0]+'"'+((t.style||'number')===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select><select data-s="'+i+'">'+['1x1','2x1','1x2','2x2'].map(v=>'<option'+(v===tileSize(t)?' selected':'')+'>'+v+'</option>').join('')+'</select><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div></div>';}
 async function api(p,o){const r=await fetch(p,o);const t=await r.text();let j=null;try{j=JSON.parse(t);}catch(e){}if(!r.ok)throw new Error((j&&(j.message||j.error))||t||('HTTP '+r.status));return j;}
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const domainOf=e=>{const i=(e||'').indexOf('.');return i>0?e.slice(0,i):'';};
@@ -95,11 +101,11 @@ function renderTabs(){const ps=pages();if(cur>=ps.length)cur=Math.max(0,ps.lengt
 function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.innerHTML='<p class="dk-empty">No deck pages. Add one with "+ Page".</p>';return;}
   const p=ps[cur];const [c,r]=grid(p);let used=0;p.tiles.forEach(t=>{const [w,h]=tileSize(t).split('x').map(Number);used+=w*h;});
   let h='<div class="grid-2"><div class="field"><label class="field-label">Page name</label><input type="text" id="dkPName" value="'+esc(p.name||'')+'"></div><div class="field"><label class="field-label">Grid (columns x rows)</label><div class="dk-row"><select id="dkPCols" style="width:auto">'+[2,3,4,5,6].map(n=>'<option'+(n===c?' selected':'')+'>'+n+'</option>').join('')+'</select><span>x</span><select id="dkPRows" style="width:auto">'+[2,3,4].map(n=>'<option'+(n===r?' selected':'')+'>'+n+'</option>').join('')+'</select><button type="button" class="btn btn-danger" id="dkPDel" style="margin-left:auto">Delete page</button></div></div></div>';
-  h+='<div class="dk-tiles">'+p.tiles.map((t,i)=>{const d=domainOf(t.entity);const en=entMap[t.entity];const nm=en&&en.name?en.name:(t.entity||'No entity');
+  h+='<div class="dk-tiles">'+p.tiles.map((t,i)=>{if(t.type==='metric')return metricRow(t,i);const d=domainOf(t.entity);const en=entMap[t.entity];const nm=en&&en.name?en.name:(t.entity||'No entity');
     const cp=tileCp(t);
     return '<div class="dk-tile"><button type="button" class="dk-ic'+(cp?' mdi':'')+'" data-ic="'+i+'" title="'+esc(cp?(t.icon||(en&&en.icon)||'automatic'):'Choose an icon')+'" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+(cp?String.fromCodePoint(cp):esc((d||'?').slice(0,2).toUpperCase()))+'</button><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="dk-tsub">'+esc(t.entity||'no entity')+(en&&en.state?' - '+esc(en.state)+(en.unit?' '+esc(en.unit):''):'')+'</div></div>'+
     '<div class="dk-tact"><select data-t="'+i+'"><option value="toggle"'+(t.type==='toggle'?' selected':'')+'>Switch</option><option value="action"'+(t.type==='action'?' selected':'')+'>Button</option><option value="sensor"'+(t.type==='sensor'?' selected':'')+'>Sensor</option></select><select data-s="'+i+'">'+['1x1','2x1','1x2','2x2'].map(v=>'<option'+(v===tileSize(t)?' selected':'')+'>'+v+'</option>').join('')+'</select><button type="button" class="btn" data-e="'+i+'">Entity</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div></div>';}).join('')+'</div>';
-  h+='<p class="dk-cap'+(used>c*r?' over':'')+'">'+used+' of '+(c*r)+' cells used'+(used>c*r?' - tiles that do not fit are not shown':'')+'</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button></div>';
+  h+='<p class="dk-cap'+(used>c*r?' over':'')+'">'+used+' of '+(c*r)+' cells used'+(used>c*r?' - tiles that do not fit are not shown':'')+'</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button></div><p class="field-hint">Chart and Bar need a 2x1 or bigger tile; a 1x1 tile shows the number.</p>';
   el.innerHTML=h;
   $('dkPName').oninput=e=>{p.name=e.target.value;setDirty(true);renderTabs();};
   $('dkPCols').onchange=e=>{p.layouts=p.layouts||{};p.layouts.landscape={cols:+e.target.value,rows:grid(p)[1]};setDirty(true);renderPage();};
@@ -112,7 +118,10 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   el.querySelectorAll('[data-ic]').forEach(x=>x.onclick=()=>openIcons(+x.dataset.ic));
   el.querySelectorAll('[data-u]').forEach(x=>x.onclick=()=>{const i=+x.dataset.u;if(i<1)return;const t=p.tiles.splice(i,1)[0];p.tiles.splice(i-1,0,t);setDirty(true);renderPage();});
   el.querySelectorAll('[data-x]').forEach(x=>x.onclick=()=>{p.tiles.splice(+x.dataset.x,1);setDirty(true);renderPage();});
-  $('dkAddTile').onclick=()=>openPicker(-1);}
+  $('dkAddTile').onclick=()=>openPicker(-1);
+  $('dkAddPc').onclick=async()=>{if(!pcm.length)await loadPc();const usedIds=p.tiles.filter(t=>t.type==='metric').map(t=>t.metric);const m=pcm.find(x=>!usedIds.includes(x.id))||pcm[0];if(!m){alert('No PC metrics yet - start the companion app on the PC.');return;}p.tiles.push({id:'m'+Date.now().toString(36),type:'metric',metric:m.id,style:'number'});setDirty(true);renderPage();};
+  el.querySelectorAll('[data-m]').forEach(x=>x.onchange=e=>{p.tiles[+x.dataset.m].metric=+e.target.value;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-st]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.st];if(e.target.value==='number')delete t.style;else t.style=e.target.value;setDirty(true);});}
 function render(){renderTabs();renderPage();}
 
 /* entity picker */
@@ -174,6 +183,7 @@ $('dkSave').onclick=async()=>{try{await api('/api/deck',{method:'POST',headers:{
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
 
 (async function init(){haStatus();icRefresh();setInterval(()=>{if(visible())haStatus();},3000);
+  await loadPc();
   try{const r=await api('/api/deck');deck=r.deck;$('dkHeader').checked=r.header!==false;render();}catch(e){$('dkPage').innerHTML='<p class="dk-empty">'+esc(e.message)+'</p>';}
   try{await loadEnts();}catch(e){}})();
 })();)JS";

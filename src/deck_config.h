@@ -13,6 +13,9 @@
 //           "tap":  { "action": "toggle" },
 //           "hold": { "action": "more-info" } } ] } ] }
 //
+// A PC metric tile: { "type": "metric", "metric": <companion id>,
+//   "style": "number" | "chart" | "bar", "scaleMax": 0 (= by unit) }.
+//
 // label / icon null = take them from Home Assistant later (Phase 3); until
 // then the entity id stands in. `sub` is an optional fixed second line.
 // Positions are keyed by orientation; a tile without one for the current
@@ -33,7 +36,8 @@ constexpr int ORIENT_PORTRAIT = 1;
 constexpr int MAX_DECK_PAGES = 8;
 constexpr int MAX_PAGE_TILES = 24;
 
-enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR };
+enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC };
+enum MetricStyle : uint8_t { METRIC_NUMBER = 0, METRIC_CHART, METRIC_BAR };
 enum ActionKind : uint8_t {
   ACT_NONE = 0,
   ACT_TOGGLE,        // toggle the tile's entity
@@ -63,6 +67,9 @@ struct TileDef {
   uint32_t color = 0;
   TilePos pos[2];
   TileAction tap, hold;
+  uint8_t metric = 0;  // TILE_METRIC: companion metric id
+  MetricStyle style = METRIC_NUMBER;
+  uint16_t scaleMax = 0;  // 0 = full scale by unit
 };
 
 struct PageDef {

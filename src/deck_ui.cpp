@@ -10,6 +10,7 @@
 #include "settings.h"
 #include "led.h"
 #include "pc_metrics.h"
+#include "renderer_internal.h"
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <WiFi.h>
@@ -71,6 +72,13 @@ struct TileRt {
   bool pending;           // optimistic toggle waiting for HA
   bool pendingOn;
   uint32_t pendingUntil;
+  // PC metric tiles
+  lv_obj_t* unit;
+  lv_obj_t* viz;          // chart or bar
+  lv_chart_series_t* ser;
+  int32_t* pts;           // chart points (PC_HISTORY_LEN), LVGL heap
+  bool warn;
+  bool compact;           // 1x1 number tile: value font shrinks to fit
 };
 
 lgfx::LGFX_Sprite* s_face = nullptr;
@@ -1101,6 +1109,174 @@ lv_obj_t* makeRoot(int w, int h) {
   return r;
 }
 
+// --- PC metric tiles ------------------------------------------------------------------
+// Identity colours in slot order, the same set the faces use.
+constexpr uint32_t kMetricPalette[8] = {0x3987E5, 0x00A35C, 0xD55181, 0xC98500,
+                                        0x199E70, 0xD95926, 0x9085E9, 0xE66767};
+constexpr uint32_t C_WARN = 0xE5A50A;
+
+uint32_t metricAccent(const TileDef& d) {
+  return d.hasColor ? d.color : kMetricPalette[(d.metric - 1) % 8];
+}
+
+void setText(lv_obj_t* l, const char* text) {
+  if (strcmp(lv_label_get_text(l), text)) lv_label_set_text(l, text);
+}
+
+// Pull the latest companion packet into one metric tile.
+void applyPcToTile(TileRt& r) {
+  const TileDef& d = *r.def;
+  const PcMetric* m = pcData.online ? pcMetricFindById(d.metric) : nullptr;
+  if (!m) {
+    setText(r.sub, "--");
+    setText(r.unit, "");
+    if (!d.label.length()) setText(r.name, "PC offline");
+    lv_obj_set_style_opa(r.obj, LV_OPA_50, 0);
+    return;
+  }
+  lv_obj_set_style_opa(r.obj, LV_OPA_COVER, 0);
+  if (!d.label.length()) setText(r.name, m->name);
+  MetricText mt;
+  formatMetricText(*m, m->value, mt);
+  setText(r.sub, mt.value);
+  setText(r.unit, mt.unit);
+  if (r.compact) {
+    // "2.3k RPM" overflows a narrow 1x1 tile at 28 px: drop the value to 20 px.
+    lv_point_t v, u;
+    lv_text_get_size(&v, mt.value, &deck_font_28, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_text_get_size(&u, mt.unit, &deck_font_14, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_obj_update_layout(r.obj);
+    const bool fits = v.x + 4 + u.x <= lv_obj_get_content_width(r.obj);
+    const lv_font_t* f = fits ? &deck_font_28 : &deck_font_20;
+    if (lv_obj_get_style_text_font(r.sub, LV_PART_MAIN) != f) lv_obj_set_style_text_font(r.sub, f, 0);
+  }
+
+  GaugeSlot gs = {d.metric, GAUGE_TYPE_AUTO, d.scaleMax, 0};
+  const float scale = slotScaleMax(gs, *m);
+  const float pct = scale > 0 ? m->value * 100.0f / scale : 0;
+  // Same rule as the faces: enter at warnThresholdPct, leave 5 points below.
+  const float enter = (float)dispSettings.warnThresholdPct;
+  const bool warn = enter > 0 && (r.warn ? pct >= enter - 5 : pct >= enter);
+  if (warn != r.warn) {
+    r.warn = warn;
+    lv_obj_set_style_text_color(r.sub, lv_color_hex(warn ? C_WARN : C_TEXT), 0);
+  }
+  const uint32_t accent = warn ? C_WARN : metricAccent(d);
+  if (r.viz && d.style == METRIC_BAR) {
+    lv_bar_set_value(r.viz, (int32_t)constrain(pct, 0.0f, 100.0f), LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(r.viz, lv_color_hex(accent), LV_PART_INDICATOR);
+  } else if (r.viz && r.pts) {
+    // History as tenths, oldest first, padded on the left while it fills.
+    const SlotHistory& hs = pcHistoryById[d.metric];
+    const int n = hs.metricId == d.metric ? hs.count : 0;
+    float lo = 1e9f, hi = -1e9f;
+    for (int i = 0; i < n; i++) {
+      const float v = pcHistoryAt(hs, (uint8_t)i);
+      lo = v < lo ? v : lo;
+      hi = v > hi ? v : hi;
+    }
+    for (int i = 0; i < PC_HISTORY_LEN; i++) {
+      const int k = i - (PC_HISTORY_LEN - n);
+      r.pts[i] = k < 0 ? LV_CHART_POINT_NONE : (int32_t)lroundf(pcHistoryAt(hs, (uint8_t)k) * 10);
+    }
+    if (n) {
+      const float pad = (hi - lo) * 0.15f + 0.5f;
+      lv_chart_set_axis_range(r.viz, LV_CHART_AXIS_PRIMARY_Y, (int32_t)floorf((lo - pad) * 10),
+                              (int32_t)ceilf((hi + pad) * 10));
+    }
+    lv_chart_set_series_color(r.viz, r.ser, lv_color_hex(accent));
+    lv_chart_refresh(r.viz);
+  }
+}
+
+// Number big at the bottom, or a chart / bar under a smaller number (2x1 and
+// up only; a 1x1 tile always shows the number).
+void makeMetricContent(TileRt& r, lv_obj_t* t, int w, int h) {
+  const TileDef& d = *r.def;
+  const bool roomy = w >= 2 || h >= 2;
+  const MetricStyle style = roomy ? d.style : METRIC_NUMBER;
+  const uint32_t accent = metricAccent(d);
+  lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);  // read-only
+
+  r.name = lv_label_create(t);
+  lv_label_set_text(r.name, d.label.length() ? d.label.c_str() : "");
+  const lv_font_t* nameFont = roomy ? &deck_font_20 : &deck_font_14;
+  lv_obj_set_style_text_font(r.name, nameFont, 0);
+  lv_obj_set_style_text_color(r.name, lv_color_hex(accent), 0);
+  lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_size(r.name, lv_pct(100), lv_font_get_line_height(nameFont));
+  lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, 0, -2);
+
+  // Value and unit side by side, bottoms aligned.
+  lv_obj_t* row = lv_obj_create(t);
+  lv_obj_remove_style_all(row);
+  lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+  lv_obj_set_style_pad_column(row, 4, 0);
+  lv_obj_remove_flag(row, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+  r.sub = lv_label_create(row);
+  lv_label_set_text(r.sub, "--");
+  r.unit = lv_label_create(row);
+  lv_label_set_text(r.unit, "");
+  lv_obj_set_style_text_opa(r.unit, LV_OPA_70, 0);
+  lv_obj_set_style_pad_bottom(r.unit, 4, 0);
+
+  if (style == METRIC_NUMBER) {
+    lv_obj_set_style_text_font(r.sub, roomy ? &lv_font_montserrat_40 : &deck_font_28, 0);
+    lv_obj_set_style_text_font(r.unit, roomy ? &deck_font_20 : &deck_font_14, 0);
+    lv_obj_align(row, LV_ALIGN_BOTTOM_LEFT, 0, 2);
+    r.compact = !roomy;
+    return;
+  }
+  lv_obj_set_style_text_font(r.sub, &deck_font_28, 0);
+  lv_obj_set_style_text_font(r.unit, &deck_font_14, 0);
+  if (style == METRIC_BAR) {
+    lv_obj_align(row, LV_ALIGN_LEFT_MID, 0, 4);
+    r.viz = lv_bar_create(t);
+    lv_obj_set_size(r.viz, lv_pct(100), 8);
+    lv_obj_align(r.viz, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_bar_set_range(r.viz, 0, 100);
+    lv_obj_set_style_bg_color(r.viz, lv_color_hex(0x2E333C), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(r.viz, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(r.viz, lv_color_hex(accent), LV_PART_INDICATOR);
+    return;
+  }
+  // Chart: the number top right, the line under it.
+  lv_obj_align(row, LV_ALIGN_TOP_RIGHT, 0, -6);
+  lv_obj_set_width(r.name, lv_pct(55));
+  r.viz = lv_chart_create(t);
+  lv_obj_remove_style_all(r.viz);
+  lv_obj_set_size(r.viz, lv_pct(100), lv_pct(62));
+  lv_obj_align(r.viz, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_chart_set_type(r.viz, LV_CHART_TYPE_LINE);
+  lv_chart_set_div_line_count(r.viz, 0, 0);
+  lv_chart_set_point_count(r.viz, PC_HISTORY_LEN);
+  lv_obj_set_style_line_width(r.viz, 2, LV_PART_ITEMS);
+  lv_obj_set_style_width(r.viz, 0, LV_PART_INDICATOR);
+  lv_obj_set_style_height(r.viz, 0, LV_PART_INDICATOR);
+  lv_obj_remove_flag(r.viz, LV_OBJ_FLAG_CLICKABLE);
+  r.ser = lv_chart_add_series(r.viz, lv_color_hex(accent), LV_CHART_AXIS_PRIMARY_Y);
+  r.pts = (int32_t*)lv_malloc(sizeof(int32_t) * PC_HISTORY_LEN);
+  for (int i = 0; i < PC_HISTORY_LEN; i++) r.pts[i] = LV_CHART_POINT_NONE;
+  lv_chart_set_series_ext_y_array(r.viz, r.ser, r.pts);
+}
+
+uint32_t s_pcSeen = 0;
+bool s_pcOnline = false;
+
+// New companion packet or a change of the online flag: refresh metric tiles.
+void pcSync(bool force) {
+  if (!force && pcData.lastReceived == s_pcSeen && pcData.online == s_pcOnline) return;
+  s_pcSeen = pcData.lastReceived;
+  s_pcOnline = pcData.online;
+  for (TileRt& r : s_tiles) {
+    if (r.def->type != TILE_METRIC) continue;
+    applyPcToTile(r);
+    markPageStale(r.page);
+  }
+}
+
 void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, int w, int h) {
   const String domain = entityDomain(def.entity);
   const uint32_t accent = def.hasColor ? def.color : domainColor(domain);
@@ -1123,6 +1299,17 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_transform_height(t, -3, LV_STATE_PRESSED);
   lv_obj_set_style_transition(t, &s_pressTrans, 0);
   lv_obj_set_style_transition(t, &s_pressTrans, LV_STATE_PRESSED);
+
+  if (def.type == TILE_METRIC) {
+    TileRt r = {};
+    r.def = &def;
+    r.page = page;
+    r.obj = t;
+    makeMetricContent(r, t, w, h);
+    s_tiles.push_back(r);
+    applyPcToTile(s_tiles.back());
+    return;
+  }
 
   lv_obj_t* chip = lv_obj_create(t);
   lv_obj_remove_flag(chip, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
@@ -1168,7 +1355,14 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   }
 
   const int iconPx = def.type == TILE_SENSOR ? 16 : 20;
-  TileRt r = {&def, page, t, name, sub, ic, iconPx, 0, false, 0, false, false, 0};
+  TileRt r = {};
+  r.def = &def;
+  r.page = page;
+  r.obj = t;
+  r.name = name;
+  r.sub = sub;
+  r.icon = ic;
+  r.iconPx = iconPx;
   r.iconCp = showIcon(ic, def, nullptr, false, iconPx, 0);
   lv_label_set_text(sub, tileSub(r).c_str());
   const size_t idx = s_tiles.size();
@@ -1350,6 +1544,8 @@ void destroyPages() {
     s_pages[i] = {};
   }
   s_count = 0;
+  for (TileRt& r : s_tiles)
+    if (r.pts) lv_free(r.pts);
   s_tiles.clear();
   s_canvas = nullptr;
   portENTER_CRITICAL(&s_mux);
@@ -1584,6 +1780,7 @@ void deckTick() {
   updateHeaders();
   qpUpdateStatus(false);
   haSync();
+  pcSync(false);
   lv_timer_handler();
   refreshOneSnapshot();
   logStats();

@@ -2,6 +2,7 @@
 #if defined(BOARD_IS_JC3248W535)
 
 #include "deck_config.h"
+#include "config.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 
@@ -177,6 +178,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       if (!strcmp(tt, "toggle")) t.type = TILE_TOGGLE;
       else if (!strcmp(tt, "action")) t.type = TILE_ACTION;
       else if (!strcmp(tt, "sensor")) t.type = TILE_SENSOR;
+      else if (!strcmp(tt, "metric")) t.type = TILE_METRIC;
       else {
         if (err) *err = where + ": unknown type '" + tt + "'";
         return false;
@@ -188,6 +190,19 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       t.hasColor = parseColor(tv["color"] | (const char*)nullptr, t.color);
       parsePos(tv["pos"]["landscape"], t.pos[ORIENT_LANDSCAPE]);
       parsePos(tv["pos"]["portrait"], t.pos[ORIENT_PORTRAIT]);
+      if (t.type == TILE_METRIC) {
+        const int m = tv["metric"] | 0;
+        if (m < 1 || m > MAX_METRICS) {
+          if (err) *err = where + ": metric id must be 1.." + String(MAX_METRICS);
+          return false;
+        }
+        t.metric = (uint8_t)m;
+        const char* st = tv["style"] | "number";
+        t.style = !strcmp(st, "chart") ? METRIC_CHART : !strcmp(st, "bar") ? METRIC_BAR : METRIC_NUMBER;
+        t.scaleMax = (uint16_t)constrain((int)(tv["scaleMax"] | 0), 0, 65535);
+        p.tiles.push_back(t);
+        continue;  // read-only: no tap or hold actions
+      }
       if (!parseAction(tv["tap"], t.tap, err, where + " tap")) return false;
       if (!parseAction(tv["hold"], t.hold, err, where + " hold")) return false;
       // Defaults: a toggle toggles, anything holds to its detail card.
