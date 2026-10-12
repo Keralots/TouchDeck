@@ -136,9 +136,16 @@ void entityFromAttrs(HaEntity& e, JsonObjectConst a) {
   if (a["device_class"].is<const char*>()) e.deviceClass = (const char*)a["device_class"];
   // Present-but-null (a light turning off) must clear it, so look at the
   // keys rather than at a["brightness"], which cannot tell null from absent.
-  for (JsonPairConst kv : a)
-    if (!strcmp(kv.key().c_str(), "brightness"))
+  for (JsonPairConst kv : a) {
+    const char* k = kv.key().c_str();
+    if (!strcmp(k, "brightness")) {
       e.brightness = kv.value().is<int>() ? kv.value().as<int>() : -1;
+    } else if (!strcmp(k, "current_position") || !strcmp(k, "percentage")) {
+      e.level = kv.value().is<float>() ? (int)lroundf(kv.value().as<float>()) : -1;
+    } else if (!strcmp(k, "volume_level")) {
+      e.level = kv.value().is<float>() ? (int)lroundf(kv.value().as<float>() * 100) : -1;
+    }
+  }
   if (a["min"].is<float>()) e.numMin = a["min"].as<float>();
   if (a["max"].is<float>()) e.numMax = a["max"].as<float>();
   if (a["step"].is<float>()) e.numStep = a["step"].as<float>();
@@ -165,6 +172,7 @@ void applyEvent(JsonObjectConst ev) {
     e.unit = "";
     e.deviceClass = "";
     e.brightness = -1;
+    e.level = -1;
     e.numMin = e.numMax = e.numStep = NAN;
     entityFromAttrs(e, kv.value()["a"].as<JsonObjectConst>());
     e.version++;
@@ -182,6 +190,9 @@ void applyEvent(JsonObjectConst ev) {
     for (JsonVariantConst k : kv.value()["-"]["a"].as<JsonArrayConst>()) {
       const char* key = k | "";
       if (!strcmp(key, "brightness")) e.brightness = -1;
+      else if (!strcmp(key, "current_position") || !strcmp(key, "percentage") ||
+               !strcmp(key, "volume_level"))
+        e.level = -1;
       else if (!strcmp(key, "icon")) e.icon = "";
       else if (!strcmp(key, "unit_of_measurement")) e.unit = "";
       else if (!strcmp(key, "device_class")) e.deviceClass = "";

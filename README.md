@@ -15,9 +15,14 @@ WebSocket API and receives PC metrics over UDP on the LAN.
 - **Columns:** pages stacked into a column. Swipe left and right between
   columns, up and down between the pages of a column.
 - **Home Assistant:** live state over the WebSocket API, optimistic toggles,
-  scenes / scripts / buttons, a detail card on long press with a brightness
-  slider for lights. Icons come from Material Design Icons, the set Home
-  Assistant uses (the font is installed from the portal).
+  scenes / scripts / buttons, a detail card on long press with a level
+  slider (light brightness, cover position, fan speed, volume, numbers).
+  Icons come from Material Design Icons, the set Home Assistant uses (the
+  font is installed from the portal).
+- **Slider tiles:** a light, cover, fan, media player or number as a tile
+  that fills to its level; drag sideways on it to change the level (the page
+  does not swipe there), tap to toggle, hold for the card. Pick "Slider" as
+  the tile type in the portal.
 - **Confirm before acting:** a tile can ask on the device before it turns
   something off (a printer mid-print) or before every action. Set it under
   the tile's "more options" button in the portal.

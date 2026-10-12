@@ -42,6 +42,8 @@ bool deckTestCard(const String& tileId);
 // its confirm card.
 bool deckTestTap(const String& tileId, bool hold);
 bool deckTestConfirm(bool ok);
+// Bench hook (/api/deck/slide): a slider tile drag ending at pct.
+bool deckTestSlide(const String& tileId, int pct);
 // Bench hook (/api/deck/panel): open or close the quick panel with its slide.
 bool deckTestPanel(bool open);
 // Bench hook (/api/deck/edit): drive the on-device edit mode. op = open |
@@ -57,6 +59,9 @@ namespace deck {
 bool uiTryBeginSwipe(int dir, bool vertical, Src& a, Src& b, int& startOff, int& idxA);
 // The compositor refused the drag after a uiTryBegin*() call succeeded.
 void uiSwipeAborted();
+// Touch task: true when (x, y) is on a slider tile of the shown page, where a
+// drag moves the slider instead of the page.
+bool uiNoSwipeAt(int x, int y);
 // Touch task: claim a quick-panel drag (opening = pull down, else push up).
 // Fills the panel image, the page under it, the starting offset and the
 // panel height in rows.
