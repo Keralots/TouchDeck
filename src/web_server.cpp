@@ -1702,8 +1702,16 @@ static void handleDeckSwipe() {
 }
 
 // --- Deck page and its API ----------------------------------------------------
+// The Deck section of the portal; loaded by portal.js only when /api/config
+// reports "deck". no-cache so a firmware update is picked up at once.
+static void handleDeckJs() {
+  streamAsset(DECK_JS, sizeof(DECK_JS) - 1, "application/javascript", "no-cache");
+}
+
+// Old address of the separate Deck page: the section now lives in the portal.
 static void handleDeckPage() {
-  streamAsset(DECK_HTML, sizeof(DECK_HTML) - 1, "text/html; charset=utf-8", "no-cache");
+  server.sendHeader("Location", "/");
+  server.send(302, "text/plain", "");
 }
 
 // GET /api/deck -> {"source": "...", "deck": <deck.json>}
@@ -1925,6 +1933,7 @@ void initWebServer() {
   server.on("/api/deck/swipe", HTTP_POST, handleDeckSwipe);
   server.on("/api/deck/panel", HTTP_POST, handleDeckPanel);
   server.on("/deck", HTTP_GET, handleDeckPage);
+  server.on("/deck.js", HTTP_GET, handleDeckJs);
   server.on("/api/deck", HTTP_GET, handleDeckGet);
   server.on("/api/deck", HTTP_POST, handleDeckPost);
   server.on("/api/ha/status", HTTP_GET, handleHaStatus);
