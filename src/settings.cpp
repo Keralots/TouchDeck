@@ -74,6 +74,7 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.tempScaleMax     = GAUGE_TEMP_SCALE_DEFAULT;
   ds.powerScaleW      = GAUGE_POWER_SCALE_DEFAULT;
   ds.warnThresholdPct = 90;
+  ds.theme            = THEME_MIDNIGHT;
 }
 
 void defaultBacklightSettings(BacklightSettings& bs) {
@@ -124,6 +125,8 @@ void loadSettings() {
     dispSettings.powerScaleW = prefs.getUShort("pscale", dispSettings.powerScaleW);
     dispSettings.warnThresholdPct = prefs.getUChar("warnpct", dispSettings.warnThresholdPct);
   }
+  dispSettings.theme = prefs.getUChar("theme", THEME_MIDNIGHT) == THEME_DAYLIGHT ? THEME_DAYLIGHT
+                                                                                : THEME_MIDNIGHT;
   if (prefs.getBytesLength("net") == sizeof(NetworkSettings))
     prefs.getBytes("net", &netSettings, sizeof(NetworkSettings));
   if (prefs.getBytesLength("backlight") == sizeof(BacklightSettings)) {
@@ -159,6 +162,7 @@ void saveSettings() {
   prefs.putUShort("tscale", dispSettings.tempScaleMax);
   prefs.putUShort("pscale", dispSettings.powerScaleW);
   prefs.putUChar("warnpct", dispSettings.warnThresholdPct);
+  prefs.putUChar("theme", dispSettings.theme);
   prefs.putBytes("net", &netSettings, sizeof(NetworkSettings));
   prefs.putBytes("backlight", &backlightSettings, sizeof(BacklightSettings));
   prefs.putBytes("led", &ledSettings, sizeof(LedSettings));

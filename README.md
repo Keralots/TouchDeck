@@ -41,7 +41,8 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
   tiles, entity and icon pickers, columns, and a grid editor: drag tiles to
   move or swap them, resize from the corner, separately for landscape and
   portrait.
-- **Display:** rotation, brightness, night schedule, PC metric tile scales.
+- **Display:** rotation, theme (Midnight or Daylight), brightness, night
+  schedule, PC metric tile scales.
 - **Time:** 12/24 h clock and timezone.
 - **Hardware:** the status LED.
 - **Network:** WiFi, hostname / mDNS, static IP.
