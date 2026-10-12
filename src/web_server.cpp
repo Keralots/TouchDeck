@@ -755,10 +755,10 @@ static void handleLiveScreenshot() {
   free(row);
 }
 
-// POST /api/deck/swipe?dir=1|-1 - bench hook, one full page slide.
+// POST /api/deck/swipe?dir=1|-1[&axis=v] - bench hook, one full page slide.
 static void handleDeckSwipe() {
   const int dir = server.hasArg("dir") ? server.arg("dir").toInt() : 1;
-  const bool ok = deckTestSwipe(dir);
+  const bool ok = deckTestSwipe(dir, server.arg("axis") == "v");
   sendJsonMessage(ok ? 200 : 409, ok, ok ? "Swipe started" : "Swipe not possible now");
 }
 

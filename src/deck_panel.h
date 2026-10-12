@@ -57,19 +57,21 @@ void panelPostLv(int idx, uint32_t gen);
 bool panelWaitLvReady(uint32_t timeoutMs);
 
 // --- Page-slide compositor ---------------------------------------------------
-// The visible strip is A | B, offset `off` pixels into it (0 = all A,
-// logicalW() = all B). Only the touch task drives drags; only the flush task
-// advances animations.
+// The visible strip is A | B (or A over B), offset `off` pixels into it
+// (0 = all A, logicalW() or logicalH() = all B). Only the touch task drives
+// drags; only the flush task advances animations.
 enum CompMode : uint8_t { COMP_NONE = 0, COMP_DRAG, COMP_ANIM, COMP_HOLD };
 
-// Horizontal page strip; pageA is the pager index of A (for the page dots).
-bool compBeginDrag(const Src& a, const Src& b, int off, int pageA);
+// Page strip, horizontal (columns) or vertical (pages of a column); pageA is
+// the dot index of A on that axis.
+bool compBeginDrag(const Src& a, const Src& b, int off, int pageA, bool vertical);
 // Vertical: `panel` (panel.h rows, full width) pulled down over `page`, which
 // is dimmed as the panel opens. off = visible panel rows, 0..panel.h.
 bool compBeginPanel(const Src& panel, const Src& page, int off);
-// Page count and the page LVGL shows, for the page dots the flush task draws
-// during and shortly after a horizontal slide.
-void panelSetPager(int count, int active);
+// Column count and the column shown, plus the page count of that column and
+// the page shown in it, for the dots the flush task draws during and shortly
+// after a slide.
+void panelSetPager(int count, int active, int vCount, int vActive);
 void compDrag(int off);
 // Animate to `toOff` over durMs. landing != 0 means the gesture ends in a new
 // state (another page, panel open/closed): the last frame stays frozen until

@@ -18,7 +18,9 @@
 // label / icon null = take them from Home Assistant later (Phase 3); until
 // then the entity id stands in. `sub` is an optional fixed second line.
 // Positions are keyed by orientation; a tile without one for the current
-// orientation flows into the next free cell. Pages of type "metrics" (left
+// orientation flows into the next free cell. Adjacent pages with the same
+// "group" stack into one column: left/right moves between columns, up/down
+// between the pages of a column. Pages of type "metrics" (left
 // over from StatNode) are skipped.
 #ifndef DECK_CONFIG_H
 #define DECK_CONFIG_H
@@ -71,6 +73,7 @@ struct TileDef {
 
 struct PageDef {
   String id, name;
+  String group;  // adjacent pages with the same group form one column
   uint8_t cols[2] = {4, 3};
   uint8_t rows[2] = {3, 4};
   std::vector<TileDef> tiles;

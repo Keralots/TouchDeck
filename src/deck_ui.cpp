@@ -103,8 +103,16 @@ struct Shared {
   bool valid[MAX_PAGES] = {};
   bool busy[MAX_PAGES] = {};
   Src src[MAX_PAGES] = {};
-  // What the current compositor gesture is, for its landing.
+  // Columns: adjacent pages of one group. colCur is the page a column shows
+  // when it is swiped to (the one it showed last).
+  int nCols = 0;
+  int col[MAX_PAGES] = {};
+  int colFirst[MAX_PAGES] = {};
+  int colLen[MAX_PAGES] = {};
+  int colCur[MAX_PAGES] = {};
+  // What the current compositor gesture is, and for a page slide where it lands.
   enum Gesture : uint8_t { GEST_PAGE, GEST_PANEL_OPEN, GEST_PANEL_CLOSE } gesture = GEST_PAGE;
+  int target = 0;
   bool panelOpen = false;
   bool modalOpen = false;  // detail card up: no swipes or panel
   bool panelValid = false;
@@ -274,28 +282,33 @@ void markPageStale(int page) {
 
 // --- Navigation -------------------------------------------------------------------------
 void switchTo(int page);
+void setPager(int page);
 void releaseSwipe();
 
-// Slide one page toward dir through the compositor, as a fling would.
-bool slideBy(int dir) {
+// Slide one column (or, vertical, one page of the column) toward dir through
+// the compositor, as a fling would.
+bool slideBy(int dir, bool vertical) {
   Src a, b;
-  int so, pageA;
-  if (!uiTryBeginSwipe(dir, a, b, so, pageA)) return false;
-  if (!compBeginDrag(a, b, so, pageA)) {
+  int so, idxA;
+  if (!uiTryBeginSwipe(dir, vertical, a, b, so, idxA)) return false;
+  if (!compBeginDrag(a, b, so, idxA, vertical)) {
     releaseSwipe();
     return false;
   }
-  compRelease(dir > 0 ? logicalW() : 0, SLIDE_MS, (int8_t)dir);
+  const int full = vertical ? logicalH() : logicalW();
+  compRelease(dir > 0 ? full : 0, SLIDE_MS, (int8_t)dir);
   return true;
 }
 
 void goToPage(const String& id) {
   for (int i = 0; i < s_count; i++) {
     if (!s_pages[i].def || s_pages[i].def->id != id) continue;
-    const int d = i - sh.active;
-    if (d == 0) return;
-    if ((d == 1 || d == -1) && slideBy(d)) return;
-    switchTo(i);  // not adjacent (or images not ready): jump
+    const int a = sh.active;
+    if (i == a) return;
+    const int dc = sh.col[i] - sh.col[a];
+    if (dc == 0 && (i - a == 1 || i - a == -1) && slideBy(i - a, true)) return;
+    if ((dc == 1 || dc == -1) && sh.colCur[sh.col[i]] == i && slideBy(dc, false)) return;
+    switchTo(i);  // not a neighbour (or images not ready): jump
     return;
   }
 }
@@ -1476,9 +1489,23 @@ void buildPages() {
   for (int i = 0; i < MAX_PAGES; i++) { sh.valid[i] = false; sh.busy[i] = false; }
   const int active = sh.active < s_count ? sh.active : 0;
   sh.active = active;
+  sh.nCols = 0;
+  for (int i = 0; i < s_count; i++) {
+    const String& g = s_pages[i].def->group;
+    const bool joins = i > 0 && g.length() && g == s_pages[i - 1].def->group;
+    if (!joins) {
+      sh.colFirst[sh.nCols] = i;
+      sh.colLen[sh.nCols] = 0;
+      sh.colCur[sh.nCols] = i;
+      sh.nCols++;
+    }
+    sh.col[i] = sh.nCols - 1;
+    sh.colLen[sh.nCols - 1]++;
+  }
+  sh.colCur[sh.col[active]] = active;
   portEXIT_CRITICAL(&s_mux);
 
-  panelSetPager(s_count, active);
+  setPager(active);
   // Inactive pages wait just off the right edge: they keep their layout and
   // can be snapshotted, but their invalidations are clipped away.
   for (int i = 0; i < s_count; i++) lv_obj_set_pos(s_pages[i].root, i == active ? 0 : w, 0);
@@ -1486,6 +1513,11 @@ void buildPages() {
   s_lastWifi = -1;
   buildQuickPanel();
   collectEntities();
+}
+
+void setPager(int page) {
+  const int c = sh.col[page];
+  panelSetPager(sh.nCols, c, sh.colLen[c], page - sh.colFirst[c]);
 }
 
 void destroyPages() {
@@ -1514,8 +1546,9 @@ void switchTo(int page) {
   lv_obj_set_x(s_pages[page].root, 0);
   portENTER_CRITICAL(&s_mux);
   sh.active = page;
+  sh.colCur[sh.col[page]] = page;
   portEXIT_CRITICAL(&s_mux);
-  panelSetPager(s_count, page);
+  setPager(page);
   s_gen++;
   // New neighbours; cheap to re-take, and the page we left changed state.
   for (int i = 0; i < s_count; i++) s_pages[i].stale = true;
@@ -1536,12 +1569,17 @@ void refreshOneSnapshot() {
     refreshPanelSnapshot();
     return;
   }
+  // The pages one gesture away first: next / previous column, then the
+  // pages above and below in this column.
   const int a = sh.active;
+  const int c = sh.col[a];
   int pick = -1;
-  const int order[2] = {a + 1, a - 1};
-  for (int k = 0; k < 2 && pick < 0; k++) {
+  const int order[4] = {c + 1 < sh.nCols ? sh.colCur[c + 1] : -1, c > 0 ? sh.colCur[c - 1] : -1,
+                        a + 1 < s_count && sh.col[a + 1] == c ? a + 1 : -1,
+                        a > 0 && sh.col[a - 1] == c ? a - 1 : -1};
+  for (int k = 0; k < 4 && pick < 0; k++) {
     const int p = order[k];
-    if (p >= 0 && p < s_count && s_pages[p].stale) pick = p;
+    if (p >= 0 && s_pages[p].stale) pick = p;
   }
   for (int p = 0; p < s_count && pick < 0; p++)
     if (s_pages[p].stale) pick = p;
@@ -1680,7 +1718,7 @@ void deckTick() {
   if (compTakeLanding(&landing)) {
     if (landing) {
       switch (sh.gesture) {
-        case Shared::GEST_PAGE: switchTo(sh.active + landing); break;
+        case Shared::GEST_PAGE: switchTo(sh.target); break;
         case Shared::GEST_PANEL_OPEN: showPanel(true); break;
         case Shared::GEST_PANEL_CLOSE: showPanel(false); break;
       }
@@ -1821,9 +1859,9 @@ bool deckTestCard(const String& tileId) {
   return false;
 }
 
-bool deckTestSwipe(int dir) {
+bool deckTestSwipe(int dir, bool vertical) {
   if (!s_disp || (dir != 1 && dir != -1)) return false;
-  return slideBy(dir);
+  return slideBy(dir, vertical);
 }
 
 bool deckTestPanel(bool open) {
@@ -1845,26 +1883,38 @@ bool deckTestPanel(bool open) {
 
 namespace deck {
 
-bool uiTryBeginSwipe(int dir, Src& a, Src& b, int& startOff, int& pageA) {
+bool uiTryBeginSwipe(int dir, bool vertical, Src& a, Src& b, int& startOff, int& idxA) {
   bool ok = false;
   portENTER_CRITICAL(&s_mux);
-  const int target = sh.active + dir;
+  const int cur = sh.active;
+  const int c = cur < sh.count ? sh.col[cur] : 0;
+  int target = -1, idxCur = 0, idxTarget = 0;
+  if (vertical) {
+    target = cur + dir;
+    if (target < 0 || target >= sh.count || sh.col[target] != c) target = -1;
+    idxCur = cur - sh.colFirst[c];
+    idxTarget = idxCur + dir;
+  } else if (c + dir >= 0 && c + dir < sh.nCols) {
+    target = sh.colCur[c + dir];
+    idxCur = c;
+    idxTarget = c + dir;
+  }
   if (sh.swipeEnabled && !sh.owned && !sh.panelOpen && !sh.modalOpen &&
-      target >= 0 && target < sh.count &&
-      sh.valid[target] && !sh.busy[target]) {
+      target >= 0 && sh.valid[target] && !sh.busy[target]) {
     sh.owned = true;
     sh.gesture = Shared::GEST_PAGE;
-    const Src cur = {nullptr, 0, true};  // the live LVGL frame
+    sh.target = target;
+    const Src live = {nullptr, 0, true};  // the live LVGL frame
     if (dir > 0) {
-      a = cur;
+      a = live;
       b = sh.src[target];
       startOff = 0;
-      pageA = sh.active;
+      idxA = idxCur;
     } else {
       a = sh.src[target];
-      b = cur;
-      startOff = logicalW();
-      pageA = target;
+      b = live;
+      startOff = vertical ? logicalH() : logicalW();
+      idxA = idxTarget;
     }
     ok = true;
   }

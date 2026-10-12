@@ -152,6 +152,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
     PageDef p;
     p.id = (const char*)(pv["id"] | "");
     p.name = (const char*)(pv["name"] | "");
+    p.group = (const char*)(pv["group"] | "");
     const char* type = pv["type"] | "tiles";
     if (!strcmp(type, "metrics")) continue;
     if (!p.id.length()) p.id = "page" + String(cfg.pages.size() + 1);

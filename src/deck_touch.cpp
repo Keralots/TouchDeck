@@ -46,10 +46,12 @@ struct Sample {
   int16_t x, y;
 };
 
-// One compositor drag, horizontal (pages) or vertical (quick panel), in
-// compositor offset units: off runs from startOff toward commitOff.
+// One compositor drag: horizontal (columns), vertical (pages of a column) or
+// the quick panel, in compositor offset units: off runs from startOff toward
+// commitOff.
 struct Drag {
   bool vertical;
+  bool panel;
   int startOff, commitOff, range, off;
   int8_t landing;  // reported when the drag commits
 };
@@ -149,12 +151,12 @@ void touchTask(void*) {
           // Finger moving left reveals the next page.
           const int d = dx < 0 ? 1 : -1;
           Src a, b;
-          int so, pageA;
-          if (uiTryBeginSwipe(d, a, b, so, pageA)) {
-            if (compBeginDrag(a, b, so, pageA)) {
+          int so, idxA;
+          if (uiTryBeginSwipe(d, false, a, b, so, idxA)) {
+            if (compBeginDrag(a, b, so, idxA, false)) {
               state = G_DRAG;
               const int w = logicalW();
-              drag = {false, so, d > 0 ? w : 0, w, so, (int8_t)d};
+              drag = {false, false, so, d > 0 ? w : 0, w, so, (int8_t)d};
               s_swipeStarted = true;
             } else {
               uiSwipeAborted();
@@ -165,7 +167,8 @@ void touchTask(void*) {
           }
         } else if (abs(dy) >= SLOP_PX && abs(dy) > abs(dx)) {
           // Pull the quick panel down from the top edge, or push an open
-          // one back up from anywhere.
+          // one back up from anywhere. Elsewhere a vertical drag moves
+          // between the pages of a column.
           const bool open = uiPanelIsOpen();
           state = G_PASS;
           if ((!open && dy > 0 && y0 < EDGE_PX) || (open && dy < 0)) {
@@ -174,7 +177,22 @@ void touchTask(void*) {
             if (uiTryBeginPanel(!open, panel, page, so, ph)) {
               if (compBeginPanel(panel, page, so)) {
                 state = G_DRAG;
-                drag = {true, so, open ? 0 : ph, ph, so, (int8_t)(open ? -1 : 1)};
+                drag = {true, true, so, open ? 0 : ph, ph, so, (int8_t)(open ? -1 : 1)};
+                s_swipeStarted = true;
+              } else {
+                uiSwipeAborted();
+              }
+            }
+          } else if (!open && y0 >= EDGE_PX) {
+            // Finger moving up reveals the page below.
+            const int d = dy < 0 ? 1 : -1;
+            Src a, b;
+            int so, idxA;
+            if (uiTryBeginSwipe(d, true, a, b, so, idxA)) {
+              if (compBeginDrag(a, b, so, idxA, true)) {
+                state = G_DRAG;
+                const int h = logicalH();
+                drag = {true, false, so, d > 0 ? h : 0, h, so, (int8_t)d};
                 s_swipeStarted = true;
               } else {
                 uiSwipeAborted();
@@ -184,7 +202,9 @@ void touchTask(void*) {
         }
       }
       if (state == G_DRAG) {
-        int off = drag.vertical ? drag.startOff + (y - y0) : drag.startOff - (x - x0);
+        int off = drag.panel      ? drag.startOff + (y - y0)
+                  : drag.vertical ? drag.startOff - (y - y0)
+                                  : drag.startOff - (x - x0);
         if (off < 0) off = 0;
         if (off > drag.range) off = drag.range;
         drag.off = off;
@@ -196,8 +216,8 @@ void touchTask(void*) {
 
     if (s_down && now - lastMs >= RELEASE_MS) {
       if (state == G_DRAG) {
-        // Offset velocity (px/ms) over the last samples. Horizontal offsets
-        // grow as the finger moves left, vertical ones as it moves down.
+        // Offset velocity (px/ms) over the last samples. Page offsets grow as
+        // the finger moves left or up, the panel's as it moves down.
         float v = 0.0f;
         int first = nsamples - 1;
         while (first > 0 && lastMs - samples[first - 1].ms <= VELOCITY_WINDOW_MS) first--;
@@ -205,11 +225,13 @@ void touchTask(void*) {
         if (dt >= 15) {
           const Sample& a = samples[first];
           const Sample& b = samples[nsamples - 1];
-          v = drag.vertical ? (float)(b.y - a.y) / dt : -(float)(b.x - a.x) / dt;
+          v = drag.panel      ? (float)(b.y - a.y) / dt
+            : drag.vertical ? -(float)(b.y - a.y) / dt
+                            : -(float)(b.x - a.x) / dt;
         }
         const float toward = drag.commitOff > drag.startOff ? v : -v;
         const int progress = abs(drag.off - drag.startOff);
-        const float fraction = drag.vertical ? PANEL_COMMIT_FRACTION : COMMIT_FRACTION;
+        const float fraction = drag.panel ? PANEL_COMMIT_FRACTION : COMMIT_FRACTION;
         bool commit;
         if (toward > FLING_PX_PER_MS) commit = true;
         else if (toward < -FLING_PX_PER_MS) commit = false;

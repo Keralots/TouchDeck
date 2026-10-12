@@ -94,11 +94,14 @@ $('dkHaForget').onclick=async()=>{if(!confirm('Remove the Home Assistant address
 const tileSize=t=>{const p=t.pos&&t.pos.landscape;return p?((p.w||1)+'x'+(p.h||1)):'1x1';};
 function setSize(t,v){const [w,h]=v.split('x').map(Number);if(w===1&&h===1){delete t.pos;return;}t.pos={landscape:{w:w,h:h}};}
 const grid=p=>{const l=(p.layouts&&p.layouts.landscape)||{};return [l.cols||4,l.rows||3];};
-function renderTabs(){const ps=pages();if(cur>=ps.length)cur=Math.max(0,ps.length-1);$('dkTabs').innerHTML=ps.map((p,i)=>'<button type="button" class="chip page-tab'+(i===cur?' on':'')+'" data-i="'+i+'">'+esc(p.name||p.id)+'</button>').join('')+'<button type="button" class="chip page-tab" id="dkAddPage">+ Page</button>';
+function renderTabs(){const ps=pages();if(cur>=ps.length)cur=Math.max(0,ps.length-1);$('dkTabs').innerHTML=ps.map((p,i)=>'<button type="button" class="chip page-tab'+(i===cur?' on':'')+'" data-i="'+i+'">'+(stackedAt(ps,i)?'&#8595; ':'')+esc(p.name||p.id)+'</button>').join('')+'<button type="button" class="chip page-tab" id="dkAddPage">+ Page</button>';
   $('dkTabs').querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>{cur=+b.dataset.i;render();});$('dkAddPage').onclick=()=>{deck.pages.push({id:'p'+Date.now().toString(36),name:'New page',layouts:{landscape:{cols:4,rows:3}},tiles:[]});cur=pages().length-1;setDirty(true);render();};}
+/* A page stacked below the one before it (same group) is in its column. */
+const stackedAt=(ps,i)=>i>0&&!!ps[i].group&&ps[i].group===ps[i-1].group;
 function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.innerHTML='<p class="dk-empty">No deck pages. Add one with "+ Page".</p>';return;}
   const p=ps[cur];const [c,r]=grid(p);let used=0;p.tiles.forEach(t=>{const [w,h]=tileSize(t).split('x').map(Number);used+=w*h;});
   let h='<div class="grid-2"><div class="field"><label class="field-label">Page name</label><input type="text" id="dkPName" value="'+esc(p.name||'')+'"></div><div class="field"><label class="field-label">Grid (columns x rows)</label><div class="dk-row"><select id="dkPCols" style="width:auto">'+[2,3,4,5,6].map(n=>'<option'+(n===c?' selected':'')+'>'+n+'</option>').join('')+'</select><span>x</span><select id="dkPRows" style="width:auto">'+[2,3,4].map(n=>'<option'+(n===r?' selected':'')+'>'+n+'</option>').join('')+'</select><button type="button" class="btn btn-danger" id="dkPDel" style="margin-left:auto">Delete page</button></div></div></div>';
+  h+='<label class="check-row standalone"><input type="checkbox" id="dkPStack"'+(stackedAt(ps,cur)?' checked':'')+(cur===0?' disabled':'')+'><span class="check-box"></span><span class="check-text"><strong>Below the previous page</strong><span class="ct-hint">Stacked pages form one column: swipe up and down between them, left and right to the next column.</span></span></label>';
   h+='<div class="dk-tiles">'+p.tiles.map((t,i)=>{if(t.type==='metric')return metricRow(t,i);const d=domainOf(t.entity);const en=entMap[t.entity];const nm=en&&en.name?en.name:(t.entity||'No entity');
     const cp=tileCp(t);
     return '<div class="dk-tile"><button type="button" class="dk-ic'+(cp?' mdi':'')+'" data-ic="'+i+'" title="'+esc(cp?(t.icon||(en&&en.icon)||'automatic'):'Choose an icon')+'" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+(cp?String.fromCodePoint(cp):esc((d||'?').slice(0,2).toUpperCase()))+'</button><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="dk-tsub">'+esc(t.entity||'no entity')+(en&&en.state?' - '+esc(en.state)+(en.unit?' '+esc(en.unit):''):'')+'</div></div>'+
@@ -108,6 +111,9 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   $('dkPName').oninput=e=>{p.name=e.target.value;setDirty(true);renderTabs();};
   $('dkPCols').onchange=e=>{p.layouts=p.layouts||{};p.layouts.landscape={cols:+e.target.value,rows:grid(p)[1]};setDirty(true);renderPage();};
   $('dkPRows').onchange=e=>{p.layouts=p.layouts||{};p.layouts.landscape={cols:grid(p)[0],rows:+e.target.value};setDirty(true);renderPage();};
+  /* The page and the pages stacked under it move together. */
+  $('dkPStack').onchange=e=>{const prev=ps[cur-1];if(!prev)return;let end=cur+1;while(end<ps.length&&stackedAt(ps,end))end++;const run=ps.slice(cur,end);
+    if(e.target.checked){const g=prev.group||prev.id;prev.group=g;run.forEach(x=>x.group=g);}else if(run.length>1)run.forEach(x=>x.group=p.id);else delete p.group;setDirty(true);renderTabs();};
   $('dkPDel').onclick=()=>{if(!confirm('Delete the page "'+(p.name||p.id)+'"?'))return;deck.pages.splice(deck.pages.indexOf(p),1);cur=0;setDirty(true);render();};
   el.querySelectorAll('[data-l]').forEach(x=>x.oninput=e=>{const t=p.tiles[+x.dataset.l];const v=e.target.value.trim();if(v)t.label=v;else delete t.label;setDirty(true);});
   el.querySelectorAll('[data-t]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.t];t.type=e.target.value;if(t.type!=='action')delete t.tap;setDirty(true);renderPage();});

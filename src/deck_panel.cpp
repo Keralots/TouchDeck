@@ -65,10 +65,12 @@ void IRAM_ATTR teIsr(void*) {
 SemaphoreHandle_t s_lvReady = nullptr;
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
-enum Kind : uint8_t { KIND_HSTRIP = 0, KIND_PANEL };
+enum Kind : uint8_t { KIND_HSTRIP = 0, KIND_VSTRIP, KIND_PANEL };
 
-// Page dots: shown while a horizontal slide owns the screen, then held and
-// faded out over LVGL frames by this task (LVGL never draws them).
+// Page dots: shown while a page slide owns the screen, then held and faded
+// out over LVGL frames by this task (LVGL never draws them). Horizontal dots
+// at the bottom count columns, vertical ones at the right edge count the
+// pages of the column.
 constexpr int64_t DOTS_HOLD_US = 1200000;
 constexpr int64_t DOTS_FADE_US = 300000;
 
@@ -96,6 +98,9 @@ struct State {
   // pager / dots
   int pageCount = 1;
   int pageActive = 0;
+  int vCount = 1;
+  int vActive = 0;
+  bool dotsV = false;       // the last slide was vertical: show column dots
   bool dotsForce = false;
   int64_t dotsUntil = 0;
   uint8_t lastSentDots = 0;
@@ -103,8 +108,8 @@ struct State {
 State s;
 
 // A frame to send, resolved under the lock so the build never reads shared
-// state: one LVGL framebuffer, a horizontal A|B strip, or a panel pulled down
-// over a (dimmed) page. Plus the page-dot overlay.
+// state: one LVGL framebuffer, a horizontal or vertical A|B strip, or a panel
+// pulled down over a (dimmed) page. Plus the page-dot overlay.
 struct Frame {
   bool comp;
   bool releaseLv;
@@ -116,6 +121,7 @@ struct Frame {
   int off;
   uint8_t dim;
   uint8_t dotCount, dotActive, dotAlpha;
+  bool dotsV;
 };
 
 // --- Stats (approximate, single writer) ----------------------------------------
@@ -276,6 +282,13 @@ inline void emitRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int dste
     }
     return;
   }
+  if (f.kind == KIND_VSTRIP) {
+    const int vy = ly + f.off;  // position in the A-over-B strip
+    const Src& src = vy < f.h ? f.a : f.b;
+    const int sy = vy < f.h ? vy : vy - f.h;
+    copyAny(d, dstep, src.px + sy * src.stride + x0, n, src.swap, 0);
+    return;
+  }
   while (n > 0) {
     const int vx = x0 + f.off;  // position in the A|B strip
     const Src& src = vx < f.w ? f.a : f.b;
@@ -310,19 +323,22 @@ inline uint16_t blendLE(uint16_t bg, uint16_t fg, uint32_t a) {
 
 inline float clamp01(float v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
 
-// Page dots on a translucent pill, bottom centre, drawn into the native chunk
-// (panel byte order) after it was built.
+// Page dots on a translucent pill, bottom centre (columns) or right edge
+// (pages of a column), drawn into the native chunk (panel byte order) after
+// it was built.
 void overlayDots(const Frame& f, uint16_t* dst, int ny0) {
   const int n = f.dotCount;
   if (n < 2 || !f.dotAlpha) return;
   constexpr int SPACING = 14;
   constexpr float DOT_R = 3.5f;
   constexpr float PILL_R = 8.0f;
-  const float cy = (float)f.h - 14.0f;
-  const float cx = (float)f.w * 0.5f;
+  const bool v = f.dotsV;
+  const float cy = v ? (float)f.h * 0.5f : (float)f.h - 14.0f;
+  const float cx = v ? (float)f.w - 14.0f : (float)f.w * 0.5f;
   const float half = (float)(n - 1) * SPACING * 0.5f;  // pill segment half length
-  const int bx0 = (int)(cx - half - PILL_R) - 1, bx1 = (int)(cx + half + PILL_R) + 1;
-  const int by0 = (int)(cy - PILL_R) - 1, by1 = (int)(cy + PILL_R) + 1;
+  const float hx = v ? 0.0f : half, hy = v ? half : 0.0f;
+  const int bx0 = (int)(cx - hx - PILL_R) - 1, bx1 = (int)(cx + hx + PILL_R) + 1;
+  const int by0 = (int)(cy - hy - PILL_R) - 1, by1 = (int)(cy + hy + PILL_R) + 1;
   // Quick reject: does the box touch the native rows of this chunk?
   int nxa, nya, nxb, nyb;
   toNative(f.rot, bx0, by0, nxa, nya);
@@ -336,18 +352,20 @@ void overlayDots(const Frame& f, uint16_t* dst, int ny0) {
       toNative(f.rot, lx, ly, nx, ny);
       if (ny < ny0 || ny >= ny0 + ROWS || nx < 0 || nx >= NATIVE_W) continue;
       const float px = lx + 0.5f, py = ly + 0.5f;
-      float sx = px - cx;
-      if (sx < -half) sx += half; else if (sx > half) sx -= half; else sx = 0;
-      const float dy = py - cy;
-      const float pill = clamp01(PILL_R + 0.5f - sqrtf(sx * sx + dy * dy));
+      // Along and across the pill's axis.
+      const float along = v ? py : px, mid = v ? cy : cx;
+      const float across = v ? px - cx : py - cy;
+      float sa = along - mid;
+      if (sa < -half) sa += half; else if (sa > half) sa -= half; else sa = 0;
+      const float pill = clamp01(PILL_R + 0.5f - sqrtf(sa * sa + across * across));
       if (pill <= 0) continue;
       uint16_t& out = dst[(ny - ny0) * NATIVE_W + nx];
       uint16_t c = __builtin_bswap16(out);
       c = blendLE(c, 0x0000, (uint32_t)(150 * pill * fade));
-      const int i = (int)lroundf((px - (cx - half)) / SPACING);
+      const int i = (int)lroundf((along - (mid - half)) / SPACING);
       if (i >= 0 && i < n) {
-        const float dx = px - (cx - half + i * SPACING);
-        const float dot = clamp01(DOT_R + 0.5f - sqrtf(dx * dx + dy * dy));
+        const float da = along - (mid - half + i * SPACING);
+        const float dot = clamp01(DOT_R + 0.5f - sqrtf(da * da + across * across));
         if (dot > 0) {
           const uint16_t col = i == f.dotActive ? 0xFFFF : 0x8C71;
           c = blendLE(c, col, (uint32_t)(255 * dot * fade));
@@ -432,8 +450,9 @@ bool decide(Frame& f) {
   f.w = w;
   f.h = h;
   f.releaseLv = false;
-  f.dotCount = (uint8_t)s.pageCount;
-  f.dotActive = (uint8_t)s.pageActive;
+  f.dotsV = s.dotsV;
+  f.dotCount = (uint8_t)(s.dotsV ? s.vCount : s.pageCount);
+  f.dotActive = (uint8_t)(s.dotsV ? s.vActive : s.pageActive);
   if (s.lvPending) {
     s.lvPending = false;
     if (s.mode == COMP_HOLD && s.lvGen >= s.holdGen) s.mode = COMP_NONE;
@@ -460,10 +479,11 @@ bool decide(Frame& f) {
         s.holdGen = UINT32_MAX;
         s.landed = s.landing;
         s.landedPending = true;
-        if (s.kind == KIND_HSTRIP) {
+        if (s.kind != KIND_PANEL) {
           s.dotsForce = false;
           s.dotsUntil = now + DOTS_HOLD_US + DOTS_FADE_US;
-          if (s.landing) s.pageActive = s.pageA + (s.landing > 0 ? 1 : 0);
+          int& act = s.kind == KIND_VSTRIP ? s.vActive : s.pageActive;
+          if (s.landing) act = s.pageA + (s.landing > 0 ? 1 : 0);
         }
       } else {
         const float p = t <= 0 ? 0.0f : (float)t / (float)s.durUs;
@@ -482,6 +502,10 @@ bool decide(Frame& f) {
       if (s.kind == KIND_HSTRIP) {
         f.off = off < 0 ? 0 : (off > w ? w : off);
         f.dotActive = (uint8_t)(s.pageA + (f.off * 2 >= w ? 1 : 0));
+        f.dim = 0;
+      } else if (s.kind == KIND_VSTRIP) {
+        f.off = off < 0 ? 0 : (off > h ? h : off);
+        f.dotActive = (uint8_t)(s.pageA + (f.off * 2 >= h ? 1 : 0));
         f.dim = 0;
       } else {
         const int ph = f.a.h;
@@ -727,12 +751,13 @@ bool panelWaitLvReady(uint32_t timeoutMs) {
   return xSemaphoreTake(s_lvReady, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
 }
 
-bool compBeginDrag(const Src& a, const Src& b, int off, int pageA) {
+bool compBeginDrag(const Src& a, const Src& b, int off, int pageA, bool vertical) {
   bool ok = false;
   portENTER_CRITICAL(&s_mux);
   if (s.mode == COMP_NONE && s.lvLatest >= 0) {
     s.mode = COMP_DRAG;
-    s.kind = KIND_HSTRIP;
+    s.kind = vertical ? KIND_VSTRIP : KIND_HSTRIP;
+    s.dotsV = vertical;
     s.a = a;
     s.b = b;
     s.pageA = pageA;
@@ -765,10 +790,12 @@ bool compBeginPanel(const Src& panel, const Src& page, int off) {
   return ok;
 }
 
-void panelSetPager(int count, int active) {
+void panelSetPager(int count, int active, int vCount, int vActive) {
   portENTER_CRITICAL(&s_mux);
   s.pageCount = count;
   s.pageActive = active;
+  s.vCount = vCount;
+  s.vActive = vActive;
   portEXIT_CRITICAL(&s_mux);
 }
 
