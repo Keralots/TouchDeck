@@ -5,8 +5,6 @@
 #ifndef DECK_TOUCH_H
 #define DECK_TOUCH_H
 
-#if defined(BOARD_IS_JC3248W535)
-
 #include <Arduino.h>
 
 namespace deck {
@@ -32,5 +30,4 @@ void touchSuppressUntilRelease();
 
 }  // namespace deck
 
-#endif  // BOARD_IS_JC3248W535
 #endif  // DECK_TOUCH_H

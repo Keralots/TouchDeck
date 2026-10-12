@@ -4,12 +4,10 @@
 #include <Arduino.h>
 #include "config.h"
 
-// One metric as pushed by the PC companion (V2.1 protocol). Slim model: the
-// OLED project's layout fields (position/barPosition/companionId/...) are gone
-// because the color gauge UI binds metrics to gauge slots in settings, not in
-// the packet.
+// One metric as pushed by the PC companion (V2.1 protocol). Metric tiles bind
+// to it by id.
 struct PcMetric {
-  uint8_t id;            // 1-based stable id; the gauge mapping binds by this
+  uint8_t id;            // 1-based stable id
   char    name[16];      // short sensor name from the companion ("CPU","GPUT")
   char    unit[8];       // "%", "C", "W", "RPM", "MB", ...
   float   value;
@@ -27,18 +25,9 @@ struct PcMetricData {
 
 extern PcMetricData pcData;
 
-// Value history for the sparkline and chart faces, sampled once per received
-// packet (~3 s companion cadence -> 60 samples = ~3 min window).
-//
-// Keyed by METRIC ID, not by gauge slot. The samples belong to the metric, not
-// to the grid position it happens to occupy, so a slot rebind or a metric page
-// switch no longer throws the ring away. That is what makes page rotation
-// usable: rotating every few seconds under the old slot-keyed rings reset every
-// chart on every switch, so no chart ever filled.
-//
-// Every metric the packet carries is sampled, not only the bound ones, so a
-// chart is already warm the moment the user binds a metric or rotates to a page
-// that shows it. Costs ~8 KB of static RAM.
+// Value history for the chart tiles, one sample per received packet, keyed by
+// metric id. Every metric in the packet is sampled, so a new chart tile starts
+// warm. ~8 KB of static RAM.
 #define PC_HISTORY_LEN 60
 
 struct SlotHistory {
@@ -48,12 +37,8 @@ struct SlotHistory {
   float   samples[PC_HISTORY_LEN];
 };
 
-// Indexed by metric id. Index 0 is the permanently empty "nothing bound" ring,
-// so an unbound slot charts nothing without needing a branch at each call site.
+// Indexed by metric id. Index 0 is the permanently empty ring.
 extern SlotHistory pcHistoryById[MAX_METRICS + 1];
-
-// History for whatever the given slot of the ACTIVE metric page is bound to.
-const SlotHistory& pcHistoryForSlot(uint8_t slotIdx);
 
 // Sample oldest->newest: i in [0, count).
 static inline float pcHistoryAt(const SlotHistory& h, uint8_t i) {
@@ -68,7 +53,7 @@ bool pcMetricsHandle();
 // Re-bind the socket after a WiFi reconnect (old fd goes stale).
 void pcMetricsRestartUdp();
 
-// Lookups for the renderer / gauge mapping.
+// Lookups for the metric tiles.
 const PcMetric* pcMetricFindById(uint8_t id);
 const PcMetric* pcMetricFindByName(const char* name);
 

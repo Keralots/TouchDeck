@@ -21,40 +21,13 @@ static uint8_t previewBrightness = 0;
 // ---------------------------------------------------------------------------
 //  Pin deny-list
 // ---------------------------------------------------------------------------
-// Ported from BambuHelper so the two projects accept the same wiring. The job
-// of this list is to refuse a pin that would kill the display, USB or boot -
-// it deliberately does not try to model which pins a given board physically
-// breaks out, because the user knows their own wiring and picks from it.
+// Refuses a pin that would kill the display, touch, USB or boot; it does not
+// try to model which pins the board physically breaks out.
 bool ledPinAllowed(uint8_t pin) {
   // GPIO 0 is the "unset" sentinel (LED_DEFAULT_PIN) and a strapping pin on
   // every board here, so it is never a valid choice.
   if (pin == 0) return false;
   if (pin == BACKLIGHT_PIN) return false;
-  // Dynamic conflict: the capacitive pad owns its pin while it is enabled.
-  if (touchSettings.enabled && pin == touchSettings.pin) return false;
-
-#if defined(BOARD_IS_S3_ZERO)
-  // Waveshare ESP32-S3-Zero + external ST7789 240x240
-  if (pin >= 8 && pin <= 12) return false;    // display SPI
-  if (pin == 13) return false;                // display backlight
-  if (pin == 19 || pin == 20) return false;   // USB CDC D-/D+
-  if (pin == 21) return false;                // onboard WS2812 RGB LED
-  if (pin >= 26 && pin <= 37) return false;   // SPI flash + PSRAM / not exposed
-  if (pin > 48) return false;
-
-#elif defined(BOARD_IS_WS154)
-  // Waveshare ESP32-S3-Touch-LCD-1.54"
-  if (pin == 21 || pin == 38 || pin == 39 || pin == 40 || pin == 45) return false; // display SPI
-  if (pin == 41 || pin == 42 || pin == 47 || pin == 48) return false; // CST816 I2C + RST/IRQ
-  if (pin == 8 || pin == 9 || pin == 10 || pin == 12) return false;   // ES8311 I2S
-  if (pin == 7) return false;                 // audio PA control
-  if (pin == 2) return false;                 // BAT_EN
-  if (pin == 4 || pin == 5) return false;     // board buttons (0 is already out)
-  if (pin == 19 || pin == 20) return false;   // USB CDC D-/D+
-  if (pin >= 26 && pin <= 37) return false;   // SPI flash + PSRAM
-  if (pin > 48) return false;
-
-#elif defined(BOARD_IS_JC3248W535)
   // Guition JC3248W535 (AXS15231B QSPI 320x480)
   if (pin == 21 || pin == 39 || pin == 40 ||
       pin == 45 || pin == 47 || pin == 48) return false;  // display QSPI
@@ -66,27 +39,6 @@ bool ledPinAllowed(uint8_t pin) {
   if (pin == 19 || pin == 20) return false;   // USB CDC D-/D+
   if (pin >= 26 && pin <= 37) return false;   // SPI flash + PSRAM (qio_opi)
   if (pin > 48) return false;
-
-#elif defined(BOARD_IS_S3)
-  // LOLIN S3 mini + external ST7789 240x240. The pre-wired units put the LED
-  // on GPIO 2, the pad on 4 and the buzzer on 5, all of which pass here.
-  if (pin >= 8 && pin <= 12) return false;    // display SPI (backlight 13 is above)
-  if (pin == 19 || pin == 20) return false;   // USB CDC D-/D+
-  if (pin == 43 || pin == 44) return false;   // UART0
-  if (pin == 45 || pin == 46) return false;   // strapping / VDD_SPI
-  if (pin >= 26 && pin <= 37) return false;   // SPI flash + PSRAM (qio_qspi)
-  if (pin > 48) return false;
-
-#elif defined(BOARD_IS_C3)
-  // LOLIN C3 mini + external ST7789 240x240
-  if (pin == 6 || pin == 7 || pin == 10 ||
-      pin == 20 || pin == 21) return false;   // display SPI
-  if (pin == 18 || pin == 19) return false;   // USB CDC D-/D+
-  if (pin >= 11 && pin <= 17) return false;   // flash
-  if (pin == 8 || pin == 9) return false;     // strapping
-  if (pin > 21) return false;
-#endif
-
   return true;
 }
 
@@ -230,8 +182,8 @@ void ledTick() {
   uint8_t duty = (ledSettings.nightEnabled && nightBrightnessActive())
                    ? ledSettings.nightBrightness
                    : ledSettings.brightness;
-  // One test covers manual off, the PC-offline sleep timer and a night
-  // brightness of 0: whatever put the panel out, the LED goes with it.
+  // One test covers manual off and a night brightness of 0: whatever put the
+  // panel out, the LED goes with it.
   if (ledSettings.followDisplay && currentBacklightLevel() == 0) duty = 0;
   if (ledSettings.offlineOff && !pcData.online) duty = 0;
   writeDuty(duty);

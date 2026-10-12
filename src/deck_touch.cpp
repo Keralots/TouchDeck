@@ -1,6 +1,4 @@
 // Guition JC3248W535 touch reader and swipe arbiter. See deck_touch.h.
-#if defined(BOARD_IS_JC3248W535)
-
 #include "deck_touch.h"
 #include "deck_panel.h"
 #include "deck_ui.h"
@@ -271,5 +269,3 @@ void touchSuppressUntilRelease() {
 }
 
 }  // namespace deck
-
-#endif  // BOARD_IS_JC3248W535

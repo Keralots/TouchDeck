@@ -167,9 +167,8 @@ static void completeWiFiStartup() {
     setScreenState(SCREEN_WIFI_CONNECTED);
     unsigned long ipStart = millis();
     while (millis() - ipStart < 1500) {
-      updateDisplay();
-      flushFrame();  // JC3248W535: push sprite to panel during blocking loop
-      delay(50);
+      displayTick();
+      delay(20);
     }
   }
 }
@@ -215,16 +214,18 @@ void initWiFi() {
 
       while (WiFi.status() != WL_CONNECTED &&
              millis() - start < WIFI_CONNECT_TIMEOUT) {
-        delay(100);
-        updateDisplay();
-        flushFrame();  // JC3248W535: push sprite to panel during blocking loop
+        delay(20);
+        displayTick();  // keeps the connecting screen animated
       }
       if (WiFi.status() == WL_CONNECTED) break;
 
       Serial.println("WiFi attempt failed, retrying...");
       WiFi.disconnect(true);
       splashStaStarted = false;
-      delay(1000);
+      for (int i = 0; i < 50; i++) {
+        delay(20);
+        displayTick();
+      }
     }
 
     if (WiFi.status() == WL_CONNECTED) {

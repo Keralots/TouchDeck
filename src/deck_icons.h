@@ -5,8 +5,6 @@
 #ifndef DECK_ICONS_H
 #define DECK_ICONS_H
 
-#if defined(BOARD_IS_JC3248W535)
-
 #include <Arduino.h>
 #include <lvgl.h>
 
@@ -32,5 +30,4 @@ void iconUtf8(uint32_t cp, char out[5]);
 
 }  // namespace deck
 
-#endif  // BOARD_IS_JC3248W535
 #endif  // DECK_ICONS_H

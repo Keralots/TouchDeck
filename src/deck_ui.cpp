@@ -1,16 +1,15 @@
 // Guition JC3248W535 deck UI. See deck_ui.h for the threading contract.
-#if defined(BOARD_IS_JC3248W535)
-
 #include "deck_ui.h"
 #include "deck_config.h"
 #include "deck_ha.h"
 #include "deck_icons.h"
+#include "deck_sys.h"
 #include "deck_touch.h"
 #include "display_ui.h"
 #include "settings.h"
 #include "led.h"
 #include "pc_metrics.h"
-#include "renderer_internal.h"
+#include "metric_format.h"
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <WiFi.h>
@@ -22,11 +21,8 @@ using namespace deck;
 
 namespace {
 
-constexpr int MAX_PAGES = MAX_DECK_PAGES + 1;  // + the face page if inserted
+constexpr int MAX_PAGES = MAX_DECK_PAGES;
 constexpr int HEADER_H = 30;
-// While a deck page is showing, the face is still redrawn about this often so
-// a swipe back to it does not reveal stale numbers.
-constexpr uint32_t HIDDEN_FACE_MS = 1000;
 // Page images are refreshed one per pass, at most this often (each costs
 // ~40 ms of loop time at 480x320).
 constexpr uint32_t SNAP_SPACING_MS = 40;
@@ -53,7 +49,6 @@ struct Page {
   lv_obj_t* grid;
   lv_draw_buf_t* snap;
   const PageDef* def;
-  bool isFace;
   bool stale;
 };
 
@@ -81,18 +76,13 @@ struct TileRt {
   bool compact;           // 1x1 number tile: value font shrinks to fit
 };
 
-lgfx::LGFX_Sprite* s_face = nullptr;
 lv_display_t* s_disp = nullptr;
 lv_indev_t* s_indev = nullptr;
-lv_obj_t* s_canvas = nullptr;
 DeckConfig s_cfg;
 Page s_pages[MAX_PAGES];
 std::vector<TileRt> s_tiles;
 int s_count = 0;
-int s_facePage = 0;
 uint32_t s_gen = 1;
-bool s_faceDirty = true;
-uint32_t s_lastHiddenFace = 0;
 uint32_t s_lastSnapMs = 0;
 uint32_t s_lastClockCheck = 0;
 int s_lastMinute = -1;
@@ -108,10 +98,8 @@ portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 struct Shared {
   int active = 0;
   int count = 0;
-  int facePage = 0;
   bool swipeEnabled = false;
   bool owned = false;      // a swipe owns the screen until its landing is handled
-  bool faceBusy = false;   // the renderer is drawing into the face sprite
   bool valid[MAX_PAGES] = {};
   bool busy[MAX_PAGES] = {};
   Src src[MAX_PAGES] = {};
@@ -1110,7 +1098,7 @@ lv_obj_t* makeRoot(int w, int h) {
 }
 
 // --- PC metric tiles ------------------------------------------------------------------
-// Identity colours in slot order, the same set the faces use.
+// Identity colours by metric id.
 constexpr uint32_t kMetricPalette[8] = {0x3987E5, 0x00A35C, 0xD55181, 0xC98500,
                                         0x199E70, 0xD95926, 0x9085E9, 0xE66767};
 constexpr uint32_t C_WARN = 0xE5A50A;
@@ -1151,10 +1139,9 @@ void applyPcToTile(TileRt& r) {
     if (lv_obj_get_style_text_font(r.sub, LV_PART_MAIN) != f) lv_obj_set_style_text_font(r.sub, f, 0);
   }
 
-  GaugeSlot gs = {d.metric, GAUGE_TYPE_AUTO, d.scaleMax, 0};
-  const float scale = slotScaleMax(gs, *m);
+  const float scale = metricScaleMax(*m, d.scaleMax);
   const float pct = scale > 0 ? m->value * 100.0f / scale : 0;
-  // Same rule as the faces: enter at warnThresholdPct, leave 5 points below.
+  // Enter the warning colour at warnThresholdPct, leave it 5 points below.
   const float enter = (float)dispSettings.warnThresholdPct;
   const bool warn = enter > 0 && (r.warn ? pct >= enter - 5 : pct >= enter);
   if (warn != r.warn) {
@@ -1473,54 +1460,21 @@ void addTilesPage(const PageDef& def) {
   s_count++;
 }
 
-void addFacePage() {
-  const int w = logicalW(), h = logicalH();
-  Page& f = s_pages[s_count];
-  f = {};
-  f.isFace = true;
-  f.root = makeRoot(w, h);
-  s_canvas = lv_canvas_create(f.root);
-  lv_canvas_set_buffer(s_canvas, s_face->getBuffer(), w, h, LV_COLOR_FORMAT_RGB565_SWAPPED);
-  lv_obj_set_pos(s_canvas, 0, 0);
-  s_facePage = s_count;
-  s_count++;
-}
-
 void buildPages() {
-  const int w = logicalW(), h = logicalH();
+  const int w = logicalW();
   s_count = 0;
   s_tiles.clear();
   s_tiles.reserve(64);
-  bool haveFace = false;
   for (const PageDef& pd : s_cfg.pages) {
     if (s_count >= MAX_PAGES) break;
-    if (pd.metrics) {
-      if (!haveFace) { addFacePage(); s_pages[s_count - 1].def = &pd; haveFace = true; }
-    } else {
-      addTilesPage(pd);
-    }
-  }
-  if (!haveFace) {
-    // The metric page is part of the product: put it first if the config
-    // forgot it. Shift what was built one slot right.
-    for (int i = s_count; i > 0; i--) s_pages[i] = s_pages[i - 1];
-    for (TileRt& t : s_tiles) t.page++;
-    const int n = s_count;
-    s_count = 0;
-    addFacePage();
-    s_count = n + 1;
+    addTilesPage(pd);
   }
 
   portENTER_CRITICAL(&s_mux);
   sh.count = s_count;
-  sh.facePage = s_facePage;
   sh.owned = false;
   for (int i = 0; i < MAX_PAGES; i++) { sh.valid[i] = false; sh.busy[i] = false; }
-  // The face page is shown straight from the renderer's sprite (already in
-  // panel byte order) instead of a snapshot.
-  sh.valid[s_facePage] = true;
-  sh.src[s_facePage] = {(const uint16_t*)s_face->getBuffer(), (uint16_t)w, false};
-  const int active = sh.active < s_count ? sh.active : s_facePage;
+  const int active = sh.active < s_count ? sh.active : 0;
   sh.active = active;
   portEXIT_CRITICAL(&s_mux);
 
@@ -1530,7 +1484,6 @@ void buildPages() {
   for (int i = 0; i < s_count; i++) lv_obj_set_pos(s_pages[i].root, i == active ? 0 : w, 0);
   s_lastMinute = -1;
   s_lastWifi = -1;
-  s_faceDirty = true;
   buildQuickPanel();
   collectEntities();
 }
@@ -1547,7 +1500,6 @@ void destroyPages() {
   for (TileRt& r : s_tiles)
     if (r.pts) lv_free(r.pts);
   s_tiles.clear();
-  s_canvas = nullptr;
   portENTER_CRITICAL(&s_mux);
   sh.count = 0;
   for (int i = 0; i < MAX_PAGES; i++) sh.valid[i] = false;
@@ -1567,7 +1519,6 @@ void switchTo(int page) {
   s_gen++;
   // New neighbours; cheap to re-take, and the page we left changed state.
   for (int i = 0; i < s_count; i++) s_pages[i].stale = true;
-  if (page == s_facePage) s_faceDirty = true;
 }
 
 void releaseSwipe() {
@@ -1590,10 +1541,10 @@ void refreshOneSnapshot() {
   const int order[2] = {a + 1, a - 1};
   for (int k = 0; k < 2 && pick < 0; k++) {
     const int p = order[k];
-    if (p >= 0 && p < s_count && !s_pages[p].isFace && s_pages[p].stale) pick = p;
+    if (p >= 0 && p < s_count && s_pages[p].stale) pick = p;
   }
   for (int p = 0; p < s_count && pick < 0; p++)
-    if (!s_pages[p].isFace && s_pages[p].stale) pick = p;
+    if (s_pages[p].stale) pick = p;
   if (pick < 0) {
     refreshPanelSnapshot();
     return;
@@ -1644,23 +1595,15 @@ void updateHeaders() {
   const int minute = lt.tm_hour * 60 + lt.tm_min;
   if (minute == s_lastMinute) return;
   s_lastMinute = minute;
-  char buf[8];
-  snprintf(buf, sizeof(buf), "%02d:%02d", lt.tm_hour, lt.tm_min);
+  char buf[12];
+  if (netSettings.use24h) snprintf(buf, sizeof(buf), "%02d:%02d", lt.tm_hour, lt.tm_min);
+  else snprintf(buf, sizeof(buf), "%d:%02d %s", (lt.tm_hour + 11) % 12 + 1, lt.tm_min,
+                lt.tm_hour < 12 ? "AM" : "PM");
   for (int i = 0; i < s_count; i++) {
     if (!s_pages[i].clock) continue;
     lv_label_set_text(s_pages[i].clock, buf);
     s_pages[i].stale = true;
   }
-}
-
-void createFaceSprite() {
-  s_face->deleteSprite();
-  s_face->setPsram(true);
-  s_face->setColorDepth(16);
-  s_face->setRotation(0);
-  if (!s_face->createSprite(logicalW(), logicalH()))
-    Serial.println("Deck: face sprite allocation FAILED");
-  s_face->setTextDatum(MC_DATUM);
 }
 
 void logStats() {
@@ -1683,10 +1626,8 @@ void logStats() {
 }  // namespace
 
 // --- Public API ----------------------------------------------------------------------
-bool deckBegin(lgfx::LGFX_Sprite* face, uint8_t rotation) {
-  s_face = face;
+bool deckBegin(uint8_t rotation) {
   if (!panelBegin(rotation)) return false;
-  createFaceSprite();
 
   String source, err;
   deckConfigLoad(s_cfg, &source, &err);
@@ -1755,59 +1696,39 @@ void deckTick() {
     touchSuppressUntilRelease();
   }
 
-  // Status screens (splash, WiFi setup, OTA) live on the face page and must be
-  // visible whatever page was showing.
+  // System screens (splash, WiFi setup, OTA) cover the pages: no gestures,
+  // no panel or card under them.
   const ScreenState sc = getScreenState();
-  const bool systemScreen = !(sc == SCREEN_MONITOR || sc == SCREEN_CLOCK || sc == SCREEN_OFF);
-  if (systemScreen && (sh.active != s_facePage || s_qp.open)) {
+  const bool systemScreen = sc != SCREEN_DECK;
+  if (systemScreen && (sh.swipeEnabled || s_qp.open || s_modalCard)) {
     compCancel();
     releaseSwipe();
     hidePanelNow();
     closeModal();
-    switchTo(s_facePage);
   }
   portENTER_CRITICAL(&s_mux);
   sh.swipeEnabled = !systemScreen;
-  sh.faceBusy = false;  // the renderer only draws before this call
   portEXIT_CRITICAL(&s_mux);
+  sysScreenSync(sc);
 
   if (compOwnsScreen()) return;  // LVGL stays frozen during a drag or slide
 
-  if (s_faceDirty) {
-    s_faceDirty = false;
-    if (sh.active == s_facePage && s_canvas) lv_obj_invalidate(s_canvas);
-  }
   updateHeaders();
   qpUpdateStatus(false);
   haSync();
   pcSync(false);
   lv_timer_handler();
-  refreshOneSnapshot();
+  if (!systemScreen) refreshOneSnapshot();
   logStats();
 }
-
-void deckFaceDirty() { s_faceDirty = true; }
 
 void deckToast(const char* text) {
   if (s_disp) deckToastShow(text, 1800);
 }
 
-bool deckFaceMayRender() {
-  if (!s_disp) return true;  // before deckBegin (or if it failed)
-  if (compOwnsScreen()) return false;
-  if (sh.active != s_facePage) {
-    const uint32_t now = millis();
-    if (now - s_lastHiddenFace < HIDDEN_FACE_MS) return false;
-    s_lastHiddenFace = now;
-  }
-  portENTER_CRITICAL(&s_mux);
-  const bool ok = !sh.owned;
-  if (ok) sh.faceBusy = true;
-  portEXIT_CRITICAL(&s_mux);
-  return ok;
+void deckRefreshNow() {
+  if (s_disp && !compOwnsScreen()) lv_timer_handler();
 }
-
-bool deckFacePageActive() { return !s_disp || sh.active == s_facePage; }
 
 void deckApplyRotation(uint8_t rotation) {
   if (!s_disp) return;
@@ -1817,11 +1738,11 @@ void deckApplyRotation(uint8_t rotation) {
   releaseSwipe();
   destroyPages();
   panelSetRotation(rotation);
-  createFaceSprite();
   lv_display_set_resolution(s_disp, logicalW(), logicalH());
   lv_display_set_buffers(s_disp, panelLvBuffer(0), panelLvBuffer(1), FRAME_BYTES,
                          LV_DISPLAY_RENDER_MODE_DIRECT);
   buildPages();
+  sysScreenRelayout();
   s_gen++;
   lv_obj_invalidate(lv_screen_active());
 }
@@ -1930,8 +1851,7 @@ bool uiTryBeginSwipe(int dir, Src& a, Src& b, int& startOff, int& pageA) {
   const int target = sh.active + dir;
   if (sh.swipeEnabled && !sh.owned && !sh.panelOpen && !sh.modalOpen &&
       target >= 0 && target < sh.count &&
-      sh.valid[target] && !sh.busy[target] &&
-      !(target == sh.facePage && sh.faceBusy)) {
+      sh.valid[target] && !sh.busy[target]) {
     sh.owned = true;
     sh.gesture = Shared::GEST_PAGE;
     const Src cur = {nullptr, 0, true};  // the live LVGL frame
@@ -1963,7 +1883,7 @@ bool uiTryBeginPanel(bool opening, Src& panel, Src& page, int& startOff, int& pa
     if (opening) {
       page = {nullptr, 0, true};  // the live LVGL frame, no panel in it yet
       ok = true;
-    } else if (sh.valid[a] && !sh.busy[a] && !(a == sh.facePage && sh.faceBusy)) {
+    } else if (sh.valid[a] && !sh.busy[a]) {
       page = sh.src[a];  // the page without the panel on top
       ok = true;
     }
@@ -1987,5 +1907,3 @@ bool uiPanelIsOpen() {
 }
 
 }  // namespace deck
-
-#endif  // BOARD_IS_JC3248W535

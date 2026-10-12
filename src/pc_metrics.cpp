@@ -5,18 +5,11 @@
 // WiFiUDP (not AsyncUDP) on purpose: AsyncUDP froze on ESP32 in the sibling
 // projects. The socket is polled from loop() via pcMetricsHandle().
 #include "pc_metrics.h"
-#include "settings.h"   // activeGaugeMap(): history rings follow the slot bindings
 #include <WiFiUdp.h>
 #include <ArduinoJson.h>
 
 PcMetricData pcData = {};
 SlotHistory pcHistoryById[MAX_METRICS + 1] = {};
-
-const SlotHistory& pcHistoryForSlot(uint8_t slotIdx) {
-  if (slotIdx >= NUM_GAUGE_SLOTS) return pcHistoryById[0];
-  const uint8_t id = activeGaugeMap().slots[slotIdx].metricId;
-  return pcHistoryById[id <= MAX_METRICS ? id : 0];
-}
 
 static WiFiUDP udp;
 
@@ -91,7 +84,7 @@ static void parsePacket(const char* json) {
     // survives the wire (see _parse_rest_value in statnode_companion.py: "the
     // ESP32 divides by 10 when showing"), and this firmware never did - so a
     // 366.8 KB/s link rendered as "3668 KB/s". Undo it once, here, so the
-    // history rings, the meters and every face see real KB/s.
+    // history rings and the metric tiles see real KB/s.
     //
     // Keyed on the exact "KB/s" string because that scaling belongs to that
     // one unit: the Linux companion reports "MB/s" unscaled, and both must

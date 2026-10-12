@@ -6,8 +6,6 @@
 #ifndef DECK_WEB_H
 #define DECK_WEB_H
 
-#if defined(BOARD_IS_JC3248W535)
-
 #include <Arduino.h>
 
 static const char DECK_JS[] PROGMEM = R"JS((function(){'use strict';
@@ -184,9 +182,8 @@ window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.return
 
 (async function init(){haStatus();icRefresh();setInterval(()=>{if(visible())haStatus();},3000);
   await loadPc();
-  try{const r=await api('/api/deck');deck=r.deck;$('dkHeader').checked=r.header!==false;render();}catch(e){$('dkPage').innerHTML='<p class="dk-empty">'+esc(e.message)+'</p>';}
+  try{const r=await api('/api/deck');deck=r.deck;deck.pages=deck.pages.filter(p=>p.type!=='metrics');$('dkHeader').checked=r.header!==false;render();}catch(e){$('dkPage').innerHTML='<p class="dk-empty">'+esc(e.message)+'</p>';}
   try{await loadEnts();}catch(e){}})();
 })();)JS";
 
-#endif  // BOARD_IS_JC3248W535
 #endif  // DECK_WEB_H

@@ -1,6 +1,4 @@
 // Guition deck: Home Assistant client. See deck_ha.h.
-#if defined(BOARD_IS_JC3248W535)
-
 #include "deck_ha.h"
 #include "deck_config.h"
 #include <LittleFS.h>
@@ -836,5 +834,3 @@ bool haFetchEntityList(String& outJson, bool refresh, String& err) {
 }
 
 }  // namespace deck
-
-#endif  // BOARD_IS_JC3248W535

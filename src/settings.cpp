@@ -1,310 +1,92 @@
 #include "settings.h"
 #include "config.h"
-#include "led.h"       // sanitizeLedPin() - the LED pin is validated per board
+#include "led.h"       // sanitizeLedPin()
 #include <Preferences.h>
 
-// Global settings instances.
 char wifiSSID[33] = "";
 char wifiPass[65] = "";
 uint8_t brightness = 200;
 DisplaySettings dispSettings;
 NetworkSettings netSettings;
-GaugeMapping gaugePages[METRIC_PAGE_COUNT];
-GaugeLabels gaugePageLabels[METRIC_PAGE_COUNT];
-uint8_t activeMetricPage = 0;
 BacklightSettings backlightSettings;
-TouchSettings touchSettings;
 LedSettings ledSettings;
-ThemeSettings themeSettings;
-PageSettings pageSettings;
-uint8_t displayStyle = STYLE_DEFAULT;
-uint8_t displayLayout = LAYOUT_TILES;
-uint8_t displaySurface = SURFACE_FLAT;
-uint8_t duoHeroBands = 2;
-uint8_t duoRowStyle = DUO_ROWS_GRID;
-uint8_t chartSmoothing = 0;
-uint8_t glassTheme = GLASS_THEME_DEFAULT;
-uint8_t glassGlossPct = GLASS_GLOSS_PCT_DEFAULT;
-uint8_t glassBowPct = GLASS_BOW_PCT_DEFAULT;
-uint8_t glassChartFillPct = GLASS_CHART_FILL_PCT_DEFAULT;
-uint8_t clockFace = CLOCK_FACE_STANDARD;
-uint8_t sparkRedrawSec = SPARK_REDRAW_MS / 1000;
 
 static Preferences prefs;
 static const uint8_t BACKLIGHT_SETTINGS_VERSION = 1;
-// v2 widened styleMask to 16 bits so the glass faces (styles 7 and 8) fit.
-// v3 keeps the layout identical and changes what the bits MEAN: face indices
-// instead of DisplayStyle values. Without the bump the loader would accept a v2
-// blob verbatim and every existing device would silently cycle the wrong faces.
-static const uint8_t TOUCH_SETTINGS_VERSION = 3;
 static const uint8_t LED_SETTINGS_VERSION = 1;
-static const uint8_t THEME_SETTINGS_VERSION = 1;
-static const uint8_t PAGE_SETTINGS_VERSION = 1;
 
 // ---------------------------------------------------------------------------
-//  Face families
+//  StatNode migration
 // ---------------------------------------------------------------------------
-// Twelve families over the Layout x Surface product. The Bands and Rows columns
-// are seeded defaults, not part of the family key - selecting a face sets them,
-// after which the user may change them freely without changing the family.
-//
-// The legacy column is lossy on purpose: twelve families project onto nine
-// DisplayStyle values, so the four combinations that never existed borrow the
-// closest older face. That costs nothing on a normal boot, because the stored
-// "style" always equals legacyStyleFor(tuple) by construction. It does make
-// downgrade detection best effort: flash old firmware, switch Liquid glass
-// tiles to Aero glass tiles (which writes 7 again), come back, and the
-// comparison sees no change. Perfect detection is impossible while the old
-// build writes only the lossy value.
-static const FaceFamily FACE_TABLE[FACE_COUNT] = {
-  // layout,            surface,        bands, rowStyle,      legacy,            name
-  { LAYOUT_BIG_NUMBERS, SURFACE_FLAT,   2, DUO_ROWS_GRID, STYLE_BIG_NUMBERS, "Big numbers"        },
-  { LAYOUT_TILES,       SURFACE_FLAT,   2, DUO_ROWS_GRID, STYLE_TILES,       "Tiles"              },
-  { LAYOUT_TILES,       SURFACE_AERO,   2, DUO_ROWS_GRID, STYLE_GLASS_TILES, "Aero glass tiles"   },
-  { LAYOUT_TILES,       SURFACE_LIQUID, 2, DUO_ROWS_GRID, STYLE_GLASS_TILES, "Liquid glass tiles" },
-  { LAYOUT_TILES,       SURFACE_WASH,   2, DUO_ROWS_GRID, STYLE_PULSE,       "Pulse"              },
-  { LAYOUT_STRIPS,      SURFACE_FLAT,   2, DUO_ROWS_GRID, STYLE_STRIPS,      "Strips"             },
-  { LAYOUT_STRIPS,      SURFACE_WASH,   2, DUO_ROWS_GRID, STYLE_STRIPS,      "Washed strips"      },
-  { LAYOUT_DUO,         SURFACE_FLAT,   1, DUO_ROWS_LIST, STYLE_HERO,        "Hero + list"        },
-  { LAYOUT_DUO,         SURFACE_FLAT,   2, DUO_ROWS_GRID, STYLE_DUO,         "Duo"                },
-  { LAYOUT_DUO,         SURFACE_AERO,   2, DUO_ROWS_GRID, STYLE_GLASS_DUO,   "Aero glass duo"     },
-  { LAYOUT_DUO,         SURFACE_LIQUID, 2, DUO_ROWS_GRID, STYLE_GLASS_DUO,   "Liquid glass duo"   },
-  { LAYOUT_DUO,         SURFACE_WASH,   2, DUO_ROWS_GRID, STYLE_DUO,         "Washed duo"         },
+// StatNode's display blob, only to read rotation and the metric scales from a
+// device that ran it. Must stay byte-identical to StatNode 1.3.0.
+struct LegacyGaugeColors {
+  uint16_t arc, label, value;
+};
+struct LegacyDisplaySettings {
+  uint8_t  rotation;
+  uint16_t bgColor, trackColor, progressBarColor;
+  bool     animatedBar, smallLabels, invertColors, cydPanelClassic, pongClock;
+  uint16_t tempScaleMax, powerScaleW;
+  uint8_t  gaugeSmoothing;
+  uint16_t warnColor;
+  uint8_t  warnThresholdPct;
+  uint16_t clockTimeColor, clockDateColor;
+  bool     hideClockDate;
+  LegacyGaugeColors progress, gauge;
 };
 
-const FaceFamily& faceSpec(uint8_t faceIdx) {
-  return FACE_TABLE[faceIdx < FACE_COUNT ? faceIdx : FACE_DEFAULT];
-}
+// StatNode face, clock, touch pad and theme keys TouchDeck does not use.
+static const char* const kLegacyKeys[] = {
+  "disp", "gauges", "labels", "gauges1", "labels1", "gauges2", "labels2",
+  "pages", "touch", "theme", "style", "facever", "layout", "surface",
+  "duobands", "duorows", "clockface", "sparks", "chartsm", "glasstheme",
+  "glossa", "glossbow", "chartfill",
+};
 
-uint8_t faceIndex(uint8_t layout, uint8_t surface, uint8_t rowStyle) {
-  for (uint8_t i = 0; i < FACE_COUNT; i++) {
-    if (FACE_TABLE[i].layout != layout || FACE_TABLE[i].surface != surface)
-      continue;
-    // Duo+Flat is the one pair carried by two families. Every other pair
-    // appears once, so the row style is ignored there.
-    if (layout == LAYOUT_DUO && surface == SURFACE_FLAT &&
-        FACE_TABLE[i].rowStyle != (rowStyle ? DUO_ROWS_LIST : DUO_ROWS_GRID))
-      continue;
-    return i;
+// Called with prefs open read-write when no "rot" key exists yet.
+static void migrateFromStatNode() {
+  if (prefs.getBytesLength("disp") == sizeof(LegacyDisplaySettings)) {
+    LegacyDisplaySettings old;
+    prefs.getBytes("disp", &old, sizeof(old));
+    dispSettings.rotation = old.rotation & 3;
+    dispSettings.tempScaleMax = old.tempScaleMax;
+    dispSettings.powerScaleW = old.powerScaleW;
+    dispSettings.warnThresholdPct = old.warnThresholdPct;
+    Serial.println("Settings: display settings taken over from StatNode");
   }
-  return FACE_DEFAULT;
-}
-
-bool faceIsLegal(uint8_t layout, uint8_t surface) {
-  for (uint8_t i = 0; i < FACE_COUNT; i++)
-    if (FACE_TABLE[i].layout == layout && FACE_TABLE[i].surface == surface)
-      return true;
-  return false;
-}
-
-// The inverse of the legacy column. Only the eight faces that existed before
-// the split are reachable here; the four new combinations have no legacy value
-// to arrive from.
-uint8_t faceIndexFromLegacyStyle(uint8_t style) {
-  switch (normalizeDisplayStyle(style)) {
-    case STYLE_BIG_NUMBERS: return 0;
-    case STYLE_TILES:       return 1;
-    case STYLE_GLASS_TILES: return 2;
-    case STYLE_PULSE:       return 4;
-    case STYLE_STRIPS:      return 5;
-    case STYLE_HERO:        return 7;
-    case STYLE_DUO:         return 8;
-    case STYLE_GLASS_DUO:   return 10;
-    default:                return FACE_DEFAULT;
-  }
-}
-
-uint8_t legacyStyleFor(uint8_t layout, uint8_t surface, uint8_t rowStyle) {
-  return FACE_TABLE[faceIndex(layout, surface, rowStyle)].legacyStyle;
-}
-
-const char* faceNameFor(uint8_t layout, uint8_t surface, uint8_t rowStyle) {
-  return FACE_TABLE[faceIndex(layout, surface, rowStyle)].name;
-}
-
-void applyFace(uint8_t faceIdx) {
-  const FaceFamily& f = faceSpec(faceIdx);
-  displayLayout  = f.layout;
-  displaySurface = f.surface;
-  duoHeroBands   = f.bands;
-  duoRowStyle    = f.rowStyle;
-  displayStyle   = f.legacyStyle;
-}
-
-// Bands are documented above as deliberately NOT part of the face key, which
-// makes them a user preference rather than something the family owns. Touch
-// cycling must therefore carry the current band count across the switch instead
-// of re-seeding it: the user asked for a different face, not for their band
-// count to be reset. This is not cosmetic. With TouchSettings.rememberStyle set,
-// the cycler persists the face straight after applying it, so a re-seed here
-// wrote the table default over a saved custom value and no amount of cycling
-// back brought it home - the user had to set it again from the portal.
-//
-// Explicit face picks (portal, legacy style endpoint, the NVS legacy migration)
-// still go through applyFace() and take the seeded default, because there the
-// table is the only band count on offer.
-void applyFaceKeepBands(uint8_t faceIdx) {
-  const uint8_t bands = duoHeroBands;
-  applyFace(faceIdx);
-  duoHeroBands = bands;
-}
-
-void syncFaceFromDisplayStyle() {
-  applyFace(faceIndexFromLegacyStyle(displayStyle));
-}
-
-void normalizeFace(uint8_t& layout, uint8_t& surface, uint8_t& bands,
-                   uint8_t& rowStyle) {
-  if (layout >= LAYOUT_COUNT) layout = LAYOUT_TILES;
-  if (surface >= SURFACE_COUNT) surface = SURFACE_FLAT;
-  // Flat is legal under every layout, so it is the safe fallback for a pair the
-  // table does not carry.
-  if (!faceIsLegal(layout, surface)) surface = SURFACE_FLAT;
-  if (bands < 1) bands = 1;
-  if (bands > DUO_BANDS_MAX) bands = DUO_BANDS_MAX;
-  if (rowStyle > DUO_ROWS_LIST) rowStyle = DUO_ROWS_GRID;
-}
-
-uint8_t currentFaceIndex() {
-  return faceIndex(displayLayout, displaySurface, duoRowStyle);
-}
-
-void syncDisplayStyleFromFace() {
-  normalizeFace(displayLayout, displaySurface, duoHeroBands, duoRowStyle);
-  displayStyle = legacyStyleFor(displayLayout, displaySurface, duoRowStyle);
-}
-
-uint16_t faceMaskFromStyleMask(uint16_t styleMask) {
-  uint16_t out = 0;
-  for (uint8_t s = STYLE_BIG_NUMBERS; s < STYLE_COUNT; s++)
-    if (styleMask & (1u << s))
-      out |= (uint16_t)(1u << faceIndexFromLegacyStyle(s));
-  return out;
-}
-
-// The face record spans five NVS keys and Preferences has no transaction, so a
-// power loss partway through would leave a tuple that reads back as valid but
-// describes a face the user never picked. "facever" is therefore invalidated
-// first and written last: any interrupted write is caught on the next boot and
-// the whole tuple is re-derived from the legacy "style" value.
-//
-// This applies to every face write, not only the first migration. Once a valid
-// marker exists, a later multi-key save has exactly the same window, and the
-// boot-time legacy comparison would misread the result as a downgrade.
-//
-// Expects prefs to be open read-write.
-static bool writeFaceRecord() {
-  bool ok = prefs.putUChar("facever", 0xFF) != 0;
-  ok = (prefs.putUChar("layout", displayLayout) != 0) && ok;
-  ok = (prefs.putUChar("surface", displaySurface) != 0) && ok;
-  ok = (prefs.putUChar("duobands", duoHeroBands) != 0) && ok;
-  ok = (prefs.putUChar("duorows", duoRowStyle) != 0) && ok;
-  ok = (prefs.putUChar("style", displayStyle) != 0) && ok;
-  if (!ok) return false;
-  return prefs.putUChar("facever", FACE_SCHEMA_VERSION) != 0;
+  // "rot" marks the migration done, so it is written last and the legacy keys
+  // go only after every new key is stored.
+  const bool ok = prefs.putUShort("tscale", dispSettings.tempScaleMax) &&
+                  prefs.putUShort("pscale", dispSettings.powerScaleW) &&
+                  prefs.putUChar("warnpct", dispSettings.warnThresholdPct) &&
+                  prefs.putUChar("rot", dispSettings.rotation);
+  if (!ok) return;
+  for (const char* key : kLegacyKeys)
+    if (prefs.isKey(key)) prefs.remove(key);
 }
 
 // ---------------------------------------------------------------------------
 //  Defaults
 // ---------------------------------------------------------------------------
 void defaultDisplaySettings(DisplaySettings& ds) {
-  ds.rotation         = 0;
-  ds.bgColor          = CLR_BG;
-  ds.trackColor       = CLR_TRACK;
-  ds.progressBarColor = CLR_GREEN;
-  ds.animatedBar      = true;
-  ds.smallLabels      = false;
-  ds.invertColors     = false;
-  ds.cydPanelClassic  = false;
-  ds.pongClock        = false;
+  ds.rotation         = 1;   // landscape
   ds.tempScaleMax     = GAUGE_TEMP_SCALE_DEFAULT;
   ds.powerScaleW      = GAUGE_POWER_SCALE_DEFAULT;
-  ds.gaugeSmoothing   = 2;   // Normal
-  ds.warnColor        = CLR_RED;
   ds.warnThresholdPct = 90;
-  ds.clockTimeColor   = CLR_TEXT;
-  ds.clockDateColor   = CLR_TEXT_DIM;
-  ds.hideClockDate    = false;
-  ds.progress = { CLR_GREEN, CLR_TEXT_DIM, CLR_TEXT };
-  ds.gauge    = { CLR_BLUE,  CLR_TEXT_DIM, CLR_TEXT };
-}
-
-// Slot accent defaults, shared by every page so a page the user fills in later
-// starts with the same readable spread instead of one flat colour.
-static const uint16_t kSlotPalette[NUM_GAUGE_SLOTS] = {
-  CLR_ORANGE, CLR_BLUE, CLR_GREEN, CLR_CYAN, CLR_GOLD, CLR_RED,
-  CLR_VIOLET, CLR_ROSE
-};
-
-void defaultGaugeMapping(GaugeMapping& gm) {
-  // Out-of-box mapping: bind metric ids 1..N to the slots and let each gauge
-  // auto-classify by the metric's unit (same behavior the renderer had before
-  // the mapping was configurable). The user overrides any slot from the portal.
-  const uint16_t* palette = kSlotPalette;
-  for (uint8_t i = 0; i < NUM_GAUGE_SLOTS; i++) {
-    // Board-dependent: eight on the 320x480 panel, six on the 240x240 squares
-    // (see DEFAULT_BOUND_SLOTS). Slots past that start empty, so a device never
-    // boots into more readings than its panel carries well, and the user adds or
-    // removes tiles by binding/clearing slots on the portal's Metrics page.
-    gm.slots[i].metricId = (i < DEFAULT_BOUND_SLOTS) ? (uint8_t)(i + 1) : 0;
-    gm.slots[i].type     = GAUGE_TYPE_AUTO;
-    gm.slots[i].scaleMax = 0;            // 0 = use the gauge type's default scale
-    gm.slots[i].arcColor = palette[i];
-  }
-}
-
-// Pages past the first boot completely unbound, on purpose. An unbound page is
-// skipped by the cycler, so a device that has never been given a second page
-// behaves exactly like a single-page device. Seeding them from
-// defaultGaugeMapping() instead would make every page identical AND make all of
-// them cyclable, so an untouched device would tap between three copies of the
-// same screen.
-void emptyGaugeMapping(GaugeMapping& gm) {
-  for (uint8_t i = 0; i < NUM_GAUGE_SLOTS; i++) {
-    gm.slots[i].metricId = 0;
-    gm.slots[i].type     = GAUGE_TYPE_AUTO;
-    gm.slots[i].scaleMax = 0;
-    gm.slots[i].arcColor = kSlotPalette[i];
-  }
-}
-
-void defaultGaugeLabels(GaugeLabels& labels) {
-  memset(&labels, 0, sizeof(labels));
 }
 
 void defaultBacklightSettings(BacklightSettings& bs) {
+  memset(&bs, 0, sizeof(bs));
   bs.version = BACKLIGHT_SETTINGS_VERSION;
-  bs.nightEnabled = 0;
   bs.nightBrightness = 32;
-  bs.nightOfflineOff = 0;
   bs.nightStartMinute = 22 * 60;
   bs.nightEndMinute = 7 * 60;
-  bs.offlineSleepMinutes = 0;
-}
-
-void defaultTouchSettings(TouchSettings& ts) {
-  ts.version = TOUCH_SETTINGS_VERSION;
-  ts.enabled = 0;
-  ts.pin = TOUCH_DEFAULT_PIN;
-  ts.activeHigh = 1;
-  ts.shortAction = TOUCH_ACTION_NEXT_STYLE;
-  // Deliberately NOT TOGGLE_POWER. On a capacitive pad a fingertip lingers, so
-  // an accidental long press used to blank the display - and the tap that
-  // followed was consumed waking it back up instead of doing what the user
-  // wanted, which read as "the pad needs several taps". Toggling the clock is
-  // useful, obvious and undone by repeating the gesture. Blanking the screen is
-  // still available, just not one accidental hold away.
-  ts.longAction = TOUCH_ACTION_TOGGLE_CLOCK;
-  ts.styleMask = FACE_ACTIVE_MASK;
-  ts.rememberStyle = 0;
 }
 
 void defaultLedSettings(LedSettings& ls) {
   ls.version = LED_SETTINGS_VERSION;
   ls.enabled = 0;
-  // No board here ships an LED on a known pin, so the default is the "unset"
-  // sentinel and the user names the GPIO on the Hardware page. LED_DEFAULT_PIN
-  // stays the single source of that sentinel (see ledPinAllowed()).
   ls.pin = LED_DEFAULT_PIN;
   ls.brightness = 160;
   ls.nightEnabled = 1;
@@ -313,334 +95,76 @@ void defaultLedSettings(LedSettings& ls) {
   ls.offlineOff = 0;
 }
 
-void defaultThemeSettings(ThemeSettings& ts) {
-  ts.version = THEME_SETTINGS_VERSION;
-  ts.labelMode = THEME_LABEL_CLASSIC;
-  ts.tileTintPct = 0;
-  ts.reserved = 0;
-  ts.valueColor = CLR_TEXT;
-  ts.labelColor = CLR_TEXT_DIM;
-  ts.secondaryColor = CLR_TEXT_DIM;
-  ts.tileColor = CLR_CARD;
-}
-
-void defaultPageSettings(PageSettings& ps) {
-  memset(&ps, 0, sizeof(ps));
-  ps.version = PAGE_SETTINGS_VERSION;
-  // Rotation off out of the box. A fresh device has one bound page, so an
-  // interval would do nothing anyway, and a display that starts moving on its
-  // own after the user fills in a second page would be a surprise.
-  ps.rotateSeconds = 0;
-  ps.rotateUnit = 0;
-  // Long enough to actually read the page you just tapped to.
-  ps.pinSeconds = 30;
-  ps.rememberPage = 0;
-  ps.startPage = 0;
-}
-
 void defaultNetworkSettings(NetworkSettings& ns) {
+  memset(&ns, 0, sizeof(ns));
   ns.useDHCP = true;
-  ns.staticIP[0] = '\0';
-  ns.gateway[0]  = '\0';
-  ns.subnet[0]   = '\0';
-  ns.dns[0]      = '\0';
   ns.showIPAtStartup = true;
-  ns.timezoneIndex = 0;
-  ns.timezoneStr[0] = '\0';
   ns.use24h = true;
-  ns.dateFormat = 0;
   ns.mdnsEnabled = true;
-  sanitizeHostname("statnode", ns.hostname, sizeof(ns.hostname));
+  sanitizeHostname("touchdeck", ns.hostname, sizeof(ns.hostname));
 }
 
 // ---------------------------------------------------------------------------
-//  Persistence (NVS blobs - one key per struct, robust to field changes only
-//  when the struct size matches; on size mismatch we fall back to defaults).
+//  Persistence. Blobs are taken only when size (and version) match.
 // ---------------------------------------------------------------------------
+static uint16_t clampScale(uint16_t v, uint16_t def) { return v ? v : def; }
+
 void loadSettings() {
   defaultDisplaySettings(dispSettings);
   defaultNetworkSettings(netSettings);
-  defaultGaugeMapping(gaugePages[0]);
-  defaultGaugeLabels(gaugePageLabels[0]);
-  for (uint8_t p = 1; p < METRIC_PAGE_COUNT; p++) {
-    emptyGaugeMapping(gaugePages[p]);
-    defaultGaugeLabels(gaugePageLabels[p]);
-  }
   defaultBacklightSettings(backlightSettings);
-  defaultTouchSettings(touchSettings);
   defaultLedSettings(ledSettings);
-  defaultThemeSettings(themeSettings);
-  defaultPageSettings(pageSettings);
 
-  prefs.begin(NVS_NAMESPACE, true);  // read-only
-
-  if (prefs.getBytesLength("disp") == sizeof(DisplaySettings)) {
-    prefs.getBytes("disp", &dispSettings, sizeof(DisplaySettings));
+  prefs.begin(NVS_NAMESPACE, false);
+  if (!prefs.isKey("rot")) {
+    migrateFromStatNode();
+  } else {
+    dispSettings.rotation = prefs.getUChar("rot", dispSettings.rotation) & 3;
+    dispSettings.tempScaleMax = prefs.getUShort("tscale", dispSettings.tempScaleMax);
+    dispSettings.powerScaleW = prefs.getUShort("pscale", dispSettings.powerScaleW);
+    dispSettings.warnThresholdPct = prefs.getUChar("warnpct", dispSettings.warnThresholdPct);
   }
-  if (prefs.getBytesLength("net") == sizeof(NetworkSettings)) {
+  if (prefs.getBytesLength("net") == sizeof(NetworkSettings))
     prefs.getBytes("net", &netSettings, sizeof(NetworkSettings));
-  }
-  // Gauge mapping + labels are sized by NUM_GAUGE_SLOTS, so raising the slot
-  // count changes the blob length. The exact-size checks below would then miss
-  // and silently fall back to defaults, resetting every slot the user bound. So
-  // also accept the older, shorter layout and copy what it holds into the
-  // leading slots; the new trailing slots stay at their defaults (unbound is
-  // the honest state - nothing was ever configured for them).
-  //
-  // These two keys are page 0's by definition. Pages past the first get their
-  // own keys rather than a longer blob here, so this migration keeps working
-  // untouched however many pages the build carries.
-  {
-    struct LegacyGaugeMappingV1 { GaugeSlot slots[LEGACY_GAUGE_SLOTS_V1]; };
-    const size_t stored = prefs.getBytesLength("gauges");
-    if (stored == sizeof(GaugeMapping)) {
-      prefs.getBytes("gauges", &gaugePages[0], sizeof(GaugeMapping));
-    } else if (stored == sizeof(LegacyGaugeMappingV1)) {
-      LegacyGaugeMappingV1 old;
-      prefs.getBytes("gauges", &old, sizeof(old));
-      for (uint8_t i = 0; i < LEGACY_GAUGE_SLOTS_V1; i++)
-        gaugePages[0].slots[i] = old.slots[i];
-      Serial.printf("Settings: migrated %u-slot gauge mapping to %u slots\n",
-                    (unsigned)LEGACY_GAUGE_SLOTS_V1, (unsigned)NUM_GAUGE_SLOTS);
-    }
-  }
-  {
-    struct LegacyGaugeLabelsV1 { char labels[LEGACY_GAUGE_SLOTS_V1][GAUGE_LABEL_LENGTH]; };
-    const size_t stored = prefs.getBytesLength("labels");
-    if (stored == sizeof(GaugeLabels)) {
-      prefs.getBytes("labels", &gaugePageLabels[0], sizeof(GaugeLabels));
-    } else if (stored == sizeof(LegacyGaugeLabelsV1)) {
-      LegacyGaugeLabelsV1 old;
-      prefs.getBytes("labels", &old, sizeof(old));
-      for (uint8_t i = 0; i < LEGACY_GAUGE_SLOTS_V1; i++)
-        strlcpy(gaugePageLabels[0].labels[i], old.labels[i], GAUGE_LABEL_LENGTH);
-    }
-  }
-  // Pages past the first never existed under an older firmware, so there is no
-  // legacy layout to accept here - an absent key just leaves the page empty.
-  for (uint8_t p = 1; p < METRIC_PAGE_COUNT; p++) {
-    char key[16];
-    pageNvsKey(key, sizeof(key), "gauges", p);
-    if (prefs.getBytesLength(key) == sizeof(GaugeMapping))
-      prefs.getBytes(key, &gaugePages[p], sizeof(GaugeMapping));
-    pageNvsKey(key, sizeof(key), "labels", p);
-    if (prefs.getBytesLength(key) == sizeof(GaugeLabels))
-      prefs.getBytes(key, &gaugePageLabels[p], sizeof(GaugeLabels));
-  }
-  if (prefs.getBytesLength("pages") == sizeof(PageSettings)) {
-    PageSettings stored;
-    prefs.getBytes("pages", &stored, sizeof(stored));
-    if (stored.version == PAGE_SETTINGS_VERSION) pageSettings = stored;
-  }
   if (prefs.getBytesLength("backlight") == sizeof(BacklightSettings)) {
     BacklightSettings stored;
     prefs.getBytes("backlight", &stored, sizeof(stored));
     if (stored.version == BACKLIGHT_SETTINGS_VERSION) backlightSettings = stored;
-  }
-  // v3 did not resize the blob, so a v2 record still matches on length and has
-  // to be told apart by its version field alone. A v1 device chains v1 -> v2
-  // -> v3 through the same mask remap.
-  bool migrateTouchVersion = false;
-  if (prefs.getBytesLength("touch") == sizeof(TouchSettings)) {
-    TouchSettings stored;
-    prefs.getBytes("touch", &stored, sizeof(stored));
-    if (stored.version == TOUCH_SETTINGS_VERSION) {
-      touchSettings = stored;
-    } else if (stored.version == 2) {
-      touchSettings = stored;
-      touchSettings.version = TOUCH_SETTINGS_VERSION;
-      touchSettings.styleMask = faceMaskFromStyleMask(stored.styleMask);
-      migrateTouchVersion = true;
-    }
-  } else if (prefs.getBytesLength("touch") == sizeof(TouchSettingsV1)) {
-    // Pre-glass blob: same fields, 8-bit mask, rememberStyle and styleMask in
-    // the opposite order. Copy field by field rather than losing a configured
-    // pad to a size mismatch on the OTA that added the glass faces.
-    TouchSettingsV1 old;
-    prefs.getBytes("touch", &old, sizeof(old));
-    if (old.version == 1) {
-      touchSettings.version       = TOUCH_SETTINGS_VERSION;
-      touchSettings.enabled       = old.enabled;
-      touchSettings.pin           = old.pin;
-      touchSettings.activeHigh    = old.activeHigh;
-      touchSettings.shortAction   = old.shortAction;
-      touchSettings.longAction    = old.longAction;
-      touchSettings.rememberStyle = old.rememberStyle;
-      touchSettings.styleMask     = faceMaskFromStyleMask(old.styleMask);
-      migrateTouchVersion = true;
-    }
   }
   if (prefs.getBytesLength("led") == sizeof(LedSettings)) {
     LedSettings stored;
     prefs.getBytes("led", &stored, sizeof(stored));
     if (stored.version == LED_SETTINGS_VERSION) ledSettings = stored;
   }
-  if (prefs.getBytesLength("theme") == sizeof(ThemeSettings)) {
-    ThemeSettings stored;
-    prefs.getBytes("theme", &stored, sizeof(stored));
-    if (stored.version == THEME_SETTINGS_VERSION) themeSettings = stored;
-  }
   prefs.getString("ssid", wifiSSID, sizeof(wifiSSID));
   prefs.getString("pass", wifiPass, sizeof(wifiPass));
   brightness = prefs.getUChar("bright", 200);
-  const uint8_t storedDisplayStyle = prefs.getUChar("style", STYLE_DEFAULT);
-  displayStyle = normalizeDisplayStyle(storedDisplayStyle);
-  const bool migrateDisplayStyle = displayStyle != storedDisplayStyle;
-  // Face tuple. Trusted only when its commit marker is intact, every key is in
-  // range, the pair is legal, AND the family still agrees with the legacy
-  // "style" value. That last test is the downgrade round trip: old firmware
-  // reads and writes only "style" and leaves these keys alone, so a mismatch
-  // means the user picked a face on the older build and their newer choice must
-  // not be silently overruled by a stale tuple.
-  const uint8_t storedFaceVer   = prefs.getUChar("facever", 0xFF);
-  const uint8_t storedLayout    = prefs.getUChar("layout", 0xFF);
-  const uint8_t storedSurface   = prefs.getUChar("surface", 0xFF);
-  const uint8_t storedDuoBands  = prefs.getUChar("duobands", 0xFF);
-  const uint8_t storedDuoRows   = prefs.getUChar("duorows", 0xFF);
-  bool faceRecordValid =
-    storedFaceVer == FACE_SCHEMA_VERSION &&
-    storedLayout < LAYOUT_COUNT && storedSurface < SURFACE_COUNT &&
-    storedDuoBands >= 1 && storedDuoBands <= DUO_BANDS_MAX &&
-    storedDuoRows <= DUO_ROWS_LIST &&
-    faceIsLegal(storedLayout, storedSurface) &&
-    legacyStyleFor(storedLayout, storedSurface, storedDuoRows) == displayStyle;
-  if (faceRecordValid) {
-    displayLayout  = storedLayout;
-    displaySurface = storedSurface;
-    duoHeroBands   = storedDuoBands;
-    duoRowStyle    = storedDuoRows;
-  } else {
-    syncFaceFromDisplayStyle();
-  }
-  const bool migrateFace = !faceRecordValid;
-  clockFace = prefs.getUChar(
-    "clockface", dispSettings.pongClock ? CLOCK_FACE_BREAKOUT : CLOCK_FACE_STANDARD);
-  if (clockFace >= CLOCK_FACE_COUNT) clockFace = CLOCK_FACE_STANDARD;
-  dispSettings.pongClock = clockFace == CLOCK_FACE_BREAKOUT;
-  sparkRedrawSec = prefs.getUChar("sparks", SPARK_REDRAW_MS / 1000);
-  if (sparkRedrawSec < 1) sparkRedrawSec = 1;
-  if (sparkRedrawSec > 60) sparkRedrawSec = 60;
-  chartSmoothing = prefs.getUChar("chartsm", 0);
-  if (chartSmoothing > CHART_SMOOTH_MAX) chartSmoothing = 0;
-  glassGlossPct = prefs.getUChar("glossa", GLASS_GLOSS_PCT_DEFAULT);
-  if (glassGlossPct > 100) glassGlossPct = GLASS_GLOSS_PCT_DEFAULT;
-  glassBowPct = prefs.getUChar("glossbow", GLASS_BOW_PCT_DEFAULT);
-  if (glassBowPct > 100) glassBowPct = GLASS_BOW_PCT_DEFAULT;
-  glassChartFillPct = prefs.getUChar("chartfill", GLASS_CHART_FILL_PCT_DEFAULT);
-  if (glassChartFillPct > 100) glassChartFillPct = GLASS_CHART_FILL_PCT_DEFAULT;
-  glassTheme = prefs.getUChar("glasstheme", GLASS_THEME_DEFAULT);
-  if (glassTheme >= GLASS_THEME_COUNT) glassTheme = GLASS_THEME_DEFAULT;
+  prefs.end();
+
+  dispSettings.tempScaleMax = clampScale(dispSettings.tempScaleMax, GAUGE_TEMP_SCALE_DEFAULT);
+  dispSettings.powerScaleW = clampScale(dispSettings.powerScaleW, GAUGE_POWER_SCALE_DEFAULT);
+  if (dispSettings.warnThresholdPct > 100) dispSettings.warnThresholdPct = 90;
   backlightSettings.nightEnabled = backlightSettings.nightEnabled ? 1 : 0;
-  backlightSettings.nightOfflineOff = backlightSettings.nightOfflineOff ? 1 : 0;
-  if (backlightSettings.nightStartMinute >= 24 * 60)
-    backlightSettings.nightStartMinute = 22 * 60;
-  if (backlightSettings.nightEndMinute >= 24 * 60)
-    backlightSettings.nightEndMinute = 7 * 60;
-  if (backlightSettings.offlineSleepMinutes > 24 * 60)
-    backlightSettings.offlineSleepMinutes = 24 * 60;
-  touchSettings.enabled = touchSettings.enabled ? 1 : 0;
-  touchSettings.activeHigh = touchSettings.activeHigh ? 1 : 0;
-  touchSettings.rememberStyle = touchSettings.rememberStyle ? 1 : 0;
-  if (touchSettings.shortAction >= TOUCH_ACTION_COUNT)
-    touchSettings.shortAction = TOUCH_ACTION_NEXT_STYLE;
-  if (touchSettings.longAction >= TOUCH_ACTION_COUNT)
-    touchSettings.longAction = TOUCH_ACTION_TOGGLE_POWER;
-  const uint16_t storedTouchStyleMask = touchSettings.styleMask;
-  touchSettings.styleMask &= FACE_ACTIVE_MASK;
-  if (touchSettings.styleMask == 0)
-    touchSettings.styleMask = 1u << FACE_DEFAULT;
-  const bool migrateTouchStyleMask =
-    migrateTouchVersion || touchSettings.styleMask != storedTouchStyleMask;
-  // After the touch pin is settled: the LED may not sit on a pin the pad has
-  // claimed, and sanitizeLedPin() tests exactly that.
+  if (backlightSettings.nightStartMinute >= 24 * 60) backlightSettings.nightStartMinute = 22 * 60;
+  if (backlightSettings.nightEndMinute >= 24 * 60) backlightSettings.nightEndMinute = 7 * 60;
+  netSettings.hostname[sizeof(netSettings.hostname) - 1] = '\0';
+  netSettings.timezoneStr[sizeof(netSettings.timezoneStr) - 1] = '\0';
   sanitizeLedPin();
-  if (themeSettings.labelMode >= THEME_LABEL_MODE_COUNT)
-    themeSettings.labelMode = THEME_LABEL_CLASSIC;
-  if (themeSettings.tileTintPct > 30) themeSettings.tileTintPct = 30;
-  pageSettings.rotateUnit = pageSettings.rotateUnit ? 1 : 0;
-  pageSettings.rememberPage = pageSettings.rememberPage ? 1 : 0;
-  if (pageSettings.pinSeconds > 240) pageSettings.pinSeconds = 240;
-  if (pageSettings.startPage >= METRIC_PAGE_COUNT) pageSettings.startPage = 0;
-  // Never boot into an empty page while another page has bindings. This also
-  // covers page 0: the editor is allowed to clear it, so treating it as an
-  // unconditional fallback would leave the panel blank after a restart.
-  const uint8_t requestedPage = pageSettings.rememberPage
-    ? pageSettings.startPage : 0;
-  activeMetricPage = metricPageHasBindings(requestedPage)
-    ? requestedPage : firstBoundMetricPage(0);
-
-  for (uint8_t p = 0; p < METRIC_PAGE_COUNT; p++) {
-    for (uint8_t i = 0; i < NUM_GAUGE_SLOTS; i++) {
-      char* label = gaugePageLabels[p].labels[i];
-      label[GAUGE_LABEL_LENGTH - 1] = '\0';
-      char cleaned[GAUGE_LABEL_LENGTH];
-      sanitizeGaugeLabel(label, cleaned, sizeof(cleaned));
-      strlcpy(label, cleaned, GAUGE_LABEL_LENGTH);
-    }
-  }
-
-  prefs.end();
-
-  if (migrateDisplayStyle || migrateFace || migrateTouchStyleMask) {
-    prefs.begin(NVS_NAMESPACE, false);
-    // writeFaceRecord() rewrites "style" as well, so a legacy-only migration
-    // still lands through it.
-    if (migrateDisplayStyle || migrateFace) writeFaceRecord();
-    if (migrateTouchStyleMask)
-      prefs.putBytes("touch", &touchSettings, sizeof(TouchSettings));
-    prefs.end();
-  }
-}
-
-// Write just the LED blob. The hold-free path for the Hardware page: a
-// brightness change should not rewrite every other NVS key.
-void saveLedSettings() {
-  sanitizeLedPin();
-  prefs.begin(NVS_NAMESPACE, false);
-  prefs.putBytes("led", &ledSettings, sizeof(LedSettings));
-  prefs.end();
 }
 
 void saveSettings() {
-  // Keep the old field coherent for downgrade compatibility. Runner maps to
-  // Standard on firmware versions that predate the dedicated scalar.
-  dispSettings.pongClock = clockFace == CLOCK_FACE_BREAKOUT;
   sanitizeLedPin();
-  // The tuple is what the portal, the renderer and the touch cycler assign;
-  // the legacy scalar follows from it.
-  syncDisplayStyleFromFace();
-  touchSettings.styleMask &= FACE_ACTIVE_MASK;
-  if (touchSettings.styleMask == 0)
-    touchSettings.styleMask = 1u << FACE_DEFAULT;
-  prefs.begin(NVS_NAMESPACE, false);  // read-write
-  prefs.putBytes("disp", &dispSettings, sizeof(DisplaySettings));
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putUChar("rot", dispSettings.rotation);
+  prefs.putUShort("tscale", dispSettings.tempScaleMax);
+  prefs.putUShort("pscale", dispSettings.powerScaleW);
+  prefs.putUChar("warnpct", dispSettings.warnThresholdPct);
   prefs.putBytes("net", &netSettings, sizeof(NetworkSettings));
-  // Page 0 keeps the original key names so an older firmware still reads it.
-  prefs.putBytes("gauges", &gaugePages[0], sizeof(GaugeMapping));
-  prefs.putBytes("labels", &gaugePageLabels[0], sizeof(GaugeLabels));
-  for (uint8_t p = 1; p < METRIC_PAGE_COUNT; p++) {
-    char key[16];
-    pageNvsKey(key, sizeof(key), "gauges", p);
-    prefs.putBytes(key, &gaugePages[p], sizeof(GaugeMapping));
-    pageNvsKey(key, sizeof(key), "labels", p);
-    prefs.putBytes(key, &gaugePageLabels[p], sizeof(GaugeLabels));
-  }
   prefs.putBytes("backlight", &backlightSettings, sizeof(BacklightSettings));
-  prefs.putBytes("touch", &touchSettings, sizeof(TouchSettings));
   prefs.putBytes("led", &ledSettings, sizeof(LedSettings));
-  prefs.putBytes("theme", &themeSettings, sizeof(ThemeSettings));
-  prefs.putBytes("pages", &pageSettings, sizeof(PageSettings));
   prefs.putString("ssid", wifiSSID);
   prefs.putString("pass", wifiPass);
   prefs.putUChar("bright", brightness);
-  writeFaceRecord();
-  prefs.putUChar("clockface", clockFace);
-  prefs.putUChar("sparks", sparkRedrawSec);
-  prefs.putUChar("chartsm", chartSmoothing);
-  prefs.putUChar("glasstheme", glassTheme);
-  prefs.putUChar("glossa", glassGlossPct);
-  prefs.putUChar("glossbow", glassBowPct);
-  prefs.putUChar("chartfill", glassChartFillPct);
   prefs.end();
 }
 
@@ -649,109 +173,6 @@ bool factoryResetSettings() {
   const bool cleared = prefs.clear();
   prefs.end();
   return cleared;
-}
-
-void saveStartMetricPage() {
-  if (!pageSettings.rememberPage) return;
-  if (pageSettings.startPage == activeMetricPage) return;  // nothing to rewrite
-  pageSettings.startPage = activeMetricPage;
-  prefs.begin(NVS_NAMESPACE, false);
-  prefs.putBytes("pages", &pageSettings, sizeof(PageSettings));
-  prefs.end();
-}
-
-void saveDisplayFace() {
-  syncDisplayStyleFromFace();
-  prefs.begin(NVS_NAMESPACE, false);
-  writeFaceRecord();
-  prefs.end();
-}
-
-void sanitizeGaugeLabel(const char* in, char* out, size_t outSize) {
-  if (!out || outSize == 0) return;
-  out[0] = '\0';
-  if (!in) return;
-
-  while (*in == ' ') in++;
-  size_t written = 0;
-  for (; *in && written < outSize - 1; in++) {
-    const uint8_t c = (uint8_t)*in;
-    if (c >= 32 && c <= 126) out[written++] = (char)c;
-  }
-  while (written > 0 && out[written - 1] == ' ') written--;
-  out[written] = '\0';
-}
-
-// Page 0 keeps the bare key so an older firmware still finds it; later pages
-// append their index. NVS caps key names at 15 characters, which leaves room
-// well past the page counts this device will ever carry.
-void pageNvsKey(char* out, size_t len, const char* base, uint8_t page) {
-  if (page == 0) strlcpy(out, base, len);
-  else snprintf(out, len, "%s%u", base, (unsigned)page);
-}
-
-// A page with nothing bound has nothing to draw, so the cycler steps over it.
-// Deliberately keyed on the stored binding rather than on what the live packet
-// carries: otherwise a page would appear and vanish as the companion restarts.
-bool metricPageHasBindings(uint8_t page) {
-  if (page >= METRIC_PAGE_COUNT) return false;
-  for (uint8_t i = 0; i < NUM_GAUGE_SLOTS; i++)
-    if (gaugePages[page].slots[i].metricId != 0) return true;
-  return false;
-}
-
-uint8_t metricPageCountBound() {
-  uint8_t n = 0;
-  for (uint8_t p = 0; p < METRIC_PAGE_COUNT; p++)
-    if (metricPageHasBindings(p)) n++;
-  return n;
-}
-
-uint8_t firstBoundMetricPage(uint8_t fallback) {
-  for (uint8_t p = 0; p < METRIC_PAGE_COUNT; p++)
-    if (metricPageHasBindings(p)) return p;
-  return fallback < METRIC_PAGE_COUNT ? fallback : 0;
-}
-
-// activeMetricPage is only ever set from validated paths, but a stray value
-// would index out of bounds on every frame, so clamp at the accessor.
-GaugeMapping& activeGaugeMap() {
-  return gaugePages[activeMetricPage < METRIC_PAGE_COUNT ? activeMetricPage : 0];
-}
-
-GaugeLabels& activeGaugeLabels() {
-  return gaugePageLabels[activeMetricPage < METRIC_PAGE_COUNT ? activeMetricPage : 0];
-}
-
-const char* gaugeDisplayLabel(uint8_t slotIndex, const char* fallback) {
-  const GaugeLabels& labels = activeGaugeLabels();
-  if (slotIndex < NUM_GAUGE_SLOTS && labels.labels[slotIndex][0])
-    return labels.labels[slotIndex];
-  return fallback ? fallback : "";
-}
-
-// ---------------------------------------------------------------------------
-//  RGB565 <-> HTML hex
-// ---------------------------------------------------------------------------
-uint16_t htmlToRgb565(const char* hex) {
-  if (!hex) return 0;
-  if (*hex == '#') hex++;
-  long v = strtol(hex, nullptr, 16);
-  uint8_t r = (v >> 16) & 0xFF;
-  uint8_t g = (v >> 8) & 0xFF;
-  uint8_t b = v & 0xFF;
-  return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-}
-
-void rgb565ToHtml(uint16_t color, char* buf) {
-  uint8_t r = ((color >> 11) & 0x1F);
-  uint8_t g = ((color >> 5) & 0x3F);
-  uint8_t b = (color & 0x1F);
-  // Scale 5/6-bit channels back to 8-bit.
-  r = (r * 255 + 15) / 31;
-  g = (g * 255 + 31) / 63;
-  b = (b * 255 + 15) / 31;
-  snprintf(buf, 8, "#%02X%02X%02X", r, g, b);
 }
 
 // ---------------------------------------------------------------------------
@@ -772,11 +193,7 @@ void sanitizeHostname(const char* in, char* out, size_t outSize) {
       lastHyphen = true;
     }
   }
-  // Strip trailing hyphen.
   while (j > 0 && out[j - 1] == '-') j--;
   out[j] = '\0';
-  if (j == 0) {
-    strncpy(out, "statnode", outSize - 1);
-    out[outSize - 1] = '\0';
-  }
+  if (j == 0) strlcpy(out, "touchdeck", outSize);
 }

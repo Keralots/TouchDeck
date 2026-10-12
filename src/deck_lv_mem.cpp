@@ -3,8 +3,6 @@
 // draw task under 4 KB landed in internal RAM, which WiFi, the portal, the
 // Home Assistant socket and the display's DMA staging buffers also need.
 // Frame buffers were already in PSRAM, so the render cost barely moves.
-#if defined(BOARD_IS_JC3248W535)
-
 #include <esp_heap_caps.h>
 #include <lvgl.h>
 
@@ -39,5 +37,3 @@ void lv_mem_monitor_core(lv_mem_monitor_t* mon_p) { LV_UNUSED(mon_p); }
 lv_result_t lv_mem_test_core(void) { return LV_RESULT_OK; }
 
 }  // extern "C"
-
-#endif  // BOARD_IS_JC3248W535

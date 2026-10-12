@@ -2,7 +2,6 @@
 //
 // { "schema": 1, "theme": "midnight",
 //   "pages": [
-//     { "id": "pc-stats", "type": "metrics" },
 //     { "id": "desk", "name": "Desk",
 //       "layouts": { "landscape": { "cols": 4, "rows": 3 } },
 //       "tiles": [
@@ -19,12 +18,10 @@
 // label / icon null = take them from Home Assistant later (Phase 3); until
 // then the entity id stands in. `sub` is an optional fixed second line.
 // Positions are keyed by orientation; a tile without one for the current
-// orientation flows into the next free cell. A page of type "metrics" is the
-// StatNode face page; without one it is inserted first.
+// orientation flows into the next free cell. Pages of type "metrics" (left
+// over from StatNode) are skipped.
 #ifndef DECK_CONFIG_H
 #define DECK_CONFIG_H
-
-#if defined(BOARD_IS_JC3248W535)
 
 #include <Arduino.h>
 #include <vector>
@@ -74,7 +71,6 @@ struct TileDef {
 
 struct PageDef {
   String id, name;
-  bool metrics = false;
   uint8_t cols[2] = {4, 3};
   uint8_t rows[2] = {3, 4};
   std::vector<TileDef> tiles;
@@ -104,5 +100,4 @@ bool deckFsReady();
 
 }  // namespace deck
 
-#endif  // BOARD_IS_JC3248W535
 #endif  // DECK_CONFIG_H

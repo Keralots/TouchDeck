@@ -1,6 +1,4 @@
 // Guition deck: MDI icon font. See deck_icons.h.
-#if defined(BOARD_IS_JC3248W535)
-
 #include "deck_icons.h"
 #include "deck_config.h"
 #include <LittleFS.h>
@@ -259,5 +257,3 @@ void iconUtf8(uint32_t cp, char out[5]) {
 }
 
 }  // namespace deck
-
-#endif  // BOARD_IS_JC3248W535

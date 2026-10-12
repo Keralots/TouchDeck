@@ -14,8 +14,6 @@
 #ifndef DECK_HA_H
 #define DECK_HA_H
 
-#if defined(BOARD_IS_JC3248W535)
-
 #include <Arduino.h>
 #include <vector>
 
@@ -78,5 +76,4 @@ const char* haEntityListPath();
 
 }  // namespace deck
 
-#endif  // BOARD_IS_JC3248W535
 #endif  // DECK_HA_H

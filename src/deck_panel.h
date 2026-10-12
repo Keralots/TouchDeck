@@ -12,8 +12,6 @@
 #ifndef DECK_PANEL_H
 #define DECK_PANEL_H
 
-#if defined(BOARD_IS_JC3248W535)
-
 #include <Arduino.h>
 
 namespace deck {
@@ -24,7 +22,7 @@ static constexpr size_t FRAME_BYTES = (size_t)NATIVE_W * NATIVE_H * 2;
 
 // A full-screen logical image (logicalW() x logicalH()). stride is in pixels.
 // swap=true for little-endian RGB565 (LVGL), false for data already in panel
-// byte order (LovyanGFX sprites). px == nullptr means "the latest complete
+// byte order. px == nullptr means "the latest complete
 // LVGL frame", resolved by the flush task when the frame is built.
 struct Src {
   const uint16_t* px;
@@ -37,8 +35,8 @@ struct Src {
 // Backlight is left alone. Returns false if a buffer could not be allocated.
 bool panelBegin(uint8_t rotation);
 
-// User rotation 0..3, same meaning as LovyanGFX setRotation() on the old
-// full-frame sprite (1 = landscape with USB-C on the right).
+// User rotation 0..3, 0 = native portrait (1 = landscape with USB-C on the
+// right).
 void panelSetRotation(uint8_t rotation);
 uint8_t panelRotation();
 int logicalW();
@@ -108,5 +106,4 @@ PanelStats panelTakeStats();
 
 }  // namespace deck
 
-#endif  // BOARD_IS_JC3248W535
 #endif  // DECK_PANEL_H

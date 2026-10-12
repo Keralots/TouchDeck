@@ -1,6 +1,4 @@
 // Guition deck configuration loader. See deck_config.h for the schema.
-#if defined(BOARD_IS_JC3248W535)
-
 #include "deck_config.h"
 #include "config.h"
 #include <ArduinoJson.h>
@@ -11,14 +9,12 @@ namespace {
 
 const char* const CONFIG_PATH = "/deck.json";
 
-// Built-in starter deck: the metric page plus two example pages. The HA
-// entity ids are placeholders until the portal editor (Phase 4) lets the
-// user pick real ones.
+// Built-in starter deck: an example Home Assistant page (placeholder entity
+// ids) and the PC stats from the companion's first eight metrics.
 const char kDefaultDeck[] PROGMEM = R"JSON({
   "schema": 1,
   "theme": "midnight",
   "pages": [
-    { "id": "pc-stats", "type": "metrics" },
     { "id": "desk", "name": "Desk",
       "layouts": { "landscape": { "cols": 4, "rows": 3 } },
       "tiles": [
@@ -40,18 +36,18 @@ const char kDefaultDeck[] PROGMEM = R"JSON({
     { "id": "pc", "name": "PC",
       "layouts": { "landscape": { "cols": 4, "rows": 3 } },
       "tiles": [
-        { "id": "mute", "type": "action", "label": "Mute mic", "sub": "Hotkey", "icon": "mdi:microphone-off" },
-        { "id": "shot", "type": "action", "label": "Screenshot", "sub": "Hotkey", "icon": "mdi:image" },
-        { "id": "prev", "type": "action", "label": "Previous", "sub": "Media", "icon": "mdi:skip-previous" },
-        { "id": "play", "type": "action", "label": "Play", "sub": "Media", "icon": "mdi:play" },
-        { "id": "next", "type": "action", "label": "Next", "sub": "Media", "icon": "mdi:skip-next" },
-        { "id": "lock", "type": "action", "label": "Lock PC", "sub": "Win+L", "icon": "mdi:lock" },
-        { "id": "term", "type": "action", "label": "Terminal", "sub": "Companion", "icon": "mdi:console" },
-        { "id": "vol", "type": "action", "label": "Volume", "sub": "Media", "icon": "mdi:volume-high",
-          "pos": { "landscape": { "x": 3, "y": 1, "w": 1, "h": 2 } } },
-        { "id": "sleep", "type": "action", "label": "Sleep PC", "sub": "Companion", "icon": "mdi:power-sleep", "color": "#FF8A7A" },
-        { "id": "todesk", "type": "action", "label": "Desk", "sub": "Page", "icon": "mdi:chevron-left",
-          "tap": { "action": "page", "page": "desk" } }
+        { "id": "m1", "type": "metric", "metric": 1, "style": "chart",
+          "pos": { "landscape": { "x": 0, "y": 0, "w": 2, "h": 1 } } },
+        { "id": "m2", "type": "metric", "metric": 2, "style": "chart",
+          "pos": { "landscape": { "x": 2, "y": 0, "w": 2, "h": 1 } } },
+        { "id": "m3", "type": "metric", "metric": 3 },
+        { "id": "m4", "type": "metric", "metric": 4 },
+        { "id": "m5", "type": "metric", "metric": 5 },
+        { "id": "m6", "type": "metric", "metric": 6 },
+        { "id": "m7", "type": "metric", "metric": 7, "style": "bar",
+          "pos": { "landscape": { "x": 0, "y": 2, "w": 2, "h": 1 } } },
+        { "id": "m8", "type": "metric", "metric": 8, "style": "bar",
+          "pos": { "landscape": { "x": 2, "y": 2, "w": 2, "h": 1 } } }
       ] }
   ]
 })JSON";
@@ -157,12 +153,8 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
     p.id = (const char*)(pv["id"] | "");
     p.name = (const char*)(pv["name"] | "");
     const char* type = pv["type"] | "tiles";
-    p.metrics = !strcmp(type, "metrics");
+    if (!strcmp(type, "metrics")) continue;
     if (!p.id.length()) p.id = "page" + String(cfg.pages.size() + 1);
-    if (p.metrics) {
-      cfg.pages.push_back(p);
-      continue;
-    }
     parseGrid(pv["layouts"]["landscape"], p.cols[ORIENT_LANDSCAPE], p.rows[ORIENT_LANDSCAPE]);
     parseGrid(pv["layouts"]["portrait"], p.cols[ORIENT_PORTRAIT], p.rows[ORIENT_PORTRAIT]);
     JsonArrayConst tiles = pv["tiles"].as<JsonArrayConst>();
@@ -213,6 +205,10 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       p.tiles.push_back(t);
     }
     cfg.pages.push_back(p);
+  }
+  if (cfg.pages.empty()) {
+    if (err) *err = "no pages";
+    return false;
   }
   out = cfg;
   return true;
@@ -283,5 +279,3 @@ bool deckConfigLoad(DeckConfig& out, String* source, String* err) {
 }
 
 }  // namespace deck
-
-#endif  // BOARD_IS_JC3248W535

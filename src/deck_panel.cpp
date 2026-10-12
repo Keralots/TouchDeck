@@ -1,7 +1,5 @@
 // Guition JC3248W535 display pipeline. See deck_panel.h for the contract and
 // the measured panel facts behind it.
-#if defined(BOARD_IS_JC3248W535)
-
 #include "deck_panel.h"
 #include <driver/spi_master.h>
 #include <driver/gpio.h>
@@ -360,8 +358,7 @@ void overlayDots(const Frame& f, uint16_t* dst, int ny0) {
   }
 }
 
-// Fill one native chunk (rows ny0 .. ny0+ROWS-1). Mapping per user rotation
-// (identical to LovyanGFX's sprite rotation):
+// Fill one native chunk (rows ny0 .. ny0+ROWS-1). Mapping per user rotation:
 //   0: lx = nx,        ly = ny
 //   1: lx = ny,        ly = 319 - nx
 //   2: lx = 319 - nx,  ly = 479 - ny
@@ -867,5 +864,3 @@ PanelStats panelTakeStats() {
 }
 
 }  // namespace deck
-
-#endif  // BOARD_IS_JC3248W535
