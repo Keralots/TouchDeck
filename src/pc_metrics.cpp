@@ -9,11 +9,34 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <esp_heap_caps.h>
+#include <esp_random.h>
+#include <mbedtls/md.h>
+#include <vector>
 
 PcSource* pcSources = nullptr;
 
 static WiFiUDP udp;
 static uint32_t s_version = 1;
+
+static void toHex(const uint8_t* b, size_t n, char* out) {
+  static const char* h = "0123456789abcdef";
+  for (size_t i = 0; i < n; i++) {
+    out[2 * i] = h[b[i] >> 4];
+    out[2 * i + 1] = h[b[i] & 15];
+  }
+  out[2 * n] = 0;
+}
+
+static bool fromHex(const char* s, uint8_t* b, size_t n) {
+  if (!s || strlen(s) != 2 * n) return false;
+  for (size_t i = 0; i < n; i++) {
+    char t[3] = {s[2 * i], s[2 * i + 1], 0};
+    char* end = nullptr;
+    b[i] = (uint8_t)strtoul(t, &end, 16);
+    if (!end || *end) return false;
+  }
+  return true;
+}
 
 // Known PCs in NVS: "deckpc"/"list" = [{"id","name"}], first = default.
 static void saveKnown() {
@@ -24,6 +47,11 @@ static void saveKnown() {
     JsonObject o = a.add<JsonObject>();
     o["id"] = pcSources[i].id;
     o["name"] = pcSources[i].name;
+    if (pcSources[i].paired) {
+      char k[65];
+      toHex(pcSources[i].key, 32, k);
+      o["key"] = k;
+    }
   }
   String out;
   serializeJson(doc, out);
@@ -50,6 +78,7 @@ static void loadKnown() {
     pc.used = true;
     strlcpy(pc.id, o["id"] | "", sizeof(pc.id));
     strlcpy(pc.name, o["name"] | "PC", sizeof(pc.name));
+    pc.paired = fromHex(o["key"] | (const char*)nullptr, pc.key, 32);
   }
 }
 
@@ -107,6 +136,30 @@ static PcSource* sourceForPacket(const char* id, const char* name) {
   return free;
 }
 
+// --- Commands in flight and their results (all on the loop task) -----------
+struct PendingCmd {
+  String pcId, nonce, cmd;
+  uint32_t sentMs;
+};
+static std::vector<PendingCmd> s_pending;
+static std::vector<PcCmdResult> s_results;
+constexpr uint32_t CMD_TIMEOUT_MS = 3000;
+
+static void addResult(const String& pcId, const String& cmd, bool ok, const String& msg) {
+  const PcSource* pc = pcSource(pcId);
+  if (s_results.size() < 8) s_results.push_back({pc ? String(pc->name) : String("PC"), cmd, msg, ok});
+}
+
+static void handleAck(JsonDocument& doc) {
+  const String nonce = doc["ack"] | "";
+  for (size_t i = 0; i < s_pending.size(); i++) {
+    if (s_pending[i].nonce != nonce) continue;
+    addResult(s_pending[i].pcId, s_pending[i].cmd, doc["ok"] | false, doc["msg"] | "");
+    s_pending.erase(s_pending.begin() + i);
+    return;
+  }
+}
+
 static void parsePacket(const char* json, IPAddress from) {
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, json);
@@ -114,9 +167,19 @@ static void parsePacket(const char* json, IPAddress from) {
     Serial.printf("pc_metrics: JSON parse error: %s\n", err.c_str());
     return;
   }
+  if (!doc["ack"].isNull()) {
+    handleAck(doc);
+    return;
+  }
   PcSource* pc = sourceForPacket(doc["pc_id"] | "", doc["pc_name"] | "");
   if (!pc) return;
   pc->ip = from;
+  pc->cmdPort = doc["cmd_port"] | 0;
+  // A few nonces per packet, so quick taps (volume) need not wait for the next one.
+  memset(pc->nonces, 0, sizeof(pc->nonces));
+  int n = 0;
+  for (JsonVariantConst v : doc["nonces"].as<JsonArrayConst>())
+    if (n < 4) strlcpy(pc->nonces[n++], v | "", sizeof(pc->nonces[0]));
   PcMetricData& d = pc->data;
 
   d.status = doc["status"] | PC_STATUS_OK;
@@ -210,6 +273,15 @@ bool pcMetricsHandle() {
     }
   }
 
+  for (size_t i = 0; i < s_pending.size();) {
+    if (millis() - s_pending[i].sentMs < CMD_TIMEOUT_MS) {
+      i++;
+      continue;
+    }
+    addResult(s_pending[i].pcId, s_pending[i].cmd, false, "no answer");
+    s_pending.erase(s_pending.begin() + i);
+  }
+
   // Liveness: drop to offline when no packet has arrived for the stale window.
   for (int i = 0; i < MAX_PCS; i++) {
     PcMetricData& d = pcSources[i].data;
@@ -251,6 +323,134 @@ bool pcForget(const String& id) {
     return true;
   }
   return false;
+}
+
+bool pcSendCommand(const String& pcId, const char* cmd, String& err) {
+  PcSource* pc = pcSource(pcId);
+  if (!pc) {
+    err = "unknown PC";
+    return false;
+  }
+  if (!pc->paired) {
+    err = String(pc->name) + " is not paired";
+    return false;
+  }
+  if (!pc->data.online || !pc->cmdPort) {
+    err = String(pc->name) + (pc->data.online ? " does not take commands" : " is offline");
+    return false;
+  }
+  char* nonce = nullptr;
+  for (auto& n : pc->nonces)
+    if (n[0]) nonce = n;
+  if (!nonce) {
+    err = "too fast, try again";
+    return false;
+  }
+  if (s_pending.size() >= 4) {
+    err = "busy, try again";
+    return false;
+  }
+  const String msg = String(pc->id) + "|" + nonce + "|" + cmd;
+  uint8_t mac[32];
+  mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), pc->key, 32,
+                  (const uint8_t*)msg.c_str(), msg.length(), mac);
+  char sig[65];
+  toHex(mac, 32, sig);
+  JsonDocument doc;
+  doc["pc"] = pc->id;
+  doc["cmd"] = cmd;
+  doc["nonce"] = nonce;
+  doc["sig"] = sig;
+  String out;
+  serializeJson(doc, out);
+  udp.beginPacket(pc->ip, pc->cmdPort);
+  udp.write((const uint8_t*)out.c_str(), out.length());
+  if (!udp.endPacket()) {
+    err = "send failed";
+    return false;
+  }
+  s_pending.push_back({pc->id, nonce, cmd, millis()});
+  nonce[0] = 0;  // single use; the next metrics packet brings new ones
+  return true;
+}
+
+bool pcTakeCmdResult(PcCmdResult& out) {
+  if (s_results.empty()) return false;
+  out = s_results.front();
+  s_results.erase(s_results.begin());
+  return true;
+}
+
+// --- Pairing -----------------------------------------------------------------
+static struct {
+  String id;
+  char code[7];
+  uint8_t key[32];
+  uint32_t until;  // millis deadline, 0 = no pairing
+  uint8_t tries;
+} s_pair = {};
+constexpr uint32_t PAIR_MS = 120000;
+
+bool pcPairStart(const String& id, String& err) {
+  PcSource* pc = pcSource(id);
+  if (!pc || id != pc->id) {
+    err = "unknown PC: start the companion's metric stream to this device first";
+    return false;
+  }
+  s_pair.id = id;
+  snprintf(s_pair.code, sizeof(s_pair.code), "%06lu", (unsigned long)(esp_random() % 1000000));
+  esp_fill_random(s_pair.key, sizeof(s_pair.key));
+  s_pair.until = millis() + PAIR_MS;
+  if (!s_pair.until) s_pair.until = 1;
+  s_pair.tries = 0;
+  Serial.printf("pc_metrics: pairing '%s' started\n", pc->name);
+  return true;
+}
+
+bool pcPairConfirm(const String& id, const String& code, String& keyHex, String& err) {
+  if (!s_pair.until || (int32_t)(millis() - s_pair.until) >= 0 || id != s_pair.id) {
+    err = "no pairing in progress for this PC";
+    return false;
+  }
+  if (code != s_pair.code) {
+    if (++s_pair.tries >= 5) pcPairCancel();
+    err = "wrong code";
+    return false;
+  }
+  PcSource* pc = pcSource(id);
+  if (!pc) {
+    pcPairCancel();
+    err = "unknown PC";
+    return false;
+  }
+  memcpy(pc->key, s_pair.key, 32);
+  pc->paired = true;
+  saveKnown();
+  char k[65];
+  toHex(s_pair.key, 32, k);
+  keyHex = k;
+  pcPairCancel();
+  s_version++;
+  Serial.printf("pc_metrics: '%s' paired\n", pc->name);
+  return true;
+}
+
+void pcPairCancel() {
+  s_pair.until = 0;
+  s_pair.id = "";
+  memset(s_pair.key, 0, sizeof(s_pair.key));
+}
+
+bool pcPairPending(String& pcName, String& code) {
+  if (!s_pair.until) return false;
+  if ((int32_t)(millis() - s_pair.until) >= 0) {
+    pcPairCancel();
+    return false;
+  }
+  const PcSource* pc = pcSource(s_pair.id);
+  pcName = pc ? pc->name : "PC";
+  code = s_pair.code;
+  return true;
 }
 
 const PcMetric* pcMetricFind(const PcSource* pc, uint8_t id) {

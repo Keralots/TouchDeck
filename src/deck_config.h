@@ -31,6 +31,11 @@
 //   "body": "text" | { json }, "contentType": "...", "headers": { "K": "v" } }.
 // method defaults to GET, or POST with a body.
 //
+// A command to a PC running the companion (paired from the companion):
+// { "action": "pc", "pc": "<pc_id>" (optional), "cmd": "media_play_pause" |
+//   "media_next" | "media_prev" | "media_stop" | "volume_up" | "volume_down" |
+//   "volume_mute" | "lock" | "sleep" | "restart" | "shutdown" }.
+//
 // label / icon null = take them from Home Assistant later (Phase 3); until
 // then the entity id stands in. `sub` is an optional fixed second line.
 // Positions are keyed by orientation; a tile without one for the current
@@ -60,6 +65,7 @@ enum ActionKind : uint8_t {
   ACT_PAGE,          // {page: id}
   ACT_MORE_INFO,     // detail popup
   ACT_HTTP,          // {method, url, body, contentType, headers}
+  ACT_PC,            // {pc, cmd}: a command to a paired PC's companion
 };
 enum ConfirmMode : uint8_t { CONFIRM_NONE = 0, CONFIRM_OFF, CONFIRM_ALWAYS };
 
@@ -69,6 +75,7 @@ struct TileAction {
   String page;
   String method, url, body, ctype;  // ACT_HTTP
   String headers;                   // ACT_HTTP: "Name: value\n" lines
+  String pc, cmd;                   // ACT_PC: companion pc_id ("" = first PC), command
 };
 
 // set = an explicit cell (x, y). w and h always apply: a tile with only a

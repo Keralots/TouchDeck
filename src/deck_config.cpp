@@ -121,6 +121,19 @@ bool parseAction(JsonVariantConst v, TileAction& a, String* err, const String& w
       }
       a.headers += name + ": " + val + "\n";
     }
+  } else if (!strcmp(kind, "pc")) {
+    static const char* const kCmds[] = {"media_play_pause", "media_next", "media_prev", "media_stop",
+                                        "volume_up", "volume_down", "volume_mute", "lock", "sleep",
+                                        "restart", "shutdown"};
+    a.kind = ACT_PC;
+    a.pc = (const char*)(v["pc"] | "");
+    a.cmd = (const char*)(v["cmd"] | "");
+    bool known = false;
+    for (const char* c : kCmds) known = known || a.cmd == c;
+    if (!known) {
+      if (err) *err = where + ": unknown PC command '" + a.cmd + "'";
+      return false;
+    }
   } else if (!strcmp(kind, "call-service")) {
     a.kind = ACT_CALL_SERVICE;
     a.domain = (const char*)(v["domain"] | "");

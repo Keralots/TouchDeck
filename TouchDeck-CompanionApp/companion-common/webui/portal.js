@@ -14,6 +14,13 @@ function setText(id,value){var el=$(id);if(el)el.textContent=value==null?'-':Str
 function showToast(message,error){var el=$('toast');el.textContent=message;el.classList.toggle('err',!!error);el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(function(){el.classList.remove('show')},3200)}
 async function api(url,options){var response=await fetch(url,options);var data=await response.json();if(!response.ok||data.success===false)throw new Error(data.message||('Request failed: '+response.status));return data}
 function formBody(form){return new URLSearchParams(new FormData(form))}
+/* Pairing with the device for control (see pc_control.py). */
+function showPaired(paired){$('pairTag').textContent=paired?'paired':'not paired';$('pairForgetBtn').classList.toggle('hidden',!paired);$('pairStartBtn').lastChild.textContent=paired?'Pair again':'Pair for control';}
+function pairCodeBox(open){$('pairCodeBox').classList.toggle('hidden',!open);$('pairIdle').classList.toggle('hidden',open);if(open){$('pairCode').value='';$('pairCode').focus();}}
+$('pairStartBtn').addEventListener('click',async function(){try{var d=await api('/api/pair/start',{method:'POST'});showToast(d.message);pairCodeBox(true)}catch(error){showToast(error.message,true)}});
+$('pairConfirmBtn').addEventListener('click',async function(){try{var d=await api('/api/pair/confirm',{method:'POST',body:new URLSearchParams({code:$('pairCode').value})});showToast(d.message);pairCodeBox(false);showPaired(true)}catch(error){showToast(error.message,true)}});
+$('pairCancelBtn').addEventListener('click',function(){pairCodeBox(false)});
+$('pairForgetBtn').addEventListener('click',async function(){try{var d=await api('/api/pair/forget',{method:'POST'});showToast(d.message);showPaired(false)}catch(error){showToast(error.message,true)}});
 function setDirty(on){app.dirty=!!on;var meta=$('saveMeta');meta.classList.toggle('clean',!app.dirty);meta.querySelector('.txt').textContent=app.dirty?'Unsaved sensor changes':'All sensor changes saved'}
 
 function setMode(mode){document.documentElement.dataset.mode=mode;localStorage.setItem('sn_mode',mode);qa('[data-mode]').forEach(function(button){button.classList.toggle('on',button.dataset.mode===mode)})}
@@ -27,7 +34,7 @@ qa('.nav-item').forEach(function(button){button.addEventListener('click',functio
 $('navToggle').addEventListener('click',function(){var open=document.documentElement.classList.toggle('nav-open');this.setAttribute('aria-expanded',String(open))});
 $('navScrim').addEventListener('click',function(){document.documentElement.classList.remove('nav-open');$('navToggle').setAttribute('aria-expanded','false')});
 
-async function loadInfo(){var info=await api('/api/info');app.info=info;app.maxMetrics=info.max_metrics||20;setText('topVersion',info.version);setText('aboutVersion',info.version);$('esp32_ip').value=info.ip||'';$('udp_port').value=info.udp_port||4210;$('update_interval').value=info.update_interval||3;$('pc_name').value=info.pc_name||'';$('sourceField').classList.toggle('hidden',!info.source_select);$('sensor_source').value=info.sensor_source||'auto';setText('srDevice',info.ip||'-')}
+async function loadInfo(){var info=await api('/api/info');app.info=info;app.maxMetrics=info.max_metrics||20;setText('topVersion',info.version);setText('aboutVersion',info.version);$('esp32_ip').value=info.ip||'';$('udp_port').value=info.udp_port||4210;$('update_interval').value=info.update_interval||3;$('pc_name').value=info.pc_name||'';showPaired(!!info.paired);setText('cmdPort',info.cmd_port||4211);$('sourceField').classList.toggle('hidden',!info.source_select);$('sensor_source').value=info.sensor_source||'auto';setText('srDevice',info.ip||'-')}
 
 function selectedSensors(){var byKey={};app.sensors.forEach(function(sensor){byKey[sensor.key]=sensor});return app.selectedKeys.map(function(key){return byKey[key]}).filter(Boolean)}
 function valueText(sensor){var live=app.live[sensor.metric_id];var value=live&&live.value!=null?live.value:sensor.current_value;return value==null?'-':String(value)+' '+(sensor.unit||'')}

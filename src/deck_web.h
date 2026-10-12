@@ -103,12 +103,25 @@ function metricRow(t,i){const ml=mlist(t),m=ml.find(x=>x.id===t.metric);const co
 /* A tile's "more options" panel: confirm, and for buttons the tap action. */
 const opt=(v,l,on)=>'<option value="'+esc(v)+'"'+(on?' selected':'')+'>'+esc(l)+'</option>';
 const isHttp=t=>!!(t.tap&&t.tap.action==='http');
+const isPcCmd=t=>!!(t.tap&&t.tap.action==='pc');
+/* PC commands: [cmd, label, icon]; the last three ask on the device by default. */
+const PCCMD=[['media_play_pause','Play / pause','play-pause'],['media_next','Next track','skip-next'],['media_prev','Previous track','skip-previous'],['media_stop','Stop','stop'],['volume_up','Volume up','volume-plus'],['volume_down','Volume down','volume-minus'],['volume_mute','Mute','volume-mute'],['lock','Lock','lock'],['sleep','Sleep','power-sleep'],['restart','Restart','restart'],['shutdown','Shut down','power']];
+const RISKY=['sleep','restart','shutdown'];
+function pcCmdSet(t,cmd){const c=PCCMD.find(x=>x[0]===cmd)||PCCMD[0];const old=PCCMD.find(x=>x[0]===(t.tap&&t.tap.cmd));
+  t.tap=Object.assign({action:'pc',cmd:c[0]},t.tap&&t.tap.pc?{pc:t.tap.pc}:{});
+  if(!t.label||(old&&t.label===old[1]))t.label=c[1];if(!t.icon||(old&&t.icon==='mdi:'+old[2]))t.icon='mdi:'+c[2];
+  if(RISKY.includes(c[0]))t.confirm='always';else if(old&&RISKY.includes(old[0])&&t.confirm==='always')delete t.confirm;}
 const tapName=a=>a.action==='page'?'Open page '+a.page:a.action==='call-service'?'Service '+a.domain+'.'+a.service:a.action;
 const hdrText=h=>Object.keys(h||{}).map(k=>k+': '+h[k]).join('\n');
 function moreRow(t,i){const cf=t.confirm||'';
   let h='<div class="dk-more"><div class="field"><label class="field-label">Confirm on the device</label><select data-cf="'+i+'">'+[['','No'],['off','Before turning off'],['always','Before every action']].map(o=>opt(o[0],o[1],cf===o[0])).join('')+'</select></div>';
   if(t.type==='action'){const tp=t.tap||{},k=isHttp(t)?'http':(t.tap?'keep':'');
-    h+='<div class="field"><label class="field-label">On tap</label><select data-ak="'+i+'">'+opt('','Home Assistant entity',k==='')+opt('http','HTTP request',k==='http')+(k==='keep'?opt('keep',tapName(tp),true):'')+'</select></div>';
+    const kk=isPcCmd(t)?'pc':k;
+    h+='<div class="field"><label class="field-label">On tap</label><select data-ak="'+i+'">'+opt('','Home Assistant entity',kk==='')+opt('http','HTTP request',kk==='http')+opt('pc','PC command',kk==='pc')+(kk==='keep'?opt('keep',tapName(tp),true):'')+'</select></div>';
+    if(kk==='pc'){h+='<div class="field"><label class="field-label">Command</label><select data-pcc="'+i+'">'+PCCMD.map(c=>opt(c[0],c[1],tp.cmd===c[0])).join('')+'</select></div>';
+      h+='<div class="field"><label class="field-label">PC</label><select data-pcp="'+i+'">'+opt('','Default PC'+(pcs[0]?' ('+pcs[0].name+')':''),!tp.pc)+pcs.map(x=>opt(x.id,x.name+(x.paired?'':' - not paired'),tp.pc===x.id)).join('')+'</select></div>';
+      const tg=pcs.find(x=>x.id===(tp.pc||''))||(!tp.pc&&pcs[0]);
+      h+='<p class="field-hint wide" style="margin:0">'+(tg&&tg.paired?'Paired with '+esc(tg.name)+'.':'Pair the PC first: TouchDeck Companion, Device page, "Pair for control".')+' Sleep, Restart and Shut down ask on the device before they run.</p>';}
     if(k==='http'){const body=typeof tp.body==='object'&&tp.body!==null?JSON.stringify(tp.body):(tp.body||'');
       h+='<div class="field"><label class="field-label">Method</label><select data-hm="'+i+'">'+['GET','POST','PUT','PATCH','DELETE'].map(m=>opt(m,m,(tp.method||'GET')===m)).join('')+'</select></div>'+
       '<div class="field wide"><label class="field-label">URL</label><input type="text" data-hu="'+i+'" value="'+esc(tp.url||'')+'" placeholder="http://192.168.0.50/cm?cmnd=Power%20Toggle" spellcheck="false"></div>'+
@@ -202,9 +215,9 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   h+='<p class="field-hint">Drag a tile to move it, or onto a tile of the same size to swap them; the corner handle resizes. Tap a tile to find it in the list.</p>';
   h+='<div class="dk-tiles">'+p.tiles.map((t,i)=>{if(t.type==='metric')return metricRow(t,i);const d=domainOf(t.entity);const en=entMap[t.entity];const nm=en&&en.name?en.name:(t.entity||'No entity');
     const cp=tileCp(t);
-    return '<div class="dk-tile'+(i===sel?' sel':'')+'"><button type="button" class="dk-ic'+(cp?' mdi':'')+'" data-ic="'+i+'" title="'+esc(cp?(t.icon||(en&&en.icon)||'automatic'):'Choose an icon')+'" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+(cp?String.fromCodePoint(cp):esc((d||'?').slice(0,2).toUpperCase()))+'</button><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="dk-tsub">'+esc(t.entity||(isHttp(t)?'HTTP '+(t.tap.method||'GET')+' '+(t.tap.url||''):'no entity'))+(en&&en.state?' - '+esc(en.state)+(en.unit?' '+esc(en.unit):''):'')+'</div></div>'+
+    return '<div class="dk-tile'+(i===sel?' sel':'')+'"><button type="button" class="dk-ic'+(cp?' mdi':'')+'" data-ic="'+i+'" title="'+esc(cp?(t.icon||(en&&en.icon)||'automatic'):'Choose an icon')+'" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+(cp?String.fromCodePoint(cp):esc((d||'?').slice(0,2).toUpperCase()))+'</button><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="dk-tsub">'+esc(t.entity||(isHttp(t)?'HTTP '+(t.tap.method||'GET')+' '+(t.tap.url||''):isPcCmd(t)?'PC command: '+((PCCMD.find(c=>c[0]===t.tap.cmd)||[0,t.tap.cmd])[1]):'no entity'))+(en&&en.state?' - '+esc(en.state)+(en.unit?' '+esc(en.unit):''):'')+'</div></div>'+
     '<div class="dk-tact"><select data-t="'+i+'"><option value="toggle"'+(t.type==='toggle'?' selected':'')+'>Switch</option><option value="action"'+(t.type==='action'?' selected':'')+'>Button</option><option value="sensor"'+(t.type==='sensor'?' selected':'')+'>Sensor</option>'+(SLIDER.includes(d)||t.type==='slider'?'<option value="slider"'+(t.type==='slider'?' selected':'')+'>Slider</option>':'')+'</select>'+sizeSel(t,i)+'<button type="button" class="btn" data-e="'+i+'">Entity</button><button type="button" class="btn'+(i===more?' on':'')+'" data-mo="'+i+'" title="More options">&#8943;</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div>'+(i===more?moreRow(t,i):'')+'</div>';}).join('')+'</div>';
-  h+='<p class="dk-cap">'+cells+' of '+(c*r)+' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button></div>'+pcList()+'<p class="field-hint">Chart and Bar need a 2x1 or bigger tile (a 1x1 tile shows the number), so picking one makes a 1x1 tile 2x1.</p>';
+  h+='<p class="dk-cap">'+cells+' of '+(c*r)+' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddPcCmd">+ Add PC control</button></div>'+pcList()+'<p class="field-hint">Chart and Bar need a 2x1 or bigger tile (a 1x1 tile shows the number), so picking one makes a 1x1 tile 2x1.</p>';
   el.innerHTML=h;
   $('dkPName').oninput=e=>{p.name=e.target.value;setDirty(true);renderTabs();};
   const setGrid=(gc,gr)=>{p.layouts=p.layouts||{};p.layouts[ori]={cols:gc,rows:gr};setDirty(true);renderPage();};
@@ -227,9 +240,12 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   el.querySelectorAll('[data-mo]').forEach(x=>x.onclick=()=>{const i=+x.dataset.mo;more=more===i?-1:i;renderPage();});
   el.querySelectorAll('[data-cf]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.cf];if(e.target.value)t.confirm=e.target.value;else delete t.confirm;setDirty(true);});
   $('dkAddTile').onclick=()=>openPicker(-1);
+  $('dkAddPcCmd').onclick=()=>{const t={id:'c'+Date.now().toString(36),type:'action'};pcCmdSet(t,'media_play_pause');p.tiles.push(t);more=p.tiles.length-1;setDirty(true);renderPage();};
   $('dkAddHttp').onclick=()=>{p.tiles.push({id:'h'+Date.now().toString(36),type:'action',label:'HTTP',icon:'mdi:web',tap:{action:'http',method:'GET',url:'http://'}});more=p.tiles.length-1;setDirty(true);renderPage();};
   const tapOf=x=>p.tiles[+(x.dataset.ak||x.dataset.hm||x.dataset.hu||x.dataset.hb||x.dataset.hh||x.dataset.hc||x.dataset.ht)];
-  el.querySelectorAll('[data-ak]').forEach(x=>x.onchange=e=>{const t=tapOf(x),v=e.target.value;if(v==='keep')return;if(v==='http')t.tap={action:'http',method:'GET',url:'http://'};else delete t.tap;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-ak]').forEach(x=>x.onchange=e=>{const t=tapOf(x),v=e.target.value;if(v==='keep')return;if(v==='http')t.tap={action:'http',method:'GET',url:'http://'};else if(v==='pc'){delete t.tap;pcCmdSet(t,'media_play_pause');}else delete t.tap;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-pcc]').forEach(x=>x.onchange=e=>{pcCmdSet(p.tiles[+x.dataset.pcc],e.target.value);setDirty(true);renderPage();});
+  el.querySelectorAll('[data-pcp]').forEach(x=>x.onchange=e=>{const a=p.tiles[+x.dataset.pcp].tap;if(e.target.value)a.pc=e.target.value;else delete a.pc;setDirty(true);renderPage();});
   el.querySelectorAll('[data-hm]').forEach(x=>x.onchange=e=>{tapOf(x).tap.method=e.target.value;setDirty(true);renderPage();});
   el.querySelectorAll('[data-hu]').forEach(x=>x.oninput=e=>{tapOf(x).tap.url=e.target.value.trim();setDirty(true);});
   el.querySelectorAll('[data-hb]').forEach(x=>x.oninput=e=>{const a=tapOf(x).tap;if(e.target.value)a.body=e.target.value;else delete a.body;setDirty(true);});

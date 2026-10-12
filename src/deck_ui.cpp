@@ -357,6 +357,8 @@ void goToPage(const String& id) {
 // --- Tile events ------------------------------------------------------------------------
 void openModal(int tileIdx);
 void openConfirm(int tileIdx, bool hold);
+const char* pcCmdLabel(const String& cmd);
+void pairSync();
 void refreshModal();
 void deckToastShow(const char* text, uint32_t holdMs);
 void qpSyncValues();
@@ -639,6 +641,15 @@ void haSync() {
   }
 }
 
+// Finished PC commands: a short toast either way.
+void pcCmdSync() {
+  PcCmdResult o;
+  while (pcTakeCmdResult(o)) {
+    const String t = o.pcName + ": " + pcCmdLabel(o.cmd) + (o.ok ? "" : String(" - ") + (o.msg.length() ? o.msg : "failed"));
+    deckToastShow(t.c_str(), o.ok ? 1200 : 2500);
+  }
+}
+
 // Finished HTTP tile actions: a short toast either way.
 void httpSync() {
   HttpOutcome o;
@@ -703,6 +714,11 @@ void runAction(TileRt& r, const TileAction& a) {
     case ACT_HTTP:
       if (!httpSend(a, tileLabel(*r.def))) deckToastShow("Busy, try again", 1500);
       break;
+    case ACT_PC: {
+      String err;
+      if (!pcSendCommand(a.pc, a.cmd.c_str(), err)) deckToastShow(err.c_str(), 2200);
+      break;
+    }
     case ACT_CALL_SERVICE:
       if (!haUp) deckToastShow("Home Assistant is offline", 1800);
       else if (!haCallService(a.domain, a.service, entity, a.data))
@@ -719,6 +735,17 @@ void runAction(TileRt& r, const TileAction& a) {
       break;
     }
   }
+}
+
+const char* pcCmdLabel(const String& cmd) {
+  static const char* const kLabels[][2] = {
+      {"media_play_pause", "Play / pause"}, {"media_next", "Next track"}, {"media_prev", "Previous track"},
+      {"media_stop", "Stop"},               {"volume_up", "Volume up"},   {"volume_down", "Volume down"},
+      {"volume_mute", "Mute"},              {"lock", "Lock"},             {"sleep", "Sleep"},
+      {"restart", "Restart"},               {"shutdown", "Shut down"}};
+  for (const auto& l : kLabels)
+    if (cmd == l[0]) return l[1];
+  return "Run";
 }
 
 // Tile setting "confirm": "off" asks before an action that turns the tile off.
@@ -744,6 +771,7 @@ const char* actionVerb(const TileRt& r, const TileAction& a) {
     return r.on ? "Turn off" : "Turn on";
   }
   if (a.kind == ACT_HTTP) return "Send";
+  if (a.kind == ACT_PC) return pcCmdLabel(a.cmd);
   if (a.kind == ACT_CALL_SERVICE) {
     if (a.service == "turn_off") return "Turn off";
     if (a.service == "turn_on") return "Turn on";
@@ -2868,6 +2896,76 @@ void destroyPages() {
   portEXIT_CRITICAL(&s_mux);
 }
 
+// The pairing card: shows the code a companion asked for, until it is
+// entered, cancelled or times out (pc_metrics owns the state).
+lv_obj_t* s_pairCard = nullptr;
+lv_obj_t* s_pairScrim = nullptr;
+uint32_t s_pairChecked = 0;
+
+void pairClose() {
+  if (s_pairCard) lv_obj_delete(s_pairCard);
+  if (s_pairScrim) lv_obj_delete(s_pairScrim);
+  s_pairCard = s_pairScrim = nullptr;
+  setModalOpen(s_modalCard != nullptr);
+}
+
+void onPairCancel(lv_event_t*) {
+  pcPairCancel();
+  lv_async_call([](void*) { pairClose(); }, nullptr);  // runs in the button's own event
+}
+
+void pairSync() {
+  const uint32_t now = millis();
+  if (now - s_pairChecked < 250) return;
+  s_pairChecked = now;
+  String name, code;
+  const bool pending = pcPairPending(name, code);
+  if (!pending) {
+    if (s_pairCard) pairClose();
+    return;
+  }
+  if (s_pairCard) return;
+  const int w = logicalW(), h = logicalH();
+  s_pairScrim = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_pairScrim);
+  lv_obj_set_size(s_pairScrim, w, h);
+  lv_obj_set_style_bg_color(s_pairScrim, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(s_pairScrim, LV_OPA_50, 0);
+  lv_obj_add_flag(s_pairScrim, LV_OBJ_FLAG_CLICKABLE);
+  const int cw = w - 40 < 340 ? w - 40 : 340;
+  lv_obj_t* c = lv_obj_create(lv_layer_top());
+  s_pairCard = c;
+  lv_obj_remove_style_all(c);
+  lv_obj_set_size(c, cw, 196);
+  lv_obj_center(c);
+  lv_obj_set_style_bg_color(c, lv_color_hex(C_PANEL), 0);
+  lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(c, 22, 0);
+  lv_obj_set_style_text_color(c, lv_color_hex(C_TEXT), 0);
+  lv_obj_add_flag(c, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* t = lv_label_create(c);
+  lv_label_set_text_fmt(t, "Pair %s", name.c_str());
+  lv_obj_set_style_text_font(t, &deck_font_20, 0);
+  lv_label_set_long_mode(t, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_width(t, cw - 32);
+  lv_obj_set_pos(t, 16, 14);
+  lv_obj_t* k = lv_label_create(c);
+  String spaced = code.substring(0, 3) + " " + code.substring(3);
+  lv_label_set_text(k, spaced.c_str());
+  lv_obj_set_style_text_font(k, &deck_font_28, 0);
+  lv_obj_set_style_text_letter_space(k, 4, 0);
+  lv_obj_align(k, LV_ALIGN_TOP_MID, 0, 50);
+  lv_obj_t* hint = lv_label_create(c);
+  lv_label_set_text(hint, "Enter this code in TouchDeck Companion");
+  lv_obj_set_style_text_color(hint, lv_color_hex(C_DIM), 0);
+  lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 94);
+  lv_obj_t* cancel = qpButton(c, 16, 196 - 16 - 44, cw - 32, "Cancel", false);
+  lv_obj_set_height(cancel, 44);
+  lv_obj_add_event_cb(cancel, onPairCancel, LV_EVENT_CLICKED, nullptr);
+  setModalOpen(true);  // no swipes under it
+}
+
 void syncSwipeZones() {
   const int a = sh.active;
   if (!s_zonesDirty && a == s_zonesPage) return;
@@ -3114,6 +3212,8 @@ void deckTick() {
   haSync();
   settleSliders();
   httpSync();
+  pcCmdSync();
+  pairSync();
   pcSync(false);
   syncSwipeZones();
   lv_timer_handler();

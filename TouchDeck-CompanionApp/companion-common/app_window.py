@@ -16,6 +16,7 @@ import webbrowser
 
 from app_state import AppState
 from config_model import normalize_config
+import pc_control
 import server as srv
 
 try:
@@ -179,6 +180,10 @@ def _monitor_loop():
             payload, values, _fresh, last_good, _stale = core.collect_metrics(cfg, snapshot, last_good, status)
             payload["pc_id"] = cfg.get("pc_id", "")
             payload["pc_name"] = cfg.get("pc_name", "")
+            if cfg.get("pc_key"):
+                # A paired device can send one command per nonce (see pc_control).
+                payload["cmd_port"] = int(cfg.get("cmd_port") or pc_control.DEFAULT_CMD_PORT)
+                payload["nonces"] = [pc_control.NONCES.issue() for _ in range(4)]
             sock.sendto(json.dumps(payload).encode("utf-8"), (cfg["esp32_ip"], cfg["udp_port"]))
             _state.update_values(values)
         except Exception as e:
@@ -292,6 +297,8 @@ def run(core, start_hidden=False, notify_startup=False):
 
     threading.Thread(target=_detect_source, daemon=True, name="detect-source").start()
     threading.Thread(target=_monitor_loop, daemon=True, name="monitor").start()
+    threading.Thread(target=pc_control.listen, args=(_state, _stop), daemon=True,
+                     name="pc-control").start()
 
     if not WEBVIEW_AVAILABLE:
         # No native window backend: serve and open the browser instead.

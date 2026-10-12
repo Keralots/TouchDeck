@@ -96,6 +96,14 @@ def normalize_config(config):
     if not (len(pc_id) == 12 and all(c in "0123456789abcdef" for c in pc_id)):
         out["pc_id"] = uuid.uuid4().hex[:12]
     out["pc_name"] = clean_pc_name(out.get("pc_name")) or clean_pc_name(socket.gethostname()) or "PC"
+    # Control from the device: the key comes from pairing, the port is ours.
+    key = str(out.get("pc_key") or "")
+    out["pc_key"] = key if len(key) == 64 and all(c in "0123456789abcdef" for c in key) else ""
+    try:
+        port = int(out.get("cmd_port") or 4211)
+    except (TypeError, ValueError):
+        port = 4211
+    out["cmd_port"] = port if 1024 <= port <= 65535 else 4211
 
     old_map = out.get("metric_ids")
     if not isinstance(old_map, dict):

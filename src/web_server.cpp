@@ -202,6 +202,8 @@ static void handleApiConfig() {
     pc["id"] = src.id;
     pc["name"] = src.name;
     pc["online"] = src.data.online;
+    pc["paired"] = src.paired;
+    pc["control"] = src.data.online && src.cmdPort != 0;
     if (src.data.online) pc["ip"] = src.ip.toString();
     JsonArray list = pc["metrics"].to<JsonArray>();
     for (uint8_t i = 0; i < src.data.count; i++) {
@@ -990,6 +992,34 @@ static void handleHttpTestGet() {
   server.send(200, "application/json", out);
 }
 
+// Pairing, called by the companion: POST /api/pc/pair?id=<pc_id> shows a code
+// on the device; POST /api/pc/pair/confirm?id=&code= answers {"key"} once.
+static void handlePcPair() {
+  String err;
+  const bool ok = pcPairStart(server.arg("id"), err);
+  sendJsonMessage(ok ? 200 : 409, ok, ok ? "Enter the code shown on the device" : err.c_str());
+}
+
+static void handlePcPairConfirm() {
+  String key, err;
+  if (!pcPairConfirm(server.arg("id"), server.arg("code"), key, err)) {
+    sendJsonMessage(403, false, err.c_str());
+    return;
+  }
+  JsonDocument doc;
+  doc["success"] = true;
+  doc["key"] = key;
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+  deckToast("PC paired");
+}
+
+static void handlePcPairCancel() {
+  pcPairCancel();
+  sendJsonMessage(200, true, "Pairing cancelled");
+}
+
 // POST /api/pc/forget?id=<pc_id> - drop a PC from the known list.
 static void handlePcForget() {
   const bool ok = pcForget(server.arg("id"));
@@ -1218,6 +1248,9 @@ void initWebServer() {
   server.on("/api/deck/card", HTTP_POST, handleDeckCard);
   server.on("/api/deck/tap", HTTP_POST, handleDeckTap);
   server.on("/api/pc/forget", HTTP_POST, handlePcForget);
+  server.on("/api/pc/pair", HTTP_POST, handlePcPair);
+  server.on("/api/pc/pair/confirm", HTTP_POST, handlePcPairConfirm);
+  server.on("/api/pc/pair/cancel", HTTP_POST, handlePcPairCancel);
   server.on("/api/deck/http-test", HTTP_POST, handleHttpTestPost);
   server.on("/api/deck/http-test", HTTP_GET, handleHttpTestGet);
   server.on("/api/deck/confirm", HTTP_POST, handleDeckConfirm);

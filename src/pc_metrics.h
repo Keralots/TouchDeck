@@ -52,6 +52,10 @@ struct PcSource {
   char     id[17];
   char     name[24];
   IPAddress ip;          // where its last packet came from
+  uint16_t cmdPort;      // its command listener ("cmd_port"), 0 = none
+  char     nonces[4][17];  // one-time nonces from its latest packet, "" = used
+  bool     paired;
+  uint8_t  key[32];      // shared HMAC key from pairing (NVS only, never in the API)
   PcMetricData data;
   SlotHistory hist[MAX_METRICS + 1];  // by metric id; index 0 stays empty
 };
@@ -78,5 +82,28 @@ bool pcForget(const String& id);
 
 // Lookup for the metric tiles. Null when the PC is offline or lacks the id.
 const PcMetric* pcMetricFind(const PcSource* pc, uint8_t id);
+
+// --- PC control -------------------------------------------------------------
+// A command goes to the PC's cmd_port as {"pc","cmd","nonce","sig"}, sig =
+// hex HMAC-SHA256(key, "pc_id|nonce|cmd") over one of the "nonces" from its
+// latest metrics packet (single use on the PC side). The PC answers {"ack": nonce,
+// "ok", "msg"} to the device's port 4210.
+//
+// Pairing (the companion calls it): pcPairStart shows a 6-digit code on the
+// device; pcPairConfirm with that code returns the new key once.
+bool pcSendCommand(const String& pcId, const char* cmd, String& err);
+struct PcCmdResult {
+  String pcName, cmd, msg;
+  bool ok;
+};
+// Next finished command (acked, refused or timed out), if any.
+bool pcTakeCmdResult(PcCmdResult& out);
+
+bool pcPairStart(const String& id, String& err);
+// keyHex is filled on success. A wrong code counts toward a limit of 5.
+bool pcPairConfirm(const String& id, const String& code, String& keyHex, String& err);
+void pcPairCancel();
+// For the device's pairing card: true while a pairing waits for its code.
+bool pcPairPending(String& pcName, String& code);
 
 #endif // PC_METRICS_H

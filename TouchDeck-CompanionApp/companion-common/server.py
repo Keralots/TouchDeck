@@ -261,6 +261,63 @@ def do_test(state, form):
     return device_status(state, address=address, timeout=2.5)
 
 
+def _post_device(address, path, params, timeout=4.0):
+    """POST to the device's API; returns (status, json body)."""
+    from urllib.parse import urlencode
+    req = urllib_request.Request(
+        _device_url(address, path + "?" + urlencode(params)), data=b"", method="POST",
+        headers={"User-Agent": "TouchDeck-Companion/%s" % CONFIG_VERSION},
+    )
+    try:
+        with _DIRECT_HTTP.open(req, timeout=timeout) as response:
+            return response.status, json.loads(response.read().decode("utf-8") or "{}")
+    except urllib_error.HTTPError as exc:
+        try:
+            return exc.code, json.loads(exc.read().decode("utf-8") or "{}")
+        except Exception:
+            return exc.code, {}
+
+
+def pair_start(state):
+    """Ask the device to show a pairing code for this PC."""
+    config = state.get_config()
+    try:
+        code, body = _post_device(config.get("esp32_ip", ""), "/api/pc/pair", {"id": config.get("pc_id", "")})
+    except Exception as exc:
+        return {"success": False, "message": "Could not reach the device: %s" % exc}
+    return {"success": code == 200, "message": body.get("message", "HTTP %d" % code)}
+
+
+def pair_confirm(core, state, code_text):
+    """Send the code shown on the device; store the key it answers with."""
+    config = normalize_config(state.get_config())
+    code_text = "".join(ch for ch in str(code_text or "") if ch.isdigit())
+    if len(code_text) != 6:
+        return {"success": False, "message": "Enter the 6 digits shown on the device."}
+    try:
+        status, body = _post_device(config.get("esp32_ip", ""), "/api/pc/pair/confirm",
+                                    {"id": config.get("pc_id", ""), "code": code_text})
+    except Exception as exc:
+        return {"success": False, "message": "Could not reach the device: %s" % exc}
+    key = str(body.get("key") or "")
+    if status != 200 or len(key) != 64:
+        return {"success": False, "message": body.get("message", "HTTP %d" % status)}
+    config["pc_key"] = key
+    if not core.save_config(config):
+        return {"success": False, "message": "Could not write the configuration file."}
+    state.set_config(config)
+    return {"success": True, "message": "Paired. Control tiles on the device can now reach this PC."}
+
+
+def pair_forget(core, state):
+    config = normalize_config(state.get_config())
+    config["pc_key"] = ""
+    if not core.save_config(config):
+        return {"success": False, "message": "Could not write the configuration file."}
+    state.set_config(config)
+    return {"success": True, "message": "Unpaired. Forget this PC in the device portal too."}
+
+
 def apply_revert(core, state):
     config = normalize_config(core.load_config() or dict(core.DEFAULT_CONFIG))
     state.set_config(config)
@@ -367,6 +424,8 @@ class _Handler(BaseHTTPRequestHandler):
                     "udp_port": config.get("udp_port", 4210),
                     "update_interval": config.get("update_interval", 3),
                     "pc_name": config.get("pc_name", ""),
+                    "paired": bool(config.get("pc_key")),
+                    "cmd_port": config.get("cmd_port", 4211),
                     "source_select": bool(getattr(core, "SUPPORTS_SOURCE_SELECT", False)),
                     "sensor_source": config.get("sensor_source", "auto"),
                     "max_metrics": MAX_METRICS,
@@ -407,6 +466,12 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json(do_test(state, self._form()))
             if path == "/api/import":
                 return self._json(apply_import(core, state, self._json_body()))
+            if path == "/api/pair/start":
+                return self._json(pair_start(state))
+            if path == "/api/pair/confirm":
+                return self._json(pair_confirm(core, state, self._form().get("code", [""])[0]))
+            if path == "/api/pair/forget":
+                return self._json(pair_forget(core, state))
             if path == "/api/revert":
                 return self._json(apply_revert(core, state))
             if path == "/api/autostart":
