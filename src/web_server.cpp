@@ -1723,7 +1723,9 @@ static void handleDeckGet() {
   out.reserve(text.length() + 48);
   out += "{\"source\":\"";
   out += "device";
-  out += "\",\"deck\":";
+  out += "\",\"header\":";
+  out += deckHeaderVisible() ? "true" : "false";
+  out += ",\"deck\":";
   out += text;
   out += "}";
   server.send(200, "application/json", out);
@@ -1856,6 +1858,12 @@ static void handleIconsFinish() {
     return;
   }
   handleIconsStatus();
+}
+
+// POST /api/deck/prefs?header=0|1 - deck display preferences.
+static void handleDeckPrefs() {
+  if (server.hasArg("header")) deckSetHeader(server.arg("header") != "0");
+  sendJsonMessage(200, true, "Saved");
 }
 
 // POST /api/deck/card?tile=<id> - bench hook, open a tile's detail card.
@@ -2009,6 +2017,7 @@ void initWebServer() {
   server.on("/deck", HTTP_GET, handleDeckPage);
   server.on("/deck.js", HTTP_GET, handleDeckJs);
   server.on("/api/deck/icons", HTTP_GET, handleIconsStatus);
+  server.on("/api/deck/prefs", HTTP_POST, handleDeckPrefs);
   server.on("/api/deck/icons", HTTP_POST, handleIconsFinish, handleIconsUpload);
   server.on("/mdi.ttf", HTTP_GET, handleIconsFont);
   server.on("/api/deck", HTTP_GET, handleDeckGet);

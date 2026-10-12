@@ -11,6 +11,7 @@
 #include "led.h"
 #include "pc_metrics.h"
 #include <LittleFS.h>
+#include <Preferences.h>
 #include <WiFi.h>
 #include <lvgl.h>
 #include <time.h>
@@ -45,8 +46,10 @@ constexpr uint32_t C_DIM = 0x596070;
 
 struct Page {
   lv_obj_t* root;
+  lv_obj_t* title;
   lv_obj_t* clock;
   lv_obj_t* wifi;
+  lv_obj_t* grid;
   lv_draw_buf_t* snap;
   const PageDef* def;
   bool isFace;
@@ -508,6 +511,9 @@ constexpr uint32_t C_PANEL = 0x161A20;
 constexpr uint32_t C_SCREEN_ACCENT = 0xF6C56B;
 constexpr uint32_t C_LIGHT_ACCENT = 0xFFB35C;
 
+// Top bar (page name, WiFi, clock) shown; owner setting, NVS "deckui"/"hdr".
+bool s_header = true;
+
 struct QuickPanel {
   lv_obj_t* scrim;
   lv_obj_t* box;
@@ -521,6 +527,7 @@ struct QuickPanel {
   lv_obj_t* lightSlider;
   lv_obj_t* lightVal;
   lv_obj_t* nightBtn;
+  lv_obj_t* headerBtn;
   lv_draw_buf_t* snap;
   bool open;
   bool stale;
@@ -660,6 +667,9 @@ void onNight(lv_event_t*) {
 
 void onScrim(lv_event_t*) { closePanelAnimated(); }
 
+void setHeader(bool on);
+void onHeaderBtn(lv_event_t*) { setHeader(lv_obj_has_state(s_qp.headerBtn, LV_STATE_CHECKED)); }
+
 lv_obj_t* qpButton(lv_obj_t* parent, int x, int y, int w, const char* text, bool checkable) {
   lv_obj_t* b = lv_button_create(parent);
   lv_obj_set_pos(b, x, y);
@@ -735,11 +745,15 @@ void buildQuickPanel() {
   lv_obj_add_event_cb(s_qp.lightSlider, onLightSlider, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(s_qp.lightSlider, onLightSlider, LV_EVENT_RELEASED, nullptr);
 
-  const int bw = (w - 16 * 2 - 10) / 2;
-  lv_obj_t* off = qpButton(box, 16, y0 + 132, bw, LV_SYMBOL_POWER "  Screen off", false);
+  const int bw = (w - 16 * 2 - 2 * 10) / 3;
+  const bool wide = w >= 400;
+  lv_obj_t* off = qpButton(box, 16, y0 + 132, bw, wide ? LV_SYMBOL_POWER "  Screen off" : LV_SYMBOL_POWER "  Off", false);
   lv_obj_add_event_cb(off, onScreenOff, LV_EVENT_CLICKED, nullptr);
   s_qp.nightBtn = qpButton(box, 16 + bw + 10, y0 + 132, bw, LV_SYMBOL_EYE_CLOSE "  Night", true);
   lv_obj_add_event_cb(s_qp.nightBtn, onNight, LV_EVENT_VALUE_CHANGED, nullptr);
+  s_qp.headerBtn = qpButton(box, 16 + 2 * (bw + 10), y0 + 132, bw, LV_SYMBOL_UP "  Top bar", true);
+  if (s_header) lv_obj_add_state(s_qp.headerBtn, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(s_qp.headerBtn, onHeaderBtn, LV_EVENT_VALUE_CHANGED, nullptr);
 
   lv_obj_t* grip = lv_obj_create(box);
   lv_obj_remove_style_all(grip);
@@ -1163,6 +1177,21 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_add_event_cb(t, tileEvent, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)idx);
 }
 
+// Shows or hides a tiles page's top bar; the grid takes the freed height.
+void layoutHeader(Page& p) {
+  if (!p.grid) return;
+  const int w = logicalW(), h = logicalH();
+  for (lv_obj_t* o : {p.title, p.clock, p.wifi}) {
+    if (s_header) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+  }
+  const int top = s_header ? HEADER_H : 0;
+  lv_obj_set_pos(p.grid, 0, top);
+  lv_obj_set_size(p.grid, w, h - top);
+  lv_obj_set_style_pad_top(p.grid, s_header ? 2 : 8, 0);
+  p.stale = true;
+}
+
 void addTilesPage(const PageDef& def) {
   const int w = logicalW(), h = logicalH();
   const int orient = w > h ? ORIENT_LANDSCAPE : ORIENT_PORTRAIT;
@@ -1173,6 +1202,7 @@ void addTilesPage(const PageDef& def) {
   p.root = makeRoot(w, h);
 
   lv_obj_t* t = lv_label_create(p.root);
+  p.title = t;
   lv_label_set_text(t, def.name.length() ? def.name.c_str() : def.id.c_str());
   lv_obj_set_style_text_font(t, &deck_font_20, 0);
   lv_obj_set_style_text_color(t, lv_color_hex(C_TITLE), 0);
@@ -1196,14 +1226,13 @@ void addTilesPage(const PageDef& def) {
   rowDsc[page][rows] = LV_GRID_TEMPLATE_LAST;
 
   lv_obj_t* grid = lv_obj_create(p.root);
+  p.grid = grid;
   lv_obj_remove_style_all(grid);
-  lv_obj_set_pos(grid, 0, HEADER_H);
-  lv_obj_set_size(grid, w, h - HEADER_H);
   lv_obj_remove_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_layout(grid, LV_LAYOUT_GRID);
   lv_obj_set_grid_dsc_array(grid, colDsc[page], rowDsc[page]);
   lv_obj_set_style_pad_all(grid, 8, 0);
-  lv_obj_set_style_pad_top(grid, 2, 0);
+  layoutHeader(p);
   lv_obj_set_style_pad_row(grid, 7, 0);
   lv_obj_set_style_pad_column(grid, 7, 0);
 
@@ -1492,6 +1521,13 @@ bool deckBegin(lgfx::LGFX_Sprite* face, uint8_t rotation) {
   lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
 
   if (!iconsLoad(iconsPath(), err)) Serial.printf("Deck: icons: %s\n", err.c_str());
+  {
+    Preferences prefs;
+    if (prefs.begin("deckui", true)) {
+      s_header = prefs.getBool("hdr", true);
+      prefs.end();
+    }
+  }
   haBegin();
   buildPages();
   touchBegin();
@@ -1611,6 +1647,30 @@ bool deckApplyConfig(const String& text, String& err) {
   Serial.printf("Deck: new config applied, %u pages\n", (unsigned)s_cfg.pages.size());
   return true;
 }
+
+namespace {
+void setHeader(bool on) {
+  if (on == s_header) return;
+  s_header = on;
+  Preferences prefs;
+  if (prefs.begin("deckui", false)) {
+    prefs.putBool("hdr", on);
+    prefs.end();
+  }
+  for (int i = 0; i < s_count; i++) layoutHeader(s_pages[i]);
+  if (s_qp.headerBtn) {
+    if (on) lv_obj_add_state(s_qp.headerBtn, LV_STATE_CHECKED);
+    else lv_obj_remove_state(s_qp.headerBtn, LV_STATE_CHECKED);
+    qpMarkStale();
+  }
+}
+}  // namespace
+
+void deckSetHeader(bool on) {
+  if (s_disp) setHeader(on);
+}
+
+bool deckHeaderVisible() { return s_header; }
 
 bool deckInstallIcons(const char* uploaded, String& err) {
   if (!s_disp) {

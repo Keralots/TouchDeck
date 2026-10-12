@@ -39,6 +39,9 @@ bool deckApplyConfig(const String& text, String& err);
 // Portal upload: load the MDI font stored at uploaded, keep it as the icon
 // font and rebuild the pages with it. A bad file is deleted, the old font stays.
 bool deckInstallIcons(const char* uploaded, String& err);
+// Top bar (page name, WiFi, clock) on the tiles pages; persisted.
+void deckSetHeader(bool on);
+bool deckHeaderVisible();
 // Bench hook (/api/deck/swipe): run one full page slide toward dir as if a
 // finger had flung it. False when that page is not reachable right now.
 bool deckTestSwipe(int dir);

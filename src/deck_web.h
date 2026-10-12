@@ -54,6 +54,7 @@ sec.innerHTML=`<div class="page-header"><h1 class="page-h1">Deck</h1><p class="p
 <div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
 <div class="dk-status"><span class="dk-dot" id="dkIcDot"></span><span id="dkIcState">checking...</span></div></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
+<label class="check-row standalone" style="margin-bottom:14px"><input type="checkbox" id="dkHeader"><span class="check-box"></span><span class="check-text"><strong>Show the top bar</strong><span class="ct-hint">Page name, WiFi and clock above the tiles. Also switchable in the quick panel on the device.</span></span></label>
 <div class="dk-tabs" id="dkTabs"></div><div id="dkPage"></div>
 <div class="dk-save"><span class="dk-msg" id="dkMsg">No changes</span><button type="button" class="btn btn-accent" id="dkSave">Save to device</button></div></div>`;
 document.body.insertAdjacentHTML('beforeend',`<div class="dk-modal" id="dkPicker"><div class="dk-sheet"><div class="dk-head">
@@ -166,12 +167,14 @@ function openIcons(i){if(!mdi){alert('Install the icon font first (Icons card ab
 $('dkIcQ').oninput=renderIcons;$('dkIcAuto').onclick=()=>setIcon('');$('dkIcClose').onclick=()=>$('dkIcPick').classList.remove('show');
 $('dkIcPick').onclick=e=>{if(e.target===$('dkIcPick'))$('dkIcPick').classList.remove('show');};
 
+$('dkHeader').onchange=async e=>{const b=new URLSearchParams();b.set('header',e.target.checked?'1':'0');try{await api('/api/deck/prefs',{method:'POST',body:b});}catch(x){alert(x.message);}};
+
 /* save */
 $('dkSave').onclick=async()=>{try{await api('/api/deck',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(deck)});setDirty(false);}catch(e){alert('Not saved: '+e.message);}};
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
 
 (async function init(){haStatus();icRefresh();setInterval(()=>{if(visible())haStatus();},3000);
-  try{const r=await api('/api/deck');deck=r.deck;render();}catch(e){$('dkPage').innerHTML='<p class="dk-empty">'+esc(e.message)+'</p>';}
+  try{const r=await api('/api/deck');deck=r.deck;$('dkHeader').checked=r.header!==false;render();}catch(e){$('dkPage').innerHTML='<p class="dk-empty">'+esc(e.message)+'</p>';}
   try{await loadEnts();}catch(e){}})();
 })();)JS";
 
