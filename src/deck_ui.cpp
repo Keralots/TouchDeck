@@ -10,6 +10,7 @@
 #include "led.h"
 #include "pc_metrics.h"
 #include "metric_format.h"
+#include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <WiFi.h>
@@ -284,6 +285,7 @@ void markPageStale(int page) {
 void switchTo(int page);
 void setPager(int page);
 void releaseSwipe();
+void edOpen(int page);
 
 // Slide one column (or, vertical, one page of the column) toward dir through
 // the compositor, as a fling would.
@@ -678,6 +680,7 @@ void onScrim(lv_event_t*) { closePanelAnimated(); }
 
 void setHeader(bool on);
 void onHeaderBtn(lv_event_t*) { setHeader(lv_obj_has_state(s_qp.headerBtn, LV_STATE_CHECKED)); }
+void onEditBtn(lv_event_t*) { edOpen(sh.active); }
 
 lv_obj_t* qpButton(lv_obj_t* parent, int x, int y, int w, const char* text, bool checkable) {
   lv_obj_t* b = lv_button_create(parent);
@@ -754,15 +757,18 @@ void buildQuickPanel() {
   lv_obj_add_event_cb(s_qp.lightSlider, onLightSlider, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(s_qp.lightSlider, onLightSlider, LV_EVENT_RELEASED, nullptr);
 
-  const int bw = (w - 16 * 2 - 2 * 10) / 3;
+  // Four buttons; on a portrait screen they carry only their symbols.
+  const int bw = (w - 16 * 2 - 3 * 10) / 4;
   const bool wide = w >= 400;
-  lv_obj_t* off = qpButton(box, 16, y0 + 132, bw, wide ? LV_SYMBOL_POWER "  Screen off" : LV_SYMBOL_POWER "  Off", false);
+  lv_obj_t* off = qpButton(box, 16, y0 + 132, bw, wide ? LV_SYMBOL_POWER "  Off" : LV_SYMBOL_POWER, false);
   lv_obj_add_event_cb(off, onScreenOff, LV_EVENT_CLICKED, nullptr);
-  s_qp.nightBtn = qpButton(box, 16 + bw + 10, y0 + 132, bw, LV_SYMBOL_EYE_CLOSE "  Night", true);
+  s_qp.nightBtn = qpButton(box, 16 + bw + 10, y0 + 132, bw, wide ? LV_SYMBOL_EYE_CLOSE "  Night" : LV_SYMBOL_EYE_CLOSE, true);
   lv_obj_add_event_cb(s_qp.nightBtn, onNight, LV_EVENT_VALUE_CHANGED, nullptr);
-  s_qp.headerBtn = qpButton(box, 16 + 2 * (bw + 10), y0 + 132, bw, LV_SYMBOL_UP "  Top bar", true);
+  s_qp.headerBtn = qpButton(box, 16 + 2 * (bw + 10), y0 + 132, bw, wide ? LV_SYMBOL_UP "  Top bar" : LV_SYMBOL_UP, true);
   if (s_header) lv_obj_add_state(s_qp.headerBtn, LV_STATE_CHECKED);
   lv_obj_add_event_cb(s_qp.headerBtn, onHeaderBtn, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_t* edit = qpButton(box, 16 + 3 * (bw + 10), y0 + 132, bw, wide ? LV_SYMBOL_EDIT "  Edit" : LV_SYMBOL_EDIT, false);
+  lv_obj_add_event_cb(edit, onEditBtn, LV_EVENT_CLICKED, nullptr);
 
   lv_obj_t* grip = lv_obj_create(box);
   lv_obj_remove_style_all(grip);
@@ -1386,6 +1392,49 @@ void layoutHeader(Page& p) {
   p.stale = true;
 }
 
+// Where each tile of a page lands: explicit cells first (in tile order), then
+// the rest flow into the first free place that fits. The portal grid editor
+// mirrors this rule (layout() in deck_web.h).
+struct Cell {
+  bool placed;
+  int x, y, w, h;
+};
+
+void placeTiles(const PageDef& def, int orient, std::vector<Cell>& out) {
+  const int cols = def.cols[orient], rows = def.rows[orient];
+  bool used[6][6] = {};
+  auto fits = [&](int x, int y, int tw, int th) {
+    if (x + tw > cols || y + th > rows) return false;
+    for (int yy = y; yy < y + th; yy++)
+      for (int xx = x; xx < x + tw; xx++)
+        if (used[yy][xx]) return false;
+    return true;
+  };
+  auto take = [&](Cell& c, int x, int y) {
+    for (int yy = y; yy < y + c.h; yy++)
+      for (int xx = x; xx < x + c.w; xx++) used[yy][xx] = true;
+    c.placed = true;
+    c.x = x;
+    c.y = y;
+  };
+  out.assign(def.tiles.size(), Cell{false, 0, 0, 1, 1});
+  for (size_t i = 0; i < def.tiles.size(); i++) {
+    const TilePos& ps = def.tiles[i].pos[orient];
+    out[i].w = ps.w;
+    out[i].h = ps.h;
+    if (ps.set && fits(ps.x, ps.y, ps.w, ps.h)) take(out[i], ps.x, ps.y);
+  }
+  for (Cell& c : out)
+    for (int y = 0; y < rows && !c.placed; y++)
+      for (int x = 0; x < cols && !c.placed; x++)
+        if (fits(x, y, c.w, c.h)) take(c, x, y);
+}
+
+void onGridHold(lv_event_t* e) {
+  const int page = (int)(uintptr_t)lv_event_get_user_data(e);
+  if (page == sh.active) edOpen(page);
+}
+
 void addTilesPage(const PageDef& def) {
   const int w = logicalW(), h = logicalH();
   const int orient = w > h ? ORIENT_LANDSCAPE : ORIENT_PORTRAIT;
@@ -1430,47 +1479,388 @@ void addTilesPage(const PageDef& def) {
   lv_obj_set_style_pad_row(grid, 7, 0);
   lv_obj_set_style_pad_column(grid, 7, 0);
 
-  // Explicit positions first, then the rest flow into free cells.
-  bool used[6][6] = {};
-  auto fits = [&](int x, int y, int tw, int th) {
-    if (x + tw > cols || y + th > rows) return false;
-    for (int yy = y; yy < y + th; yy++)
-      for (int xx = x; xx < x + tw; xx++)
-        if (used[yy][xx]) return false;
-    return true;
-  };
-  auto take = [&](int x, int y, int tw, int th) {
-    for (int yy = y; yy < y + th; yy++)
-      for (int xx = x; xx < x + tw; xx++) used[yy][xx] = true;
-  };
-  std::vector<bool> placed(def.tiles.size(), false);
-  for (size_t i = 0; i < def.tiles.size(); i++) {
-    const TilePos& ps = def.tiles[i].pos[orient];
-    if (ps.set && fits(ps.x, ps.y, ps.w, ps.h)) {
-      take(ps.x, ps.y, ps.w, ps.h);
-      makeTile(grid, def.tiles[i], page, ps.x, ps.y, ps.w, ps.h);
-      placed[i] = true;
-    }
-  }
-  for (size_t i = 0; i < def.tiles.size(); i++) {
-    if (placed[i]) continue;
-    const TilePos& ps = def.tiles[i].pos[orient];
-    const int tw = ps.w, th = ps.h;
-    bool done = false;
-    for (int y = 0; y < rows && !done; y++)
-      for (int x = 0; x < cols && !done; x++)
-        if (fits(x, y, tw, th)) {
-          take(x, y, tw, th);
-          makeTile(grid, def.tiles[i], page, x, y, tw, th);
-          done = true;
-        }
-    if (!done) Serial.printf("Deck: page '%s' has no room for tile '%s'\n",
-                             def.id.c_str(), def.tiles[i].id.c_str());
+  // Long press on an empty part of the page opens the edit mode.
+  lv_obj_add_flag(grid, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(grid, onGridHold, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)page);
+
+  std::vector<Cell> cells;
+  placeTiles(def, orient, cells);
+  for (size_t i = 0; i < cells.size(); i++) {
+    const Cell& c = cells[i];
+    if (c.placed) makeTile(grid, def.tiles[i], page, c.x, c.y, c.w, c.h);
+    else Serial.printf("Deck: page '%s' has no room for tile '%s'\n",
+                       def.id.c_str(), def.tiles[i].id.c_str());
   }
 
   p.snap = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
   p.stale = true;
   s_count++;
+}
+
+// --- Edit mode ------------------------------------------------------------------------
+// Long press on an empty part of a page, or Edit in the quick panel: a sketch
+// of the active page on the top layer. Drag a tile to a free place or onto a
+// tile of its size (swap), resize it from the corner, remove it with x. Done
+// writes the page's positions into the stored deck.json; Cancel drops them.
+constexpr int ED_BAR_H = 48;
+constexpr int ED_PAD = 8;
+constexpr int ED_GAP = 7;
+constexpr int ED_SLOP = 6;
+constexpr uint32_t C_ED_OK = 0x5CC9A7;
+constexpr uint32_t C_ED_BAD = 0xE5534B;
+
+struct EdTile {
+  Cell c;
+  bool removed;
+  lv_obj_t* box;
+};
+
+struct EditState {
+  lv_obj_t* root = nullptr;
+  lv_obj_t* title = nullptr;
+  lv_obj_t* ghost = nullptr;
+  int cfgPage = -1;  // index into s_cfg.pages
+  String name;
+  int orient = 0, cols = 1, rows = 1, cw = 1, ch = 1;
+  std::vector<EdTile> tiles;
+  bool dirty = false;
+  enum Pending : uint8_t { P_NONE, P_SAVE, P_CANCEL } pending = P_NONE;
+  // The drag in progress: which tile, resize or move, where it would land.
+  int k = -1;
+  bool sizing = false, moved = false, ok = false;
+  int swap = -1;
+  lv_point_t p0 = {};
+  int bx0 = 0, by0 = 0;
+  Cell to = {};
+};
+EditState s_ed;
+
+void edPlace(lv_obj_t* o, const Cell& c) {
+  lv_obj_set_pos(o, ED_PAD + c.x * (s_ed.cw + ED_GAP), ED_BAR_H + c.y * (s_ed.ch + ED_GAP));
+  lv_obj_set_size(o, c.w * s_ed.cw + (c.w - 1) * ED_GAP, c.h * s_ed.ch + (c.h - 1) * ED_GAP);
+}
+
+// Can tile k go to c? Free cells, or (a move, not a resize) exactly onto a
+// tile of the same size, which then takes k's place (*swap).
+bool edCheck(int k, const Cell& c, bool sizing, int* swap) {
+  *swap = -1;
+  if (c.x < 0 || c.y < 0 || c.x + c.w > s_ed.cols || c.y + c.h > s_ed.rows) return false;
+  const Cell& me = s_ed.tiles[k].c;
+  int hit = -1, hits = 0;
+  for (int j = 0; j < (int)s_ed.tiles.size(); j++) {
+    const EdTile& o = s_ed.tiles[j];
+    if (j == k || !o.c.placed || o.removed) continue;
+    if (o.c.x < c.x + c.w && c.x < o.c.x + o.c.w && o.c.y < c.y + c.h && c.y < o.c.y + o.c.h) {
+      hit = j;
+      hits++;
+    }
+  }
+  if (!hits) return true;
+  if (sizing || hits > 1 || !me.placed || c.w != me.w || c.h != me.h) return false;
+  const Cell& o = s_ed.tiles[hit].c;
+  if (o.x != c.x || o.y != c.y || o.w != me.w || o.h != me.h) return false;
+  *swap = hit;
+  return true;
+}
+
+bool edApply(int k, const Cell& c, bool sizing) {
+  int swap;
+  if (!edCheck(k, c, sizing, &swap)) return false;
+  EdTile& t = s_ed.tiles[k];
+  if (swap >= 0) {
+    s_ed.tiles[swap].c.x = t.c.x;
+    s_ed.tiles[swap].c.y = t.c.y;
+  }
+  t.c = c;
+  t.c.placed = true;
+  s_ed.dirty = true;
+  return true;
+}
+
+void edLayout() {
+  for (EdTile& t : s_ed.tiles)
+    if (t.box) edPlace(t.box, t.c);
+}
+
+void edDragEvent(lv_event_t* e) {
+  const uint32_t tag = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
+  const int k = tag & 0xFF;
+  const bool sizing = tag & 0x100;
+  if (k >= (int)s_ed.tiles.size() || !s_ed.tiles[k].box) return;
+  EdTile& t = s_ed.tiles[k];
+  const lv_event_code_t code = lv_event_get_code(e);
+  lv_point_t p;
+  lv_indev_get_point(lv_indev_active(), &p);
+  if (code == LV_EVENT_PRESSED) {
+    s_ed.k = k;
+    s_ed.sizing = sizing;
+    s_ed.moved = false;
+    s_ed.ok = false;
+    s_ed.p0 = p;
+    s_ed.bx0 = lv_obj_get_x(t.box);
+    s_ed.by0 = lv_obj_get_y(t.box);
+    return;
+  }
+  if (s_ed.k != k) return;
+  if (code == LV_EVENT_PRESSING) {
+    const int dx = p.x - s_ed.p0.x, dy = p.y - s_ed.p0.y;
+    if (!s_ed.moved && abs(dx) + abs(dy) < ED_SLOP) return;
+    if (!s_ed.moved) {
+      s_ed.moved = true;
+      // A moved tile floats over the target frame, a resized one under it.
+      lv_obj_move_foreground(sizing ? s_ed.ghost : t.box);
+      lv_obj_set_style_opa(t.box, LV_OPA_80, 0);
+    }
+    const float sx = s_ed.cw + ED_GAP, sy = s_ed.ch + ED_GAP;
+    Cell c = t.c;
+    if (sizing) {
+      c.w = constrain((int)lroundf((p.x - ED_PAD) / sx) - c.x, 1, min(6, s_ed.cols - c.x));
+      c.h = constrain((int)lroundf((p.y - ED_BAR_H) / sy) - c.y, 1, min(6, s_ed.rows - c.y));
+    } else {
+      lv_obj_set_pos(t.box, s_ed.bx0 + dx, s_ed.by0 + dy);
+      c.x = constrain((int)lroundf((s_ed.bx0 + dx - ED_PAD) / sx), 0, s_ed.cols - c.w);
+      c.y = constrain((int)lroundf((s_ed.by0 + dy - ED_BAR_H) / sy), 0, s_ed.rows - c.h);
+    }
+    s_ed.to = c;
+    s_ed.ok = edCheck(k, c, sizing, &s_ed.swap);
+    const lv_color_t col = lv_color_hex(s_ed.ok ? C_ED_OK : C_ED_BAD);
+    lv_obj_set_style_border_color(s_ed.ghost, col, 0);
+    lv_obj_set_style_bg_color(s_ed.ghost, col, 0);
+    edPlace(s_ed.ghost, c);
+    lv_obj_remove_flag(s_ed.ghost, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  // RELEASED or PRESS_LOST
+  if (s_ed.moved && s_ed.ok && code == LV_EVENT_RELEASED) edApply(k, s_ed.to, sizing);
+  s_ed.k = -1;
+  lv_obj_add_flag(s_ed.ghost, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_set_style_opa(t.box, LV_OPA_COVER, 0);
+  edLayout();
+}
+
+void edRemove(int k) {
+  if (k < 0 || k >= (int)s_ed.tiles.size() || !s_ed.tiles[k].box) return;
+  s_ed.tiles[k].removed = true;
+  // Hidden, not deleted: this runs in an event of the box's own child.
+  lv_obj_add_flag(s_ed.tiles[k].box, LV_OBJ_FLAG_HIDDEN);
+  s_ed.dirty = true;
+}
+
+void edRemoveEvent(lv_event_t* e) { edRemove((int)(uintptr_t)lv_event_get_user_data(e)); }
+void edDoneEvent(lv_event_t*) { s_ed.pending = EditState::P_SAVE; }
+void edCancelEvent(lv_event_t*) { s_ed.pending = EditState::P_CANCEL; }
+
+// The name the tile shows (HA friendly name, metric name), else from the config.
+String edTileName(const TileDef& d) {
+  for (const TileRt& r : s_tiles)
+    if (r.def == &d && r.name && *lv_label_get_text(r.name)) return lv_label_get_text(r.name);
+  if (d.type != TILE_METRIC || d.label.length()) return tileLabel(d);
+  const PcMetric* m = pcMetricFindById(d.metric);
+  return m ? String(m->name) : "PC metric " + String(d.metric);
+}
+
+void edMakeBox(int k, const TileDef& d) {
+  const uint32_t accent = d.type == TILE_METRIC ? metricAccent(d)
+                          : d.hasColor          ? d.color
+                                                : domainColor(entityDomain(d.entity));
+  lv_obj_t* b = lv_obj_create(s_ed.root);
+  lv_obj_remove_style_all(b);
+  lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(b, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK));
+  lv_obj_set_style_bg_color(b, lv_color_hex(C_TILE), 0);
+  lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(b, 12, 0);
+  lv_obj_set_style_border_width(b, 2, 0);
+  lv_obj_set_style_border_color(b, lv_color_hex(accent), 0);
+  lv_obj_set_style_pad_all(b, 8, 0);
+  s_ed.tiles[k].box = b;
+  edPlace(b, s_ed.tiles[k].c);
+
+  lv_obj_t* name = lv_label_create(b);
+  lv_label_set_text(name, edTileName(d).c_str());
+  lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
+  // Full width, mid height: below the x and above the grip.
+  lv_obj_set_width(name, lv_pct(100));
+  lv_obj_set_style_max_height(name, 2 * lv_font_get_line_height(&deck_font_14), 0);
+  lv_obj_align(name, LV_ALIGN_LEFT_MID, 0, 6);
+
+  lv_obj_t* x = lv_obj_create(b);
+  lv_obj_remove_style_all(x);
+  lv_obj_set_size(x, 30, 30);
+  lv_obj_align(x, LV_ALIGN_TOP_RIGHT, 8, -8);
+  lv_obj_set_style_radius(x, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(x, lv_color_hex(0x3A2226), 0);
+  lv_obj_set_style_bg_opa(x, LV_OPA_COVER, 0);
+  lv_obj_add_event_cb(x, edRemoveEvent, LV_EVENT_CLICKED, (void*)(uintptr_t)k);
+  lv_obj_t* xl = lv_label_create(x);
+  lv_label_set_text(xl, LV_SYMBOL_CLOSE);
+  lv_obj_set_style_text_color(xl, lv_color_hex(C_ED_BAD), 0);
+  lv_obj_center(xl);
+
+  // Resize grip: an L-shaped corner mark with a finger-sized hit area.
+  lv_obj_t* g = lv_obj_create(b);
+  lv_obj_remove_style_all(g);
+  lv_obj_set_size(g, 34, 34);
+  lv_obj_align(g, LV_ALIGN_BOTTOM_RIGHT, 8, 8);
+  lv_obj_add_flag(g, LV_OBJ_FLAG_PRESS_LOCK);
+  for (int i = 0; i < 2; i++) {
+    lv_obj_t* bar = lv_obj_create(g);
+    lv_obj_remove_style_all(bar);
+    lv_obj_remove_flag(bar, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(bar, i ? 3 : 14, i ? 14 : 3);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(C_CLOCK), 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+    lv_obj_align(bar, LV_ALIGN_BOTTOM_RIGHT, -7, -7);
+  }
+  // Not LV_EVENT_ALL: the handler reads the touch point, which draw events lack.
+  for (lv_event_code_t c : {LV_EVENT_PRESSED, LV_EVENT_PRESSING, LV_EVENT_RELEASED, LV_EVENT_PRESS_LOST}) {
+    lv_obj_add_event_cb(b, edDragEvent, c, (void*)(uintptr_t)k);
+    lv_obj_add_event_cb(g, edDragEvent, c, (void*)(uintptr_t)(k | 0x100));
+  }
+}
+
+void edOpen(int page) {
+  if (s_ed.root || page < 0 || page >= s_count || !s_pages[page].def) return;
+  hidePanelNow();
+  closeModal();
+  const PageDef& def = *s_pages[page].def;
+  const int w = logicalW(), h = logicalH();
+  s_ed = EditState();
+  s_ed.cfgPage = (int)(&def - &s_cfg.pages[0]);
+  s_ed.name = def.name.length() ? def.name : def.id;
+  s_ed.orient = w > h ? ORIENT_LANDSCAPE : ORIENT_PORTRAIT;
+  s_ed.cols = def.cols[s_ed.orient];
+  s_ed.rows = def.rows[s_ed.orient];
+  s_ed.cw = (w - 2 * ED_PAD - (s_ed.cols - 1) * ED_GAP) / s_ed.cols;
+  s_ed.ch = (h - ED_BAR_H - ED_PAD - (s_ed.rows - 1) * ED_GAP) / s_ed.rows;
+
+  lv_obj_t* root = lv_obj_create(lv_layer_top());
+  s_ed.root = root;
+  lv_obj_remove_style_all(root);
+  lv_obj_set_size(root, w, h);
+  lv_obj_set_style_bg_color(root, lv_color_hex(C_BG), 0);
+  lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
+  lv_obj_set_style_text_color(root, lv_color_hex(C_TEXT), 0);
+  lv_obj_remove_flag(root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);  // taps never reach the page
+
+  constexpr int BW = 84;
+  s_ed.title = lv_label_create(root);
+  lv_obj_set_style_text_font(s_ed.title, &deck_font_20, 0);
+  lv_label_set_long_mode(s_ed.title, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_width(s_ed.title, w - 2 * BW - 40);
+  lv_obj_set_pos(s_ed.title, 12, 13);
+  lv_obj_t* cancel = qpButton(root, w - 2 * BW - 16, 4, BW, "Cancel", false);
+  lv_obj_add_event_cb(cancel, edCancelEvent, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* done = qpButton(root, w - BW - 8, 4, BW, LV_SYMBOL_OK " Done", false);
+  lv_obj_set_style_bg_color(done, lv_color_hex(C_OK), 0);
+  lv_obj_set_style_text_color(done, lv_color_hex(C_TEXT_ON), 0);
+  lv_obj_add_event_cb(done, edDoneEvent, LV_EVENT_CLICKED, nullptr);
+
+  for (int y = 0; y < s_ed.rows; y++)
+    for (int x = 0; x < s_ed.cols; x++) {
+      lv_obj_t* o = lv_obj_create(root);
+      lv_obj_remove_style_all(o);
+      lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_set_style_radius(o, 12, 0);
+      lv_obj_set_style_border_width(o, 1, 0);
+      lv_obj_set_style_border_color(o, lv_color_hex(C_CHIP), 0);
+      edPlace(o, Cell{true, x, y, 1, 1});
+    }
+
+  std::vector<Cell> cells;
+  placeTiles(def, s_ed.orient, cells);
+  int hidden = 0;
+  for (const Cell& c : cells) {
+    s_ed.tiles.push_back({c, false, nullptr});
+    if (!c.placed) hidden++;
+  }
+  for (size_t i = 0; i < cells.size(); i++)
+    if (cells[i].placed) edMakeBox((int)i, def.tiles[i]);
+
+  s_ed.ghost = lv_obj_create(root);
+  lv_obj_remove_style_all(s_ed.ghost);
+  lv_obj_remove_flag(s_ed.ghost, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_radius(s_ed.ghost, 12, 0);
+  lv_obj_set_style_border_width(s_ed.ghost, 2, 0);
+  lv_obj_set_style_bg_opa(s_ed.ghost, LV_OPA_20, 0);
+  lv_obj_add_flag(s_ed.ghost, LV_OBJ_FLAG_HIDDEN);
+
+  String t = "Edit " + s_ed.name;
+  if (hidden) t += " (" + String(hidden) + " not shown)";
+  lv_label_set_text(s_ed.title, t.c_str());
+
+  setModalOpen(true);  // no swipes or quick panel under the editor
+  panelSetPager(1, 0, 1, 0);  // and no page dots over it
+  Serial.printf("Deck: edit page '%s'\n", def.id.c_str());
+}
+
+void edClose() {
+  if (!s_ed.root) return;
+  lv_obj_delete(s_ed.root);
+  s_ed = EditState();
+  setModalOpen(false);
+  if (s_count) setPager(sh.active);
+}
+
+// The stored deck.json with this page's positions (pinned for every placed
+// tile, in the current orientation) and removals. Tiles match by index: the
+// parser keeps every tile of a page in file order. Other fields stay as they are.
+bool edBuild(String& out, String& err) {
+  String text;
+  deckConfigText(text);
+  JsonDocument doc;
+  if (deserializeJson(doc, text)) {
+    err = "stored deck.json unreadable";
+    return false;
+  }
+  JsonObject pv;
+  int n = 0;
+  for (JsonObject p : doc["pages"].as<JsonArray>()) {
+    if (!strcmp(p["type"] | "tiles", "metrics")) continue;  // skipped by the parser
+    if (n++ == s_ed.cfgPage) {
+      pv = p;
+      break;
+    }
+  }
+  JsonArray tiles = pv["tiles"].as<JsonArray>();
+  if (pv.isNull() || tiles.size() != s_ed.tiles.size()) {
+    err = "page changed meanwhile";
+    return false;
+  }
+  const char* key = s_ed.orient == ORIENT_LANDSCAPE ? "landscape" : "portrait";
+  for (size_t i = 0; i < tiles.size(); i++) {
+    const EdTile& t = s_ed.tiles[i];
+    if (!t.c.placed || t.removed) continue;
+    JsonObject tv = tiles[i];
+    JsonObject pos = tv["pos"].is<JsonObject>() ? tv["pos"].as<JsonObject>() : tv["pos"].to<JsonObject>();
+    JsonObject q = pos[key].to<JsonObject>();
+    q["x"] = t.c.x;
+    q["y"] = t.c.y;
+    if (t.c.w > 1) q["w"] = t.c.w;
+    if (t.c.h > 1) q["h"] = t.c.h;
+  }
+  for (size_t i = tiles.size(); i-- > 0;)
+    if (s_ed.tiles[i].removed) tiles.remove(i);
+  out = "";
+  serializeJson(doc, out);
+  return true;
+}
+
+// From deckTick, outside the LVGL event that asked for it: applying the
+// config rebuilds the pages, and the editor goes with them.
+void edFinish() {
+  const bool save = s_ed.pending == EditState::P_SAVE && s_ed.dirty;
+  String text, err;
+  const bool built = save && edBuild(text, err);
+  edClose();
+  if (!save) return;
+  if (built && deckApplyConfig(text, err)) {
+    deckToastShow("Page saved", 1500);
+  } else {
+    Serial.printf("Deck: edit not saved: %s\n", err.c_str());
+    deckToastShow("Not saved", 1800);
+  }
 }
 
 void buildPages() {
@@ -1521,6 +1911,7 @@ void setPager(int page) {
 }
 
 void destroyPages() {
+  edClose();
   closeModal();
   destroyQuickPanel();
   for (int i = 0; i < s_count; i++) {
@@ -1738,11 +2129,12 @@ void deckTick() {
   // no panel or card under them.
   const ScreenState sc = getScreenState();
   const bool systemScreen = sc != SCREEN_DECK;
-  if (systemScreen && (sh.swipeEnabled || s_qp.open || s_modalCard)) {
+  if (systemScreen && (sh.swipeEnabled || s_qp.open || s_modalCard || s_ed.root)) {
     compCancel();
     releaseSwipe();
     hidePanelNow();
     closeModal();
+    edClose();
   }
   portENTER_CRITICAL(&s_mux);
   sh.swipeEnabled = !systemScreen;
@@ -1751,6 +2143,7 @@ void deckTick() {
 
   if (compOwnsScreen()) return;  // LVGL stays frozen during a drag or slide
 
+  if (s_ed.pending != EditState::P_NONE) edFinish();
   updateHeaders();
   qpUpdateStatus(false);
   haSync();
@@ -1857,6 +2250,32 @@ bool deckTestCard(const String& tileId) {
     return true;
   }
   return false;
+}
+
+bool deckTestEdit(const String& op, int tile, int x, int y, int w, int h) {
+  if (!s_disp) return false;
+  if (op == "open") {
+    edOpen(sh.active);
+    return s_ed.root != nullptr;
+  }
+  if (!s_ed.root) return false;
+  if (op == "done" || op == "cancel") {
+    s_ed.pending = op == "done" ? EditState::P_SAVE : EditState::P_CANCEL;
+    return true;
+  }
+  if (tile < 0 || tile >= (int)s_ed.tiles.size() || !s_ed.tiles[tile].box || s_ed.tiles[tile].removed)
+    return false;
+  if (op == "remove") {
+    edRemove(tile);
+    return true;
+  }
+  if (op != "move") return false;
+  const Cell& cur = s_ed.tiles[tile].c;
+  const Cell c = {true, x, y, w > 0 ? w : cur.w, h > 0 ? h : cur.h};
+  const bool resize = c.w != cur.w || c.h != cur.h;
+  if (!edApply(tile, c, resize)) return false;
+  edLayout();
+  return true;
 }
 
 bool deckTestSwipe(int dir, bool vertical) {
