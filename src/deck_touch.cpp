@@ -116,6 +116,7 @@ void touchTask(void*) {
 
   GestureState state = G_IDLE;
   int16_t x0 = 0, y0 = 0, lastX = 0, lastY = 0;
+  bool noSwipe = false;
   uint32_t lastMs = 0;
   Drag drag = {};
   Sample samples[NSAMPLES];
@@ -134,6 +135,7 @@ void touchTask(void*) {
         x0 = x;
         y0 = y;
         state = G_PENDING;
+        noSwipe = uiNoSwipeAt(x, y);
         nsamples = 0;
       }
       lastX = x;
@@ -147,7 +149,9 @@ void touchTask(void*) {
 
       if (state == G_PENDING && !s_suppress) {
         const int dx = x - x0, dy = y - y0;
-        if (abs(dx) >= SLOP_PX && abs(dx) > abs(dy)) {
+        if (noSwipe && (abs(dx) >= SLOP_PX || abs(dy) >= SLOP_PX)) {
+          state = G_PASS;  // a slider tile takes the drag
+        } else if (abs(dx) >= SLOP_PX && abs(dx) > abs(dy)) {
           // Finger moving left reveals the next page.
           const int d = dx < 0 ? 1 : -1;
           Src a, b;

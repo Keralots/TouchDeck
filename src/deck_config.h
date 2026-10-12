@@ -18,6 +18,10 @@
 // A PC metric tile: { "type": "metric", "metric": <companion id>,
 //   "style": "number" | "chart" | "bar", "scaleMax": 0 (= by unit) }.
 //
+// "type": "slider": the tile is a level control (light brightness, cover
+// position, fan speed, media volume, input_number / number); drag sideways to
+// set it, tap toggles (numbers: opens the card).
+//
 // "confirm": "off" | "always" (optional, tap and hold actions): ask on the
 // device before turning the tile off, or before any action it runs.
 //
@@ -46,7 +50,7 @@ constexpr int ORIENT_PORTRAIT = 1;
 constexpr int MAX_DECK_PAGES = 8;
 constexpr int MAX_PAGE_TILES = 24;
 
-enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC };
+enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER };
 enum MetricStyle : uint8_t { METRIC_NUMBER = 0, METRIC_CHART, METRIC_BAR };
 enum ActionKind : uint8_t {
   ACT_NONE = 0,

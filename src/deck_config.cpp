@@ -220,6 +220,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       if (!strcmp(tt, "toggle")) t.type = TILE_TOGGLE;
       else if (!strcmp(tt, "action")) t.type = TILE_ACTION;
       else if (!strcmp(tt, "sensor")) t.type = TILE_SENSOR;
+      else if (!strcmp(tt, "slider")) t.type = TILE_SLIDER;
       else if (!strcmp(tt, "metric")) t.type = TILE_METRIC;
       else {
         if (err) *err = where + ": unknown type '" + tt + "'";
@@ -258,6 +259,11 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       if (tv["tap"].isNull() && t.type == TILE_TOGGLE) t.tap.kind = ACT_TOGGLE;
       // A read-only sensor opens its card on a tap too.
       if (tv["tap"].isNull() && t.type == TILE_SENSOR) t.tap.kind = ACT_MORE_INFO;
+      // A slider toggles on a tap; a number has no on/off, so its card opens.
+      if (tv["tap"].isNull() && t.type == TILE_SLIDER)
+        t.tap.kind = t.entity.startsWith("input_number.") || t.entity.startsWith("number.")
+                         ? ACT_MORE_INFO
+                         : ACT_TOGGLE;
       if (tv["hold"].isNull()) t.hold.kind = ACT_MORE_INFO;
       p.tiles.push_back(t);
     }

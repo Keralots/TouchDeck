@@ -979,6 +979,13 @@ static void handleDeckTap() {
   sendJsonMessage(ok ? 200 : 404, ok, ok ? "Tapped" : "No such tile");
 }
 
+// POST /api/deck/slide?tile=<id>&pct=0..100 - bench hook, a slider tile drag
+// ending at pct (sends it to HA like a real one).
+static void handleDeckSlide() {
+  const bool ok = deckTestSlide(server.arg("tile"), server.arg("pct").toInt());
+  sendJsonMessage(ok ? 200 : 409, ok, ok ? "Sent" : "No such slider, or HA not connected");
+}
+
 // POST /api/deck/confirm?ok=1|0 - bench hook, answer the open confirm card.
 static void handleDeckConfirm() {
   const bool ok = deckTestConfirm(server.arg("ok") == "1");
@@ -1189,6 +1196,7 @@ void initWebServer() {
   server.on("/api/deck/http-test", HTTP_POST, handleHttpTestPost);
   server.on("/api/deck/http-test", HTTP_GET, handleHttpTestGet);
   server.on("/api/deck/confirm", HTTP_POST, handleDeckConfirm);
+  server.on("/api/deck/slide", HTTP_POST, handleDeckSlide);
   server.on("/api/deck/edit", HTTP_POST, handleDeckEdit);
   server.on("/api/deck/screen", HTTP_POST, handleDeckScreen);
   server.on("/deck", HTTP_GET, handleDeckPage);

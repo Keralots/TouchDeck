@@ -98,6 +98,13 @@ struct TileRt {
   int32_t* pts;           // chart points (PC_HISTORY_LEN), LVGL heap
   bool warn;
   bool compact;           // 1x1 number tile: value font shrinks to fit
+  // Slider tiles: the fill behind the content shows the level (0..1).
+  lv_obj_t* fill;
+  float frac;
+  bool sliding;           // this press became a drag: no tap or hold action
+  int16_t slX0;
+  float slFrac0;
+  uint32_t slSentMs, slReleasedMs;
 };
 
 lv_display_t* s_disp = nullptr;
@@ -142,8 +149,16 @@ struct Shared {
   bool panelValid = false;
   bool panelBusy = false;
   Src panelSrc = {};
+  // Slider tiles of the shown page: a touch starting on one is a slider drag,
+  // never a page swipe.
+  struct Zone {
+    int16_t x1, y1, x2, y2;
+  } zones[MAX_PAGE_TILES] = {};
+  int nZones = 0;
 };
 Shared sh;
+int s_zonesPage = -1;     // page the zones were taken from
+bool s_zonesDirty = true;  // tiles rebuilt or moved: take them again
 
 // --- LVGL glue ---------------------------------------------------------------------
 uint32_t tickCb() { return millis(); }
@@ -409,6 +424,89 @@ void setTileOn(TileRt& r, bool on) {
   else lv_obj_remove_state(r.obj, LV_STATE_CHECKED);
 }
 
+// --- Slider tiles (also the detail card's slider) ---------------------------------------
+bool sliderDomain(const String& d) {
+  return d == "light" || d == "cover" || d == "fan" || d == "media_player" || d == "input_number" ||
+         d == "number";
+}
+
+bool parseNum(const String& s, float& v) {
+  char* end = nullptr;
+  v = strtof(s.c_str(), &end);
+  return s.length() && end && *end == 0;
+}
+
+// The entity's level as 0..1, or -1 when it has none (unavailable, a cover
+// without a position).
+float sliderFrac(const String& d, const HaEntity& e) {
+  if (!e.known || e.state == "unavailable" || e.state == "unknown") return -1;
+  if (d == "input_number" || d == "number") {
+    float v;
+    const float lo = isnan(e.numMin) ? 0 : e.numMin, hi = isnan(e.numMax) ? 100 : e.numMax;
+    if (!parseNum(e.state, v) || hi <= lo) return -1;
+    return constrain((v - lo) / (hi - lo), 0.0f, 1.0f);
+  }
+  if (d == "light") return e.state != "on" ? 0 : e.brightness >= 0 ? e.brightness / 255.0f : 1;
+  if (e.level >= 0) return constrain(e.level / 100.0f, 0.0f, 1.0f);
+  return (d == "fan" && e.state == "off") ? 0 : -1;
+}
+
+// What the tile shows for a level: "62%", or a number's value and unit.
+String sliderText(const String& d, const HaEntity& e, float frac) {
+  if (frac < 0) return prettyState(d, e);
+  if (d == "input_number" || d == "number") {
+    const float lo = isnan(e.numMin) ? 0 : e.numMin, hi = isnan(e.numMax) ? 100 : e.numMax;
+    char num[24];
+    snprintf(num, sizeof num, "%.4g", lo + (hi - lo) * frac);
+    return e.unit.length() ? String(num) + " " + e.unit : String(num);
+  }
+  if ((d == "light" || d == "fan") && frac <= 0) return "Off";
+  return String((int)lroundf(frac * 100)) + "%";
+}
+
+// Set the entity to a level. False when HA did not take the call.
+bool sliderSend(const String& entity, float frac) {
+  const String d = entityDomain(entity);
+  const int pct = (int)lroundf(constrain(frac, 0.0f, 1.0f) * 100);
+  if (d == "light")
+    return pct ? haCallService("light", "turn_on", entity, "{\"brightness_pct\":" + String(pct) + "}")
+               : haCallService("light", "turn_off", entity, "");
+  if (d == "cover")
+    return haCallService("cover", "set_cover_position", entity, "{\"position\":" + String(pct) + "}");
+  if (d == "fan")
+    return pct ? haCallService("fan", "set_percentage", entity, "{\"percentage\":" + String(pct) + "}")
+               : haCallService("fan", "turn_off", entity, "");
+  if (d == "media_player")
+    return haCallService("media_player", "volume_set", entity,
+                         "{\"volume_level\":" + String(pct / 100.0f, 2) + "}");
+  if (d == "input_number" || d == "number") {
+    HaEntity e;
+    haGetEntity(entity, e);
+    const float lo = isnan(e.numMin) ? 0 : e.numMin, hi = isnan(e.numMax) ? 100 : e.numMax;
+    if (hi <= lo) return false;
+    float val = lo + (hi - lo) * frac;
+    if (e.numStep > 0) {
+      val = lo + lroundf((val - lo) / e.numStep) * e.numStep;
+      if (val > hi) val -= e.numStep;  // HA refuses values past max
+    }
+    char num[24];
+    snprintf(num, sizeof num, "%.7g", constrain(val, lo, hi));
+    return haCallService(d, "set_value", entity, String("{\"value\":") + num + "}");
+  }
+  return false;
+}
+
+void setSliderFill(TileRt& r, float frac) {
+  r.frac = frac < 0 ? 0 : frac;
+  const int w = lv_obj_get_width(r.obj), h = lv_obj_get_height(r.obj);
+  if (w <= 0) return;  // not laid out yet: SIZE_CHANGED comes back here
+  // The fill starts at the tile edge, outside the 9 px padding.
+  lv_obj_set_pos(r.fill, -9, -9);
+  lv_obj_set_size(r.fill, (int)lroundf(w * r.frac), h);
+  if (r.frac <= 0) lv_obj_add_flag(r.fill, LV_OBJ_FLAG_HIDDEN);
+  else lv_obj_remove_flag(r.fill, LV_OBJ_FLAG_HIDDEN);
+}
+
 // Pull the latest HA state into one tile's widgets.
 void applyHaToTile(TileRt& r, bool force) {
   const TileDef& d = *r.def;
@@ -428,7 +526,18 @@ void applyHaToTile(TileRt& r, bool force) {
   r.iconCp = showIcon(r.icon, d, &e, on, r.iconPx, r.iconCp);
   lv_obj_set_style_opa(r.obj, avail ? LV_OPA_COVER : LV_OPA_50, 0);
   if (!d.label.length() && e.name.length()) lv_label_set_text(r.name, e.name.c_str());
-  if (!d.sub.length()) lv_label_set_text(r.sub, prettyState(domain, e).c_str());
+  if (d.type == TILE_SLIDER) {
+    r.on = on;
+    // While dragging, and briefly after (HA echoes older values), the finger wins.
+    const bool held = lv_obj_has_state(r.obj, LV_STATE_PRESSED) && r.sliding;
+    if (!held && millis() - r.slReleasedMs >= 1500) {
+      const float f = sliderFrac(domain, e);
+      setSliderFill(r, f);
+      if (!d.sub.length()) lv_label_set_text(r.sub, sliderText(domain, e, f).c_str());
+    }
+  } else if (!d.sub.length()) {
+    lv_label_set_text(r.sub, prettyState(domain, e).c_str());
+  }
   markPageStale(r.page);
 }
 
@@ -655,8 +764,59 @@ void tileEvent(lv_event_t* e) {
   const lv_event_code_t code = lv_event_get_code(e);
   // SHORT_CLICKED, not CLICKED: CLICKED also fires on the release after a
   // long press, which would run the tap action as well as the hold action.
+  if (r.sliding) return;  // the press was a slider drag
   if (code == LV_EVENT_SHORT_CLICKED) requestAction(r, false);
   else if (code == LV_EVENT_LONG_PRESSED) requestAction(r, true);
+}
+
+bool modalShown();
+
+// Slider tile: a sideways drag moves the level from where it was (no jump to
+// the finger), sending at most every 300 ms and once more on release.
+void sliderEvent(lv_event_t* e) {
+  const size_t idx = (size_t)(uintptr_t)lv_event_get_user_data(e);
+  if (idx >= s_tiles.size()) return;
+  TileRt& r = s_tiles[idx];
+  const lv_event_code_t code = lv_event_get_code(e);
+  if (code == LV_EVENT_SIZE_CHANGED) {
+    setSliderFill(r, r.frac);
+    return;
+  }
+  lv_point_t p;
+  lv_indev_get_point(lv_indev_active(), &p);
+  const uint32_t now = millis();
+  if (code == LV_EVENT_PRESSED) {
+    r.sliding = false;
+    r.slX0 = p.x;
+    return;
+  }
+  const bool canSlide = r.def->entity.length() && haLink() == HA_CONNECTED && !modalShown();
+  if (code == LV_EVENT_PRESSING) {
+    if (!r.sliding) {
+      if (!canSlide || abs(p.x - r.slX0) < 8) return;
+      r.sliding = true;
+      r.slX0 = p.x;
+      r.slFrac0 = r.frac;
+      r.slSentMs = 0;
+    }
+    const int w = lv_obj_get_width(r.obj);
+    const float f = constrain(r.slFrac0 + (p.x - r.slX0) / (float)(w > 0 ? w : 1), 0.0f, 1.0f);
+    if (fabsf(f - r.frac) < 0.005f) return;
+    setSliderFill(r, f);
+    HaEntity he;
+    haGetEntity(r.def->entity, he);
+    if (!r.def->sub.length())
+      lv_label_set_text(r.sub, sliderText(entityDomain(r.def->entity), he, f).c_str());
+    if (now - r.slSentMs >= 300) {
+      r.slSentMs = now;
+      sliderSend(r.def->entity, f);
+    }
+  } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+    if (!r.sliding) return;
+    r.slReleasedMs = now;
+    if (!sliderSend(r.def->entity, r.frac)) deckToastShow("Home Assistant is offline", 1500);
+    markPageStale(r.page);
+  }
 }
 
 // --- Quick panel ------------------------------------------------------------------------
@@ -1034,6 +1194,8 @@ lv_timer_t* s_confirmTimer = nullptr;
 constexpr uint32_t CONFIRM_TIMEOUT_MS = 8000;
 constexpr uint32_t CONFIRM_ARM_MS = 400;  // a stray second tap must not confirm
 
+bool modalShown() { return s_modalCard != nullptr; }
+
 void setModalOpen(bool open) {
   portENTER_CRITICAL(&s_mux);
   sh.modalOpen = open;
@@ -1108,17 +1270,22 @@ void onModalPrimary(lv_event_t*) {
   refreshModal();
 }
 
-uint32_t s_modalSentMs = 0;      // last brightness call while dragging
+uint32_t s_modalSentMs = 0;      // last level call while dragging
 uint32_t s_modalReleasedMs = 0;  // HA echoes old values for a moment after
 
-bool modalIsLight() {
-  return s_modalTile >= 0 && entityDomain(s_tiles[s_modalTile].def->entity) == "light";
+// The card gets a level slider for lights and for entities that report a level.
+bool modalHasSlider() {
+  if (s_modalTile < 0) return false;
+  const String& id = s_tiles[s_modalTile].def->entity;
+  const String d = entityDomain(id);
+  if (d == "light") return true;
+  HaEntity e;
+  return sliderDomain(d) && haGetEntity(id, e) && sliderFrac(d, e) >= 0;
 }
 
-void sendBrightness(int pct) {
+void sendLevel(int pct) {
   if (s_modalTile < 0) return;
-  const String& entity = s_tiles[s_modalTile].def->entity;
-  if (!haCallService("light", "turn_on", entity, String("{\"brightness_pct\":") + pct + "}"))
+  if (!sliderSend(s_tiles[s_modalTile].def->entity, pct / 100.0f))
     deckToastShow("Home Assistant is offline", 1500);
 }
 
@@ -1127,15 +1294,18 @@ void onModalSlider(lv_event_t* e) {
   const int pct = lv_slider_get_value(s_modalSlider);
   const uint32_t now = millis();
   if (code == LV_EVENT_VALUE_CHANGED) {
-    lv_label_set_text_fmt(s_modalState, "%d%%", pct);
-    // Live while dragging, but not faster than HA and the light can follow.
+    const String& id = s_tiles[s_modalTile].def->entity;
+    HaEntity he;
+    haGetEntity(id, he);
+    lv_label_set_text(s_modalState, sliderText(entityDomain(id), he, pct / 100.0f).c_str());
+    // Live while dragging, but not faster than HA and the device can follow.
     if (now - s_modalSentMs >= 300) {
       s_modalSentMs = now;
-      sendBrightness(pct);
+      sendLevel(pct);
     }
   } else if (code == LV_EVENT_RELEASED) {
     s_modalReleasedMs = now;
-    sendBrightness(pct);
+    sendLevel(pct);
   }
 }
 
@@ -1156,22 +1326,23 @@ void refreshModal() {
     const bool dragging = lv_obj_has_state(s_modalSlider, LV_STATE_PRESSED);
     const bool settling = millis() - s_modalReleasedMs < 1500;
     if (!dragging && !settling) {
-      const bool on = haKnown && e.state == "on";
-      const int pct = on && e.brightness >= 0 ? (e.brightness * 100 + 127) / 255 : 0;
-      lv_slider_set_value(s_modalSlider, pct > 0 ? pct : 1, LV_ANIM_OFF);
-      lv_label_set_text(s_modalState, st.c_str());
+      const float f = haKnown ? sliderFrac(domain, e) : -1;
+      const int pct = f > 0 ? (int)lroundf(f * 100) : 0;
+      lv_slider_set_value(s_modalSlider, pct, LV_ANIM_OFF);  // a light's 0 shows as 1
+      lv_label_set_text(s_modalState, (haKnown && domain != "light" ? sliderText(domain, e, f) : st).c_str());
     }
   } else {
     lv_label_set_text(s_modalState, st.c_str());
   }
-  if (r.def->type == TILE_TOGGLE)
-    lv_label_set_text(s_modalBtnLbl, r.on ? "Turn off" : "Turn on");
+  if (r.def->type == TILE_TOGGLE || (r.def->type == TILE_SLIDER && r.def->tap.kind == ACT_TOGGLE))
+    lv_label_set_text(s_modalBtnLbl, actionVerb(r, r.def->tap));
   const bool on = haKnown && haStateOn(domain, e.state);
   s_modalIconCp = showIcon(s_modalIcon, *r.def, haKnown ? &e : nullptr, on, 28, s_modalIconCp);
 }
 
 // Detail card for a tile (hold action "more-info"): name, entity, state, a
-// brightness slider for lights, and the tap action as a button.
+// level slider (light brightness, cover position...), and the tap action as a
+// button.
 void openModal(int tileIdx) {
   closeModal();
   const TileRt& r = s_tiles[tileIdx];
@@ -1179,7 +1350,7 @@ void openModal(int tileIdx) {
   const int w = logicalW(), h = logicalH();
   const uint32_t accent = d.hasColor ? d.color : domainColor(entityDomain(d.entity));
   s_modalTile = tileIdx;
-  const bool light = modalIsLight();
+  const bool light = modalHasSlider();
 
   s_modalScrim = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_modalScrim);
@@ -1246,7 +1417,7 @@ void openModal(int tileIdx) {
     s_modalSlider = sl;
     lv_obj_set_pos(sl, 26, 128);
     lv_obj_set_size(sl, cw - 52, 14);
-    lv_slider_set_range(sl, 1, 100);
+    lv_slider_set_range(sl, entityDomain(d.entity) == "light" ? 1 : 0, 100);
     lv_obj_set_style_bg_color(sl, lv_color_hex(C_TRACK), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(sl, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(sl, lv_color_hex(accent), LV_PART_INDICATOR);
@@ -1265,11 +1436,12 @@ void openModal(int tileIdx) {
   lv_obj_set_style_bg_color(primary, lv_color_hex(accent), 0);
   lv_obj_set_style_text_color(primary, lv_color_hex(C_TEXT_ON), 0);
   s_modalBtnLbl = lv_obj_get_child(primary, 0);
-  lv_label_set_text(s_modalBtnLbl, d.type == TILE_TOGGLE ? "" : (d.type == TILE_SENSOR ? "Refresh" : "Run"));
+  lv_label_set_text(s_modalBtnLbl, "Run");
   lv_obj_add_event_cb(primary, onModalPrimary, LV_EVENT_CLICKED, nullptr);
-  if (d.type == TILE_SENSOR) lv_obj_add_flag(primary, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_t* close = qpButton(c, d.type == TILE_SENSOR ? 16 : 16 + bw + 10, by,
-                             d.type == TILE_SENSOR ? cw - 32 : bw, "Close", false);
+  // Nothing to run when the tap only opens this card (sensors, numbers).
+  const bool noPrimary = d.type == TILE_SENSOR || d.tap.kind == ACT_MORE_INFO;
+  if (noPrimary) lv_obj_add_flag(primary, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_t* close = qpButton(c, noPrimary ? 16 : 16 + bw + 10, by, noPrimary ? cw - 32 : bw, "Close", false);
   lv_obj_set_height(close, 44);
   lv_obj_add_event_cb(close, onModalScrim, LV_EVENT_CLICKED, nullptr);
 
@@ -1598,6 +1770,19 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     return;
   }
 
+  // Slider: the level fill goes in first so it stays behind the content.
+  lv_obj_t* fill = nullptr;
+  if (def.type == TILE_SLIDER) {
+    fill = lv_obj_create(t);
+    lv_obj_remove_style_all(fill);
+    lv_obj_add_flag(fill, (lv_obj_flag_t)(LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_HIDDEN));
+    lv_obj_remove_flag(fill, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_set_style_radius(fill, 16, 0);
+    lv_obj_set_style_bg_color(fill, lv_color_hex(accent), 0);
+    lv_obj_set_style_bg_opa(fill, s_theme == THEME_DAYLIGHT ? LV_OPA_40 : LV_OPA_50, 0);
+    lv_obj_add_flag(t, LV_OBJ_FLAG_PRESS_LOCK);  // the drag may leave the tile
+  }
+
   lv_obj_t* chip = lv_obj_create(t);
   lv_obj_remove_flag(chip, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
   lv_obj_set_size(chip, 30, 30);
@@ -1650,16 +1835,22 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   r.icon = ic;
   r.iconPx = iconPx;
   r.iconCp = showIcon(ic, def, nullptr, false, iconPx, 0);
+  r.fill = fill;
   lv_label_set_text(sub, tileSub(r).c_str());
   const size_t idx = s_tiles.size();
   s_tiles.push_back(r);
   lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
   lv_obj_add_event_cb(t, tileEvent, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)idx);
+  if (fill)
+    for (lv_event_code_t c : {LV_EVENT_PRESSED, LV_EVENT_PRESSING, LV_EVENT_RELEASED, LV_EVENT_PRESS_LOST,
+                              LV_EVENT_SIZE_CHANGED})
+      lv_obj_add_event_cb(t, sliderEvent, c, (void*)(uintptr_t)idx);
 }
 
 // Shows or hides a tiles page's top bar; the grid takes the freed height.
 void layoutHeader(Page& p) {
   if (!p.grid) return;
+  s_zonesDirty = true;
   const int w = logicalW(), h = logicalH();
   for (lv_obj_t* o : {p.title, p.clock, p.wifi}) {
     if (s_header) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
@@ -2159,6 +2350,7 @@ void buildPages() {
   const int w = logicalW();
   s_count = 0;
   s_tiles.clear();
+  s_zonesDirty = true;
   s_tiles.reserve(64);
   for (const PageDef& pd : s_cfg.pages) {
     if (s_count >= MAX_PAGES) break;
@@ -2218,6 +2410,31 @@ void destroyPages() {
   portENTER_CRITICAL(&s_mux);
   sh.count = 0;
   for (int i = 0; i < MAX_PAGES; i++) sh.valid[i] = false;
+  portEXIT_CRITICAL(&s_mux);
+}
+
+void syncSwipeZones() {
+  const int a = sh.active;
+  if (!s_zonesDirty && a == s_zonesPage) return;
+  s_zonesDirty = false;
+  s_zonesPage = a;
+  Shared::Zone z[MAX_PAGE_TILES];
+  int n = 0;
+  if (a >= 0 && a < s_count && s_pages[a].root) {
+    lv_obj_update_layout(s_pages[a].root);
+    lv_area_t root;
+    lv_obj_get_coords(s_pages[a].root, &root);
+    for (const TileRt& r : s_tiles) {
+      if (r.page != a || !r.fill || n == MAX_PAGE_TILES) continue;
+      lv_area_t t;
+      lv_obj_get_coords(r.obj, &t);
+      z[n++] = {(int16_t)(t.x1 - root.x1), (int16_t)(t.y1 - root.y1), (int16_t)(t.x2 - root.x1),
+                (int16_t)(t.y2 - root.y1)};
+    }
+  }
+  portENTER_CRITICAL(&s_mux);
+  memcpy(sh.zones, z, sizeof(Shared::Zone) * n);
+  sh.nZones = n;
   portEXIT_CRITICAL(&s_mux);
 }
 
@@ -2442,6 +2659,7 @@ void deckTick() {
   haSync();
   httpSync();
   pcSync(false);
+  syncSwipeZones();
   lv_timer_handler();
   if (!systemScreen) refreshOneSnapshot();
   logStats();
@@ -2569,6 +2787,21 @@ bool deckTestTap(const String& tileId, bool hold) {
   return false;
 }
 
+bool deckTestSlide(const String& tileId, int pct) {
+  for (TileRt& r : s_tiles) {
+    if (r.def->id != tileId || !r.fill) continue;
+    const float f = constrain(pct, 0, 100) / 100.0f;
+    setSliderFill(r, f);
+    HaEntity he;
+    haGetEntity(r.def->entity, he);
+    lv_label_set_text(r.sub, sliderText(entityDomain(r.def->entity), he, f).c_str());
+    r.slReleasedMs = millis();
+    markPageStale(r.page);
+    return sliderSend(r.def->entity, f);
+  }
+  return false;
+}
+
 bool deckTestConfirm(bool ok) {
   if (s_confirmHold < 0) return false;
   if (ok) onConfirmOk(nullptr);
@@ -2666,6 +2899,18 @@ bool uiTryBeginSwipe(int dir, bool vertical, Src& a, Src& b, int& startOff, int&
 }
 
 void uiSwipeAborted() { releaseSwipe(); }
+
+bool uiNoSwipeAt(int x, int y) {
+  bool hit = false;
+  portENTER_CRITICAL(&s_mux);
+  const int n = sh.panelOpen || sh.modalOpen ? 0 : sh.nZones;  // those cover the tiles
+  for (int i = 0; i < n && !hit; i++) {
+    const Shared::Zone& z = sh.zones[i];
+    hit = x >= z.x1 && x <= z.x2 && y >= z.y1 && y <= z.y2;
+  }
+  portEXIT_CRITICAL(&s_mux);
+  return hit;
+}
 
 bool uiTryBeginPanel(bool opening, Src& panel, Src& page, int& startOff, int& panelH) {
   bool ok = false;
