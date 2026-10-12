@@ -3,6 +3,7 @@
 #include "settings.h"
 #include "display_ui.h"
 #include "pc_metrics.h"
+#include "soc/soc_caps.h"
 
 // Which GPIO currently carries the PWM signal, or -1 when nothing is attached.
 // Kept separate from ledSettings.pin so a configuration change detaches the
@@ -38,7 +39,8 @@ bool ledPinAllowed(uint8_t pin) {
   if (pin == 2 || pin == 41 || pin == 42) return false;   // NS4168 I2S audio
   if (pin == 19 || pin == 20) return false;   // USB CDC D-/D+
   if (pin >= 26 && pin <= 37) return false;   // SPI flash + PSRAM (qio_opi)
-  if (pin > 48) return false;
+  // Pins the chip does not have (the S3 has no GPIO 22..25).
+  if (pin >= SOC_GPIO_PIN_COUNT || !((SOC_GPIO_VALID_OUTPUT_GPIO_MASK >> pin) & 1)) return false;
   return true;
 }
 
