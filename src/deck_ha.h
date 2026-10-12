@@ -38,6 +38,9 @@ struct HaEntity {
   String unit;              // unit_of_measurement (sensors)
   String deviceClass;       // device_class (picks a default icon)
   int brightness = -1;      // 0..255 for lights that report it
+  float numMin = NAN;       // input_number range and step
+  float numMax = NAN;
+  float numStep = NAN;
   uint32_t version = 0;     // bumps on every change of this entity
 };
 

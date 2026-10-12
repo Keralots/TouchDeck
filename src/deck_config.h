@@ -12,6 +12,9 @@
 //           "tap":  { "action": "toggle" },
 //           "hold": { "action": "more-info" } } ] } ] }
 //
+// "led": { "entity": "input_number.desk_led" } (optional): the status LED's
+// day level follows an input_boolean, input_number or light.
+//
 // A PC metric tile: { "type": "metric", "metric": <companion id>,
 //   "style": "number" | "chart" | "bar", "scaleMax": 0 (= by unit) }.
 //
@@ -82,6 +85,7 @@ struct PageDef {
 struct DeckConfig {
   uint8_t schema = 1;
   String theme;
+  String ledEntity;  // HA entity the LED's day level follows, empty = none
   std::vector<PageDef> pages;
 };
 

@@ -139,6 +139,9 @@ void entityFromAttrs(HaEntity& e, JsonObjectConst a) {
   for (JsonPairConst kv : a)
     if (!strcmp(kv.key().c_str(), "brightness"))
       e.brightness = kv.value().is<int>() ? kv.value().as<int>() : -1;
+  if (a["min"].is<float>()) e.numMin = a["min"].as<float>();
+  if (a["max"].is<float>()) e.numMax = a["max"].as<float>();
+  if (a["step"].is<float>()) e.numStep = a["step"].as<float>();
 }
 
 Entry* findEntry(const char* id) {
@@ -162,6 +165,7 @@ void applyEvent(JsonObjectConst ev) {
     e.unit = "";
     e.deviceClass = "";
     e.brightness = -1;
+    e.numMin = e.numMax = e.numStep = NAN;
     entityFromAttrs(e, kv.value()["a"].as<JsonObjectConst>());
     e.version++;
     changed = true;

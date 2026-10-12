@@ -16,6 +16,7 @@ static uint32_t lastTickMs     = 0;
 // ignores the schedule, so the 60 Hz tick does not fight a slider drag with the
 // stale saved value. Cleared by initLed() (which the save handler calls) and by
 // shutdownLed().
+static int16_t haLevel           = LED_HA_NONE;
 static bool    previewActive     = false;
 static uint8_t previewBrightness = 0;
 
@@ -107,6 +108,10 @@ uint8_t ledCurrentDuty() {
   return (lastWrittenDuty < 0) ? 0 : (uint8_t)lastWrittenDuty;
 }
 
+void ledSetHaLevel(int16_t level) { haLevel = level; }
+int16_t ledHaLevel() { return haLevel; }
+uint8_t ledDayLevel() { return haLevel >= 0 ? (uint8_t)haLevel : ledSettings.brightness; }
+
 // ---------------------------------------------------------------------------
 //  Lifecycle
 // ---------------------------------------------------------------------------
@@ -183,7 +188,8 @@ void ledTick() {
 
   uint8_t duty = (ledSettings.nightEnabled && nightBrightnessActive())
                    ? ledSettings.nightBrightness
-                   : ledSettings.brightness;
+                   : ledDayLevel();
+  if (haLevel == 0) duty = 0;  // switched off from HA: off at night too
   // One test covers manual off and a night brightness of 0: whatever put the
   // panel out, the LED goes with it.
   if (ledSettings.followDisplay && currentBacklightLevel() == 0) duty = 0;

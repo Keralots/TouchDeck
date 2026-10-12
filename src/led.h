@@ -33,4 +33,15 @@ void sanitizeLedPin();
 // Live state for /api/status.
 uint8_t ledCurrentDuty();
 
+// Home Assistant control of the day level (deck.json "led" entity):
+// LED_HA_NONE = not linked, LED_HA_LOCAL = on at the local day level, else
+// 0..255. The night level and follow-display still apply; an HA level of 0
+// keeps the LED off at night too.
+constexpr int16_t LED_HA_NONE = -1;
+constexpr int16_t LED_HA_LOCAL = -2;
+void ledSetHaLevel(int16_t level);
+int16_t ledHaLevel();
+// The day level in use: from HA when it sets one, else the saved setting.
+uint8_t ledDayLevel();
+
 #endif // LED_H

@@ -139,6 +139,12 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
     return false;
   }
   cfg.theme = (const char*)(doc["theme"] | "midnight");
+  cfg.ledEntity = (const char*)(doc["led"]["entity"] | "");
+  if (cfg.ledEntity.length() && !cfg.ledEntity.startsWith("input_boolean.") &&
+      !cfg.ledEntity.startsWith("input_number.") && !cfg.ledEntity.startsWith("light.")) {
+    if (err) *err = "led entity must be an input_boolean, input_number or light";
+    return false;
+  }
   JsonArrayConst pages = doc["pages"].as<JsonArrayConst>();
   if (pages.isNull() || pages.size() == 0) {
     if (err) *err = "no pages";
