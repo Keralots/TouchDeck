@@ -339,6 +339,7 @@ void goToPage(const String& id) {
 
 // --- Tile events ------------------------------------------------------------------------
 void openModal(int tileIdx);
+void openConfirm(int tileIdx, bool hold);
 void refreshModal();
 void deckToastShow(const char* text, uint32_t holdMs);
 void qpSyncValues();
@@ -596,6 +597,42 @@ void runAction(TileRt& r, const TileAction& a) {
   }
 }
 
+// Tile setting "confirm": "off" asks before an action that turns the tile off.
+bool needsConfirm(const TileRt& r, const TileAction& a) {
+  if (a.kind == ACT_PAGE || a.kind == ACT_MORE_INFO) return false;
+  switch (r.def->confirm) {
+    case CONFIRM_ALWAYS: return true;
+    case CONFIRM_OFF:
+      return (a.kind == ACT_TOGGLE && r.on) || (a.kind == ACT_CALL_SERVICE && a.service == "turn_off");
+    default: return false;
+  }
+}
+
+// Button text for what the action is about to do.
+const char* actionVerb(const TileRt& r, const TileAction& a) {
+  const String domain = entityDomain(r.def->entity);
+  if (a.kind == ACT_TOGGLE) {
+    if (domain == "lock") return r.on ? "Unlock" : "Lock";
+    if (domain == "cover") return r.on ? "Close" : "Open";
+    if (domain == "media_player") return "Play / pause";
+    if (domain == "scene" || domain == "script") return "Run";
+    if (domain == "button" || domain == "input_button") return "Press";
+    return r.on ? "Turn off" : "Turn on";
+  }
+  if (a.kind == ACT_CALL_SERVICE) {
+    if (a.service == "turn_off") return "Turn off";
+    if (a.service == "turn_on") return "Turn on";
+  }
+  if (domain == "button" || domain == "input_button") return "Press";
+  return "Run";
+}
+
+void requestAction(TileRt& r, bool hold) {
+  const TileAction& a = hold ? r.def->hold : r.def->tap;
+  if (needsConfirm(r, a)) openConfirm((int)(&r - &s_tiles[0]), hold);
+  else runAction(r, a);
+}
+
 void tileEvent(lv_event_t* e) {
   const size_t idx = (size_t)(uintptr_t)lv_event_get_user_data(e);
   if (idx >= s_tiles.size()) return;
@@ -603,8 +640,8 @@ void tileEvent(lv_event_t* e) {
   const lv_event_code_t code = lv_event_get_code(e);
   // SHORT_CLICKED, not CLICKED: CLICKED also fires on the release after a
   // long press, which would run the tap action as well as the hold action.
-  if (code == LV_EVENT_SHORT_CLICKED) runAction(r, r.def->tap);
-  else if (code == LV_EVENT_LONG_PRESSED) runAction(r, r.def->hold);
+  if (code == LV_EVENT_SHORT_CLICKED) requestAction(r, false);
+  else if (code == LV_EVENT_LONG_PRESSED) requestAction(r, true);
 }
 
 // --- Quick panel ------------------------------------------------------------------------
@@ -973,6 +1010,14 @@ lv_obj_t* s_modalBtnLbl = nullptr;
 lv_obj_t* s_modalSlider = nullptr;
 lv_obj_t* s_modalIcon = nullptr;
 uint32_t s_modalIconCp = 0;
+// Confirm dialog (shares the card slot): which action waits, the tile state it
+// was asked for, and the auto-cancel timer.
+int8_t s_confirmHold = -1;  // -1 = the card is a detail card
+bool s_confirmOn = false;
+uint32_t s_confirmMs = 0;
+lv_timer_t* s_confirmTimer = nullptr;
+constexpr uint32_t CONFIRM_TIMEOUT_MS = 8000;
+constexpr uint32_t CONFIRM_ARM_MS = 400;  // a stray second tap must not confirm
 
 void setModalOpen(bool open) {
   portENTER_CRITICAL(&s_mux);
@@ -1030,6 +1075,9 @@ void closeModal() {
   s_modalSlider = nullptr;
   s_modalIcon = nullptr;
   s_modalTile = -1;
+  s_confirmHold = -1;
+  if (s_confirmTimer) lv_timer_delete(s_confirmTimer);
+  s_confirmTimer = nullptr;
   setModalOpen(false);
 }
 
@@ -1079,6 +1127,11 @@ void onModalSlider(lv_event_t* e) {
 void refreshModal() {
   if (s_modalTile < 0 || !s_modalCard) return;
   const TileRt& r = s_tiles[s_modalTile];
+  if (s_confirmHold >= 0) {
+    // The state changed under the question (HA, another device): ask again.
+    if (r.on != s_confirmOn) closeModal();
+    return;
+  }
   const String domain = entityDomain(r.def->entity);
   String st = tileSub(r);
   HaEntity e;
@@ -1207,6 +1260,113 @@ void openModal(int tileIdx) {
 
   setModalOpen(true);
   refreshModal();
+}
+
+void onConfirmOk(lv_event_t*) {
+  if (s_modalTile < 0 || s_confirmHold < 0 || millis() - s_confirmMs < CONFIRM_ARM_MS) return;
+  TileRt& r = s_tiles[s_modalTile];
+  const TileAction& a = s_confirmHold ? r.def->hold : r.def->tap;
+  closeModal();
+  runAction(r, a);
+}
+
+void onConfirmTimeout(lv_timer_t*) {
+  s_confirmTimer = nullptr;  // a one-shot timer deletes itself
+  closeModal();
+}
+
+// "Turn off Printer?" card for tiles with "confirm". Cancel, the scrim, the
+// timeout or a state change close it without running anything.
+void openConfirm(int tileIdx, bool hold) {
+  closeModal();
+  const TileRt& r = s_tiles[tileIdx];
+  const TileDef& d = *r.def;
+  const TileAction& a = hold ? d.hold : d.tap;
+  const int w = logicalW(), h = logicalH();
+  const uint32_t accent = d.hasColor ? d.color : domainColor(entityDomain(d.entity));
+  constexpr uint32_t C_DANGER = 0xE5534B;
+  s_modalTile = tileIdx;
+  s_confirmHold = hold ? 1 : 0;
+  s_confirmOn = r.on;
+  s_confirmMs = millis();
+
+  s_modalScrim = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_modalScrim);
+  lv_obj_set_size(s_modalScrim, w, h);
+  lv_obj_set_style_bg_color(s_modalScrim, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(s_modalScrim, LV_OPA_50, 0);
+  lv_obj_add_event_cb(s_modalScrim, onModalScrim, LV_EVENT_CLICKED, nullptr);
+
+  const int cw = w - 40 < 360 ? w - 40 : 360;
+  const int ch = 188;
+  lv_obj_t* c = lv_obj_create(lv_layer_top());
+  s_modalCard = c;
+  lv_obj_remove_style_all(c);
+  lv_obj_set_size(c, cw, ch);
+  lv_obj_center(c);
+  lv_obj_set_style_bg_color(c, lv_color_hex(C_PANEL), 0);
+  lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(c, 22, 0);
+  lv_obj_set_style_text_color(c, lv_color_hex(C_TEXT), 0);
+  lv_obj_add_flag(c, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* chip = lv_obj_create(c);
+  lv_obj_remove_style_all(chip);
+  lv_obj_set_size(chip, 44, 44);
+  lv_obj_set_pos(chip, 16, 16);
+  lv_obj_set_style_radius(chip, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_opa(chip, LV_OPA_COVER, 0);
+  styleIconChip(chip, accent);
+  lv_obj_set_style_text_font(chip, &deck_font_20, 0);
+  lv_obj_remove_flag(chip, LV_OBJ_FLAG_CLICKABLE);
+  s_modalIcon = lv_label_create(chip);
+  lv_label_set_text(s_modalIcon, "");
+  lv_obj_center(s_modalIcon);
+  HaEntity he;
+  const bool haKnown = d.entity.length() && haGetEntity(d.entity, he);
+  s_modalIconCp = showIcon(s_modalIcon, d, haKnown ? &he : nullptr, r.on, 28, 0);
+
+  String title = tileLabel(d);
+  if (!d.label.length() && haKnown && he.name.length()) title = he.name;
+  lv_obj_t* name = lv_label_create(c);
+  lv_label_set_text(name, title.c_str());
+  lv_obj_set_style_text_font(name, &deck_font_20, 0);
+  lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_size(name, cw - 88, lv_font_get_line_height(&deck_font_20));
+  const String state = haKnown ? prettyState(entityDomain(d.entity), he) : tileSub(r);
+  lv_obj_set_pos(name, 72, state.length() ? 15 : 26);
+  if (state.length()) {
+    lv_obj_t* st = lv_label_create(c);
+    lv_label_set_text(st, state.c_str());
+    lv_obj_set_style_text_color(st, lv_color_hex(C_DIM), 0);
+    lv_label_set_long_mode(st, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_size(st, cw - 88, lv_font_get_line_height(&deck_font_14));
+    lv_obj_set_pos(st, 72, 41);
+  }
+
+  const char* verb = actionVerb(r, a);
+  lv_obj_t* q = lv_label_create(c);
+  lv_label_set_text_fmt(q, "%s?", verb);
+  lv_obj_set_style_text_font(q, &deck_font_28, 0);
+  lv_label_set_long_mode(q, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_size(q, cw - 32, lv_font_get_line_height(&deck_font_28));
+  lv_obj_set_pos(q, 16, 74);
+
+  const int bw = (cw - 16 * 2 - 10) / 2;
+  const int by = ch - 16 - 44;
+  lv_obj_t* cancel = qpButton(c, 16, by, bw, "Cancel", false);
+  lv_obj_set_height(cancel, 44);
+  lv_obj_add_event_cb(cancel, onModalScrim, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* ok = qpButton(c, 16 + bw + 10, by, bw, verb, false);
+  lv_obj_set_height(ok, 44);
+  lv_obj_set_style_bg_color(ok, lv_color_hex(C_DANGER), 0);
+  lv_obj_set_style_text_color(ok, lv_color_white(), 0);
+  lv_obj_add_event_cb(ok, onConfirmOk, LV_EVENT_CLICKED, nullptr);
+
+  s_confirmTimer = lv_timer_create(onConfirmTimeout, CONFIRM_TIMEOUT_MS, nullptr);
+  lv_timer_set_repeat_count(s_confirmTimer, 1);
+  setModalOpen(true);
 }
 
 // --- Pages -----------------------------------------------------------------------------
@@ -2381,6 +2541,23 @@ bool deckTestCard(const String& tileId) {
     return true;
   }
   return false;
+}
+
+bool deckTestTap(const String& tileId, bool hold) {
+  if (s_ed.root) return false;
+  for (TileRt& r : s_tiles) {
+    if (r.def->id != tileId || r.def->type == TILE_METRIC) continue;
+    requestAction(r, hold);
+    return true;
+  }
+  return false;
+}
+
+bool deckTestConfirm(bool ok) {
+  if (s_confirmHold < 0) return false;
+  if (ok) onConfirmOk(nullptr);
+  else closeModal();
+  return true;
 }
 
 bool deckTestEdit(const String& op, int tile, int x, int y, int w, int h) {

@@ -18,6 +18,9 @@ WebSocket API and receives PC metrics over UDP on the LAN.
   scenes / scripts / buttons, a detail card on long press with a brightness
   slider for lights. Icons come from Material Design Icons, the set Home
   Assistant uses (the font is installed from the portal).
+- **Confirm before acting:** a tile can ask on the device before it turns
+  something off (a printer mid-print) or before every action. Set it under
+  the tile's "more options" button in the portal.
 - **PC stats:** metric tiles fed by the StatNode Companion; values, units,
   history chart and an amber warning colour above a set share of the scale.
 - **Quick panel:** pull down from the top edge for screen and LED brightness,

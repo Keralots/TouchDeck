@@ -204,6 +204,13 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       }
       if (!parseAction(tv["tap"], t.tap, err, where + " tap")) return false;
       if (!parseAction(tv["hold"], t.hold, err, where + " hold")) return false;
+      const char* cf = tv["confirm"] | "";
+      if (!strcmp(cf, "off")) t.confirm = CONFIRM_OFF;
+      else if (!strcmp(cf, "always")) t.confirm = CONFIRM_ALWAYS;
+      else if (*cf) {
+        if (err) *err = where + ": unknown confirm '" + cf + "'";
+        return false;
+      }
       // Defaults: a toggle toggles, anything holds to its detail card.
       if (tv["tap"].isNull() && t.type == TILE_TOGGLE) t.tap.kind = ACT_TOGGLE;
       // A read-only sensor opens its card on a tap too.

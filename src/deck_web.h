@@ -22,6 +22,9 @@ const CSS=`
 .dk-tact{display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.dk-tact select{width:auto;padding:6px 8px;font-size:12px}.dk-tact .btn{padding:6px 9px}
 .dk-cap{font:12px var(--mono);color:var(--dim);margin:10px 0 0}.dk-cap.over{color:var(--err)}
 .dk-tile.sel{border-color:var(--accent)}
+.dk-more{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;padding-top:10px;border-top:1px solid var(--line)}
+.dk-more .field{margin:0}.dk-more .wide{grid-column:1/-1}.dk-more select,.dk-more input,.dk-more textarea{max-width:none;padding:7px 10px;font-size:13px}
+.dk-more textarea{width:100%;min-height:58px;font:12px var(--mono);background:var(--card);color:var(--ink);border:1px solid var(--line-2);border-radius:var(--r-md);resize:vertical}
 .dk-grid{display:grid;gap:6px;padding:6px;width:100%;max-width:560px;margin:12px 0 6px;background:var(--card-2);border:1px solid var(--line);border-radius:var(--r-md);user-select:none}.dk-grid.pt{max-width:300px}
 .dk-cell{border:1px dashed var(--line);border-radius:8px}
 .dk-gt{position:relative;display:flex;flex-direction:column;justify-content:space-between;gap:4px;min-width:0;min-height:0;overflow:hidden;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);cursor:grab;touch-action:none}
@@ -82,13 +85,16 @@ const SENSOR=['sensor','binary_sensor','weather','sun','person','device_tracker'
 const autoType=d=>TOGGLE.includes(d)?'toggle':SENSOR.includes(d)?'sensor':'action';
 const DOMS=[['','All'],['light','Lights'],['switch','Switches'],['fan','Fans'],['scene','Scenes'],['script','Scripts'],['lock','Locks'],['cover','Covers'],['media_player','Media'],['climate','Climate'],['button','Buttons'],['input_boolean','Helpers'],['automation','Automations'],['sensor','Sensors'],['binary_sensor','Binary sensors']];
 const COL={light:'#F6C56B',switch:'#5CC9A7',fan:'#5CC9A7',input_boolean:'#5CC9A7',scene:'#B3A6FF',script:'#B3A6FF',lock:'#9DB8FF',cover:'#9DB8FF'};
-let deck=null,cur=0,ents=null,entMap={},dirty=false,pickFor=-1,dom='',pcm=[],ori=null,sel=-1;
+let deck=null,cur=0,ents=null,entMap={},dirty=false,pickFor=-1,dom='',pcm=[],ori=null,sel=-1,more=-1;
 const PAL=['#3987E5','#00A35C','#D55181','#C98500','#199E70','#D95926','#9085E9','#E66767'];
 async function loadPc(){try{const c=await api('/api/config');pcm=(c.metrics||[]).slice().sort((a,b)=>a.id-b.id);if(!ori&&c.display)ori=c.display.rotation%2?'landscape':'portrait';}catch(e){pcm=[];}}
 function metricRow(t,i){const m=pcm.find(x=>x.id===t.metric);const col=t.color||PAL[((t.metric||1)-1)%8];
   const opts=pcm.map(x=>'<option value="'+x.id+'"'+(x.id===t.metric?' selected':'')+'>'+esc(x.name)+' ('+esc(Math.round(x.value*10)/10)+' '+esc(x.unit)+')</option>').join('')+(m?'':'<option value="'+t.metric+'" selected>#'+t.metric+' (not in the last packet)</option>');
   return '<div class="dk-tile'+(i===sel?' sel':'')+'"><div class="dk-ic" style="background:'+col+'">PC</div><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(m?m.name:'Metric')+'"><div class="dk-tsub">PC metric #'+t.metric+(m?' - '+esc(Math.round(m.value*10)/10)+' '+esc(m.unit):'')+'</div></div>'+
   '<div class="dk-tact"><select data-m="'+i+'">'+opts+'</select><select data-st="'+i+'">'+[['number','Number'],['chart','Chart'],['bar','Bar']].map(o=>'<option value="'+o[0]+'"'+((t.style||'number')===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>'+sizeSel(t,i)+'<button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div></div>';}
+/* A tile's "more options" panel. */
+function moreRow(t,i){const cf=t.confirm||'';
+  return '<div class="dk-more"><div class="field"><label class="field-label">Confirm on the device</label><select data-cf="'+i+'">'+[['','No'],['off','Before turning off'],['always','Before every action']].map(o=>'<option value="'+o[0]+'"'+(cf===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select></div></div>';}
 async function api(p,o){const r=await fetch(p,o);const t=await r.text();let j=null;try{j=JSON.parse(t);}catch(e){}if(!r.ok)throw new Error((j&&(j.message||j.error))||t||('HTTP '+r.status));return j;}
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const domainOf=e=>{const i=(e||'').indexOf('.');return i>0?e.slice(0,i):'';};
@@ -152,7 +158,7 @@ function gdrag(e,p,at,k,size){if(e.button>0)return;e.preventDefault();e.stopProp
     if(ev.type==='pointerup'&&tgt&&tgt.ok){pinAll(p,at);if(tgt.j>=0)setPos(p.tiles[tgt.j],cell(a.x,a.y,tw,th));setPos(p.tiles[k],cell(tgt.x,tgt.y,tgt.w,tgt.h));sel=k;setDirty(true);}
     renderPage();};}
 function renderTabs(){const ps=pages();if(cur>=ps.length)cur=Math.max(0,ps.length-1);$('dkTabs').innerHTML=ps.map((p,i)=>'<button type="button" class="chip page-tab'+(i===cur?' on':'')+'" data-i="'+i+'">'+(stackedAt(ps,i)?'&#8595; ':'')+esc(p.name||p.id)+'</button>').join('')+'<button type="button" class="chip page-tab" id="dkAddPage">+ Page</button>';
-  $('dkTabs').querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>{cur=+b.dataset.i;sel=-1;render();});$('dkAddPage').onclick=()=>{deck.pages.push({id:'p'+Date.now().toString(36),name:'New page',layouts:{landscape:{cols:4,rows:3}},tiles:[]});cur=pages().length-1;setDirty(true);render();};}
+  $('dkTabs').querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>{cur=+b.dataset.i;sel=-1;more=-1;render();});$('dkAddPage').onclick=()=>{deck.pages.push({id:'p'+Date.now().toString(36),name:'New page',layouts:{landscape:{cols:4,rows:3}},tiles:[]});cur=pages().length-1;setDirty(true);render();};}
 /* A page stacked below the one before it (same group) is in its column. */
 const stackedAt=(ps,i)=>i>0&&!!ps[i].group&&ps[i].group===ps[i-1].group;
 function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.innerHTML='<p class="dk-empty">No deck pages. Add one with "+ Page".</p>';return;}
@@ -168,7 +174,7 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   h+='<div class="dk-tiles">'+p.tiles.map((t,i)=>{if(t.type==='metric')return metricRow(t,i);const d=domainOf(t.entity);const en=entMap[t.entity];const nm=en&&en.name?en.name:(t.entity||'No entity');
     const cp=tileCp(t);
     return '<div class="dk-tile'+(i===sel?' sel':'')+'"><button type="button" class="dk-ic'+(cp?' mdi':'')+'" data-ic="'+i+'" title="'+esc(cp?(t.icon||(en&&en.icon)||'automatic'):'Choose an icon')+'" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+(cp?String.fromCodePoint(cp):esc((d||'?').slice(0,2).toUpperCase()))+'</button><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="dk-tsub">'+esc(t.entity||'no entity')+(en&&en.state?' - '+esc(en.state)+(en.unit?' '+esc(en.unit):''):'')+'</div></div>'+
-    '<div class="dk-tact"><select data-t="'+i+'"><option value="toggle"'+(t.type==='toggle'?' selected':'')+'>Switch</option><option value="action"'+(t.type==='action'?' selected':'')+'>Button</option><option value="sensor"'+(t.type==='sensor'?' selected':'')+'>Sensor</option></select>'+sizeSel(t,i)+'<button type="button" class="btn" data-e="'+i+'">Entity</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div></div>';}).join('')+'</div>';
+    '<div class="dk-tact"><select data-t="'+i+'"><option value="toggle"'+(t.type==='toggle'?' selected':'')+'>Switch</option><option value="action"'+(t.type==='action'?' selected':'')+'>Button</option><option value="sensor"'+(t.type==='sensor'?' selected':'')+'>Sensor</option></select>'+sizeSel(t,i)+'<button type="button" class="btn" data-e="'+i+'">Entity</button><button type="button" class="btn'+(i===more?' on':'')+'" data-mo="'+i+'" title="More options">&#8943;</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div>'+(i===more?moreRow(t,i):'')+'</div>';}).join('')+'</div>';
   h+='<p class="dk-cap">'+cells+' of '+(c*r)+' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button></div><p class="field-hint">Chart and Bar need a 2x1 or bigger tile (a 1x1 tile shows the number), so picking one makes a 1x1 tile 2x1.</p>';
   el.innerHTML=h;
   $('dkPName').oninput=e=>{p.name=e.target.value;setDirty(true);renderTabs();};
@@ -187,8 +193,10 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   el.querySelectorAll('[data-s]').forEach(x=>x.onchange=e=>{setSize(p.tiles[+x.dataset.s],e.target.value);setDirty(true);renderPage();});
   el.querySelectorAll('[data-e]').forEach(x=>x.onclick=()=>openPicker(+x.dataset.e));
   el.querySelectorAll('[data-ic]').forEach(x=>x.onclick=()=>openIcons(+x.dataset.ic));
-  el.querySelectorAll('[data-u]').forEach(x=>x.onclick=()=>{const i=+x.dataset.u;if(i<1)return;const t=p.tiles.splice(i,1)[0];p.tiles.splice(i-1,0,t);sel=-1;setDirty(true);renderPage();});
-  el.querySelectorAll('[data-x]').forEach(x=>x.onclick=()=>{p.tiles.splice(+x.dataset.x,1);sel=-1;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-u]').forEach(x=>x.onclick=()=>{const i=+x.dataset.u;if(i<1)return;const t=p.tiles.splice(i,1)[0];p.tiles.splice(i-1,0,t);sel=-1;more=-1;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-x]').forEach(x=>x.onclick=()=>{p.tiles.splice(+x.dataset.x,1);sel=-1;more=-1;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-mo]').forEach(x=>x.onclick=()=>{const i=+x.dataset.mo;more=more===i?-1:i;renderPage();});
+  el.querySelectorAll('[data-cf]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.cf];if(e.target.value)t.confirm=e.target.value;else delete t.confirm;setDirty(true);});
   $('dkAddTile').onclick=()=>openPicker(-1);
   $('dkAddPc').onclick=async()=>{if(!pcm.length)await loadPc();const usedIds=p.tiles.filter(t=>t.type==='metric').map(t=>t.metric);const m=pcm.find(x=>!usedIds.includes(x.id))||pcm[0];if(!m){alert('No PC metrics yet - start the companion app on the PC.');return;}p.tiles.push({id:'m'+Date.now().toString(36),type:'metric',metric:m.id,style:'number'});setDirty(true);renderPage();};
   el.querySelectorAll('[data-m]').forEach(x=>x.onchange=e=>{p.tiles[+x.dataset.m].metric=+e.target.value;setDirty(true);renderPage();});
