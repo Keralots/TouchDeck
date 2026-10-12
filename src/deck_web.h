@@ -103,10 +103,12 @@ $('dkHaForget').onclick=async()=>{if(!confirm('Remove the Home Assistant address
 /* pages and tiles */
 /* Grid and positions are per orientation (ori is the one being edited). */
 const DEF={landscape:[4,3],portrait:[3,4]};
-const grid=p=>{const l=(p.layouts&&p.layouts[ori])||{};return [l.cols||DEF[ori][0],l.rows||DEF[ori][1]];};
+const grid=p=>{const l=(p.layouts&&p.layouts[ori])||{};return [gi(l.cols,DEF[ori][0]),gi(l.rows,DEF[ori][1])];};
 const tpos=t=>(t.pos&&t.pos[ori])||{};
 const cl=(v,a,b)=>Math.min(b,Math.max(a,v==null?a:Math.round(v)));
-const tdim=t=>{const q=tpos(t);return [cl(q.w,1,6),cl(q.h,1,6)];};
+/* Like the firmware's parser: a non-integer takes the default, an integer is clamped to 1..6. */
+const gi=(v,d)=>Number.isInteger(v)?Math.min(6,Math.max(1,v)):d;
+const tdim=t=>{const q=tpos(t);return [gi(q.w,1),gi(q.h,1)];};
 const tileSize=t=>tdim(t).join('x');
 const cell=(x,y,w,h)=>{const q={x:x,y:y};if(w>1)q.w=w;if(h>1)q.h=h;return q;};
 function setPos(t,q){t.pos=t.pos||{};if(Object.keys(q).length)t.pos[ori]=q;else delete t.pos[ori];if(!Object.keys(t.pos).length)delete t.pos;}
@@ -120,8 +122,9 @@ function layout(p){const [c,r]=grid(p);const used=[...Array(r)].map(()=>Array(c)
   p.tiles.forEach((t,k)=>{const q=tpos(t),[w,h]=tdim(t);if(Number.isInteger(q.x)&&Number.isInteger(q.y)){const x=cl(q.x,0,15),y=cl(q.y,0,15);if(fits(x,y,w,h))put(k,x,y,w,h);}});
   p.tiles.forEach((t,k)=>{if(at[k])return;const [w,h]=tdim(t);for(let y=0;y<r&&!at[k];y++)for(let x=0;x<c&&!at[k];x++)if(fits(x,y,w,h))put(k,x,y,w,h);});
   return at;}
-/* Pin every placed tile where it shows, so a drag changes only what moved. */
-function pinAll(p,at){p.tiles.forEach((t,k)=>{const a=at[k];if(a)setPos(t,cell(a.x,a.y,a.w,a.h));});}
+/* Pin every placed tile where it shows, so a drag changes only what moved.
+   A hidden tile loses its old cell, or it could claim space before a pinned one. */
+function pinAll(p,at){p.tiles.forEach((t,k)=>{const a=at[k];if(a){setPos(t,cell(a.x,a.y,a.w,a.h));return;}const q=Object.assign({},tpos(t));delete q.x;delete q.y;setPos(t,q);});}
 const free=(at,k,q,c,r)=>q.x>=0&&q.y>=0&&q.x+q.w<=c&&q.y+q.h<=r&&at.every((o,j)=>j===k||!o||o.x>=q.x+q.w||o.x+o.w<=q.x||o.y>=q.y+q.h||o.y+o.h<=q.y);
 function gtile(t,k,a){const m=t.type==='metric',mm=m&&pcm.find(x=>x.id===t.metric),en=entMap[t.entity],d=domainOf(t.entity);
   const col=t.color||(m?PAL[((t.metric||1)-1)%8]:(COL[d]||'#7DB5FF')),cp=m?0:tileCp(t);

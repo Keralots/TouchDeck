@@ -1831,8 +1831,17 @@ bool edBuild(String& out, String& err) {
   const char* key = s_ed.orient == ORIENT_LANDSCAPE ? "landscape" : "portrait";
   for (size_t i = 0; i < tiles.size(); i++) {
     const EdTile& t = s_ed.tiles[i];
-    if (!t.c.placed || t.removed) continue;
+    if (t.removed) continue;
     JsonObject tv = tiles[i];
+    if (!t.c.placed) {
+      // A hidden tile loses its old cell, or it could claim space before a pinned one.
+      JsonObject old = tv["pos"][key].as<JsonObject>();
+      if (!old.isNull()) {
+        old.remove("x");
+        old.remove("y");
+      }
+      continue;
+    }
     JsonObject pos = tv["pos"].is<JsonObject>() ? tv["pos"].as<JsonObject>() : tv["pos"].to<JsonObject>();
     JsonObject q = pos[key].to<JsonObject>();
     q["x"] = t.c.x;
@@ -1848,19 +1857,22 @@ bool edBuild(String& out, String& err) {
 }
 
 // From deckTick, outside the LVGL event that asked for it: applying the
-// config rebuilds the pages, and the editor goes with them.
+// config rebuilds the pages, and the editor goes with them (destroyPages).
+// A failed save keeps the editor and its changes.
 void edFinish() {
-  const bool save = s_ed.pending == EditState::P_SAVE && s_ed.dirty;
-  String text, err;
-  const bool built = save && edBuild(text, err);
-  edClose();
-  if (!save) return;
-  if (built && deckApplyConfig(text, err)) {
-    deckToastShow("Page saved", 1500);
-  } else {
-    Serial.printf("Deck: edit not saved: %s\n", err.c_str());
-    deckToastShow("Not saved", 1800);
+  const bool save = s_ed.pending == EditState::P_SAVE;
+  s_ed.pending = EditState::P_NONE;
+  if (!save || !s_ed.dirty) {
+    edClose();
+    return;
   }
+  String text, err;
+  if (edBuild(text, err) && deckApplyConfig(text, err)) {
+    deckToastShow("Page saved", 1500);
+    return;
+  }
+  Serial.printf("Deck: edit not saved: %s\n", err.c_str());
+  deckToastShow("Not saved", 1800);
 }
 
 void buildPages() {
@@ -2244,6 +2256,7 @@ bool deckInstallIcons(const char* uploaded, String& err) {
 }
 
 bool deckTestCard(const String& tileId) {
+  if (s_ed.root) return false;  // the editor blocks gestures until it closes
   for (size_t i = 0; i < s_tiles.size(); i++) {
     if (s_tiles[i].def->id != tileId) continue;
     openModal((int)i);
