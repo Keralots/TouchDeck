@@ -1791,6 +1791,12 @@ static void handleHaEntities() {
   server.send(200, "application/json", out);
 }
 
+// POST /api/deck/card?tile=<id> - bench hook, open a tile's detail card.
+static void handleDeckCard() {
+  const bool ok = deckTestCard(server.arg("tile"));
+  sendJsonMessage(ok ? 200 : 404, ok, ok ? "Card open" : "No such tile");
+}
+
 // POST /api/deck/panel?open=1|0 - bench hook, quick panel slide.
 static void handleDeckPanel() {
   const bool open = !server.hasArg("open") || server.arg("open") != "0";
@@ -1932,6 +1938,7 @@ void initWebServer() {
   server.on("/screen_live.bmp", HTTP_GET, handleLiveScreenshot);
   server.on("/api/deck/swipe", HTTP_POST, handleDeckSwipe);
   server.on("/api/deck/panel", HTTP_POST, handleDeckPanel);
+  server.on("/api/deck/card", HTTP_POST, handleDeckCard);
   server.on("/deck", HTTP_GET, handleDeckPage);
   server.on("/deck.js", HTTP_GET, handleDeckJs);
   server.on("/api/deck", HTTP_GET, handleDeckGet);

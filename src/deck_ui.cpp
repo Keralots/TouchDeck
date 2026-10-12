@@ -264,7 +264,9 @@ String prettyState(const String& domain, const HaEntity& e) {
       char buf[24];
       if (fabsf(v - roundf(v)) < 0.05f) snprintf(buf, sizeof(buf), "%.0f", v);
       else snprintf(buf, sizeof(buf), "%.1f", v);
-      return String(buf) + " " + e.unit;
+      // "25.9°C" (no space before a degree sign) saves the width that
+      // decides whether a reading fits a small tile.
+      return String(buf) + (e.unit.startsWith("\xC2\xB0") ? "" : " ") + e.unit;
     }
     return st + " " + e.unit;
   }
@@ -761,6 +763,9 @@ lv_obj_t* s_toast = nullptr;
 lv_obj_t* s_modalScrim = nullptr;
 lv_obj_t* s_modalCard = nullptr;
 int s_modalTile = -1;
+lv_obj_t* s_modalState = nullptr;
+lv_obj_t* s_modalBtnLbl = nullptr;
+lv_obj_t* s_modalSlider = nullptr;
 
 void setModalOpen(bool open) {
   portENTER_CRITICAL(&s_mux);
@@ -815,6 +820,7 @@ void closeModal() {
   if (s_modalCard) lv_obj_delete(s_modalCard);
   if (s_modalScrim) lv_obj_delete(s_modalScrim);
   s_modalCard = s_modalScrim = nullptr;
+  s_modalSlider = nullptr;
   s_modalTile = -1;
   setModalOpen(false);
 }
@@ -831,29 +837,71 @@ void onModalPrimary(lv_event_t*) {
   refreshModal();
 }
 
-lv_obj_t* s_modalState = nullptr;
-lv_obj_t* s_modalBtnLbl = nullptr;
+uint32_t s_modalSentMs = 0;      // last brightness call while dragging
+uint32_t s_modalReleasedMs = 0;  // HA echoes old values for a moment after
+
+bool modalIsLight() {
+  return s_modalTile >= 0 && entityDomain(s_tiles[s_modalTile].def->entity) == "light";
+}
+
+void sendBrightness(int pct) {
+  if (s_modalTile < 0) return;
+  const String& entity = s_tiles[s_modalTile].def->entity;
+  if (!haCallService("light", "turn_on", entity, String("{\"brightness_pct\":") + pct + "}"))
+    deckToastShow("Home Assistant is offline", 1500);
+}
+
+void onModalSlider(lv_event_t* e) {
+  const lv_event_code_t code = lv_event_get_code(e);
+  const int pct = lv_slider_get_value(s_modalSlider);
+  const uint32_t now = millis();
+  if (code == LV_EVENT_VALUE_CHANGED) {
+    lv_label_set_text_fmt(s_modalState, "%d%%", pct);
+    // Live while dragging, but not faster than HA and the light can follow.
+    if (now - s_modalSentMs >= 300) {
+      s_modalSentMs = now;
+      sendBrightness(pct);
+    }
+  } else if (code == LV_EVENT_RELEASED) {
+    s_modalReleasedMs = now;
+    sendBrightness(pct);
+  }
+}
 
 void refreshModal() {
   if (s_modalTile < 0 || !s_modalCard) return;
   const TileRt& r = s_tiles[s_modalTile];
+  const String domain = entityDomain(r.def->entity);
   String st = tileSub(r);
   HaEntity e;
-  if (r.def->entity.length() && haGetEntity(r.def->entity, e))
-    st = prettyState(entityDomain(r.def->entity), e);
-  lv_label_set_text(s_modalState, st.c_str());
+  const bool haKnown = r.def->entity.length() && haGetEntity(r.def->entity, e);
+  if (haKnown) st = prettyState(domain, e);
+  if (s_modalSlider) {
+    const bool dragging = lv_obj_has_state(s_modalSlider, LV_STATE_PRESSED);
+    const bool settling = millis() - s_modalReleasedMs < 1500;
+    if (!dragging && !settling) {
+      const bool on = haKnown && e.state == "on";
+      const int pct = on && e.brightness >= 0 ? (e.brightness * 100 + 127) / 255 : 0;
+      lv_slider_set_value(s_modalSlider, pct > 0 ? pct : 1, LV_ANIM_OFF);
+      lv_label_set_text(s_modalState, st.c_str());
+    }
+  } else {
+    lv_label_set_text(s_modalState, st.c_str());
+  }
   if (r.def->type == TILE_TOGGLE)
     lv_label_set_text(s_modalBtnLbl, r.on ? "Turn off" : "Turn on");
 }
 
-// Detail card for a tile (hold action "more-info"). Phase 3 adds the HA
-// attributes here (brightness, colour, position...).
+// Detail card for a tile (hold action "more-info"): name, entity, state, a
+// brightness slider for lights, and the tap action as a button.
 void openModal(int tileIdx) {
   closeModal();
   const TileRt& r = s_tiles[tileIdx];
   const TileDef& d = *r.def;
   const int w = logicalW(), h = logicalH();
   const uint32_t accent = d.hasColor ? d.color : domainColor(entityDomain(d.entity));
+  s_modalTile = tileIdx;
+  const bool light = modalIsLight();
 
   s_modalScrim = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_modalScrim);
@@ -862,11 +910,12 @@ void openModal(int tileIdx) {
   lv_obj_set_style_bg_opa(s_modalScrim, LV_OPA_50, 0);
   lv_obj_add_event_cb(s_modalScrim, onModalScrim, LV_EVENT_CLICKED, nullptr);
 
-  const int cw = w - 40 < 360 ? w - 40 : 360;
+  const int cw = w - 40 < 380 ? w - 40 : 380;
+  const int ch = light ? 236 : 196;
   lv_obj_t* c = lv_obj_create(lv_layer_top());
   s_modalCard = c;
   lv_obj_remove_style_all(c);
-  lv_obj_set_size(c, cw, 214);
+  lv_obj_set_size(c, cw, ch);
   lv_obj_center(c);
   lv_obj_set_style_bg_color(c, lv_color_hex(C_PANEL), 0);
   lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
@@ -877,45 +926,75 @@ void openModal(int tileIdx) {
 
   lv_obj_t* chip = lv_obj_create(c);
   lv_obj_remove_style_all(chip);
-  lv_obj_set_size(chip, 48, 48);
-  lv_obj_set_pos(chip, 18, 18);
+  lv_obj_set_size(chip, 44, 44);
+  lv_obj_set_pos(chip, 16, 16);
   lv_obj_set_style_radius(chip, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_color(chip, lv_color_hex(C_CHIP), 0);
   lv_obj_set_style_bg_opa(chip, LV_OPA_COVER, 0);
   lv_obj_set_style_text_color(chip, lv_color_hex(accent), 0);
   lv_obj_set_style_text_font(chip, &deck_font_20, 0);
+  lv_obj_remove_flag(chip, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_t* ic = lv_label_create(chip);
   lv_label_set_text(ic, iconSymbol(d));
   lv_obj_center(ic);
 
+  // Name and entity id: one line each, cut with dots (ids get long).
   lv_obj_t* name = lv_label_create(c);
-  lv_label_set_text(name, tileLabel(d).c_str());
+  String title = tileLabel(d);
+  HaEntity he;
+  if (!d.label.length() && d.entity.length() && haGetEntity(d.entity, he) && he.name.length())
+    title = he.name;
+  lv_label_set_text(name, title.c_str());
   lv_obj_set_style_text_font(name, &deck_font_20, 0);
-  lv_obj_set_pos(name, 80, 20);
-  lv_obj_set_width(name, cw - 96);
   lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_size(name, cw - 88, lv_font_get_line_height(&deck_font_20));
+  lv_obj_set_pos(name, 72, 15);
   lv_obj_t* ent = lv_label_create(c);
   lv_label_set_text(ent, d.entity.length() ? d.entity.c_str() : "No entity");
   lv_obj_set_style_text_color(ent, lv_color_hex(C_DIM), 0);
-  lv_obj_set_pos(ent, 80, 46);
+  lv_label_set_long_mode(ent, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_size(ent, cw - 88, lv_font_get_line_height(&deck_font_14));
+  lv_obj_set_pos(ent, 72, 41);
 
   s_modalState = lv_label_create(c);
   lv_obj_set_style_text_font(s_modalState, &deck_font_28, 0);
-  lv_obj_set_pos(s_modalState, 18, 84);
+  lv_label_set_long_mode(s_modalState, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_size(s_modalState, cw - 32, lv_font_get_line_height(&deck_font_28));
+  lv_obj_set_pos(s_modalState, 16, 74);
 
-  const int bw = (cw - 18 * 2 - 10) / 2;
-  lv_obj_t* primary = qpButton(c, 18, 214 - 18 - 44, bw, "", false);
+  s_modalSlider = nullptr;
+  if (light) {
+    lv_obj_t* sl = lv_slider_create(c);
+    s_modalSlider = sl;
+    lv_obj_set_pos(sl, 26, 128);
+    lv_obj_set_size(sl, cw - 52, 14);
+    lv_slider_set_range(sl, 1, 100);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(0x2E333C), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(sl, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(accent), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(sl, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(0xFFFFFF), LV_PART_KNOB);
+    lv_obj_set_style_pad_all(sl, 7, LV_PART_KNOB);
+    lv_obj_set_ext_click_area(sl, 18);
+    lv_obj_add_event_cb(sl, onModalSlider, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(sl, onModalSlider, LV_EVENT_RELEASED, nullptr);
+  }
+
+  const int bw = (cw - 16 * 2 - 10) / 2;
+  const int by = ch - 16 - 44;
+  lv_obj_t* primary = qpButton(c, 16, by, bw, "", false);
   lv_obj_set_height(primary, 44);
   lv_obj_set_style_bg_color(primary, lv_color_hex(accent), 0);
   lv_obj_set_style_text_color(primary, lv_color_hex(C_TEXT_ON), 0);
   s_modalBtnLbl = lv_obj_get_child(primary, 0);
-  lv_label_set_text(s_modalBtnLbl, d.type == TILE_TOGGLE ? "" : "Run");
+  lv_label_set_text(s_modalBtnLbl, d.type == TILE_TOGGLE ? "" : (d.type == TILE_SENSOR ? "Refresh" : "Run"));
   lv_obj_add_event_cb(primary, onModalPrimary, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* close = qpButton(c, 18 + bw + 10, 214 - 18 - 44, bw, "Close", false);
+  if (d.type == TILE_SENSOR) lv_obj_add_flag(primary, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_t* close = qpButton(c, d.type == TILE_SENSOR ? 16 : 16 + bw + 10, by,
+                             d.type == TILE_SENSOR ? cw - 32 : bw, "Close", false);
   lv_obj_set_height(close, 44);
   lv_obj_add_event_cb(close, onModalScrim, LV_EVENT_CLICKED, nullptr);
 
-  s_modalTile = tileIdx;
   setModalOpen(true);
   refreshModal();
 }
@@ -966,27 +1045,36 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_label_set_text(ic, iconSymbol(def));
   lv_obj_center(ic);
 
+  // Layout: icon top left with the state top right next to it, the name at
+  // the bottom over up to two lines (bigger on wide tiles). A sensor shows
+  // its reading big at the top instead, with a small icon top right.
+  const bool wide = w >= 2;
+  const lv_font_t* nameFont = wide ? &deck_font_20 : &deck_font_14;
   lv_obj_t* name = lv_label_create(t);
   lv_label_set_text(name, tileLabel(def).c_str());
-  // One line, cut with dots: HA names are often long and must not wrap into
-  // the state line.
+  lv_obj_set_style_text_font(name, nameFont, 0);
   lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
   lv_obj_set_width(name, lv_pct(100));
-  lv_obj_set_height(name, lv_font_get_line_height(&deck_font_14));
-  lv_obj_align(name, LV_ALIGN_BOTTOM_LEFT, 0, -14);
+  lv_obj_set_height(name, LV_SIZE_CONTENT);
+  lv_obj_set_style_max_height(name, 2 * lv_font_get_line_height(nameFont), 0);
+  lv_obj_align(name, LV_ALIGN_BOTTOM_LEFT, 0, 2);
   lv_obj_t* sub = lv_label_create(t);
+  lv_label_set_long_mode(sub, LV_LABEL_LONG_MODE_DOTS);
   if (def.type == TILE_SENSOR) {
-    // The reading is the point of a sensor tile: big and top left, with the
-    // icon moved out of its way into a smaller top-right chip.
-    lv_obj_set_size(chip, 24, 24);
-    lv_obj_align(chip, LV_ALIGN_TOP_RIGHT, 0, 0);
-    lv_obj_set_style_text_font(sub, &deck_font_20, 0);
+    lv_obj_set_size(chip, 22, 22);
+    lv_obj_align(chip, LV_ALIGN_TOP_RIGHT, 2, -2);
+    const lv_font_t* valFont = wide ? &deck_font_28 : &deck_font_20;
+    lv_obj_set_style_text_font(sub, valFont, 0);
+    lv_obj_set_size(sub, lv_pct(100), lv_font_get_line_height(valFont));
+    lv_obj_set_style_pad_right(sub, 22, 0);  // clear of the icon
     lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_align(name, LV_ALIGN_BOTTOM_LEFT, 0, 2);
     lv_obj_set_style_text_opa(name, LV_OPA_70, 0);
   } else {
     lv_obj_set_style_text_opa(sub, LV_OPA_70, 0);
-    lv_obj_align(sub, LV_ALIGN_BOTTOM_LEFT, 0, 2);
+    lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_size(sub, lv_pct(100), lv_font_get_line_height(&deck_font_14));
+    lv_obj_set_style_pad_left(sub, 36, 0);  // clear of the icon
+    lv_obj_align(sub, LV_ALIGN_TOP_RIGHT, 0, 7);
   }
 
   TileRt r = {&def, page, t, name, sub, false, 0, false, false, 0};
@@ -1443,6 +1531,15 @@ bool deckApplyConfig(const String& text, String& err) {
   lv_obj_invalidate(lv_screen_active());
   Serial.printf("Deck: new config applied, %u pages\n", (unsigned)s_cfg.pages.size());
   return true;
+}
+
+bool deckTestCard(const String& tileId) {
+  for (size_t i = 0; i < s_tiles.size(); i++) {
+    if (s_tiles[i].def->id != tileId) continue;
+    openModal((int)i);
+    return true;
+  }
+  return false;
 }
 
 bool deckTestSwipe(int dir) {

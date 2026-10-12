@@ -39,6 +39,8 @@ bool deckApplyConfig(const String& text, String& err);
 // Bench hook (/api/deck/swipe): run one full page slide toward dir as if a
 // finger had flung it. False when that page is not reachable right now.
 bool deckTestSwipe(int dir);
+// Bench hook (/api/deck/card): open the detail card of the tile with this id.
+bool deckTestCard(const String& tileId);
 // Bench hook (/api/deck/panel): open or close the quick panel with its slide.
 bool deckTestPanel(bool open);
 
