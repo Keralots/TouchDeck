@@ -17,9 +17,14 @@ QueueHandle_t s_done = nullptr;  // HttpOutcome*
 SemaphoreHandle_t s_lock = nullptr;
 TaskHandle_t s_task = nullptr;
 uint32_t s_nextTicket = 1;
-uint32_t s_testTicket = 0;  // last finished test
-int s_testCode = 0;
-String s_testErr, s_testBody;
+// The last few finished tests, so two quick Test clicks both get an answer.
+struct TestResult {
+  uint32_t ticket = 0;
+  int code = 0;
+  String err, body;
+};
+TestResult s_tests[4];
+uint8_t s_testNext = 0;
 
 void run(const Job& j, int& code, String& err, String* body) {
   code = 0;
@@ -84,10 +89,12 @@ void task(void*) {
     Serial.printf("[http] %s %s -> %d %s\n", j->a.method.c_str(), j->a.url.c_str(), code, err.c_str());
     if (j->ticket) {
       xSemaphoreTake(s_lock, portMAX_DELAY);
-      s_testTicket = j->ticket;
-      s_testCode = code;
-      s_testErr = err;
-      s_testBody = body;      xSemaphoreGive(s_lock);
+      TestResult& t = s_tests[s_testNext++ % 4];
+      t.ticket = j->ticket;
+      t.code = code;
+      t.err = err;
+      t.body = body;
+      xSemaphoreGive(s_lock);
     } else {
       HttpOutcome* o = new HttpOutcome{j->label, code, err};
       if (xQueueSend(s_done, &o, 0) != pdTRUE) delete o;
@@ -133,11 +140,13 @@ uint32_t httpTestStart(const TileAction& a) {
 bool httpTestResult(uint32_t ticket, int& code, String& err, String& body) {
   if (!s_lock) return false;
   xSemaphoreTake(s_lock, portMAX_DELAY);
-  const bool done = ticket && s_testTicket == ticket;
-  if (done) {
-    code = s_testCode;
-    err = s_testErr;
-    body = s_testBody;
+  bool done = false;
+  for (const TestResult& t : s_tests) {
+    if (!ticket || t.ticket != ticket) continue;
+    code = t.code;
+    err = t.err;
+    body = t.body;
+    done = true;
   }
   xSemaphoreGive(s_lock);
   return done;

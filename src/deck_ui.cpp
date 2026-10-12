@@ -1268,6 +1268,10 @@ void onModalScrim(lv_event_t*) { closeModal(); }
 void onModalPrimary(lv_event_t*) {
   if (s_modalTile < 0 || s_modalTile >= (int)s_tiles.size()) return;
   TileRt& r = s_tiles[s_modalTile];
+  if (needsConfirm(r, r.def->tap)) {
+    openConfirm(s_modalTile, false);  // replaces this card
+    return;
+  }
   runAction(r, r.def->tap);
   refreshModal();
 }
@@ -1289,6 +1293,21 @@ void sendLevel(int pct) {
   if (s_modalTile < 0) return;
   if (!sliderSend(s_tiles[s_modalTile].def->entity, pct / 100.0f))
     deckToastShow("Home Assistant is offline", 1500);
+}
+
+// A slider ignores HA for 1.5 s after release; then take HA's value even when
+// it arrived during that time (a stepped number rounds what was sent).
+void settleSliders() {
+  const uint32_t now = millis();
+  for (TileRt& r : s_tiles) {
+    if (!r.slReleasedMs || now - r.slReleasedMs < 1500) continue;
+    r.slReleasedMs = 0;
+    applyHaToTile(r, true);
+  }
+  if (s_modalReleasedMs && now - s_modalReleasedMs >= 1500) {
+    s_modalReleasedMs = 0;
+    refreshModal();
+  }
 }
 
 void onModalSlider(lv_event_t* e) {
@@ -2145,6 +2164,7 @@ constexpr int PICK_DOMAINS = sizeof(kPickDomains) / sizeof(kPickDomains[0]);
 constexpr size_t PICK_MAX = 50;  // rows per page of the list
 
 lv_obj_t* s_pick = nullptr;  // the picker sheet, a child of the editor root
+lv_obj_t* s_pickDead = nullptr;  // a closed sheet, deleted later (see pickClose)
 lv_obj_t* s_pickList = nullptr;
 lv_obj_t* s_pickInfo = nullptr;
 lv_obj_t* s_pickChips[PICK_DOMAINS] = {};
@@ -2356,8 +2376,13 @@ bool edAdd(const String& entity, const String& name) {
   return true;
 }
 
+// Hidden now, deleted on the next open or with the editor: this can run in
+// an event of the sheet's own child, and an async delete could outlive the root.
 void pickClose() {
-  if (s_pick) lv_obj_delete_async(s_pick);  // may run in an event of its own child
+  if (s_pick) {
+    lv_obj_add_flag(s_pick, LV_OBJ_FLAG_HIDDEN);
+    s_pickDead = s_pick;
+  }
   s_pick = s_pickList = s_pickInfo = nullptr;
   pickFree();
 }
@@ -2470,7 +2495,9 @@ void pickChipEvent(lv_event_t* e) { pickFill((int)(uintptr_t)lv_event_get_user_d
 void pickCloseEvent(lv_event_t*) { pickClose(); }
 
 void pickOpen(int dom) {
-  if (!s_ed.root || s_pick) return;
+  if (!s_ed.root || s_pick || dom < 0 || dom >= PICK_DOMAINS) return;
+  if (s_pickDead) lv_obj_delete(s_pickDead);
+  s_pickDead = nullptr;
   const int w = logicalW(), h = logicalH();
   s_pick = lv_obj_create(s_ed.root);
   lv_obj_remove_style_all(s_pick);
@@ -2679,7 +2706,7 @@ void edOpen(int page) {
 
 void edClose() {
   if (!s_ed.root) return;
-  s_pick = s_pickList = s_pickInfo = nullptr;  // deleted with the root
+  s_pick = s_pickList = s_pickInfo = s_pickDead = nullptr;  // deleted with the root
   pickFree();
   lv_obj_delete(s_ed.root);
   s_ed = EditState();
@@ -3085,6 +3112,7 @@ void deckTick() {
   updateHeaders();
   qpUpdateStatus(false);
   haSync();
+  settleSliders();
   httpSync();
   pcSync(false);
   syncSwipeZones();
