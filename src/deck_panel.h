@@ -88,6 +88,9 @@ bool compTakeLanding(int8_t* landing);
 void compSetHoldGen(uint32_t gen);
 // Abort any slide immediately (rotation change, system screen).
 void compCancel();
+// compCancel() and wait until no frame is reading page images: call before
+// freeing snapshot buffers.
+void panelQuiesce();
 
 struct PanelStats {
   uint32_t frames;

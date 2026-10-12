@@ -598,18 +598,23 @@ bool sendFrame(const Frame& f, Frame& next, bool backToBack) {
 
 static_assert(NCHUNK % 2 == 0, "the last chunk must use s_bounce[1]");
 
+volatile bool s_inFrame = false;
+
 void flushTask(void*) {
   Frame cur = {}, next = {};
   bool ready = false;
   for (;;) {
+    s_inFrame = false;
     if (!ready) {
       if (!decide(cur)) {
         const bool animating = compMode() == COMP_ANIM;
         ulTaskNotifyTake(pdTRUE, animating ? 1 : pdMS_TO_TICKS(50));
         continue;
       }
+      s_inFrame = true;
       buildChunk(cur, s_bounce[0], 0);
     }
+    s_inFrame = true;
     ready = sendFrame(cur, next, ready);
     if (ready) cur = next;
   }
@@ -828,6 +833,13 @@ void compCancel() {
   s.landedPending = false;
   s.dotsForce = false;
   portEXIT_CRITICAL(&s_mux);
+}
+
+void panelQuiesce() {
+  compCancel();
+  // A frame already being built may still read a page image; wait it out
+  // (one frame is ~16 ms) before the caller frees anything.
+  for (int i = 0; i < 40 && s_inFrame; i++) vTaskDelay(1);
 }
 
 PanelStats panelTakeStats() {

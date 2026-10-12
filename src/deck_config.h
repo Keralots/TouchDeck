@@ -48,6 +48,8 @@ struct TileAction {
   String page;
 };
 
+// set = an explicit cell (x, y). w and h always apply: a tile with only a
+// span flows into the next free place that fits it.
 struct TilePos {
   bool set = false;
   uint8_t x = 0, y = 0, w = 1, h = 1;
@@ -85,6 +87,11 @@ bool deckConfigLoad(DeckConfig& out, String* source, String* err);
 // Parse and validate a JSON document. Used by the loader and, later, by the
 // portal before anything is written.
 bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err);
+// The stored /deck.json text, or the built-in default.
+void deckConfigText(String& out);
+// Validate and store as /deck.json (written to a temp file, then renamed, so a
+// power cut never leaves half a file). On success *out is the parsed config.
+bool deckConfigStore(const String& text, DeckConfig& out, String& err);
 
 }  // namespace deck
 

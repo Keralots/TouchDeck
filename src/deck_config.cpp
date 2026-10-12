@@ -99,7 +99,7 @@ bool parseAction(JsonVariantConst v, TileAction& a, String* err, const String& w
 
 void parsePos(JsonVariantConst v, TilePos& p) {
   if (v.isNull()) return;
-  p.set = true;
+  p.set = v["x"].is<int>() && v["y"].is<int>();
   p.x = (uint8_t)constrain((int)(v["x"] | 0), 0, 15);
   p.y = (uint8_t)constrain((int)(v["y"] | 0), 0, 15);
   p.w = (uint8_t)constrain((int)(v["w"] | 1), 1, 6);
@@ -195,6 +195,48 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       p.tiles.push_back(t);
     }
     cfg.pages.push_back(p);
+  }
+  out = cfg;
+  return true;
+}
+
+void deckConfigText(String& out) {
+  if (mountFs() && LittleFS.exists(CONFIG_PATH)) {
+    File f = LittleFS.open(CONFIG_PATH, "r");
+    if (f) {
+      out = f.readString();
+      f.close();
+      DeckConfig probe;
+      if (deckConfigParse(out.c_str(), out.length(), probe, nullptr)) return;
+    }
+  }
+  out = FPSTR(kDefaultDeck);
+}
+
+bool deckConfigStore(const String& text, DeckConfig& out, String& err) {
+  DeckConfig cfg;
+  if (!deckConfigParse(text.c_str(), text.length(), cfg, &err)) return false;
+  if (!mountFs()) {
+    err = "storage not available";
+    return false;
+  }
+  const char* tmp = "/deck.json.tmp";
+  File f = LittleFS.open(tmp, "w");
+  if (!f) {
+    err = "cannot write the file";
+    return false;
+  }
+  const size_t n = f.print(text);
+  f.close();
+  if (n != text.length()) {
+    LittleFS.remove(tmp);
+    err = "storage full";
+    return false;
+  }
+  LittleFS.remove(CONFIG_PATH);
+  if (!LittleFS.rename(tmp, CONFIG_PATH)) {
+    err = "cannot replace the file";
+    return false;
   }
   out = cfg;
   return true;

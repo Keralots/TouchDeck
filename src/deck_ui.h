@@ -34,6 +34,8 @@ bool deckFaceMayRender();
 bool deckFacePageActive();
 // Rotation changed in the portal: re-layout everything at the new size.
 void deckApplyRotation(uint8_t rotation);
+// Portal save: validate, store /deck.json and rebuild the pages in place.
+bool deckApplyConfig(const String& text, String& err);
 // Bench hook (/api/deck/swipe): run one full page slide toward dir as if a
 // finger had flung it. False when that page is not reachable right now.
 bool deckTestSwipe(int dir);

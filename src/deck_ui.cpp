@@ -3,6 +3,7 @@
 
 #include "deck_ui.h"
 #include "deck_config.h"
+#include "deck_ha.h"
 #include "deck_touch.h"
 #include "display_ui.h"
 #include "settings.h"
@@ -55,8 +56,13 @@ struct TileRt {
   const TileDef* def;
   int page;
   lv_obj_t* obj;
+  lv_obj_t* name;
   lv_obj_t* sub;
   bool on;
+  uint32_t haVersion;     // last HA entity version applied
+  bool pending;           // optimistic toggle waiting for HA
+  bool pendingOn;
+  uint32_t pendingUntil;
 };
 
 lgfx::LGFX_Sprite* s_face = nullptr;
@@ -229,16 +235,147 @@ void openModal(int tileIdx);
 void refreshModal();
 void deckToastShow(const char* text, uint32_t holdMs);
 
+// --- Home Assistant binding ------------------------------------------------------------
+constexpr uint32_t PENDING_MS = 4000;  // optimistic toggle waits this long for HA
+
+bool haStateOn(const String& domain, const String& st) {
+  if (domain == "lock") return st == "locked";
+  if (domain == "cover") return st == "open" || st == "opening";
+  if (domain == "media_player") return st == "playing";
+  if (domain == "climate") return st != "off" && st.length();
+  return st == "on" || st == "home";
+}
+
+String prettyState(const String& domain, const HaEntity& e) {
+  if (!e.known) return "Unavailable";
+  const String& st = e.state;
+  if (st == "unavailable" || st == "unknown") return "Unavailable";
+  if (domain == "light" && st == "on" && e.brightness >= 0)
+    return String((e.brightness * 100 + 127) / 255) + "%";
+  if (domain == "scene") return "Scene";
+  if (domain == "script") return st == "on" ? "Running" : "Script";
+  if (domain == "button" || domain == "input_button") return "Press";
+  String s = st;
+  s.replace('_', ' ');
+  if (s.length()) s.setCharAt(0, toupper(s[0]));
+  return s;
+}
+
+// The service a toggle tile calls for its entity's domain.
+void toggleService(const String& domain, bool currentlyOn, String& svcDomain, String& svc) {
+  svcDomain = domain;
+  if (domain == "lock") svc = currentlyOn ? "unlock" : "lock";
+  else if (domain == "media_player") svc = "media_play_pause";
+  else if (domain == "scene") svc = "turn_on";
+  else if (domain == "button" || domain == "input_button") svc = "press";
+  else svc = "toggle";
+}
+
+// The service an action tile without an explicit action runs on its entity.
+bool defaultActionService(const String& domain, String& svc) {
+  if (domain == "scene" || domain == "script") { svc = "turn_on"; return true; }
+  if (domain == "button" || domain == "input_button") { svc = "press"; return true; }
+  if (domain == "automation") { svc = "trigger"; return true; }
+  return false;
+}
+
+void setTileOn(TileRt& r, bool on) {
+  r.on = on;
+  if (on) lv_obj_add_state(r.obj, LV_STATE_CHECKED);
+  else lv_obj_remove_state(r.obj, LV_STATE_CHECKED);
+}
+
+// Pull the latest HA state into one tile's widgets.
+void applyHaToTile(TileRt& r, bool force) {
+  const TileDef& d = *r.def;
+  if (!d.entity.length()) return;
+  HaEntity e;
+  if (!haGetEntity(d.entity, e)) return;
+  if (!force && e.version == r.haVersion) return;
+  r.haVersion = e.version;
+  const String domain = entityDomain(d.entity);
+  const bool avail = e.known && e.state != "unavailable" && e.state != "unknown";
+  const bool on = avail && haStateOn(domain, e.state);
+  if (r.pending) {
+    if (on != r.pendingOn) return;  // not there yet; the timeout decides
+    r.pending = false;
+  }
+  if (d.type == TILE_TOGGLE) setTileOn(r, on);
+  lv_obj_set_style_opa(r.obj, avail ? LV_OPA_COVER : LV_OPA_50, 0);
+  if (!d.label.length() && e.name.length()) lv_label_set_text(r.name, e.name.c_str());
+  if (!d.sub.length()) lv_label_set_text(r.sub, prettyState(domain, e).c_str());
+  markPageStale(r.page);
+}
+
+uint32_t s_haSeen = 0;
+
+void haSync() {
+  const uint32_t v = haStoreVersion();
+  if (v != s_haSeen) {
+    s_haSeen = v;
+    for (TileRt& r : s_tiles) applyHaToTile(r, false);
+    refreshModal();
+  }
+  String ent, msg;
+  while (haTakeFailure(ent, msg)) {
+    for (TileRt& r : s_tiles) {
+      if (r.def->entity != ent || !r.pending) continue;
+      r.pending = false;
+      applyHaToTile(r, true);
+    }
+    deckToastShow(msg.c_str(), 2500);
+  }
+  const uint32_t now = millis();
+  for (TileRt& r : s_tiles) {
+    if (!r.pending || (int32_t)(now - r.pendingUntil) < 0) continue;
+    r.pending = false;
+    applyHaToTile(r, true);
+    deckToastShow("No answer from Home Assistant", 2000);
+  }
+}
+
+void collectEntities() {
+  std::vector<String> ids;
+  for (const TileRt& r : s_tiles)
+    if (r.def->entity.length()) ids.push_back(r.def->entity);
+  haSetEntities(ids);
+  s_haSeen = 0;  // re-apply everything to the new widgets
+  for (TileRt& r : s_tiles) applyHaToTile(r, true);
+}
+
 void runAction(TileRt& r, const TileAction& a) {
+  const String& entity = r.def->entity;
+  const String domain = entityDomain(entity);
+  const bool haUp = haLink() == HA_CONNECTED;
   switch (a.kind) {
-    case ACT_TOGGLE:
-      // Local until Home Assistant is connected (Phase 3).
-      r.on = !r.on;
-      if (r.on) lv_obj_add_state(r.obj, LV_STATE_CHECKED);
-      else lv_obj_remove_state(r.obj, LV_STATE_CHECKED);
-      lv_label_set_text(r.sub, tileSub(r).c_str());
-      markPageStale(r.page);
+    case ACT_TOGGLE: {
+      if (!entity.length()) {
+        // No entity: a local switch, handy for trying layouts.
+        setTileOn(r, !r.on);
+        lv_label_set_text(r.sub, tileSub(r).c_str());
+        markPageStale(r.page);
+        break;
+      }
+      if (!haUp) {
+        deckToastShow("Home Assistant is offline", 1800);
+        break;
+      }
+      String sd, svc;
+      toggleService(domain, r.on, sd, svc);
+      if (!haCallService(sd, svc, entity, "")) {
+        deckToastShow("Home Assistant is busy, try again", 1800);
+        break;
+      }
+      if (r.def->type == TILE_TOGGLE && svc != "turn_on" && svc != "press") {
+        // Optimistic: flip now, confirm or revert when HA reports the state.
+        setTileOn(r, !r.on);
+        r.pending = true;
+        r.pendingOn = r.on;
+        r.pendingUntil = millis() + PENDING_MS;
+        markPageStale(r.page);
+      }
       break;
+    }
     case ACT_PAGE:
       goToPage(a.page);
       break;
@@ -246,11 +383,20 @@ void runAction(TileRt& r, const TileAction& a) {
       openModal((int)(&r - &s_tiles[0]));
       break;
     case ACT_CALL_SERVICE:
-      deckToastShow("Home Assistant is not set up yet", 1800);
+      if (!haUp) deckToastShow("Home Assistant is offline", 1800);
+      else if (!haCallService(a.domain, a.service, entity, a.data))
+        deckToastShow("Home Assistant is busy, try again", 1800);
       break;
-    default:
-      deckToastShow("No action set for this tile", 1500);
+    default: {
+      String svc;
+      if (entity.length() && defaultActionService(domain, svc)) {
+        if (!haUp) deckToastShow("Home Assistant is offline", 1800);
+        else if (!haCallService(domain, svc, entity, "")) deckToastShow("Home Assistant is busy, try again", 1800);
+      } else {
+        deckToastShow("No action set for this tile", 1500);
+      }
       break;
+    }
   }
 }
 
@@ -350,7 +496,8 @@ void qpUpdateStatus(bool force) {
   const int rssi = wifi ? (WiFi.RSSI() / 5) * 5 : 0;
   setChip(s_qp.wifi, wifi ? String(LV_SYMBOL_WIFI " ") + rssi + " dBm" : String(LV_SYMBOL_WIFI " offline"), wifi);
   setChip(s_qp.pc, pcData.online ? "PC online" : "PC offline", pcData.online);
-  setChip(s_qp.ha, "HA not set up", false);
+  const HaLink hl = haLink();
+  setChip(s_qp.ha, String("HA ") + haLinkName(hl), hl == HA_CONNECTED);
   setChip(s_qp.ip, wifi ? WiFi.localIP().toString() : String("-"), wifi);
 }
 
@@ -677,7 +824,11 @@ lv_obj_t* s_modalBtnLbl = nullptr;
 void refreshModal() {
   if (s_modalTile < 0 || !s_modalCard) return;
   const TileRt& r = s_tiles[s_modalTile];
-  lv_label_set_text(s_modalState, tileSub(r).c_str());
+  String st = tileSub(r);
+  HaEntity e;
+  if (r.def->entity.length() && haGetEntity(r.def->entity, e))
+    st = prettyState(entityDomain(r.def->entity), e);
+  lv_label_set_text(s_modalState, st.c_str());
   if (r.def->type == TILE_TOGGLE)
     lv_label_set_text(s_modalBtnLbl, r.on ? "Turn off" : "Turn on");
 }
@@ -811,7 +962,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_text_opa(sub, LV_OPA_70, 0);
   lv_obj_align(sub, LV_ALIGN_BOTTOM_LEFT, 0, 2);
 
-  TileRt r = {&def, page, t, sub, false};
+  TileRt r = {&def, page, t, name, sub, false, 0, false, false, 0};
   lv_label_set_text(sub, tileSub(r).c_str());
   const size_t idx = s_tiles.size();
   s_tiles.push_back(r);
@@ -888,7 +1039,7 @@ void addTilesPage(const PageDef& def) {
   for (size_t i = 0; i < def.tiles.size(); i++) {
     if (placed[i]) continue;
     const TilePos& ps = def.tiles[i].pos[orient];
-    const int tw = ps.set ? ps.w : 1, th = ps.set ? ps.h : 1;
+    const int tw = ps.w, th = ps.h;
     bool done = false;
     for (int y = 0; y < rows && !done; y++)
       for (int x = 0; x < cols && !done; x++)
@@ -965,6 +1116,7 @@ void buildPages() {
   s_lastWifi = -1;
   s_faceDirty = true;
   buildQuickPanel();
+  collectEntities();
 }
 
 void destroyPages() {
@@ -1146,6 +1298,7 @@ bool deckBegin(lgfx::LGFX_Sprite* face, uint8_t rotation) {
   lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
 
+  haBegin();
   buildPages();
   touchBegin();
   Serial.printf("Deck: LVGL %d.%d.%d up, %d pages, %dx%d\n", LVGL_VERSION_MAJOR,
@@ -1200,6 +1353,7 @@ void deckTick() {
   }
   updateHeaders();
   qpUpdateStatus(false);
+  haSync();
   lv_timer_handler();
   refreshOneSnapshot();
   logStats();
@@ -1232,7 +1386,7 @@ void deckApplyRotation(uint8_t rotation) {
   if (!s_disp) return;
   rotation &= 3;
   if (rotation == panelRotation()) return;
-  compCancel();
+  panelQuiesce();
   releaseSwipe();
   destroyPages();
   panelSetRotation(rotation);
@@ -1243,6 +1397,25 @@ void deckApplyRotation(uint8_t rotation) {
   buildPages();
   s_gen++;
   lv_obj_invalidate(lv_screen_active());
+}
+
+bool deckApplyConfig(const String& text, String& err) {
+  if (!s_disp) {
+    err = "display not running";
+    return false;
+  }
+  DeckConfig next;
+  if (!deckConfigStore(text, next, err)) return false;
+  // Tiles point into s_cfg: tear the pages down before replacing it.
+  panelQuiesce();
+  releaseSwipe();
+  destroyPages();
+  s_cfg = next;
+  buildPages();
+  s_gen++;
+  lv_obj_invalidate(lv_screen_active());
+  Serial.printf("Deck: new config applied, %u pages\n", (unsigned)s_cfg.pages.size());
+  return true;
 }
 
 bool deckTestSwipe(int dir) {
