@@ -21,7 +21,9 @@ WebSocket API and receives PC metrics over UDP on the LAN.
 - **PC stats:** metric tiles fed by the StatNode Companion; values, units,
   history chart and an amber warning colour above a set share of the scale.
 - **Quick panel:** pull down from the top edge for screen and LED brightness,
-  link status, screen off, night mode and the top bar switch.
+  link status, screen off, night mode, the top bar switch and the page editor.
+- **Edit on the device:** long press an empty spot of a page (or Edit in the
+  quick panel) to move, resize or remove its tiles; Done saves the layout.
 - **Night schedule** for the backlight and an optional status / filament LED
   on a PWM pin.
 - **System screens** for start-up, WiFi setup (with a QR code to join the
@@ -34,7 +36,9 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 - **Overview:** live picture of the screen, PC stream, Home Assistant link,
   diagnostics.
 - **Pages & tiles:** Home Assistant address and token, the icon font, pages,
-  tiles, entity and icon pickers, columns.
+  tiles, entity and icon pickers, columns, and a grid editor: drag tiles to
+  move or swap them, resize from the corner, separately for landscape and
+  portrait.
 - **Display:** rotation, brightness, night schedule, PC metric tile scales.
 - **Time:** 12/24 h clock and timezone.
 - **Hardware:** the status LED.
