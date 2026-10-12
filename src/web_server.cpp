@@ -932,6 +932,14 @@ static void handleDeckCard() {
   sendJsonMessage(ok ? 200 : 404, ok, ok ? "Card open" : "No such tile");
 }
 
+// POST /api/deck/edit?op=open|move|remove|done|cancel[&tile=<index>&x=&y=&w=&h=]
+// - bench hook, drives the on-device edit mode.
+static void handleDeckEdit() {
+  const bool ok = deckTestEdit(server.arg("op"), server.arg("tile").toInt(), server.arg("x").toInt(),
+                               server.arg("y").toInt(), server.arg("w").toInt(), server.arg("h").toInt());
+  sendJsonMessage(ok ? 200 : 409, ok, ok ? "OK" : "Not possible now");
+}
+
 // POST /api/deck/panel?open=1|0 - bench hook, quick panel slide.
 static void handleDeckPanel() {
   const bool open = !server.hasArg("open") || server.arg("open") != "0";
@@ -1124,6 +1132,7 @@ void initWebServer() {
   server.on("/api/deck/swipe", HTTP_POST, handleDeckSwipe);
   server.on("/api/deck/panel", HTTP_POST, handleDeckPanel);
   server.on("/api/deck/card", HTTP_POST, handleDeckCard);
+  server.on("/api/deck/edit", HTTP_POST, handleDeckEdit);
   server.on("/api/deck/screen", HTTP_POST, handleDeckScreen);
   server.on("/deck", HTTP_GET, handleDeckPage);
   server.on("/deck.js", HTTP_GET, handleDeckJs);

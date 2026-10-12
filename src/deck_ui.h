@@ -38,6 +38,10 @@ bool deckTestSwipe(int dir, bool vertical);
 bool deckTestCard(const String& tileId);
 // Bench hook (/api/deck/panel): open or close the quick panel with its slide.
 bool deckTestPanel(bool open);
+// Bench hook (/api/deck/edit): drive the on-device edit mode. op = open |
+// move (tile = index on the page, cell x/y, size w/h, 0 = keep) | remove |
+// done | cancel. False when the step is not possible.
+bool deckTestEdit(const String& op, int tile, int x, int y, int w, int h);
 
 namespace deck {
 // Touch task: claim a swipe toward dir (+1 next page, -1 previous page).
