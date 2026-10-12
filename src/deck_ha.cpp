@@ -2,13 +2,18 @@
 #if defined(BOARD_IS_JC3248W535)
 
 #include "deck_ha.h"
+#include "deck_config.h"
+#include <LittleFS.h>
+#include <time.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <WebSocketsClient.h>
 #include <WiFi.h>
+#include <esp_task_wdt.h>
 #include <algorithm>
 #include <deque>
+#include <new>
 
 namespace deck {
 namespace {
@@ -19,6 +24,19 @@ namespace {
 constexpr size_t SUB_BATCH = 4;
 constexpr uint32_t RECONNECT_MS = 5000;
 constexpr size_t MAX_QUEUED_CALLS = 8;
+
+// ArduinoJson grows a document in small blocks, and small blocks land in
+// internal RAM. A filtered /api/states of a real installation is hundreds of
+// blocks; it emptied the internal heap and stalled the portal's sockets.
+struct PsramAllocator : ArduinoJson::Allocator {
+  void* allocate(size_t n) override { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM); }
+  void deallocate(void* p) override { heap_caps_free(p); }
+  void* reallocate(void* p, size_t n) override { return heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM); }
+};
+ArduinoJson::Allocator* psram() {
+  static PsramAllocator a;
+  return &a;
+}
 
 SemaphoreHandle_t s_lock = nullptr;
 struct Lock {
@@ -116,6 +134,7 @@ void entityFromAttrs(HaEntity& e, JsonObjectConst a) {
   if (a.isNull()) return;
   if (a["friendly_name"].is<const char*>()) e.name = (const char*)a["friendly_name"];
   if (a["icon"].is<const char*>()) e.icon = (const char*)a["icon"];
+  if (a["unit_of_measurement"].is<const char*>()) e.unit = (const char*)a["unit_of_measurement"];
   // Present-but-null (a light turning off) must clear it, so look at the
   // keys rather than at a["brightness"], which cannot tell null from absent.
   for (JsonPairConst kv : a)
@@ -141,6 +160,7 @@ void applyEvent(JsonObjectConst ev) {
     e.state = (const char*)(kv.value()["s"] | "");
     e.name = "";
     e.icon = "";
+    e.unit = "";
     e.brightness = -1;
     entityFromAttrs(e, kv.value()["a"].as<JsonObjectConst>());
     e.version++;
@@ -159,6 +179,7 @@ void applyEvent(JsonObjectConst ev) {
       const char* key = k | "";
       if (!strcmp(key, "brightness")) e.brightness = -1;
       else if (!strcmp(key, "icon")) e.icon = "";
+      else if (!strcmp(key, "unit_of_measurement")) e.unit = "";
       else if (!strcmp(key, "friendly_name")) e.name = "";
     }
     e.version++;
@@ -181,7 +202,7 @@ void failPending(const String& message) {
 }
 
 void handleText(const uint8_t* payload, size_t len) {
-  JsonDocument doc;
+  JsonDocument doc(psram());
   if (deserializeJson(doc, payload, len)) return;
   const char* type = doc["type"] | "";
   if (!strcmp(type, "auth_required")) {
@@ -190,7 +211,7 @@ void handleText(const uint8_t* payload, size_t len) {
       Lock g;
       token = s_token;
     }
-    JsonDocument a;
+    JsonDocument a(psram());
     a["type"] = "auth";
     a["access_token"] = token;
     sendJson(a);
@@ -264,7 +285,7 @@ void resubscribe() {
     gen = s_wantedGen;
   }
   for (uint32_t sub : s_subIds) {
-    JsonDocument u;
+    JsonDocument u(psram());
     u["id"] = s_nextId++;
     u["type"] = "unsubscribe_events";
     u["subscription"] = sub;
@@ -272,7 +293,7 @@ void resubscribe() {
   }
   s_subIds.clear();
   for (size_t i = 0; i < wanted.size(); i += SUB_BATCH) {
-    JsonDocument d;
+    JsonDocument d(psram());
     const uint32_t id = s_nextId++;
     d["id"] = id;
     d["type"] = "subscribe_entities";
@@ -293,7 +314,7 @@ void sendQueuedCalls() {
       c = s_calls.front();
       s_calls.pop_front();
     }
-    JsonDocument d;
+    JsonDocument d(psram());
     const uint32_t id = s_nextId++;
     d["id"] = id;
     d["type"] = "call_service";
@@ -301,7 +322,7 @@ void sendQueuedCalls() {
     d["service"] = c.service;
     if (c.target.length()) d["target"]["entity_id"] = c.target;
     if (c.data.length()) {
-      JsonDocument data;
+      JsonDocument data(psram());
       if (!deserializeJson(data, c.data)) d["service_data"] = data.as<JsonObjectConst>();
     }
     sendJson(d);
@@ -505,8 +526,149 @@ bool haTakeFailure(String& entity, String& message) {
   return true;
 }
 
-bool haFetchEntityList(String& outJson, String& err) {
-  String url, token;
+// --- Entity list for the portal picker ---------------------------------------------
+namespace {
+
+const char* const LIST_PATH = "/ha_entities.json";
+constexpr size_t MAX_BODY = 4 * 1024 * 1024;
+
+// Rendered by Home Assistant itself, so the device never parses the full
+// /api/states JSON: one record per entity, fields split by 0x1F, records by
+// 0x1E (neither can appear in a name), already sorted. This is the complete
+// request body: the separators must reach HA as \u001f escapes, because a
+// raw control character inside a JSON string is invalid (and ArduinoJson
+// would write it raw).
+const char kListRequest[] =
+    "{\"template\":\""
+    "{% for s in states|sort(attribute='entity_id') %}"
+    "{{ s.entity_id }}\\u001f{{ s.name }}\\u001f{{ s.state }}\\u001f"
+    "{{ s.attributes.icon|default('') }}\\u001f"
+    "{{ s.attributes.unit_of_measurement|default('') }}\\u001e"
+    "{% endfor %}\"}";
+
+// Whole response body into a PSRAM buffer (caller frees). Parsing straight
+// off the socket reads byte by byte and big answers hit the read timeout.
+bool readBody(HTTPClient& http, char*& body, size_t& len, String& err) {
+  const int declared = http.getSize();
+  size_t cap = declared > 0 ? (size_t)declared + 1 : 256 * 1024;
+  if (cap > MAX_BODY) {
+    err = "the entity list is too large";
+    return false;
+  }
+  body = (char*)heap_caps_malloc(cap, MALLOC_CAP_SPIRAM);
+  if (!body) {
+    err = "out of memory";
+    return false;
+  }
+  len = 0;
+  WiFiClient* in = http.getStreamPtr();
+  uint32_t lastData = millis();
+  while (true) {
+    if (declared > 0 && len >= (size_t)declared) break;
+    const int avail = in->available();
+    if (avail > 0) {
+      if (len + avail + 1 > cap) {
+        size_t ncap = cap * 2;
+        if (ncap > MAX_BODY) ncap = MAX_BODY;
+        char* nb = ncap > cap ? (char*)heap_caps_realloc(body, ncap, MALLOC_CAP_SPIRAM) : nullptr;
+        if (!nb) {
+          heap_caps_free(body);
+          body = nullptr;
+          err = "the entity list is too large";
+          return false;
+        }
+        body = nb;
+        cap = ncap;
+      }
+      const int got = in->read((uint8_t*)body + len, min((size_t)avail, cap - len - 1));
+      if (got > 0) {
+        len += got;
+        lastData = millis();
+      }
+    } else if (!in->connected()) {
+      break;
+    } else if (millis() - lastData > 5000) {
+      break;  // stalled
+    } else {
+      vTaskDelay(1);
+    }
+    esp_task_wdt_reset();
+  }
+  body[len] = 0;
+  if (declared > 0 && len < (size_t)declared) {
+    heap_caps_free(body);
+    body = nullptr;
+    err = "the answer from Home Assistant was cut off";
+    return false;
+  }
+  return true;
+}
+
+void appendJsonString(String& o, const char* s, size_t n) {
+  o += '"';
+  for (size_t i = 0; i < n; i++) {
+    const unsigned char c = (unsigned char)s[i];
+    if (c == '"' || c == '\\') {
+      o += '\\';
+      o += (char)c;
+    } else if (c < 0x20) {
+      char esc[8];
+      snprintf(esc, sizeof(esc), "\\u%04x", c);
+      o += esc;
+    } else {
+      o += (char)c;
+    }
+  }
+  o += '"';
+}
+
+// Template answer -> [{"id","name","state","icon","unit"}, ...]
+void recordsToJson(const char* body, size_t len, String& out, size_t& count) {
+  out = "";
+  out.reserve(len + len / 3 + 64);
+  out += '[';
+  count = 0;
+  const char* p = body;
+  const char* end = body + len;
+  static const char* const kKeys[5] = {"id", "name", "state", "icon", "unit"};
+  while (p < end) {
+    const char* rec = p;
+    while (p < end && *p != '\x1e') p++;
+    const char* recEnd = p;
+    if (p < end) p++;
+    const char* f = rec;
+    int field = 0;
+    bool any = false;
+    while (f < recEnd && field < 5) {
+      const char* fe = f;
+      while (fe < recEnd && *fe != '\x1f') fe++;
+      if (field == 0) {
+        while (f < fe && (*f == '\n' || *f == '\r' || *f == ' ')) f++;  // template whitespace
+        if (f == fe) break;
+        if (count) out += ',';
+        out += '{';
+        any = true;
+      }
+      if (field < 3 || fe > f) {  // icon and unit only when set
+        if (field) out += ',';
+        out += '"';
+        out += kKeys[field];
+        out += "\":";
+        appendJsonString(out, f, fe - f);
+      }
+      field++;
+      f = fe < recEnd ? fe + 1 : fe;
+    }
+    if (any) {
+      out += '}';
+      count++;
+    }
+  }
+  out += ']';
+}
+
+bool openHa(HTTPClient& http, const char* path, String& token, String& err) {
+  String url;
   {
     Lock g;
     url = s_url;
@@ -519,51 +681,154 @@ bool haFetchEntityList(String& outJson, String& err) {
   String host;
   uint16_t port;
   if (!parseUrl(url, host, port, err)) return false;
-  HTTPClient http;
-  http.useHTTP10(true);  // plain body, no chunked framing for the stream parser
+  http.useHTTP10(true);  // plain body, no chunked framing
   http.setTimeout(8000);
-  if (!http.begin("http://" + host + ":" + String(port) + "/api/states")) {
+  if (!http.begin("http://" + host + ":" + String(port) + path)) {
     err = "cannot open the connection";
     return false;
   }
   http.addHeader("Authorization", "Bearer " + token);
+  return true;
+}
+
+bool fetchViaTemplate(String& out, size_t& count, String& err) {
+  HTTPClient http;
+  String token;
+  if (!openHa(http, "/api/template", token, err)) return false;
+  http.addHeader("Content-Type", "application/json");
+  const int code = http.POST((uint8_t*)kListRequest, sizeof(kListRequest) - 1);
+  if (code != 200) {
+    err = code == 401 ? String("token rejected") : String("template answered ") + code;
+    if (code > 0) err += ": " + http.getString().substring(0, 160);
+    http.end();
+    return false;
+  }
+  char* body = nullptr;
+  size_t len = 0;
+  const bool ok = readBody(http, body, len, err);
+  http.end();
+  if (!ok) return false;
+  recordsToJson(body, len, out, count);
+  heap_caps_free(body);
+  return true;
+}
+
+// Fallback when the template endpoint is not available to this token. Slow
+// on a big installation (ArduinoJson 7 deduplicates strings linearly, ~10 s
+// for 1400 entities), but correct.
+bool fetchViaStates(String& out, size_t& count, String& err) {
+  HTTPClient http;
+  String token;
+  if (!openHa(http, "/api/states", token, err)) return false;
   const int code = http.GET();
   if (code != 200) {
     err = code == 401 ? String("token rejected") : String("Home Assistant answered ") + code;
     http.end();
     return false;
   }
-  JsonDocument filter;
+  char* body = nullptr;
+  size_t len = 0;
+  const bool ok = readBody(http, body, len, err);
+  http.end();
+  if (!ok) return false;
+  JsonDocument filter(psram());
   filter[0]["entity_id"] = true;
   filter[0]["state"] = true;
   filter[0]["attributes"]["friendly_name"] = true;
   filter[0]["attributes"]["icon"] = true;
-  JsonDocument doc;
+  filter[0]["attributes"]["unit_of_measurement"] = true;
+  JsonDocument doc(psram());
+  // const char*: a mutable buffer would be parsed in place (zero-copy) and the
+  // strings would dangle once it is freed below.
   const DeserializationError de =
-      deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
-  http.end();
+      deserializeJson(doc, (const char*)body, len, DeserializationOption::Filter(filter));
+  heap_caps_free(body);
   if (de) {
     err = String("bad answer: ") + de.c_str();
     return false;
   }
-  struct Row {
-    const char* id;
-    JsonObjectConst o;
-  };
-  std::vector<Row> rows;
-  for (JsonObjectConst o : doc.as<JsonArrayConst>()) rows.push_back({o["entity_id"] | "", o});
-  std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return strcmp(a.id, b.id) < 0; });
-  JsonDocument out;
-  JsonArray arr = out.to<JsonArray>();
-  for (const Row& r : rows) {
-    JsonObject e = arr.add<JsonObject>();
-    e["id"] = r.id;
-    e["name"] = r.o["attributes"]["friendly_name"] | "";
-    e["state"] = r.o["state"] | "";
-    if (r.o["attributes"]["icon"].is<const char*>()) e["icon"] = r.o["attributes"]["icon"];
+  out = "[";
+  count = 0;
+  for (JsonObjectConst o : doc.as<JsonArrayConst>()) {
+    const char* id = o["entity_id"] | "";
+    const char* name = o["attributes"]["friendly_name"] | "";
+    const char* state = o["state"] | "";
+    if (count) out += ',';
+    out += "{\"id\":";
+    appendJsonString(out, id, strlen(id));
+    out += ",\"name\":";
+    appendJsonString(out, name, strlen(name));
+    out += ",\"state\":";
+    appendJsonString(out, state, strlen(state));
+    const char* icon = o["attributes"]["icon"] | "";
+    if (*icon) {
+      out += ",\"icon\":";
+      appendJsonString(out, icon, strlen(icon));
+    }
+    const char* unit = o["attributes"]["unit_of_measurement"] | "";
+    if (*unit) {
+      out += ",\"unit\":";
+      appendJsonString(out, unit, strlen(unit));
+    }
+    out += '}';
+    count++;
   }
-  outJson = "";
-  serializeJson(out, outJson);
+  out += ']';
+  return true;  // unsorted; the portal sorts
+}
+
+bool storeList(const String& listJson, size_t count, String& doc) {
+  const time_t now = time(nullptr);
+  doc = "{\"updated\":";
+  doc += String((uint32_t)(now > 1609459200 ? now : 0));
+  doc += ",\"count\":";
+  doc += String((unsigned)count);
+  doc += ",\"entities\":";
+  doc += listJson;
+  doc += '}';
+  if (!deckFsReady()) return false;
+  File f = LittleFS.open("/ha_entities.json.tmp", "w");
+  if (!f) return false;
+  const size_t n = f.print(doc);
+  f.close();
+  if (n != doc.length()) {
+    LittleFS.remove("/ha_entities.json.tmp");
+    return false;
+  }
+  LittleFS.remove(LIST_PATH);
+  return LittleFS.rename("/ha_entities.json.tmp", LIST_PATH);
+}
+
+}  // namespace
+
+const char* haEntityListPath() { return LIST_PATH; }
+
+bool haFetchEntityList(String& outJson, bool refresh, String& err) {
+  if (!refresh && deckFsReady() && LittleFS.exists(LIST_PATH)) {
+    File f = LittleFS.open(LIST_PATH, "r");
+    if (f) {
+      outJson = f.readString();
+      f.close();
+      if (outJson.length()) return true;
+    }
+  }
+  if (!refresh) {
+    // Nothing cached yet: answer with an empty list, the portal offers the
+    // update button. Fetching implicitly here would surprise with a long wait.
+    outJson = "{\"updated\":0,\"count\":0,\"entities\":[]}";
+    return true;
+  }
+  const uint32_t t0 = millis();
+  String list;
+  size_t count = 0;
+  String why;
+  if (!fetchViaTemplate(list, count, why)) {
+    Serial.printf("HA: template list failed (%s), falling back to /api/states\n", why.c_str());
+    if (!fetchViaStates(list, count, err)) return false;
+  }
+  if (!storeList(list, count, outJson)) Serial.println("HA: could not cache the entity list");
+  Serial.printf("HA: entity list updated, %u entities, %u bytes, %u ms\n", (unsigned)count,
+                (unsigned)outJson.length(), (unsigned)(millis() - t0));
   return true;
 }
 

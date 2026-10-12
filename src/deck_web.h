@@ -73,7 +73,7 @@ static const char DECK_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
 <div class="bar"><div class="bar-in"><span class="msg" id="msg">No changes</span><button class="btn btn-accent btn-lg" id="saveDeck">Save to device</button></div></div>
 
 <div class="modal" id="picker"><div class="sheet">
-  <div class="sheet-head"><div class="row"><input type="text" id="q" placeholder="Search by name or entity id" autocomplete="off" style="flex:1"><button class="btn" id="pickClose">Close</button></div><div class="chips" id="domains"></div></div>
+  <div class="sheet-head"><div class="row"><input type="text" id="q" placeholder="Search by name or entity id" autocomplete="off" style="flex:1"><button class="btn" id="pickClose">Close</button></div><div class="chips" id="domains"></div><div class="status"><span id="listInfo">-</span><button class="btn" id="listUpdate" style="margin-left:auto;padding:5px 10px">Update from HA</button></div></div>
   <div class="list" id="ents"></div>
 </div></div>
 
@@ -81,7 +81,10 @@ static const char DECK_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
 (function(){'use strict';
 const $=id=>document.getElementById(id);
 const TOGGLE=['light','switch','fan','input_boolean','lock','cover','media_player','climate','automation','siren','humidifier','valve'];
-const DOMS=[['','All'],['light','Lights'],['switch','Switches'],['fan','Fans'],['scene','Scenes'],['script','Scripts'],['lock','Locks'],['cover','Covers'],['media_player','Media'],['climate','Climate'],['button','Buttons'],['input_boolean','Helpers'],['automation','Automations']];
+const SENSOR=['sensor','binary_sensor','weather','sun','person','device_tracker','zone'];
+function autoType(d){return TOGGLE.includes(d)?'toggle':SENSOR.includes(d)?'sensor':'action';}
+const TYPES={toggle:'switch',action:'button',sensor:'sensor'};
+const DOMS=[['','All'],['light','Lights'],['switch','Switches'],['fan','Fans'],['scene','Scenes'],['script','Scripts'],['lock','Locks'],['cover','Covers'],['media_player','Media'],['climate','Climate'],['button','Buttons'],['input_boolean','Helpers'],['automation','Automations'],['sensor','Sensors'],['binary_sensor','Binary sensors']];
 const COL={light:'#F6C56B',switch:'#5CC9A7',fan:'#5CC9A7',input_boolean:'#5CC9A7',scene:'#B3A6FF',script:'#B3A6FF',lock:'#9DB8FF',cover:'#9DB8FF'};
 let deck=null,cur=0,ents=null,entMap={},dirty=false,pickFor=-1,dom='';
 async function api(p,o){const r=await fetch(p,o);const t=await r.text();let j=null;try{j=JSON.parse(t);}catch(e){}if(!r.ok)throw new Error((j&&(j.message||j.error))||t||('HTTP '+r.status));return j;}
@@ -105,8 +108,8 @@ function renderPage(){const ps=pages();const el=$('pageEdit');if(!ps.length){el.
   const p=ps[cur];const [c,r]=grid(p);let used=0;p.tiles.forEach(t=>{const [w,h]=tileSize(t).split('x').map(Number);used+=w*h;});
   let h='<div class="grid-2"><div class="field"><label class="field-label">Page name</label><input type="text" id="pName" value="'+esc(p.name||'')+'"></div><div class="field"><label class="field-label">Grid (columns x rows)</label><div class="row"><select id="pCols" style="width:auto">'+[2,3,4,5,6].map(n=>'<option'+(n===c?' selected':'')+'>'+n+'</option>').join('')+'</select><span>x</span><select id="pRows" style="width:auto">'+[2,3,4].map(n=>'<option'+(n===r?' selected':'')+'>'+n+'</option>').join('')+'</select><button class="btn btn-danger" id="pDel" style="margin-left:auto">Delete page</button></div></div></div>';
   h+='<div class="tiles">'+p.tiles.map((t,i)=>{const d=domainOf(t.entity);const ent=entMap[t.entity];const nm=ent&&ent.name?ent.name:(t.entity||'No entity');
-    return '<div class="tile"><div class="ic" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+esc((d||'?').slice(0,2).toUpperCase())+'</div><div class="tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="tsub">'+esc(t.entity||'no entity')+' - '+(t.type==='toggle'?'switch':'button')+(ent&&ent.state?' - '+esc(ent.state):'')+'</div></div>'+
-    '<div class="tact"><select data-t="'+i+'"><option value="toggle"'+(t.type==='toggle'?' selected':'')+'>Switch</option><option value="action"'+(t.type!=='toggle'?' selected':'')+'>Button</option></select><select data-s="'+i+'">'+['1x1','2x1','1x2','2x2'].map(v=>'<option'+(v===tileSize(t)?' selected':'')+'>'+v+'</option>').join('')+'</select><button class="btn" data-e="'+i+'" title="Change entity">Entity</button><button class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button class="btn" data-x="'+i+'" title="Remove">&#215;</button></div></div>';}).join('')+'</div>';
+    return '<div class="tile"><div class="ic" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+esc((d||'?').slice(0,2).toUpperCase())+'</div><div class="tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="tsub">'+esc(t.entity||'no entity')+' - '+(TYPES[t.type]||'button')+(ent&&ent.state?' - '+esc(ent.state)+(ent.unit?' '+esc(ent.unit):''):'')+'</div></div>'+
+    '<div class="tact"><select data-t="'+i+'"><option value="toggle"'+(t.type==='toggle'?' selected':'')+'>Switch</option><option value="action"'+(t.type==='action'?' selected':'')+'>Button</option><option value="sensor"'+(t.type==='sensor'?' selected':'')+'>Sensor</option></select><select data-s="'+i+'">'+['1x1','2x1','1x2','2x2'].map(v=>'<option'+(v===tileSize(t)?' selected':'')+'>'+v+'</option>').join('')+'</select><button class="btn" data-e="'+i+'" title="Change entity">Entity</button><button class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button class="btn" data-x="'+i+'" title="Remove">&#215;</button></div></div>';}).join('')+'</div>';
   h+='<p class="cap'+(used>c*r?' over':'')+'">'+used+' of '+(c*r)+' cells used'+(used>c*r?' - tiles that do not fit are not shown':'')+'</p><div class="row" style="margin-top:12px"><button class="btn btn-accent" id="addTile">+ Add tile from Home Assistant</button></div>';
   el.innerHTML=h;
   $('pName').oninput=e=>{p.name=e.target.value;setDirty(true);renderTabs();};
@@ -123,15 +126,19 @@ function renderPage(){const ps=pages();const el=$('pageEdit');if(!ps.length){el.
 function render(){renderTabs();renderPage();}
 
 /* ---- entity picker ---- */
-async function loadEnts(){if(ents)return;$('ents').innerHTML='<p class="empty">Loading entities from Home Assistant...</p>';try{ents=await api('/api/ha/entities');entMap={};ents.forEach(e=>entMap[e.id]=e);renderPage();}catch(e){ents=null;$('ents').innerHTML='<p class="empty">'+esc(e.message)+'<br>Set up Home Assistant above first.</p>';throw e;}}
+function setList(r){ents=(r.entities||[]).slice().sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);entMap={};ents.forEach(e=>entMap[e.id]=e);
+  $('listInfo').textContent=r.updated?(ents.length+' entities, list from '+new Date(r.updated*1000).toLocaleString()):'No list yet - press "Update from HA"';}
+async function loadEnts(refresh){if(ents&&!refresh)return;$('ents').innerHTML='<p class="empty">'+(refresh?'Fetching the entity list from Home Assistant...':'Loading...')+'</p>';$('listUpdate').disabled=true;
+  try{setList(await api('/api/ha/entities'+(refresh?'?refresh=1':'')));renderPage();}catch(e){if(!ents)ents=null;$('ents').innerHTML='<p class="empty">'+esc(e.message)+'<br>Check the Home Assistant settings above.</p>';throw e;}finally{$('listUpdate').disabled=false;}}
+$('listUpdate').onclick=async()=>{try{await loadEnts(true);renderEnts();}catch(e){}};
 function renderDomains(){$('domains').innerHTML=DOMS.map(d=>'<span class="chip'+(d[0]===dom?' on':'')+'" data-d="'+d[0]+'">'+d[1]+'</span>').join('');$('domains').querySelectorAll('[data-d]').forEach(c=>c.onclick=()=>{dom=c.dataset.d;renderDomains();renderEnts();});}
-function renderEnts(){if(!ents)return;const q=$('q').value.trim().toLowerCase();let list=ents.filter(e=>(!dom||domainOf(e.id)===dom)&&(!q||e.id.toLowerCase().includes(q)||(e.name||'').toLowerCase().includes(q)));
-  if(!dom&&!q){const pri=e=>TOGGLE.includes(domainOf(e.id))||['scene','script','button','input_button'].includes(domainOf(e.id))?0:1;list=list.slice().sort((a,b)=>pri(a)-pri(b));}
-  const shown=list.slice(0,250);$('ents').innerHTML=shown.length?shown.map(e=>'<div class="ent" data-id="'+esc(e.id)+'"><div><b>'+esc(e.name||e.id)+'</b><small>'+esc(e.id)+'</small></div><span class="st">'+esc(e.state)+'</span></div>').join('')+(list.length>shown.length?'<p class="empty">'+(list.length-shown.length)+' more - refine the search</p>':''):'<p class="empty">Nothing matches.</p>';
+function renderEnts(){if(!ents)return;if(!ents.length){$('ents').innerHTML='<p class="empty">No entity list on the device yet. Press "Update from HA".</p>';return;}const q=$('q').value.trim().toLowerCase();let list=ents.filter(e=>(!dom||domainOf(e.id)===dom)&&(!q||e.id.toLowerCase().includes(q)||(e.name||'').toLowerCase().includes(q)));
+  if(!dom&&!q){const pri=e=>{const d=domainOf(e.id);return TOGGLE.includes(d)||['scene','script','button','input_button'].includes(d)?0:(d==='sensor'?1:2);};list=list.slice().sort((a,b)=>pri(a)-pri(b));}
+  const shown=list.slice(0,250);$('ents').innerHTML=shown.length?shown.map(e=>'<div class="ent" data-id="'+esc(e.id)+'"><div><b>'+esc(e.name||e.id)+'</b><small>'+esc(e.id)+'</small></div><span class="st">'+esc(e.state)+(e.unit?' '+esc(e.unit):'')+'</span></div>').join('')+(list.length>shown.length?'<p class="empty">'+(list.length-shown.length)+' more - refine the search</p>':''):'<p class="empty">Nothing matches.</p>';
   $('ents').querySelectorAll('[data-id]').forEach(r=>r.onclick=()=>pick(r.dataset.id));}
 async function openPicker(i){pickFor=i;$('q').value='';$('picker').classList.add('show');renderDomains();try{await loadEnts();renderEnts();$('q').focus();}catch(e){}}
 function closePicker(){$('picker').classList.remove('show');}
-function pick(id){const p=pages()[cur];const d=domainOf(id);const type=TOGGLE.includes(d)?'toggle':'action';
+function pick(id){const p=pages()[cur];const d=domainOf(id);const type=autoType(d);
   if(pickFor<0){p.tiles.push({id:'t'+Date.now().toString(36),type:type,entity:id});}
   else{const t=p.tiles[pickFor];t.entity=id;t.type=type;delete t.label;delete t.icon;delete t.tap;}
   setDirty(true);closePicker();renderPage();}

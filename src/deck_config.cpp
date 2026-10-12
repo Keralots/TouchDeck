@@ -176,6 +176,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       const char* tt = tv["type"] | "action";
       if (!strcmp(tt, "toggle")) t.type = TILE_TOGGLE;
       else if (!strcmp(tt, "action")) t.type = TILE_ACTION;
+      else if (!strcmp(tt, "sensor")) t.type = TILE_SENSOR;
       else {
         if (err) *err = where + ": unknown type '" + tt + "'";
         return false;
@@ -191,6 +192,8 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       if (!parseAction(tv["hold"], t.hold, err, where + " hold")) return false;
       // Defaults: a toggle toggles, anything holds to its detail card.
       if (tv["tap"].isNull() && t.type == TILE_TOGGLE) t.tap.kind = ACT_TOGGLE;
+      // A read-only sensor opens its card on a tap too.
+      if (tv["tap"].isNull() && t.type == TILE_SENSOR) t.tap.kind = ACT_MORE_INFO;
       if (tv["hold"].isNull()) t.hold.kind = ACT_MORE_INFO;
       p.tiles.push_back(t);
     }
@@ -199,6 +202,8 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
   out = cfg;
   return true;
 }
+
+bool deckFsReady() { return mountFs(); }
 
 void deckConfigText(String& out) {
   if (mountFs() && LittleFS.exists(CONFIG_PATH)) {

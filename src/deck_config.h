@@ -33,7 +33,7 @@ constexpr int ORIENT_PORTRAIT = 1;
 constexpr int MAX_DECK_PAGES = 8;
 constexpr int MAX_PAGE_TILES = 24;
 
-enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE };
+enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR };
 enum ActionKind : uint8_t {
   ACT_NONE = 0,
   ACT_TOGGLE,        // toggle the tile's entity
@@ -92,6 +92,8 @@ void deckConfigText(String& out);
 // Validate and store as /deck.json (written to a temp file, then renamed, so a
 // power cut never leaves half a file). On success *out is the parsed config.
 bool deckConfigStore(const String& text, DeckConfig& out, String& err);
+// LittleFS mounted (mounts on first call).
+bool deckFsReady();
 
 }  // namespace deck
 

@@ -177,6 +177,7 @@ const char* iconSymbol(const TileDef& t) {
   if (d == "fan") return LV_SYMBOL_REFRESH;
   if (d == "lock") return LV_SYMBOL_HOME;
   if (d == "media_player") return LV_SYMBOL_PLAY;
+  if (d == "sensor" || d == "binary_sensor" || d == "weather") return LV_SYMBOL_LIST;
   return LV_SYMBOL_POWER;
 }
 
@@ -255,6 +256,18 @@ String prettyState(const String& domain, const HaEntity& e) {
   if (domain == "scene") return "Scene";
   if (domain == "script") return st == "on" ? "Running" : "Script";
   if (domain == "button" || domain == "input_button") return "Press";
+  if (e.unit.length()) {
+    // Numeric reading: at most one decimal, then the unit.
+    char* end = nullptr;
+    const float v = strtof(st.c_str(), &end);
+    if (end && *end == 0 && st.length()) {
+      char buf[24];
+      if (fabsf(v - roundf(v)) < 0.05f) snprintf(buf, sizeof(buf), "%.0f", v);
+      else snprintf(buf, sizeof(buf), "%.1f", v);
+      return String(buf) + " " + e.unit;
+    }
+    return st + " " + e.unit;
+  }
   String s = st;
   s.replace('_', ' ');
   if (s.length()) s.setCharAt(0, toupper(s[0]));
@@ -870,14 +883,14 @@ void openModal(int tileIdx) {
   lv_obj_set_style_bg_color(chip, lv_color_hex(C_CHIP), 0);
   lv_obj_set_style_bg_opa(chip, LV_OPA_COVER, 0);
   lv_obj_set_style_text_color(chip, lv_color_hex(accent), 0);
-  lv_obj_set_style_text_font(chip, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_font(chip, &deck_font_20, 0);
   lv_obj_t* ic = lv_label_create(chip);
   lv_label_set_text(ic, iconSymbol(d));
   lv_obj_center(ic);
 
   lv_obj_t* name = lv_label_create(c);
   lv_label_set_text(name, tileLabel(d).c_str());
-  lv_obj_set_style_text_font(name, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_font(name, &deck_font_20, 0);
   lv_obj_set_pos(name, 80, 20);
   lv_obj_set_width(name, cw - 96);
   lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
@@ -887,7 +900,7 @@ void openModal(int tileIdx) {
   lv_obj_set_pos(ent, 80, 46);
 
   s_modalState = lv_label_create(c);
-  lv_obj_set_style_text_font(s_modalState, &lv_font_montserrat_28, 0);
+  lv_obj_set_style_text_font(s_modalState, &deck_font_28, 0);
   lv_obj_set_pos(s_modalState, 18, 84);
 
   const int bw = (cw - 18 * 2 - 10) / 2;
@@ -955,12 +968,26 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
 
   lv_obj_t* name = lv_label_create(t);
   lv_label_set_text(name, tileLabel(def).c_str());
+  // One line, cut with dots: HA names are often long and must not wrap into
+  // the state line.
   lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
   lv_obj_set_width(name, lv_pct(100));
+  lv_obj_set_height(name, lv_font_get_line_height(&deck_font_14));
   lv_obj_align(name, LV_ALIGN_BOTTOM_LEFT, 0, -14);
   lv_obj_t* sub = lv_label_create(t);
-  lv_obj_set_style_text_opa(sub, LV_OPA_70, 0);
-  lv_obj_align(sub, LV_ALIGN_BOTTOM_LEFT, 0, 2);
+  if (def.type == TILE_SENSOR) {
+    // The reading is the point of a sensor tile: big and top left, with the
+    // icon moved out of its way into a smaller top-right chip.
+    lv_obj_set_size(chip, 24, 24);
+    lv_obj_align(chip, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_set_style_text_font(sub, &deck_font_20, 0);
+    lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_align(name, LV_ALIGN_BOTTOM_LEFT, 0, 2);
+    lv_obj_set_style_text_opa(name, LV_OPA_70, 0);
+  } else {
+    lv_obj_set_style_text_opa(sub, LV_OPA_70, 0);
+    lv_obj_align(sub, LV_ALIGN_BOTTOM_LEFT, 0, 2);
+  }
 
   TileRt r = {&def, page, t, name, sub, false, 0, false, false, 0};
   lv_label_set_text(sub, tileSub(r).c_str());
@@ -981,7 +1008,7 @@ void addTilesPage(const PageDef& def) {
 
   lv_obj_t* t = lv_label_create(p.root);
   lv_label_set_text(t, def.name.length() ? def.name.c_str() : def.id.c_str());
-  lv_obj_set_style_text_font(t, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_font(t, &deck_font_20, 0);
   lv_obj_set_style_text_color(t, lv_color_hex(C_TITLE), 0);
   lv_obj_set_pos(t, 12, 5);
   p.clock = lv_label_create(p.root);
@@ -1294,7 +1321,7 @@ bool deckBegin(lgfx::LGFX_Sprite* face, uint8_t rotation) {
 
   lv_obj_t* scr = lv_screen_active();
   lv_obj_set_style_bg_color(scr, lv_color_hex(C_BG), 0);
-  lv_obj_set_style_text_font(scr, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(scr, &deck_font_14, 0);
   lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
 

@@ -5,9 +5,9 @@
 // (in small batches, because the WebSocket library drops frames over 15 KB),
 // call_service, heartbeat and reconnect. Entity state lands in a small store
 // the UI reads by polling haStoreVersion(). The entity picker in the portal
-// uses haFetchEntityList(), a streamed REST call (/api/states) filtered down
-// to id, name, state and icon, so a large installation does not need a large
-// buffer.
+// uses haFetchEntityList(): a list Home Assistant renders itself through
+// /api/template (id, name, state, icon, unit), kept on flash and refreshed
+// only when the user asks.
 //
 // The token lives only in NVS (namespace "deckha"), like the WiFi password:
 // never in deck.json, backups, logs or /api responses.
@@ -37,6 +37,7 @@ struct HaEntity {
   String state;
   String name;              // friendly_name
   String icon;              // "mdi:..." when the entity sets one
+  String unit;              // unit_of_measurement (sensors)
   int brightness = -1;      // 0..255 for lights that report it
   uint32_t version = 0;     // bumps on every change of this entity
 };
@@ -66,9 +67,13 @@ bool haCallService(const String& domain, const String& service, const String& ta
 // show. False when none is pending.
 bool haTakeFailure(String& entity, String& message);
 
-// Portal entity picker: JSON array [{"id","name","state","icon"}] sorted by id.
-// Blocking REST call (a second or two on a big install); loop task only.
-bool haFetchEntityList(String& outJson, String& err);
+// Portal entity picker: {"updated": epoch, "count": n, "entities":
+// [{"id","name","state","icon","unit"}]}. Served from a copy on flash
+// (/ha_entities.json); refresh = fetch it from Home Assistant first (a
+// blocking call of about a second, loop task only).
+bool haFetchEntityList(String& outJson, bool refresh, String& err);
+// Where that copy lives, for streaming it straight from flash.
+const char* haEntityListPath();
 
 }  // namespace deck
 

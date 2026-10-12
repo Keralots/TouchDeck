@@ -16,6 +16,7 @@
 #include "deck_config.h"
 #include "deck_ha.h"
 #include "deck_web.h"
+#include <LittleFS.h>
 #endif
 #include <WebServer.h>
 #include <ArduinoJson.h>
@@ -1762,10 +1763,20 @@ static void handleHaForget() {
   sendJsonMessage(200, true, "Removed");
 }
 
-// GET /api/ha/entities - picker list, fetched from HA on demand.
+// GET /api/ha/entities[?refresh=1] - picker list, cached on flash.
 static void handleHaEntities() {
   String out, err;
-  if (!deck::haFetchEntityList(out, err)) {
+  const bool refresh = server.arg("refresh") == "1";
+  if (!refresh && deck::deckFsReady() && LittleFS.exists(deck::haEntityListPath())) {
+    // Straight from flash: loading 160 KB into a String first took seconds.
+    File f = LittleFS.open(deck::haEntityListPath(), "r");
+    if (f) {
+      server.streamFile(f, "application/json");
+      f.close();
+      return;
+    }
+  }
+  if (!deck::haFetchEntityList(out, refresh, err)) {
     sendJsonMessage(502, false, err.c_str());
     return;
   }
