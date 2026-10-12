@@ -16,6 +16,7 @@
 #include "deck_config.h"
 #include "deck_ha.h"
 #include "deck_web.h"
+#include "deck_icons.h"
 #include <LittleFS.h>
 #endif
 #include <WebServer.h>
@@ -1791,6 +1792,72 @@ static void handleHaEntities() {
   server.send(200, "application/json", out);
 }
 
+// --- Icon font (MDI TTF on LittleFS) ------------------------------------------
+static const char* const ICONS_UPLOAD = "/mdi.ttf.up";
+static File iconUpload;
+static String iconError;
+
+// GET /api/deck/icons -> {"loaded", "count", "size"}
+static void handleIconsStatus() {
+  JsonDocument doc;
+  doc["loaded"] = deck::iconsReady();
+  doc["count"] = deck::iconsCount();
+  doc["size"] = deck::iconsFileSize();
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+// GET /mdi.ttf - the loaded font for the portal's icon picker, from PSRAM.
+// The portal adds ?v=<size> so a new font gets a new URL.
+static void handleIconsFont() {
+  if (!deck::iconsReady()) {
+    server.send(404, "text/plain", "No icon font");
+    return;
+  }
+  streamAsset((const char*)deck::iconsData(), deck::iconsFileSize(), "font/ttf",
+              "public, max-age=31536000, immutable");
+}
+
+// POST /api/deck/icons (multipart "font") - store, then load on finish.
+static void handleIconsUpload() {
+  HTTPUpload& up = server.upload();
+  if (up.status == UPLOAD_FILE_START) {
+    iconError = "";
+    if (!deck::deckFsReady()) {
+      iconError = "file system not available";
+      return;
+    }
+    LittleFS.remove(ICONS_UPLOAD);
+    // Old font plus new one may not both fit; the running copy is in PSRAM.
+    if (LittleFS.totalBytes() - LittleFS.usedBytes() < 2 * 1024 * 1024)
+      LittleFS.remove(deck::iconsPath());
+    iconUpload = LittleFS.open(ICONS_UPLOAD, "w");
+    if (!iconUpload) iconError = "cannot create the file";
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    esp_task_wdt_reset();  // one handleClient() pass for the whole upload
+    if (iconUpload && iconUpload.write(up.buf, up.currentSize) != up.currentSize) {
+      iconError = "flash full";
+      iconUpload.close();
+    }
+  } else if (up.status == UPLOAD_FILE_END || up.status == UPLOAD_FILE_ABORTED) {
+    if (iconUpload) iconUpload.close();
+    if (up.status == UPLOAD_FILE_ABORTED) iconError = "upload aborted";
+  }
+}
+
+static void handleIconsFinish() {
+  String err = iconError;
+  if (!err.length() && !deckInstallIcons(ICONS_UPLOAD, err) && !err.length()) err = "install failed";
+  if (iconError.length()) LittleFS.remove(ICONS_UPLOAD);
+  iconError = "";
+  if (err.length()) {
+    sendJsonMessage(400, false, err.c_str());
+    return;
+  }
+  handleIconsStatus();
+}
+
 // POST /api/deck/card?tile=<id> - bench hook, open a tile's detail card.
 static void handleDeckCard() {
   const bool ok = deckTestCard(server.arg("tile"));
@@ -1941,6 +2008,9 @@ void initWebServer() {
   server.on("/api/deck/card", HTTP_POST, handleDeckCard);
   server.on("/deck", HTTP_GET, handleDeckPage);
   server.on("/deck.js", HTTP_GET, handleDeckJs);
+  server.on("/api/deck/icons", HTTP_GET, handleIconsStatus);
+  server.on("/api/deck/icons", HTTP_POST, handleIconsFinish, handleIconsUpload);
+  server.on("/mdi.ttf", HTTP_GET, handleIconsFont);
   server.on("/api/deck", HTTP_GET, handleDeckGet);
   server.on("/api/deck", HTTP_POST, handleDeckPost);
   server.on("/api/ha/status", HTTP_GET, handleHaStatus);

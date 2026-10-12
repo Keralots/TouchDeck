@@ -4,11 +4,13 @@
 #include "deck_ui.h"
 #include "deck_config.h"
 #include "deck_ha.h"
+#include "deck_icons.h"
 #include "deck_touch.h"
 #include "display_ui.h"
 #include "settings.h"
 #include "led.h"
 #include "pc_metrics.h"
+#include <LittleFS.h>
 #include <WiFi.h>
 #include <lvgl.h>
 #include <time.h>
@@ -58,6 +60,9 @@ struct TileRt {
   lv_obj_t* obj;
   lv_obj_t* name;
   lv_obj_t* sub;
+  lv_obj_t* icon;
+  int iconPx;
+  uint32_t iconCp;        // MDI codepoint shown, 0 = LVGL symbol
   bool on;
   uint32_t haVersion;     // last HA entity version applied
   bool pending;           // optimistic toggle waiting for HA
@@ -179,6 +184,71 @@ const char* iconSymbol(const TileDef& t) {
   if (d == "media_player") return LV_SYMBOL_PLAY;
   if (d == "sensor" || d == "binary_sensor" || d == "weather") return LV_SYMBOL_LIST;
   return LV_SYMBOL_POWER;
+}
+
+// Default MDI icon for an entity without one of its own.
+const char* defaultIcon(const String& domain, const String& dc, const String& unit, bool on) {
+  if (domain == "light") return on ? "lightbulb" : "lightbulb-outline";
+  if (domain == "switch" && dc == "outlet") return on ? "power-plug" : "power-plug-off";
+  if (domain == "switch" || domain == "input_boolean")
+    return on ? "toggle-switch-variant" : "toggle-switch-variant-off";
+  if (domain == "fan") return on ? "fan" : "fan-off";
+  if (domain == "lock") return on ? "lock" : "lock-open-variant";
+  if (domain == "cover") return on ? "window-shutter-open" : "window-shutter";
+  if (domain == "scene") return "palette";
+  if (domain == "script") return "script-text";
+  if (domain == "automation") return "robot";
+  if (domain == "button" || domain == "input_button") return "gesture-tap-button";
+  if (domain == "media_player") return "speaker";
+  if (domain == "climate") return "thermostat";
+  if (domain == "weather") return "weather-partly-cloudy";
+  if (domain == "person") return "account";
+  if (domain == "binary_sensor") {
+    if (dc == "door" || dc == "garage_door") return on ? "door-open" : "door-closed";
+    if (dc == "window") return on ? "window-open" : "window-closed";
+    if (dc == "motion" || dc == "occupancy" || dc == "presence") return "motion-sensor";
+    return on ? "checkbox-marked-circle" : "checkbox-blank-circle-outline";
+  }
+  if (domain == "sensor") {
+    if (dc == "temperature" || unit.startsWith("\xC2\xB0")) return "thermometer";
+    if (dc == "humidity") return "water-percent";
+    if (dc == "power") return "flash";
+    if (dc == "energy") return "lightning-bolt";
+    if (dc == "battery") return "battery";
+    if (dc == "illuminance") return "brightness-5";
+    if (dc == "pressure" || dc == "atmospheric_pressure") return "gauge";
+    if (dc == "carbon_dioxide") return "molecule-co2";
+    if (dc == "voltage") return "sine-wave";
+    if (dc == "current") return "current-ac";
+    return "eye";
+  }
+  return "gesture-tap-button";
+}
+
+// Puts a tile's icon on a label: the tile's own MDI icon, else the entity's
+// icon in HA, else a default; an LVGL symbol while no icon font is loaded.
+// Returns the codepoint shown (0 = symbol); shown = what the label has now.
+uint32_t showIcon(lv_obj_t* label, const TileDef& d, const HaEntity* e, bool on, int px,
+                  uint32_t shown) {
+  const lv_font_t* f = iconFont(px);
+  uint32_t cp = 0;
+  if (f) {
+    if (d.icon.length()) cp = iconCodepoint(d.icon);
+    if (!cp && e && e->icon.length()) cp = iconCodepoint(e->icon);
+    if (!cp)
+      cp = iconCodepoint(defaultIcon(entityDomain(d.entity), e ? e->deviceClass : String(),
+                                     e ? e->unit : String(), on));
+  }
+  if (cp && cp == shown) return cp;
+  if (cp) {
+    char u[5];
+    iconUtf8(cp, u);
+    lv_obj_set_style_text_font(label, f, 0);
+    lv_label_set_text(label, u);
+  } else {
+    lv_label_set_text(label, iconSymbol(d));
+  }
+  return cp;
 }
 
 String tileLabel(const TileDef& t) {
@@ -316,6 +386,7 @@ void applyHaToTile(TileRt& r, bool force) {
     r.pending = false;
   }
   if (d.type == TILE_TOGGLE) setTileOn(r, on);
+  r.iconCp = showIcon(r.icon, d, &e, on, r.iconPx, r.iconCp);
   lv_obj_set_style_opa(r.obj, avail ? LV_OPA_COVER : LV_OPA_50, 0);
   if (!d.label.length() && e.name.length()) lv_label_set_text(r.name, e.name.c_str());
   if (!d.sub.length()) lv_label_set_text(r.sub, prettyState(domain, e).c_str());
@@ -766,6 +837,8 @@ int s_modalTile = -1;
 lv_obj_t* s_modalState = nullptr;
 lv_obj_t* s_modalBtnLbl = nullptr;
 lv_obj_t* s_modalSlider = nullptr;
+lv_obj_t* s_modalIcon = nullptr;
+uint32_t s_modalIconCp = 0;
 
 void setModalOpen(bool open) {
   portENTER_CRITICAL(&s_mux);
@@ -821,6 +894,7 @@ void closeModal() {
   if (s_modalScrim) lv_obj_delete(s_modalScrim);
   s_modalCard = s_modalScrim = nullptr;
   s_modalSlider = nullptr;
+  s_modalIcon = nullptr;
   s_modalTile = -1;
   setModalOpen(false);
 }
@@ -890,6 +964,8 @@ void refreshModal() {
   }
   if (r.def->type == TILE_TOGGLE)
     lv_label_set_text(s_modalBtnLbl, r.on ? "Turn off" : "Turn on");
+  const bool on = haKnown && haStateOn(domain, e.state);
+  s_modalIconCp = showIcon(s_modalIcon, *r.def, haKnown ? &e : nullptr, on, 28, s_modalIconCp);
 }
 
 // Detail card for a tile (hold action "more-info"): name, entity, state, a
@@ -934,9 +1010,10 @@ void openModal(int tileIdx) {
   lv_obj_set_style_text_color(chip, lv_color_hex(accent), 0);
   lv_obj_set_style_text_font(chip, &deck_font_20, 0);
   lv_obj_remove_flag(chip, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_t* ic = lv_label_create(chip);
-  lv_label_set_text(ic, iconSymbol(d));
-  lv_obj_center(ic);
+  s_modalIcon = lv_label_create(chip);
+  s_modalIconCp = 0;
+  lv_label_set_text(s_modalIcon, "");
+  lv_obj_center(s_modalIcon);
 
   // Name and entity id: one line each, cut with dots (ids get long).
   lv_obj_t* name = lv_label_create(c);
@@ -1042,7 +1119,6 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_bg_color(chip, lv_color_hex(C_CHIP), 0);
   lv_obj_set_style_text_color(chip, lv_color_hex(accent), 0);
   lv_obj_t* ic = lv_label_create(chip);
-  lv_label_set_text(ic, iconSymbol(def));
   lv_obj_center(ic);
 
   // Layout: icon top left with the state top right next to it, the name at
@@ -1077,7 +1153,9 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     lv_obj_align(sub, LV_ALIGN_TOP_RIGHT, 0, 7);
   }
 
-  TileRt r = {&def, page, t, name, sub, false, 0, false, false, 0};
+  const int iconPx = def.type == TILE_SENSOR ? 16 : 20;
+  TileRt r = {&def, page, t, name, sub, ic, iconPx, 0, false, 0, false, false, 0};
+  r.iconCp = showIcon(ic, def, nullptr, false, iconPx, 0);
   lv_label_set_text(sub, tileSub(r).c_str());
   const size_t idx = s_tiles.size();
   s_tiles.push_back(r);
@@ -1413,6 +1491,7 @@ bool deckBegin(lgfx::LGFX_Sprite* face, uint8_t rotation) {
   lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
 
+  if (!iconsLoad(iconsPath(), err)) Serial.printf("Deck: icons: %s\n", err.c_str());
   haBegin();
   buildPages();
   touchBegin();
@@ -1531,6 +1610,28 @@ bool deckApplyConfig(const String& text, String& err) {
   lv_obj_invalidate(lv_screen_active());
   Serial.printf("Deck: new config applied, %u pages\n", (unsigned)s_cfg.pages.size());
   return true;
+}
+
+bool deckInstallIcons(const char* uploaded, String& err) {
+  if (!s_disp) {
+    err = "display not running";
+    return false;
+  }
+  // The pages hold the current fonts: tear them down before the swap.
+  panelQuiesce();
+  releaseSwipe();
+  destroyPages();
+  const bool ok = iconsLoad(uploaded, err);
+  if (ok) {
+    LittleFS.remove(iconsPath());
+    if (!LittleFS.rename(uploaded, iconsPath())) err = "font loaded but not stored";
+  } else {
+    LittleFS.remove(uploaded);
+  }
+  buildPages();
+  s_gen++;
+  lv_obj_invalidate(lv_screen_active());
+  return ok && !err.length();
 }
 
 bool deckTestCard(const String& tileId) {

@@ -135,6 +135,7 @@ void entityFromAttrs(HaEntity& e, JsonObjectConst a) {
   if (a["friendly_name"].is<const char*>()) e.name = (const char*)a["friendly_name"];
   if (a["icon"].is<const char*>()) e.icon = (const char*)a["icon"];
   if (a["unit_of_measurement"].is<const char*>()) e.unit = (const char*)a["unit_of_measurement"];
+  if (a["device_class"].is<const char*>()) e.deviceClass = (const char*)a["device_class"];
   // Present-but-null (a light turning off) must clear it, so look at the
   // keys rather than at a["brightness"], which cannot tell null from absent.
   for (JsonPairConst kv : a)
@@ -161,6 +162,7 @@ void applyEvent(JsonObjectConst ev) {
     e.name = "";
     e.icon = "";
     e.unit = "";
+    e.deviceClass = "";
     e.brightness = -1;
     entityFromAttrs(e, kv.value()["a"].as<JsonObjectConst>());
     e.version++;
@@ -180,6 +182,7 @@ void applyEvent(JsonObjectConst ev) {
       if (!strcmp(key, "brightness")) e.brightness = -1;
       else if (!strcmp(key, "icon")) e.icon = "";
       else if (!strcmp(key, "unit_of_measurement")) e.unit = "";
+      else if (!strcmp(key, "device_class")) e.deviceClass = "";
       else if (!strcmp(key, "friendly_name")) e.name = "";
     }
     e.version++;

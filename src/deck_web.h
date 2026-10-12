@@ -34,6 +34,11 @@ const CSS=`
 .dk-ent{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:9px 12px;border-radius:var(--r-md);cursor:pointer}.dk-ent:hover{background:var(--card-2)}
 .dk-ent b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dk-ent small{font:11px var(--mono);color:var(--dim)}.dk-ent .st{font:12px var(--mono);color:var(--mute);align-self:center}
 .dk-empty{padding:22px;text-align:center;color:var(--dim);font-size:13px}
+.dk-ic{cursor:pointer;border:0;padding:0}.dk-ic.mdi{font:22px dkmdi;line-height:1}
+.dk-igrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:6px;overflow-y:auto;padding:10px}
+.dk-ibtn{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 4px;border:1px solid transparent;border-radius:var(--r-md);background:none;color:var(--ink);cursor:pointer;min-width:0}
+.dk-ibtn:hover{background:var(--card-2)}.dk-ibtn.on{border-color:var(--accent);background:var(--accent-soft)}
+.dk-ibtn i{font:28px dkmdi;font-style:normal;line-height:1}.dk-ibtn small{font:10px var(--mono);color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:560px){.dk-tile{grid-template-columns:36px minmax(0,1fr)}.dk-tact{grid-column:1/-1}.dk-save{margin:18px -16px -18px;padding:12px 16px}}
 `;
 const st=document.createElement('style');st.textContent=CSS;document.head.appendChild(st);
@@ -44,6 +49,10 @@ sec.innerHTML=`<div class="page-header"><h1 class="page-h1">Deck</h1><p class="p
 <div class="field"><label class="field-label" for="dkHaToken">Long-lived access token</label><input type="password" id="dkHaToken" autocomplete="off" placeholder="paste the token"><p class="field-hint">HA profile, Security tab, Long-lived access tokens. Stored only on the device, never shown again.</p></div></div>
 <div class="dk-row"><button type="button" class="btn btn-accent" id="dkHaSave">Save and connect</button><button type="button" class="btn" id="dkHaForget">Forget</button></div>
 <div class="dk-status"><span class="dk-dot" id="dkHaDot"></span><span id="dkHaState">checking...</span></div></div>
+<div class="card"><div class="card-head"><h2 class="card-title">Icons</h2><span class="tag" id="dkIcTag">-</span></div>
+<p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; "Install" downloads it in this browser and sends it to the device. Without it the deck shows a few built-in symbols.</p>
+<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
+<div class="dk-status"><span class="dk-dot" id="dkIcDot"></span><span id="dkIcState">checking...</span></div></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
 <div class="dk-tabs" id="dkTabs"></div><div id="dkPage"></div>
 <div class="dk-save"><span class="dk-msg" id="dkMsg">No changes</span><button type="button" class="btn btn-accent" id="dkSave">Save to device</button></div></div>`;
@@ -51,7 +60,11 @@ document.body.insertAdjacentHTML('beforeend',`<div class="dk-modal" id="dkPicker
 <div class="dk-row"><input type="text" id="dkQ" placeholder="Search by name or entity id" autocomplete="off" style="flex:1"><button type="button" class="btn" id="dkPickClose">Close</button></div>
 <div class="dk-chips" id="dkDomains"></div>
 <div class="dk-status"><span id="dkListInfo">-</span><button type="button" class="btn" id="dkListUpdate" style="margin-left:auto;padding:5px 10px">Update from HA</button></div></div>
-<div class="dk-list" id="dkEnts"></div></div></div>`);
+<div class="dk-list" id="dkEnts"></div></div></div>
+<div class="dk-modal" id="dkIcPick"><div class="dk-sheet"><div class="dk-head">
+<div class="dk-row"><input type="text" id="dkIcQ" placeholder="Search icons, e.g. lamp, fan, thermometer" autocomplete="off" style="flex:1"><button type="button" class="btn" id="dkIcAuto">Automatic</button><button type="button" class="btn" id="dkIcClose">Close</button></div>
+<div class="dk-status"><span id="dkIcInfo">-</span></div></div>
+<div class="dk-igrid" id="dkIcGrid"></div></div></div>`);
 
 const $=id=>document.getElementById(id);
 const TOGGLE=['light','switch','fan','input_boolean','lock','cover','media_player','climate','automation','siren','humidifier','valve'];
@@ -82,7 +95,8 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   const p=ps[cur];const [c,r]=grid(p);let used=0;p.tiles.forEach(t=>{const [w,h]=tileSize(t).split('x').map(Number);used+=w*h;});
   let h='<div class="grid-2"><div class="field"><label class="field-label">Page name</label><input type="text" id="dkPName" value="'+esc(p.name||'')+'"></div><div class="field"><label class="field-label">Grid (columns x rows)</label><div class="dk-row"><select id="dkPCols" style="width:auto">'+[2,3,4,5,6].map(n=>'<option'+(n===c?' selected':'')+'>'+n+'</option>').join('')+'</select><span>x</span><select id="dkPRows" style="width:auto">'+[2,3,4].map(n=>'<option'+(n===r?' selected':'')+'>'+n+'</option>').join('')+'</select><button type="button" class="btn btn-danger" id="dkPDel" style="margin-left:auto">Delete page</button></div></div></div>';
   h+='<div class="dk-tiles">'+p.tiles.map((t,i)=>{const d=domainOf(t.entity);const en=entMap[t.entity];const nm=en&&en.name?en.name:(t.entity||'No entity');
-    return '<div class="dk-tile"><div class="dk-ic" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+esc((d||'?').slice(0,2).toUpperCase())+'</div><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="dk-tsub">'+esc(t.entity||'no entity')+(en&&en.state?' - '+esc(en.state)+(en.unit?' '+esc(en.unit):''):'')+'</div></div>'+
+    const cp=tileCp(t);
+    return '<div class="dk-tile"><button type="button" class="dk-ic'+(cp?' mdi':'')+'" data-ic="'+i+'" title="'+esc(cp?(t.icon||(en&&en.icon)||'automatic'):'Choose an icon')+'" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+(cp?String.fromCodePoint(cp):esc((d||'?').slice(0,2).toUpperCase()))+'</button><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="dk-tsub">'+esc(t.entity||'no entity')+(en&&en.state?' - '+esc(en.state)+(en.unit?' '+esc(en.unit):''):'')+'</div></div>'+
     '<div class="dk-tact"><select data-t="'+i+'"><option value="toggle"'+(t.type==='toggle'?' selected':'')+'>Switch</option><option value="action"'+(t.type==='action'?' selected':'')+'>Button</option><option value="sensor"'+(t.type==='sensor'?' selected':'')+'>Sensor</option></select><select data-s="'+i+'">'+['1x1','2x1','1x2','2x2'].map(v=>'<option'+(v===tileSize(t)?' selected':'')+'>'+v+'</option>').join('')+'</select><button type="button" class="btn" data-e="'+i+'">Entity</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div></div>';}).join('')+'</div>';
   h+='<p class="dk-cap'+(used>c*r?' over':'')+'">'+used+' of '+(c*r)+' cells used'+(used>c*r?' - tiles that do not fit are not shown':'')+'</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button></div>';
   el.innerHTML=h;
@@ -94,6 +108,7 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   el.querySelectorAll('[data-t]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.t];t.type=e.target.value;if(t.type!=='action')delete t.tap;setDirty(true);renderPage();});
   el.querySelectorAll('[data-s]').forEach(x=>x.onchange=e=>{setSize(p.tiles[+x.dataset.s],e.target.value);setDirty(true);renderPage();});
   el.querySelectorAll('[data-e]').forEach(x=>x.onclick=()=>openPicker(+x.dataset.e));
+  el.querySelectorAll('[data-ic]').forEach(x=>x.onclick=()=>openIcons(+x.dataset.ic));
   el.querySelectorAll('[data-u]').forEach(x=>x.onclick=()=>{const i=+x.dataset.u;if(i<1)return;const t=p.tiles.splice(i,1)[0];p.tiles.splice(i-1,0,t);setDirty(true);renderPage();});
   el.querySelectorAll('[data-x]').forEach(x=>x.onclick=()=>{p.tiles.splice(+x.dataset.x,1);setDirty(true);renderPage();});
   $('dkAddTile').onclick=()=>openPicker(-1);}
@@ -114,15 +129,48 @@ async function openPicker(i){pickFor=i;$('dkQ').value='';$('dkPicker').classList
 function closePicker(){$('dkPicker').classList.remove('show');}
 function pick(id){const p=pages()[cur];const type=autoType(domainOf(id));
   if(pickFor<0)p.tiles.push({id:'t'+Date.now().toString(36),type:type,entity:id});
-  else{const t=p.tiles[pickFor];t.entity=id;t.type=type;delete t.label;delete t.icon;delete t.tap;}
+  else{const t=p.tiles[pickFor];t.entity=id;t.type=type;delete t.label;delete t.sub;delete t.icon;delete t.tap;}
   setDirty(true);closePicker();renderPage();}
 $('dkQ').oninput=renderEnts;$('dkPickClose').onclick=closePicker;$('dkPicker').onclick=e=>{if(e.target===$('dkPicker'))closePicker();};
+
+/* icons */
+const MDI_URL='https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf';
+let mdi=null,mdiNames=[],icFor=-1;
+// name -> codepoint from the font's own glyph names (post v2 + cmap format 12).
+function parseMdi(buf){const d=new DataView(buf),u=new Uint8Array(buf),T={};const n=d.getUint16(4);
+  for(let i=0;i<n;i++){const r=12+16*i;T[String.fromCharCode(u[r],u[r+1],u[r+2],u[r+3])]=[d.getUint32(r+8),d.getUint32(r+12)];}
+  const [po,pl]=T.post,co=T.cmap[0],g=d.getUint16(po+32),cu=[];for(let p=po+34+2*g;p<po+pl;p+=1+u[p])cu.push(String.fromCharCode.apply(null,u.subarray(p+1,p+1+u[p])));
+  const nm=gi=>{if(gi>=g)return '';const k=d.getUint16(po+34+2*gi);return k>=258?(cu[k-258]||''):'';};const m=new Map();
+  for(let i=0,ns=d.getUint16(co+2);i<ns;i++){const so=co+d.getUint32(co+8+8*i);if(d.getUint16(so)!==12)continue;
+    for(let k=0,ng=d.getUint32(so+12);k<ng;k++){const b=so+16+12*k,s0=d.getUint32(b),e0=d.getUint32(b+4),g0=d.getUint32(b+8);for(let c=s0;c<=e0;c++){const x=nm(g0+c-s0);if(x&&!m.has(x))m.set(x,c);}}break;}
+  return m;}
+const iconCp=n=>{if(!mdi||!n)return 0;if(n.startsWith('mdi:'))n=n.slice(4);else if(n.includes(':'))return 0;return mdi.get(n)||0;};
+const tileCp=t=>iconCp(t.icon)||iconCp((entMap[t.entity]||{}).icon);
+async function loadMdi(size){try{const r=await fetch('/mdi.ttf?v='+size);if(!r.ok)throw new Error('HTTP '+r.status);const buf=await r.arrayBuffer();mdi=parseMdi(buf);mdiNames=[...mdi.keys()].sort();
+  const f=new FontFace('dkmdi',buf);await f.load();document.fonts.add(f);if(deck)renderPage();}catch(e){mdi=null;$('dkIcState').textContent='font on the device, but the portal could not read it: '+e.message;}}
+function icStatus(s){$('dkIcDot').className='dk-dot '+(s.loaded?'ok':'');$('dkIcState').textContent=s.loaded?(s.count+' icons, '+Math.round(s.size/1024)+' KB'):'not installed';$('dkIcTag').textContent=s.loaded?'installed':'-';}
+async function icRefresh(){try{const s=await api('/api/deck/icons');icStatus(s);if(s.loaded&&!mdi)loadMdi(s.size);}catch(e){$('dkIcState').textContent='status unavailable';}}
+async function icInstall(blob){$('dkIcDot').className='dk-dot busy';$('dkIcState').textContent='Sending to the device and installing (about 20 s)...';$('dkIcNet').disabled=$('dkIcFile').disabled=true;
+  try{const fd=new FormData();fd.append('font',blob,'mdi.ttf');const s=await api('/api/deck/icons',{method:'POST',body:fd});icStatus(s);mdi=null;if(s.loaded)await loadMdi(s.size);}
+  catch(e){$('dkIcDot').className='dk-dot err';$('dkIcState').textContent='Not installed: '+e.message;}finally{$('dkIcNet').disabled=$('dkIcFile').disabled=false;}}
+$('dkIcNet').onclick=async()=>{$('dkIcState').textContent='Downloading from jsDelivr...';try{const r=await fetch(MDI_URL);if(!r.ok)throw new Error('HTTP '+r.status);await icInstall(await r.blob());}catch(e){$('dkIcDot').className='dk-dot err';$('dkIcState').textContent='Download failed ('+e.message+'). Get the file yourself and use "Upload .ttf file".';}};
+$('dkIcFile').onclick=()=>$('dkIcInput').click();
+$('dkIcInput').onchange=e=>{const f=e.target.files[0];e.target.value='';if(f)icInstall(f);};
+function renderIcons(){const t=pages()[cur].tiles[icFor];const q=$('dkIcQ').value.trim().toLowerCase().replace(/^mdi:/,'');const cur0=(t.icon||'').replace(/^mdi:/,'');
+  const list=q?mdiNames.filter(n=>n.includes(q)):mdiNames;const shown=list.slice(0,240);
+  $('dkIcInfo').textContent=(t.icon?'Chosen: '+t.icon:'Automatic (the entity icon in HA, else a default)')+' - '+list.length+' match'+(list.length===1?'':'es')+(list.length>shown.length?', showing '+shown.length:'');
+  $('dkIcGrid').innerHTML=shown.map(n=>'<button type="button" class="dk-ibtn'+(n===cur0?' on':'')+'" data-n="'+esc(n)+'" title="mdi:'+esc(n)+'"><i>'+String.fromCodePoint(mdi.get(n))+'</i><small>'+esc(n)+'</small></button>').join('')||'<p class="dk-empty">Nothing matches.</p>';
+  $('dkIcGrid').querySelectorAll('[data-n]').forEach(b=>b.onclick=()=>setIcon('mdi:'+b.dataset.n));}
+function setIcon(v){const t=pages()[cur].tiles[icFor];if(v)t.icon=v;else delete t.icon;setDirty(true);$('dkIcPick').classList.remove('show');renderPage();}
+function openIcons(i){if(!mdi){alert('Install the icon font first (Icons card above).');return;}icFor=i;$('dkIcQ').value='';$('dkIcPick').classList.add('show');renderIcons();$('dkIcQ').focus();}
+$('dkIcQ').oninput=renderIcons;$('dkIcAuto').onclick=()=>setIcon('');$('dkIcClose').onclick=()=>$('dkIcPick').classList.remove('show');
+$('dkIcPick').onclick=e=>{if(e.target===$('dkIcPick'))$('dkIcPick').classList.remove('show');};
 
 /* save */
 $('dkSave').onclick=async()=>{try{await api('/api/deck',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(deck)});setDirty(false);}catch(e){alert('Not saved: '+e.message);}};
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
 
-(async function init(){haStatus();setInterval(()=>{if(visible())haStatus();},3000);
+(async function init(){haStatus();icRefresh();setInterval(()=>{if(visible())haStatus();},3000);
   try{const r=await api('/api/deck');deck=r.deck;render();}catch(e){$('dkPage').innerHTML='<p class="dk-empty">'+esc(e.message)+'</p>';}
   try{await loadEnts();}catch(e){}})();
 })();)JS";
