@@ -3,6 +3,7 @@
 #include "settings.h"
 #include "display_ui.h"
 #include "pc_metrics.h"
+#include "soc/soc_caps.h"
 
 // Which GPIO currently carries the PWM signal, or -1 when nothing is attached.
 // Kept separate from ledSettings.pin so a configuration change detaches the
@@ -15,6 +16,7 @@ static uint32_t lastTickMs     = 0;
 // ignores the schedule, so the 60 Hz tick does not fight a slider drag with the
 // stale saved value. Cleared by initLed() (which the save handler calls) and by
 // shutdownLed().
+static int16_t haLevel           = LED_HA_NONE;
 static bool    previewActive     = false;
 static uint8_t previewBrightness = 0;
 
@@ -38,7 +40,8 @@ bool ledPinAllowed(uint8_t pin) {
   if (pin == 2 || pin == 41 || pin == 42) return false;   // NS4168 I2S audio
   if (pin == 19 || pin == 20) return false;   // USB CDC D-/D+
   if (pin >= 26 && pin <= 37) return false;   // SPI flash + PSRAM (qio_opi)
-  if (pin > 48) return false;
+  // Pins the chip does not have (the S3 has no GPIO 22..25).
+  if (pin >= SOC_GPIO_PIN_COUNT || !((SOC_GPIO_VALID_OUTPUT_GPIO_MASK >> pin) & 1)) return false;
   return true;
 }
 
@@ -104,6 +107,10 @@ static bool attachPin(uint8_t pin) {
 uint8_t ledCurrentDuty() {
   return (lastWrittenDuty < 0) ? 0 : (uint8_t)lastWrittenDuty;
 }
+
+void ledSetHaLevel(int16_t level) { haLevel = level; }
+int16_t ledHaLevel() { return haLevel; }
+uint8_t ledDayLevel() { return haLevel >= 0 ? (uint8_t)haLevel : ledSettings.brightness; }
 
 // ---------------------------------------------------------------------------
 //  Lifecycle
@@ -181,7 +188,8 @@ void ledTick() {
 
   uint8_t duty = (ledSettings.nightEnabled && nightBrightnessActive())
                    ? ledSettings.nightBrightness
-                   : ledSettings.brightness;
+                   : ledDayLevel();
+  if (haLevel == 0) duty = 0;  // switched off from HA: off at night too
   // One test covers manual off and a night brightness of 0: whatever put the
   // panel out, the LED goes with it.
   if (ledSettings.followDisplay && currentBacklightLevel() == 0) duty = 0;

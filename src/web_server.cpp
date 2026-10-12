@@ -684,6 +684,7 @@ static void handleApiStatus() {
   doc["led_enabled"] = ledSettings.enabled != 0;
   doc["led_pin_valid"] = ledPinValid();
   doc["led_duty"] = ledCurrentDuty();
+  doc["led_ha"] = ledHaLevel();  // -1 not linked, -2 on at the local level
   doc["free_heap"]    = ESP.getFreeHeap();
   doc["max_block"]    = ESP.getMaxAllocHeap();
   doc["internal_free"] = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);

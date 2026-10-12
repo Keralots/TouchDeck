@@ -56,7 +56,8 @@ sec.innerHTML=`<div class="page-header"><h1 class="page-h1">Deck</h1><p class="p
 <div class="grid-2"><div class="field"><label class="field-label" for="dkHaUrl">Address</label><input type="text" id="dkHaUrl" placeholder="http://192.168.0.7:8123" autocomplete="off"></div>
 <div class="field"><label class="field-label" for="dkHaToken">Long-lived access token</label><input type="password" id="dkHaToken" autocomplete="off" placeholder="paste the token"><p class="field-hint">HA profile, Security tab, Long-lived access tokens. Stored only on the device, never shown again.</p></div></div>
 <div class="dk-row"><button type="button" class="btn btn-accent" id="dkHaSave">Save and connect</button><button type="button" class="btn" id="dkHaForget">Forget</button></div>
-<div class="dk-status"><span class="dk-dot" id="dkHaDot"></span><span id="dkHaState">checking...</span></div></div>
+<div class="dk-status"><span class="dk-dot" id="dkHaDot"></span><span id="dkHaState">checking...</span></div>
+<div class="field" style="margin-top:16px"><label class="field-label">Status LED</label><div class="dk-row"><span id="dkLedEnt" class="dk-tsub" style="margin:0">-</span><button type="button" class="btn" id="dkLedPick">Choose entity</button><button type="button" class="btn" id="dkLedClear">Unlink</button></div><p class="field-hint">The LED's day brightness follows this input_boolean, input_number or light, and the Light slider on the device sets it. The LED itself and its night level: Hardware page. Applies on "Save to device" below.</p></div></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Icons</h2><span class="tag" id="dkIcTag">-</span></div>
 <p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; "Install" downloads it in this browser and sends it to the device. Without it the deck shows a few built-in symbols.</p>
 <div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
@@ -192,13 +193,13 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   $('dkAddPc').onclick=async()=>{if(!pcm.length)await loadPc();const usedIds=p.tiles.filter(t=>t.type==='metric').map(t=>t.metric);const m=pcm.find(x=>!usedIds.includes(x.id))||pcm[0];if(!m){alert('No PC metrics yet - start the companion app on the PC.');return;}p.tiles.push({id:'m'+Date.now().toString(36),type:'metric',metric:m.id,style:'number'});setDirty(true);renderPage();};
   el.querySelectorAll('[data-m]').forEach(x=>x.onchange=e=>{p.tiles[+x.dataset.m].metric=+e.target.value;setDirty(true);renderPage();});
   el.querySelectorAll('[data-st]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.st];if(e.target.value==='number')delete t.style;else{t.style=e.target.value;if(tileSize(t)==='1x1')setSize(t,'2x1');}setDirty(true);renderPage();});}
-function render(){renderTabs();renderPage();}
+function render(){renderTabs();renderPage();renderLed();}
 
 /* entity picker */
 function setList(r){ents=(r.entities||[]).slice().sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);entMap={};ents.forEach(e=>entMap[e.id]=e);
   $('dkListInfo').textContent=r.updated?(ents.length+' entities, list from '+new Date(r.updated*1000).toLocaleString()):'No list yet - press "Update from HA"';}
 async function loadEnts(refresh){if(ents&&!refresh)return;$('dkEnts').innerHTML='<p class="dk-empty">'+(refresh?'Fetching the entity list from Home Assistant...':'Loading...')+'</p>';$('dkListUpdate').disabled=true;
-  try{setList(await api('/api/ha/entities'+(refresh?'?refresh=1':'')));if(deck)renderPage();}catch(e){$('dkEnts').innerHTML='<p class="dk-empty">'+esc(e.message)+'<br>Check the Home Assistant settings above.</p>';throw e;}finally{$('dkListUpdate').disabled=false;}}
+  try{setList(await api('/api/ha/entities'+(refresh?'?refresh=1':'')));if(deck){renderPage();renderLed();}}catch(e){$('dkEnts').innerHTML='<p class="dk-empty">'+esc(e.message)+'<br>Check the Home Assistant settings above.</p>';throw e;}finally{$('dkListUpdate').disabled=false;}}
 $('dkListUpdate').onclick=async()=>{try{await loadEnts(true);renderEnts();}catch(e){}};
 function renderDomains(){$('dkDomains').innerHTML=DOMS.map(d=>'<span class="chip'+(d[0]===dom?' on':'')+'" data-d="'+d[0]+'">'+d[1]+'</span>').join('');$('dkDomains').querySelectorAll('[data-d]').forEach(c=>c.onclick=()=>{dom=c.dataset.d;renderDomains();renderEnts();});}
 function renderEnts(){if(!ents)return;if(!ents.length){$('dkEnts').innerHTML='<p class="dk-empty">No entity list on the device yet. Press "Update from HA".</p>';return;}const q=$('dkQ').value.trim().toLowerCase();let list=ents.filter(e=>(!dom||domainOf(e.id)===dom)&&(!q||e.id.toLowerCase().includes(q)||(e.name||'').toLowerCase().includes(q)));
@@ -207,7 +208,12 @@ function renderEnts(){if(!ents)return;if(!ents.length){$('dkEnts').innerHTML='<p
   $('dkEnts').querySelectorAll('[data-id]').forEach(r=>r.onclick=()=>pick(r.dataset.id));}
 async function openPicker(i){pickFor=i;$('dkQ').value='';$('dkPicker').classList.add('show');renderDomains();try{await loadEnts();renderEnts();$('dkQ').focus();}catch(e){}}
 function closePicker(){$('dkPicker').classList.remove('show');}
-function pick(id){const p=pages()[cur];const type=autoType(domainOf(id));
+const LEDDOM=['input_boolean','input_number','light'];
+function renderLed(){const id=deck&&deck.led&&deck.led.entity;const en=id&&entMap[id];$('dkLedEnt').textContent=id?((en&&en.name?en.name+' - ':'')+id):'Not linked';$('dkLedClear').disabled=!id;}
+$('dkLedPick').onclick=()=>{if(deck)openPicker(-2);};
+$('dkLedClear').onclick=()=>{if(!deck)return;delete deck.led;setDirty(true);renderLed();};
+function pick(id){if(pickFor===-2){if(!LEDDOM.includes(domainOf(id))){alert('Pick an input_boolean, input_number or light.');return;}deck.led={entity:id};setDirty(true);closePicker();renderLed();return;}
+  const p=pages()[cur];const type=autoType(domainOf(id));
   if(pickFor<0)p.tiles.push({id:'t'+Date.now().toString(36),type:type,entity:id});
   else{const t=p.tiles[pickFor];t.entity=id;t.type=type;delete t.label;delete t.sub;delete t.icon;delete t.tap;}
   setDirty(true);closePicker();renderPage();}
