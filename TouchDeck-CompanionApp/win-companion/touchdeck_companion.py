@@ -1,6 +1,7 @@
 """TouchDeck Companion for Windows."""
 
 import psutil
+import ipaddress
 import socket
 import time
 import json
@@ -200,6 +201,10 @@ sensor_database = {
     "gpu": [],        # GPU metrics (usage, memory, freq, fan, power) from LHM
     "other": []
 }
+
+# Byte counter and monotonic timestamp per (interface, direction).
+_network_baselines = {}
+_network_lock = threading.Lock()
 
 # Global variable for discovered WMI namespace (can be auto-detected)
 discovered_wmi_namespace = "root\\LibreHardwareMonitor"  # Default
@@ -1419,6 +1424,41 @@ def print_troubleshooting_footer():
     print("\n" + "!" * 60 + "\n")
 
 
+def discover_network_sensors():
+    """Return psutil throughput sensors for active, non-loopback interfaces."""
+    try:
+        stats = psutil.net_if_stats()
+        addresses = psutil.net_if_addrs()
+    except OSError as exc:
+        print("  (network sensor discovery unavailable: %s)" % exc)
+        return []
+
+    sensors = []
+    for nic, stat in stats.items():
+        if not stat.isup:
+            continue
+        flags = getattr(stat, "flags", "").split(",")
+        if "loopback" in flags or "loopback" in nic.lower() or nic.lower() in ("lo", "lo0"):
+            continue
+        ip_addresses = [address.address for address in addresses.get(nic, [])
+                        if address.family in (socket.AF_INET, socket.AF_INET6)]
+        if any(ipaddress.ip_address(address).is_loopback for address in ip_addresses):
+            continue
+        for direction, title, name in (("recv", "Download", "NET_D"),
+                                       ("sent", "Upload", "NET_U")):
+            sensors.append({
+                "name": name,
+                "display_name": f"{title} Speed [{nic}] (psutil)",
+                "source": "psutil",
+                "type": "throughput",
+                "unit": "KB/s",
+                "psutil_method": f"net_{direction}:{nic}",
+                "custom_label": "",
+                "current_value": 0
+            })
+    return sensors
+
+
 def discover_sensors():
     """
     Discover all available sensors from LibreHardwareMonitor and psutil
@@ -1475,6 +1515,8 @@ def discover_sensors():
         "custom_label": "",
         "current_value": int(psutil.disk_usage('C:\\').percent)
     })
+
+    sensor_database["throughput"].extend(discover_network_sensors())
 
     print(f"  Found {len(sensor_database['system'])} system metrics")
 
@@ -3414,6 +3456,32 @@ def build_wmi_snapshot(identifiers=None):
         return None
 
 
+def _network_throughput(nic, direction):
+    """Read a byte-counter delta as integer tenths of KB/s."""
+    key = (nic, direction)
+    with _network_lock:
+        try:
+            # Raw counters let us detect resets instead of hiding them as wraps.
+            counters = psutil.net_io_counters(pernic=True, nowrap=False)
+        except OSError:
+            return None
+        counter = counters.get(nic)
+        if counter is None:
+            _network_baselines.pop(key, None)
+            return 0
+        now = time.monotonic()
+        current = getattr(counter, "bytes_" + direction)
+        previous = _network_baselines.get(key)
+        _network_baselines[key] = (current, now)
+        if previous is None:
+            return 0
+        delta = current - previous[0]
+        elapsed = now - previous[1]
+        if delta < 0 or elapsed <= 0:
+            return 0
+        return int(round(delta / elapsed / 1024 * 10))
+
+
 def get_metric_value(metric_config, snapshot=None):
     """
     Get current value for a configured metric.
@@ -3439,6 +3507,9 @@ def get_metric_value(metric_config, snapshot=None):
             return int(psutil.virtual_memory().used / (1024**3))  # GB
         elif method == "disk_usage":
             return int(psutil.disk_usage('C:\\').percent)
+        elif method.startswith(("net_recv:", "net_sent:")):
+            direction, nic = method.split(":", 1)
+            return _network_throughput(nic, direction[4:])
         return None
 
     if source == "wmi":
