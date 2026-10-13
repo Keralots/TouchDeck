@@ -431,9 +431,15 @@ static void handleConfigImport() {
   READ_INT(display, "powerScale", 1, 65535, nextDisplay.powerScaleW, uint16_t);
   READ_INT(display, "warnThreshold", 0, 100, nextDisplay.warnThresholdPct, uint8_t);
   READ_INT(display, "theme", 0, 2, nextDisplay.theme, uint8_t);
-  READ_INT(display, "glassTint", 0, 90, nextDisplay.glassTint, uint8_t);
-  READ_INT(display, "glassBlur", 0, 24, nextDisplay.glassBlur, uint8_t);
-  READ_INT(display, "glassDim", 0, 60, nextDisplay.glassDim, uint8_t);
+  // Backups from before the Glass sliders restore them to their defaults.
+  DisplaySettings displayDefaults;
+  defaultDisplaySettings(displayDefaults);
+  nextDisplay.glassTint = displayDefaults.glassTint;
+  nextDisplay.glassBlur = displayDefaults.glassBlur;
+  nextDisplay.glassDim = displayDefaults.glassDim;
+  if (!display["glassTint"].isNull()) READ_INT(display, "glassTint", 0, 90, nextDisplay.glassTint, uint8_t);
+  if (!display["glassBlur"].isNull()) READ_INT(display, "glassBlur", 0, 24, nextDisplay.glassBlur, uint8_t);
+  if (!display["glassDim"].isNull()) READ_INT(display, "glassDim", 0, 60, nextDisplay.glassDim, uint8_t);
 
   READ_BOOL(backlight, "nightEnabled", nextBacklight.nightEnabled);
   READ_INT(backlight, "nightBrightness", 0, 255, nextBacklight.nightBrightness, uint8_t);
@@ -978,6 +984,7 @@ static void handleIconsFinish() {
 static const char* const WALL_UPLOAD = "/wall.up";
 static File wallUpload;
 static String wallError;
+static size_t wallBytes;
 
 static const char* wallFile(bool portrait) { return deck::wallPath(portrait ? 320 : 480, portrait ? 480 : 320); }
 
@@ -1004,17 +1011,26 @@ static void handleWallUpload() {
       return;
     }
     LittleFS.remove(WALL_UPLOAD);
+    wallBytes = 0;
     wallUpload = LittleFS.open(WALL_UPLOAD, "w");
     if (!wallUpload) wallError = "cannot create the file";
   } else if (up.status == UPLOAD_FILE_WRITE) {
     esp_task_wdt_reset();
-    if (wallUpload && wallUpload.write(up.buf, up.currentSize) != up.currentSize) {
-      wallError = "flash full";
+    if (!wallUpload) return;
+    wallBytes += up.currentSize;
+    if (wallBytes > 480 * 320 * 3) wallError = "picture too large";
+    else if (wallUpload.write(up.buf, up.currentSize) != up.currentSize) wallError = "flash full";
+    if (wallError.length()) {
       wallUpload.close();
+      LittleFS.remove(WALL_UPLOAD);
     }
   } else if (up.status == UPLOAD_FILE_END || up.status == UPLOAD_FILE_ABORTED) {
     if (wallUpload) wallUpload.close();
-    if (up.status == UPLOAD_FILE_ABORTED) wallError = "upload aborted";
+    // An aborted upload never reaches handleWallFinish: drop the part here.
+    if (up.status == UPLOAD_FILE_ABORTED) {
+      wallError = "upload aborted";
+      LittleFS.remove(WALL_UPLOAD);
+    }
   }
 }
 

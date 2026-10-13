@@ -3426,6 +3426,19 @@ void releaseSwipe() {
   portEXIT_CRITICAL(&s_mux);
 }
 
+// Before the page images are freed: no gesture may take them any more, and
+// one the touch task (other core) took just before gets time to reach the
+// compositor, so panelQuiesce cancels it.
+void stopGestures() {
+  portENTER_CRITICAL(&s_mux);
+  for (int i = 0; i < MAX_PAGES; i++) sh.valid[i] = false;
+  sh.panelValid = false;
+  portEXIT_CRITICAL(&s_mux);
+  vTaskDelay(2);
+  panelQuiesce();
+  releaseSwipe();
+}
+
 void refreshOneSnapshot() {
   if (touchIsDown() || compMode() != COMP_NONE) return;
   const uint32_t now = millis();
@@ -3646,8 +3659,7 @@ void deckApplyRotation(uint8_t rotation) {
   if (!s_disp) return;
   rotation &= 3;
   if (rotation == panelRotation()) return;
-  panelQuiesce();
-  releaseSwipe();
+  stopGestures();
   destroyPages();
   panelSetRotation(rotation);
   lv_display_set_resolution(s_disp, logicalW(), logicalH());
@@ -3661,8 +3673,7 @@ void deckApplyRotation(uint8_t rotation) {
 
 void deckApplyTheme(uint8_t theme) {
   if (!s_disp || theme == s_theme) return;
-  panelQuiesce();
-  releaseSwipe();
+  stopGestures();
   destroyPages();
   setPalette(theme);
   lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(C_BG), 0);
@@ -3673,8 +3684,7 @@ void deckApplyTheme(uint8_t theme) {
 
 void deckReloadWallpaper(bool fileChanged) {
   if (!s_disp || s_theme != THEME_GLASS) return;
-  panelQuiesce();
-  releaseSwipe();
+  stopGestures();
   destroyPages();
   if (fileChanged) wallFree();  // else wallLoad re-blurs only when blur or dimming changed
   buildPages();
@@ -3723,8 +3733,7 @@ bool deckApplyConfig(const String& text, String& err) {
   DeckConfig next;
   if (!deckConfigStore(text, next, err)) return false;
   // Tiles point into s_cfg: tear the pages down before replacing it.
-  panelQuiesce();
-  releaseSwipe();
+  stopGestures();
   destroyPages();
   s_cfg = next;
   buildPages();
@@ -3764,8 +3773,7 @@ bool deckInstallIcons(const char* uploaded, String& err) {
     return false;
   }
   // The pages hold the current fonts: tear them down before the swap.
-  panelQuiesce();
-  releaseSwipe();
+  stopGestures();
   destroyPages();
   const bool ok = iconsLoad(uploaded, err);
   if (ok) {
