@@ -974,7 +974,7 @@ static void handleIconsFinish() {
   handleIconsStatus();
 }
 
-// --- Glass wallpaper (raw RGB565 per orientation, made by the portal) ---------------
+// --- Glass wallpaper (raw RGB888 per orientation, made by the portal) ---------------
 static const char* const WALL_UPLOAD = "/wall.up";
 static File wallUpload;
 static String wallError;
@@ -992,7 +992,8 @@ static void handleWallStatus() {
   server.send(200, "application/json", out);
 }
 
-// POST /api/deck/wallpaper?o=l|p (multipart "wall", 480x320 or 320x480 RGB565).
+// POST /api/deck/wallpaper?o=l|p (multipart "wall", 480x320 or 320x480 RGB888;
+// RGB565 from older portals still loads).
 static void handleWallUpload() {
   if (!multipartRequest()) return;
   HTTPUpload& up = server.upload();
@@ -1025,7 +1026,7 @@ static void handleWallFinish() {
     File f = LittleFS.open(WALL_UPLOAD, "r");
     const size_t size = f ? f.size() : 0;
     if (f) f.close();
-    if (size != 480 * 320 * 2) err = "expected a 480x320 RGB565 picture";
+    if (size != 480 * 320 * 3 && size != 480 * 320 * 2) err = "expected a 480x320 RGB888 picture";
   }
   if (!err.length()) {
     LittleFS.remove(wallFile(portrait));

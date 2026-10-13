@@ -96,7 +96,7 @@ static const char PAGE_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
   <div class="save-bar hidden" id="saveBar"><div class="save-bar-inner"><div class="save-meta clean" id="saveMeta"><span class="dot"></span><span class="txt">All saved</span></div><button type="button" class="btn btn-lg" id="revertBtn">Revert changes</button><button type="button" class="btn btn-accent btn-lg" id="saveBtn"><span class="gl"></span><span id="saveBtnText">Save settings</span></button></div></div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 </div>
-  <script src="/portal.js?v=31"></script>
+  <script src="/portal.js?v=32"></script>
 </body>
 </html>)HTML";
 
@@ -180,9 +180,9 @@ $('backupExport').addEventListener('click',exportConfiguration);$('backupImport'
 function updateFactoryReset(){const ready=$('factoryConfirm').value.trim()==='RESET';$('factoryReset').disabled=!ready;}
 $('factoryConfirm').addEventListener('input',updateFactoryReset);$('factoryReset').addEventListener('click',async()=>{if($('factoryConfirm').value.trim()!=='RESET')return;if(!confirm('Erase all settings and WiFi credentials? The device will restart in setup mode.'))return;try{$('factoryReset').disabled=true;$('factoryConfirm').disabled=true;const body=new URLSearchParams({confirmation:'RESET'});const data=await getJson('/api/factory-reset',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});showToast(data.message||'Factory reset complete',false);$('factoryReset').textContent='Restarting...';}catch(e){showToast(e.message,true);$('factoryConfirm').disabled=false;updateFactoryReset();}});
 
-/* Glass wallpaper: crop the photo to both screen shapes, send each as raw RGB565 (LVGL byte order). */
-function wallCrop(img,w,h){const c=document.createElement('canvas');c.width=w;c.height=h;const s=Math.max(w/img.naturalWidth,h/img.naturalHeight),dw=img.naturalWidth*s,dh=img.naturalHeight*s;c.getContext('2d').drawImage(img,(w-dw)/2,(h-dh)/2,dw,dh);return c;}
-function wallRaw(c){const p=c.getContext('2d').getImageData(0,0,c.width,c.height).data,out=new Uint8Array(c.width*c.height*2);for(let i=0,j=0;i<p.length;i+=4,j+=2){const v=(p[i]&0xF8)<<8|(p[i+1]&0xFC)<<3|p[i+2]>>3;out[j]=v&255;out[j+1]=v>>8;}return out;}
+/* Glass wallpaper: crop the photo to both screen shapes, send each as raw RGB888 (r, g, b). */
+function wallCrop(img,w,h){const c=document.createElement('canvas');c.width=w;c.height=h;const s=Math.max(w/img.naturalWidth,h/img.naturalHeight),dw=img.naturalWidth*s,dh=img.naturalHeight*s,x=c.getContext('2d');x.imageSmoothingQuality='high';x.drawImage(img,(w-dw)/2,(h-dh)/2,dw,dh);return c;}
+function wallRaw(c){const p=c.getContext('2d').getImageData(0,0,c.width,c.height).data,out=new Uint8Array(c.width*c.height*3);for(let i=0,j=0;i<p.length;i+=4,j+=3){out[j]=p[i];out[j+1]=p[i+1];out[j+2]=p[i+2];}return out;}
 async function wallSend(o,body){const f=new FormData();if(body)f.append('wall',new Blob([body]),'wall.bin');const r=await fetch('/api/deck/wallpaper'+(body?'':'/remove')+'?o='+o,{method:'POST',body:body?f:undefined});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.message||('HTTP '+r.status));return j;}
 function wallShow(s){$('wallState').textContent=s.landscape||s.portrait?'Stored: '+[s.landscape?'landscape':'',s.portrait?'portrait':''].filter(Boolean).join(' and ')+'.':'None stored: Glass uses the built-in gradient.';}
 async function wallStatus(){try{wallShow(await (await fetch('/api/deck/wallpaper')).json());}catch(e){}}

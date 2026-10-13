@@ -2221,12 +2221,17 @@ void bakeGlass(Page& p) {
   const int w = sharp->header.w, h = sharp->header.h;
   if (!p.glass) p.glass = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
   if (!p.glass) return;
-  lv_obj_update_layout(p.root);
   for (int y = 0; y < h; y++)
     memcpy(p.glass->data + y * p.glass->header.stride, sharp->data + y * sharp->header.stride, w * 2);
+  // The glass is drawn in ARGB8888 over nothing, then laid over the picture
+  // and dithered to RGB565 once: blending in RGB565 left coloured bands.
+  lv_draw_buf_t* top = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_ARGB8888, 0);
+  if (!top) return;
+  lv_draw_buf_clear(top, nullptr);
+  lv_obj_update_layout(p.root);
   lv_obj_t* cv = lv_canvas_create(p.root);
   lv_obj_add_flag(cv, LV_OBJ_FLAG_HIDDEN);
-  lv_canvas_set_draw_buf(cv, p.glass);
+  lv_canvas_set_draw_buf(cv, top);
   lv_layer_t layer;
   lv_canvas_init_layer(cv, &layer);
   const lv_area_t all = {0, 0, w - 1, h - 1};
@@ -2258,6 +2263,23 @@ void bakeGlass(Page& p) {
   }
   lv_canvas_finish_layer(cv, &layer);
   lv_obj_delete(cv);
+  for (int y = 0; y < h; y++) {
+    const uint8_t* s = top->data + y * top->header.stride;  // B, G, R, A
+    uint16_t* d = (uint16_t*)(p.glass->data + y * p.glass->header.stride);
+    for (int x = 0; x < w; x++, s += 4) {
+      const int a = s[3];
+      if (!a) continue;
+      int r = s[2], g = s[1], b = s[0];
+      if (a < 255) {  // rounded edge: mix with the picture under it
+        const uint16_t q = d[x];
+        r = (r * a + ((q >> 8 & 0xF8) | q >> 13) * (255 - a) + 127) / 255;
+        g = (g * a + ((q >> 3 & 0xFC) | (q >> 9 & 0x03)) * (255 - a) + 127) / 255;
+        b = (b * a + ((q << 3 & 0xF8) | (q >> 2 & 0x07)) * (255 - a) + 127) / 255;
+      }
+      d[x] = wallDither565(r, g, b, x, y);
+    }
+  }
+  lv_draw_buf_destroy(top);
   lv_obj_set_style_bg_image_src(p.root, p.glass, 0);
   lv_obj_invalidate(p.root);
   p.stale = true;

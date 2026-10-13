@@ -9,43 +9,74 @@
 namespace deck {
 namespace {
 
-uint16_t* s_sharp = nullptr;
-uint16_t* s_blur = nullptr;
+uint16_t* s_sharp = nullptr;  // RGB565, dimmed and dithered
+uint8_t* s_blur = nullptr;    // RGB888 (LVGL order B, G, R), undimmed
 int s_w = 0, s_h = 0, s_blurR = -1, s_dim = -1;
 lv_image_dsc_t s_sharpDsc, s_blurDsc;
 
-void fillDsc(lv_image_dsc_t& d, const uint16_t* px, int w, int h) {
+void fillDsc(lv_image_dsc_t& d, const void* px, int w, int h, lv_color_format_t cf, int bpp) {
   memset(&d, 0, sizeof(d));
   d.header.magic = LV_IMAGE_HEADER_MAGIC;
-  d.header.cf = LV_COLOR_FORMAT_RGB565;
+  d.header.cf = cf;
   d.header.w = w;
   d.header.h = h;
-  d.header.stride = w * 2;
+  d.header.stride = w * bpp;
   d.data = (const uint8_t*)px;
-  d.data_size = (uint32_t)w * h * 2;
+  d.data_size = (uint32_t)w * h * bpp;
 }
 
-uint16_t rgb565(int r, int g, int b) {
-  return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
-}
+uint8_t clamp8(float v) { return v <= 0 ? 0 : v >= 255 ? 255 : (uint8_t)(v + 0.5f); }
 
 // No file yet: a dusk gradient with a warm glow, so Glass works out of the box.
-void gradient(uint16_t* px, int w, int h) {
+// Written as RGB888 planes (r, g, b), like a loaded file.
+void gradient(uint8_t* r, uint8_t* g, uint8_t* b, int w, int h) {
   for (int y = 0; y < h; y++)
     for (int x = 0; x < w; x++) {
       const float t = (x / (float)w + y / (float)h) / 2;
       const float dx = (x - 0.2f * w) / w, dy = (y - 1.05f * h) / h;
       const float glow = fmaxf(0, 1 - sqrtf(dx * dx + dy * dy) / 0.75f);
       const float g2 = glow * glow;
-      const int r = (int)(0x24 + (0x16 - 0x24) * t + 0xB0 * g2);
-      const int g = (int)(0x2C + (0x5E - 0x2C) * t + 0x58 * g2);
-      const int b = (int)(0x5C + (0x66 - 0x5C) * t + 0x10 * g2);
-      px[y * w + x] = rgb565(r > 255 ? 255 : r, g > 255 ? 255 : g, b > 255 ? 255 : b);
+      const int i = y * w + x;
+      r[i] = clamp8(0x24 + (0x16 - 0x24) * t + 0xB0 * g2);
+      g[i] = clamp8(0x2C + (0x5E - 0x2C) * t + 0x58 * g2);
+      b[i] = clamp8(0x5C + (0x66 - 0x5C) * t + 0x10 * g2);
     }
 }
 
-// One box pass of radius r along rows (step 1) or columns (step w), edges
-// clamped. Three passes come close to a gaussian.
+// The file is RGB888 (r, g, b bytes) or, from older portals, RGB565.
+bool loadFile(uint8_t* r, uint8_t* g, uint8_t* b, int w, int h) {
+  if (!deckFsReady()) return false;
+  File f = LittleFS.open(wallPath(w, h), "r");
+  if (!f) return false;
+  const size_t n = (size_t)w * h, size = f.size();
+  bool ok = false;
+  if (size == n * 3 || size == n * 2) {
+    const int bpp = size == n * 3 ? 3 : 2;
+    uint8_t row[480 * 3];
+    ok = w <= 480;
+    for (int y = 0; ok && y < h; y++) {
+      ok = f.read(row, w * bpp) == (size_t)(w * bpp);
+      for (int x = 0; ok && x < w; x++) {
+        const int i = y * w + x;
+        if (bpp == 3) {
+          r[i] = row[x * 3];
+          g[i] = row[x * 3 + 1];
+          b[i] = row[x * 3 + 2];
+        } else {
+          const uint16_t p = row[x * 2] | row[x * 2 + 1] << 8;
+          r[i] = (p >> 8 & 0xF8) | p >> 13;
+          g[i] = (p >> 3 & 0xFC) | (p >> 9 & 0x03);
+          b[i] = (p << 3 & 0xF8) | (p >> 2 & 0x07);
+        }
+      }
+    }
+  }
+  f.close();
+  return ok;
+}
+
+// One box pass of radius r along rows or columns, edges clamped, rounded.
+// Three passes come close to a gaussian.
 void boxPass(const uint8_t* src, uint8_t* dst, int w, int h, bool vertical, int r) {
   const int n = 2 * r + 1;
   const int lines = vertical ? w : h, len = vertical ? h : w, step = vertical ? w : 1;
@@ -55,83 +86,78 @@ void boxPass(const uint8_t* src, uint8_t* dst, int w, int h, bool vertical, int 
     int sum = 0;
     for (int i = -r; i <= r; i++) sum += s[(i < 0 ? 0 : i >= len ? len - 1 : i) * step];
     for (int i = 0; i < len; i++) {
-      d[i * step] = (uint8_t)(sum / n);
+      d[i * step] = (uint8_t)((sum + n / 2) / n);
       const int add = i + r + 1, sub = i - r;
       sum += s[(add >= len ? len - 1 : add) * step] - s[(sub < 0 ? 0 : sub) * step];
     }
   }
 }
 
-// Blur src into dst (both w x h RGB565), one channel plane at a time.
-bool blurInto(const uint16_t* src, uint16_t* dst, int w, int h, int r) {
-  const size_t n = (size_t)w * h;
-  if (r <= 0) {
-    memcpy(dst, src, n * 2);
-    return true;
+// Blur one plane in place (tmp: scratch of the same size).
+void blurPlane(uint8_t* p, uint8_t* tmp, int w, int h, int r) {
+  if (r <= 0) return;
+  for (int pass = 0; pass < 3; pass++) {
+    boxPass(p, tmp, w, h, false, r);
+    boxPass(tmp, p, w, h, true, r);
   }
-  uint8_t* a = (uint8_t*)heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
-  uint8_t* b = (uint8_t*)heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
-  if (!a || !b) {
-    free(a);
-    free(b);
-    return false;
-  }
-  memset(dst, 0, n * 2);
-  for (int ch = 0; ch < 3; ch++) {
-    for (size_t i = 0; i < n; i++) {
-      const uint16_t p = src[i];
-      a[i] = ch == 0 ? (p >> 8 & 0xF8) : ch == 1 ? (p >> 3 & 0xFC) : (p << 3 & 0xF8);
-    }
-    for (int pass = 0; pass < 3; pass++) {
-      boxPass(a, b, w, h, false, r);
-      boxPass(b, a, w, h, true, r);
-    }
-    for (size_t i = 0; i < n; i++)
-      dst[i] |= ch == 0 ? (a[i] & 0xF8) << 8 : ch == 1 ? (a[i] & 0xFC) << 3 : a[i] >> 3;
-    esp_task_wdt_reset();
-  }
-  free(a);
-  free(b);
-  return true;
+  esp_task_wdt_reset();
 }
 
 }  // namespace
+
+// 8x8 ordered dither: a smooth 8-bit gradient becomes a fine pattern of
+// neighbouring RGB565 levels instead of coloured steps.
+uint16_t wallDither565(int r, int g, int b, int x, int y) {
+  static const uint8_t kBayer[8][8] = {
+      {0, 32, 8, 40, 2, 34, 10, 42},  {48, 16, 56, 24, 50, 18, 58, 26}, {12, 44, 4, 36, 14, 46, 6, 38},
+      {60, 28, 52, 20, 62, 30, 54, 22}, {3, 35, 11, 43, 1, 33, 9, 41},  {51, 19, 59, 27, 49, 17, 57, 25},
+      {15, 47, 7, 39, 13, 45, 5, 37},  {63, 31, 55, 23, 61, 29, 53, 21}};
+  const int t = (kBayer[y & 7][x & 7] * 2 + 1) * 255;  // threshold, in 1/32640 of a level
+  int r5 = (r * 31 * 128 + t) / 32640, g6 = (g * 63 * 128 + t) / 32640, b5 = (b * 31 * 128 + t) / 32640;
+  if (r5 > 31) r5 = 31;
+  if (g6 > 63) g6 = 63;
+  if (b5 > 31) b5 = 31;
+  return (uint16_t)(r5 << 11 | g6 << 5 | b5);
+}
 
 const char* wallPath(int w, int h) { return w > h ? "/wall_l.bin" : "/wall_p.bin"; }
 
 bool wallLoad(int w, int h, int blurR, int dimPct) {
   if (s_sharp && s_w == w && s_h == h && s_blurR == blurR && s_dim == dimPct) return true;
   wallFree();
-  const size_t bytes = (size_t)w * h * 2;
-  s_sharp = (uint16_t*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
-  s_blur = (uint16_t*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
-  if (!s_sharp || !s_blur) {
+  const size_t n = (size_t)w * h;
+  s_sharp = (uint16_t*)heap_caps_malloc(n * 2, MALLOC_CAP_SPIRAM);
+  s_blur = (uint8_t*)heap_caps_malloc(n * 3, MALLOC_CAP_SPIRAM);
+  uint8_t* planes = (uint8_t*)heap_caps_malloc(n * 4, MALLOC_CAP_SPIRAM);  // r, g, b, scratch
+  if (!s_sharp || !s_blur || !planes) {
+    free(planes);
     wallFree();
     return false;
   }
-  bool loaded = false;
-  if (deckFsReady()) {
-    File f = LittleFS.open(wallPath(w, h), "r");
-    if (f && f.size() == bytes) loaded = f.read((uint8_t*)s_sharp, bytes) == bytes;
-    if (f) f.close();
-  }
-  if (!loaded) gradient(s_sharp, w, h);
-  if (!blurInto(s_sharp, s_blur, w, h, blurR)) {
-    wallFree();
-    return false;
-  }
+  uint8_t *r = planes, *g = planes + n, *b = planes + 2 * n, *tmp = planes + 3 * n;
+  const bool loaded = loadFile(r, g, b, w, h);
+  if (!loaded) gradient(r, g, b, w, h);
+
   // The page shows the picture darker, for the text on it.
   const int keep = (100 - dimPct) * 256 / 100;
-  for (size_t i = 0; dimPct > 0 && i < (size_t)w * h; i++) {
-    const uint16_t p = s_sharp[i];
-    s_sharp[i] = rgb565((p >> 8 & 0xF8) * keep >> 8, (p >> 3 & 0xFC) * keep >> 8, (p << 3 & 0xF8) * keep >> 8);
+  for (int y = 0; y < h; y++)
+    for (int x = 0; x < w; x++) {
+      const int i = y * w + x;
+      s_sharp[i] = wallDither565(r[i] * keep >> 8, g[i] * keep >> 8, b[i] * keep >> 8, x, y);
+    }
+  uint8_t* ch[3] = {b, g, r};  // LVGL's RGB888 byte order
+  for (int c = 0; c < 3; c++) {
+    blurPlane(ch[c], tmp, w, h, blurR);
+    for (size_t i = 0; i < n; i++) s_blur[i * 3 + c] = ch[c][i];
   }
+  free(planes);
+
   s_w = w;
   s_h = h;
   s_blurR = blurR;
   s_dim = dimPct;
-  fillDsc(s_sharpDsc, s_sharp, w, h);
-  fillDsc(s_blurDsc, s_blur, w, h);
+  fillDsc(s_sharpDsc, s_sharp, w, h, LV_COLOR_FORMAT_RGB565, 2);
+  fillDsc(s_blurDsc, s_blur, w, h, LV_COLOR_FORMAT_RGB888, 3);
   Serial.printf("Deck: wallpaper %dx%d %s\n", w, h, loaded ? "from file" : "built-in gradient");
   return true;
 }
@@ -139,7 +165,8 @@ bool wallLoad(int w, int h, int blurR, int dimPct) {
 void wallFree() {
   free(s_sharp);
   free(s_blur);
-  s_sharp = s_blur = nullptr;
+  s_sharp = nullptr;
+  s_blur = nullptr;
   s_w = s_h = 0;
   s_blurR = s_dim = -1;
 }
