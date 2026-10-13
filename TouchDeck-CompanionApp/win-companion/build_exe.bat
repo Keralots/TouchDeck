@@ -57,6 +57,7 @@ if exist dist  rmdir /s /q dist
   --hidden-import app_window ^
   --hidden-import app_state ^
   --hidden-import config_model ^
+  --hidden-import pc_control ^
   --collect-all webview ^
   --collect-all pythonnet ^
   --collect-all pystray ^
@@ -70,6 +71,7 @@ if exist dist  rmdir /s /q dist
   --hidden-import win32api ^
   --hidden-import win32con ^
   --hidden-import win32timezone ^
+  --hidden-import win32security ^
   touchdeck_companion.py
 
 if errorlevel 1 (
