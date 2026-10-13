@@ -9,12 +9,9 @@
 namespace deck {
 namespace {
 
-constexpr int BLUR_R = 12;  // box radius; three passes come close to a gaussian
-constexpr int DIM = 216;    // brightness of the shown picture, of 256
-
 uint16_t* s_sharp = nullptr;
 uint16_t* s_blur = nullptr;
-int s_w = 0, s_h = 0;
+int s_w = 0, s_h = 0, s_blurR = -1, s_dim = -1;
 lv_image_dsc_t s_sharpDsc, s_blurDsc;
 
 void fillDsc(lv_image_dsc_t& d, const uint16_t* px, int w, int h) {
@@ -47,26 +44,31 @@ void gradient(uint16_t* px, int w, int h) {
     }
 }
 
-// One box pass along rows (step 1) or columns (step w), edges clamped.
-void boxPass(const uint8_t* src, uint8_t* dst, int w, int h, bool vertical) {
-  const int n = 2 * BLUR_R + 1;
+// One box pass of radius r along rows (step 1) or columns (step w), edges
+// clamped. Three passes come close to a gaussian.
+void boxPass(const uint8_t* src, uint8_t* dst, int w, int h, bool vertical, int r) {
+  const int n = 2 * r + 1;
   const int lines = vertical ? w : h, len = vertical ? h : w, step = vertical ? w : 1;
   for (int l = 0; l < lines; l++) {
     const uint8_t* s = src + (vertical ? l : l * w);
     uint8_t* d = dst + (vertical ? l : l * w);
     int sum = 0;
-    for (int i = -BLUR_R; i <= BLUR_R; i++) sum += s[(i < 0 ? 0 : i >= len ? len - 1 : i) * step];
+    for (int i = -r; i <= r; i++) sum += s[(i < 0 ? 0 : i >= len ? len - 1 : i) * step];
     for (int i = 0; i < len; i++) {
       d[i * step] = (uint8_t)(sum / n);
-      const int add = i + BLUR_R + 1, sub = i - BLUR_R;
+      const int add = i + r + 1, sub = i - r;
       sum += s[(add >= len ? len - 1 : add) * step] - s[(sub < 0 ? 0 : sub) * step];
     }
   }
 }
 
 // Blur src into dst (both w x h RGB565), one channel plane at a time.
-bool blurInto(const uint16_t* src, uint16_t* dst, int w, int h) {
+bool blurInto(const uint16_t* src, uint16_t* dst, int w, int h, int r) {
   const size_t n = (size_t)w * h;
+  if (r <= 0) {
+    memcpy(dst, src, n * 2);
+    return true;
+  }
   uint8_t* a = (uint8_t*)heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
   uint8_t* b = (uint8_t*)heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
   if (!a || !b) {
@@ -81,8 +83,8 @@ bool blurInto(const uint16_t* src, uint16_t* dst, int w, int h) {
       a[i] = ch == 0 ? (p >> 8 & 0xF8) : ch == 1 ? (p >> 3 & 0xFC) : (p << 3 & 0xF8);
     }
     for (int pass = 0; pass < 3; pass++) {
-      boxPass(a, b, w, h, false);
-      boxPass(b, a, w, h, true);
+      boxPass(a, b, w, h, false, r);
+      boxPass(b, a, w, h, true, r);
     }
     for (size_t i = 0; i < n; i++)
       dst[i] |= ch == 0 ? (a[i] & 0xF8) << 8 : ch == 1 ? (a[i] & 0xFC) << 3 : a[i] >> 3;
@@ -97,8 +99,8 @@ bool blurInto(const uint16_t* src, uint16_t* dst, int w, int h) {
 
 const char* wallPath(int w, int h) { return w > h ? "/wall_l.bin" : "/wall_p.bin"; }
 
-bool wallLoad(int w, int h) {
-  if (s_sharp && s_w == w && s_h == h) return true;
+bool wallLoad(int w, int h, int blurR, int dimPct) {
+  if (s_sharp && s_w == w && s_h == h && s_blurR == blurR && s_dim == dimPct) return true;
   wallFree();
   const size_t bytes = (size_t)w * h * 2;
   s_sharp = (uint16_t*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
@@ -114,17 +116,20 @@ bool wallLoad(int w, int h) {
     if (f) f.close();
   }
   if (!loaded) gradient(s_sharp, w, h);
-  if (!blurInto(s_sharp, s_blur, w, h)) {
+  if (!blurInto(s_sharp, s_blur, w, h, blurR)) {
     wallFree();
     return false;
   }
-  // The page shows the picture a little darker, for the text on it.
-  for (size_t i = 0; i < (size_t)w * h; i++) {
+  // The page shows the picture darker, for the text on it.
+  const int keep = (100 - dimPct) * 256 / 100;
+  for (size_t i = 0; dimPct > 0 && i < (size_t)w * h; i++) {
     const uint16_t p = s_sharp[i];
-    s_sharp[i] = rgb565((p >> 8 & 0xF8) * DIM >> 8, (p >> 3 & 0xFC) * DIM >> 8, (p << 3 & 0xF8) * DIM >> 8);
+    s_sharp[i] = rgb565((p >> 8 & 0xF8) * keep >> 8, (p >> 3 & 0xFC) * keep >> 8, (p << 3 & 0xF8) * keep >> 8);
   }
   s_w = w;
   s_h = h;
+  s_blurR = blurR;
+  s_dim = dimPct;
   fillDsc(s_sharpDsc, s_sharp, w, h);
   fillDsc(s_blurDsc, s_blur, w, h);
   Serial.printf("Deck: wallpaper %dx%d %s\n", w, h, loaded ? "from file" : "built-in gradient");
@@ -136,6 +141,7 @@ void wallFree() {
   free(s_blur);
   s_sharp = s_blur = nullptr;
   s_w = s_h = 0;
+  s_blurR = s_dim = -1;
 }
 
 const lv_image_dsc_t* wallSharp() { return s_sharp ? &s_sharpDsc : nullptr; }

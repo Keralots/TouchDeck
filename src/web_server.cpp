@@ -154,6 +154,9 @@ static void handleApiConfig() {
   display["powerScale"] = dispSettings.powerScaleW;
   display["warnThreshold"] = dispSettings.warnThresholdPct;
   display["theme"] = dispSettings.theme;
+  display["glassTint"] = dispSettings.glassTint;
+  display["glassBlur"] = dispSettings.glassBlur;
+  display["glassDim"] = dispSettings.glassDim;
 
   JsonObject backlight = doc["backlight"].to<JsonObject>();
   backlight["nightEnabled"] = backlightSettings.nightEnabled != 0;
@@ -252,6 +255,9 @@ static void handleConfigExport() {
   display["powerScale"] = dispSettings.powerScaleW;
   display["warnThreshold"] = dispSettings.warnThresholdPct;
   display["theme"] = dispSettings.theme;
+  display["glassTint"] = dispSettings.glassTint;
+  display["glassBlur"] = dispSettings.glassBlur;
+  display["glassDim"] = dispSettings.glassDim;
 
   JsonObject backlight = doc["backlight"].to<JsonObject>();
   backlight["nightEnabled"] = backlightSettings.nightEnabled != 0;
@@ -425,6 +431,9 @@ static void handleConfigImport() {
   READ_INT(display, "powerScale", 1, 65535, nextDisplay.powerScaleW, uint16_t);
   READ_INT(display, "warnThreshold", 0, 100, nextDisplay.warnThresholdPct, uint8_t);
   READ_INT(display, "theme", 0, 2, nextDisplay.theme, uint8_t);
+  READ_INT(display, "glassTint", 0, 90, nextDisplay.glassTint, uint8_t);
+  READ_INT(display, "glassBlur", 0, 24, nextDisplay.glassBlur, uint8_t);
+  READ_INT(display, "glassDim", 0, 60, nextDisplay.glassDim, uint8_t);
 
   READ_BOOL(backlight, "nightEnabled", nextBacklight.nightEnabled);
   READ_INT(backlight, "nightBrightness", 0, 255, nextBacklight.nightBrightness, uint8_t);
@@ -563,6 +572,12 @@ static void handleSaveDisplay() {
   const uint8_t oldRotation = dispSettings.rotation;
   const uint8_t oldTheme = dispSettings.theme;
   dispSettings.theme = (uint8_t)clampedArg("theme", dispSettings.theme, 0, 2);
+  const uint32_t oldGlass = dispSettings.glassTint << 16 | dispSettings.glassBlur << 8 | dispSettings.glassDim;
+  dispSettings.glassTint = (uint8_t)clampedArg("glassTint", dispSettings.glassTint, 0, 90);
+  dispSettings.glassBlur = (uint8_t)clampedArg("glassBlur", dispSettings.glassBlur, 0, 24);
+  dispSettings.glassDim = (uint8_t)clampedArg("glassDim", dispSettings.glassDim, 0, 60);
+  const bool glassChanged =
+    oldGlass != (uint32_t)(dispSettings.glassTint << 16 | dispSettings.glassBlur << 8 | dispSettings.glassDim);
   dispSettings.rotation = (uint8_t)clampedArg("rotation", dispSettings.rotation, 0, 3);
   brightness = (uint8_t)clampedArg("brightness", brightness, 0, 255);
   dispSettings.tempScaleMax = (uint16_t)clampedArg("tempScale", dispSettings.tempScaleMax, 1, 500);
@@ -580,6 +595,7 @@ static void handleSaveDisplay() {
   saveSettings();
   refreshBacklightControl();
   if (dispSettings.rotation != oldRotation || dispSettings.theme != oldTheme) applyDisplaySettings();
+  else if (glassChanged) deckReloadWallpaper(false);
   sendJsonMessage(200, true, "Display settings applied.");
 }
 
@@ -1020,7 +1036,7 @@ static void handleWallFinish() {
     sendJsonMessage(400, false, err.c_str());
     return;
   }
-  deckReloadWallpaper();
+  deckReloadWallpaper(true);
   handleWallStatus();
 }
 
@@ -1028,7 +1044,7 @@ static void handleWallFinish() {
 // callback loses the query arguments of a POST that is not multipart.
 static void handleWallRemove() {
   if (deck::deckFsReady()) LittleFS.remove(wallFile(server.arg("o") == "p"));
-  deckReloadWallpaper();
+  deckReloadWallpaper(true);
   handleWallStatus();
 }
 

@@ -2250,7 +2250,7 @@ void bakeGlass(Page& p) {
     lv_draw_rect_dsc_init(&rd);
     rd.radius = r;
     rd.bg_color = lv_color_hex(C_TILE);
-    rd.bg_opa = LV_OPA_40;
+    rd.bg_opa = (lv_opa_t)(dispSettings.glassTint * 255 / 100);
     rd.border_color = lv_color_white();
     rd.border_opa = LV_OPA_20;
     rd.border_width = 1;
@@ -3212,7 +3212,7 @@ void edFinish() {
 
 void buildPages() {
   const int w = logicalW();
-  if (s_theme == THEME_GLASS) wallLoad(w, logicalH());
+  if (s_theme == THEME_GLASS) wallLoad(w, logicalH(), dispSettings.glassBlur, dispSettings.glassDim);
   else wallFree();
   s_count = 0;
   s_tiles.clear();
@@ -3649,12 +3649,12 @@ void deckApplyTheme(uint8_t theme) {
   lv_obj_invalidate(lv_screen_active());
 }
 
-void deckReloadWallpaper() {
+void deckReloadWallpaper(bool fileChanged) {
   if (!s_disp || s_theme != THEME_GLASS) return;
   panelQuiesce();
   releaseSwipe();
   destroyPages();
-  wallFree();
+  if (fileChanged) wallFree();  // else wallLoad re-blurs only when blur or dimming changed
   buildPages();
   s_gen++;
   lv_obj_invalidate(lv_screen_active());

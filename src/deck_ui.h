@@ -25,8 +25,9 @@ void deckApplyRotation(uint8_t rotation);
 // Switch the colour theme (THEME_MIDNIGHT / THEME_DAYLIGHT / THEME_GLASS);
 // rebuilds the pages.
 void deckApplyTheme(uint8_t theme);
-// A wallpaper file was replaced or removed: reload it (Glass rebuilds the pages).
-void deckReloadWallpaper();
+// A wallpaper file was replaced or removed (fileChanged), or the Glass
+// sliders moved: Glass rebuilds the pages, re-reading the file if needed.
+void deckReloadWallpaper(bool fileChanged);
 // Bench hook (/api/deck/bench): render the shown page into its page image n
 // times and time it.
 bool deckBenchRender(int n, uint32_t& avgUs, uint32_t& maxUs);

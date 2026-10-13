@@ -34,7 +34,10 @@ struct DisplaySettings {
   uint16_t tempScaleMax;      // C, default full scale of temperature tiles
   uint16_t powerScaleW;       // W, default full scale of power tiles
   uint8_t  warnThresholdPct;  // metric tiles turn amber at >= this % of scale; 0 = off
-  uint8_t  theme;             // THEME_MIDNIGHT or THEME_DAYLIGHT
+  uint8_t  theme;             // THEME_MIDNIGHT, THEME_DAYLIGHT or THEME_GLASS
+  uint8_t  glassTint;         // Glass: tile tint opacity %, 0..90
+  uint8_t  glassBlur;         // Glass: blur radius px, 0..24 (0 = clear glass)
+  uint8_t  glassDim;          // Glass: wallpaper darkened by %, 0..60
 };
 
 constexpr uint8_t THEME_MIDNIGHT = 0;

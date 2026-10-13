@@ -75,6 +75,9 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.powerScaleW      = GAUGE_POWER_SCALE_DEFAULT;
   ds.warnThresholdPct = 90;
   ds.theme            = THEME_MIDNIGHT;
+  ds.glassTint        = 40;
+  ds.glassBlur        = 12;
+  ds.glassDim         = 15;
 }
 
 void defaultBacklightSettings(BacklightSettings& bs) {
@@ -127,6 +130,9 @@ void loadSettings() {
   }
   dispSettings.theme = prefs.getUChar("theme", THEME_MIDNIGHT);
   if (dispSettings.theme > THEME_GLASS) dispSettings.theme = THEME_MIDNIGHT;
+  dispSettings.glassTint = min<uint8_t>(prefs.getUChar("gtint", dispSettings.glassTint), 90);
+  dispSettings.glassBlur = min<uint8_t>(prefs.getUChar("gblur", dispSettings.glassBlur), 24);
+  dispSettings.glassDim = min<uint8_t>(prefs.getUChar("gdim", dispSettings.glassDim), 60);
   if (prefs.getBytesLength("net") == sizeof(NetworkSettings))
     prefs.getBytes("net", &netSettings, sizeof(NetworkSettings));
   if (prefs.getBytesLength("backlight") == sizeof(BacklightSettings)) {
@@ -163,6 +169,9 @@ void saveSettings() {
   prefs.putUShort("pscale", dispSettings.powerScaleW);
   prefs.putUChar("warnpct", dispSettings.warnThresholdPct);
   prefs.putUChar("theme", dispSettings.theme);
+  prefs.putUChar("gtint", dispSettings.glassTint);
+  prefs.putUChar("gblur", dispSettings.glassBlur);
+  prefs.putUChar("gdim", dispSettings.glassDim);
   prefs.putBytes("net", &netSettings, sizeof(NetworkSettings));
   prefs.putBytes("backlight", &backlightSettings, sizeof(BacklightSettings));
   prefs.putBytes("led", &ledSettings, sizeof(LedSettings));

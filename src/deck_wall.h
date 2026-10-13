@@ -12,11 +12,12 @@ namespace deck {
 
 // Where the wallpaper for a w x h screen lives on LittleFS.
 const char* wallPath(int w, int h);
-// Load the w x h wallpaper (a built-in gradient when there is no file) and
-// blur a copy. False only when PSRAM is short.
-bool wallLoad(int w, int h);
+// Load the w x h wallpaper (a built-in gradient when there is no file),
+// darken it by dimPct and blur a copy by blurR px (0 = an unblurred copy).
+// False only when PSRAM is short.
+bool wallLoad(int w, int h, int blurR, int dimPct);
 void wallFree();
-// The picture (a little dimmed for the text on it) and its blurred copy;
+// The picture (dimmed for the text on it) and its blurred copy;
 // nullptr when not loaded.
 const lv_image_dsc_t* wallSharp();
 const lv_image_dsc_t* wallBlur();
