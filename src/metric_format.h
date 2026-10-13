@@ -16,4 +16,7 @@ void formatMetricText(const PcMetric& metric, float raw, MetricText& out);
 // (percent 100, temperature / power from the display settings, else 3000).
 float metricScaleMax(const PcMetric& metric, uint16_t scaleMax);
 
+// Byte rates (KB/s, MB/s...) have no natural full scale.
+bool metricIsRate(const PcMetric& metric);
+
 #endif  // METRIC_FORMAT_H

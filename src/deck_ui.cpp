@@ -2035,11 +2035,21 @@ void applyPcToTile(TileRt& r) {
   setText(r.unit, mt.unit);
   fitValue(r);
 
-  const float scale = metricScaleMax(*m, d.scaleMax);
+  const SlotHistory& hs = pc->hist[d.metric <= MAX_METRICS ? d.metric : 0];
+  const int n = hs.metricId == d.metric ? hs.count : 0;
+  float lo = 1e9f, hi = -1e9f;
+  for (int i = 0; i < n; i++) {
+    const float v = pcHistoryAt(hs, (uint8_t)i);
+    lo = v < lo ? v : lo;
+    hi = v > hi ? v : hi;
+  }
+  // A rate without a set scale never warns; its bar is relative to the recent peak.
+  const bool autoRate = metricIsRate(*m) && !d.scaleMax;
+  const float scale = autoRate ? max(hi, m->value) : metricScaleMax(*m, d.scaleMax);
   const float pct = scale > 0 ? m->value * 100.0f / scale : 0;
   // Enter the warning colour at warnThresholdPct, leave it 5 points below.
   const float enter = (float)dispSettings.warnThresholdPct;
-  const bool warn = enter > 0 && (r.warn ? pct >= enter - 5 : pct >= enter);
+  const bool warn = !autoRate && enter > 0 && (r.warn ? pct >= enter - 5 : pct >= enter);
   if (warn != r.warn) {
     r.warn = warn;
     lv_obj_set_style_text_color(r.sub, lv_color_hex(warn ? C_WARN : tileText(d)), 0);
@@ -2050,14 +2060,6 @@ void applyPcToTile(TileRt& r) {
     lv_obj_set_style_bg_color(r.viz, lv_color_hex(accent), LV_PART_INDICATOR);
   } else if (r.viz && r.pts) {
     // History as tenths, oldest first, padded on the left while it fills.
-    const SlotHistory& hs = pc->hist[d.metric <= MAX_METRICS ? d.metric : 0];
-    const int n = hs.metricId == d.metric ? hs.count : 0;
-    float lo = 1e9f, hi = -1e9f;
-    for (int i = 0; i < n; i++) {
-      const float v = pcHistoryAt(hs, (uint8_t)i);
-      lo = v < lo ? v : lo;
-      hi = v > hi ? v : hi;
-    }
     for (int i = 0; i < PC_HISTORY_LEN; i++) {
       const int k = i - (PC_HISTORY_LEN - n);
       r.pts[i] = k < 0 ? LV_CHART_POINT_NONE : (int32_t)lroundf(pcHistoryAt(hs, (uint8_t)k) * 10);

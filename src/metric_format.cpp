@@ -68,6 +68,8 @@ void formatMetricText(const PcMetric& metric, float raw, MetricText& out) {
   }
 }
 
+bool metricIsRate(const PcMetric& metric) { return rateUnitIndex(metric.unit) >= 0; }
+
 float metricScaleMax(const PcMetric& metric, uint16_t scaleMax) {
   switch (metric.unit[0]) {
     case '%': return 100.0f;
