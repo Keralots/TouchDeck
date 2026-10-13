@@ -78,6 +78,7 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.glassTint        = 40;
   ds.glassBlur        = 12;
   ds.glassDim         = 15;
+  ds.glassOn          = 80;
 }
 
 void defaultBacklightSettings(BacklightSettings& bs) {
@@ -133,6 +134,7 @@ void loadSettings() {
   dispSettings.glassTint = min<uint8_t>(prefs.getUChar("gtint", dispSettings.glassTint), 90);
   dispSettings.glassBlur = min<uint8_t>(prefs.getUChar("gblur", dispSettings.glassBlur), 24);
   dispSettings.glassDim = min<uint8_t>(prefs.getUChar("gdim", dispSettings.glassDim), 60);
+  dispSettings.glassOn = constrain(prefs.getUChar("gon", dispSettings.glassOn), 20, 100);
   if (prefs.getBytesLength("net") == sizeof(NetworkSettings))
     prefs.getBytes("net", &netSettings, sizeof(NetworkSettings));
   if (prefs.getBytesLength("backlight") == sizeof(BacklightSettings)) {
@@ -172,6 +174,7 @@ void saveSettings() {
   prefs.putUChar("gtint", dispSettings.glassTint);
   prefs.putUChar("gblur", dispSettings.glassBlur);
   prefs.putUChar("gdim", dispSettings.glassDim);
+  prefs.putUChar("gon", dispSettings.glassOn);
   prefs.putBytes("net", &netSettings, sizeof(NetworkSettings));
   prefs.putBytes("backlight", &backlightSettings, sizeof(BacklightSettings));
   prefs.putBytes("led", &ledSettings, sizeof(LedSettings));

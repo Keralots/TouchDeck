@@ -1983,6 +1983,10 @@ void fitClock(TileRt& r, int cw, int ch) {
   setFont(r.sub, f);
   setFont(r.colon, f);
   setFont(r.mins, f);
+  // Fonts put the colon at x-height middle: centre it on the digits instead.
+  lv_font_glyph_dsc_t dg = {}, dc = {};
+  if (lv_font_get_glyph_dsc(f, &dg, '0', 0) && lv_font_get_glyph_dsc(f, &dc, ':', 0))
+    lv_obj_set_style_translate_y(r.colon, (dc.ofs_y * 2 + dc.box_h - dg.ofs_y * 2 - dg.box_h) / 2, 0);
   setFont(r.unit, unitFont(f));
   lv_obj_set_style_pad_bottom(r.unit, (lineH(f) - lineH(unitFont(f))) / 5, 0);  // share the baseline
   setFont(r.name, df);
@@ -2230,16 +2234,32 @@ void pcSync(bool force) {
 
 // Glass tiles are see-through: their glass is baked into the page
 // background (bakeGlass); pressed and on states draw over it.
-void glassStyle(lv_obj_t* t) {
+void glassStyle(lv_obj_t* t, uint32_t accent) {
+  const lv_opa_t on = (lv_opa_t)(dispSettings.glassOn * 255 / 100);
   lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, 0);
   lv_obj_set_style_bg_opa(t, LV_OPA_30, LV_STATE_PRESSED);
-  lv_obj_set_style_bg_opa(t, LV_OPA_80, LV_STATE_CHECKED);
+  lv_obj_set_style_bg_opa(t, on, LV_STATE_CHECKED);
+  lv_obj_set_style_bg_opa(t, on, LV_STATE_PRESSED | LV_STATE_CHECKED);
   lv_obj_set_style_border_width(t, 0, 0);
+  // A faint fill alone hardly tells on from off: outline it in the accent.
+  if (dispSettings.glassOn < 50) {
+    lv_obj_set_style_border_width(t, 2, LV_STATE_CHECKED);
+    lv_obj_set_style_border_color(t, lv_color_hex(accent), LV_STATE_CHECKED);
+  }
+}
+
+// Text on an "on" tile: dark while the accent fill is bright enough, else
+// the normal light text (Glass with a faint fill over a dark picture).
+uint32_t onTextColor(uint32_t accent, bool glass) {
+  if (!glass) return C_TEXT_ON;
+  const uint32_t lum = ((accent >> 16 & 0xFF) * 299 + (accent >> 8 & 0xFF) * 587 + (accent & 0xFF) * 114) / 1000;
+  return lum * dispSettings.glassOn / 100 >= 115 ? C_TEXT_ON : C_TEXT;
 }
 
 void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, int w, int h) {
   const String domain = entityDomain(def.entity);
   const uint32_t accent = def.hasColor ? def.color : domainColor(domain);
+  const bool glass = s_theme == THEME_GLASS && wallBlur();
 
   lv_obj_t* t = lv_obj_create(grid);
   lv_obj_set_grid_cell(t, LV_GRID_ALIGN_STRETCH, col, w, LV_GRID_ALIGN_STRETCH, row, h);
@@ -2252,7 +2272,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_bg_color(t, lv_color_hex(C_TILE), 0);
   lv_obj_set_style_bg_color(t, lv_color_hex(accent), LV_STATE_CHECKED);
   lv_obj_set_style_text_color(t, lv_color_hex(tileText(def)), 0);
-  lv_obj_set_style_text_color(t, lv_color_hex(C_TEXT_ON), LV_STATE_CHECKED);
+  lv_obj_set_style_text_color(t, lv_color_hex(onTextColor(accent, glass)), LV_STATE_CHECKED);
   // Press feedback: the card darkens and shrinks a little, eased in 90 ms.
   lv_obj_set_style_bg_color(t, lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
   lv_obj_set_style_bg_color(t, lv_color_mix(lv_color_hex(accent), lv_color_black(), 200),
@@ -2261,7 +2281,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_transform_height(t, -3, LV_STATE_PRESSED);
   lv_obj_set_style_transition(t, &s_pressTrans, 0);
   lv_obj_set_style_transition(t, &s_pressTrans, LV_STATE_PRESSED);
-  if (s_theme == THEME_GLASS && wallBlur()) glassStyle(t);
+  if (glass) glassStyle(t, accent);
 
   if (def.type == TILE_METRIC) {
     TileRt r = {};

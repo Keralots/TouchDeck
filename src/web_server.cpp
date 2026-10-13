@@ -157,6 +157,7 @@ static void handleApiConfig() {
   display["glassTint"] = dispSettings.glassTint;
   display["glassBlur"] = dispSettings.glassBlur;
   display["glassDim"] = dispSettings.glassDim;
+  display["glassOn"] = dispSettings.glassOn;
 
   JsonObject backlight = doc["backlight"].to<JsonObject>();
   backlight["nightEnabled"] = backlightSettings.nightEnabled != 0;
@@ -258,6 +259,7 @@ static void handleConfigExport() {
   display["glassTint"] = dispSettings.glassTint;
   display["glassBlur"] = dispSettings.glassBlur;
   display["glassDim"] = dispSettings.glassDim;
+  display["glassOn"] = dispSettings.glassOn;
 
   JsonObject backlight = doc["backlight"].to<JsonObject>();
   backlight["nightEnabled"] = backlightSettings.nightEnabled != 0;
@@ -437,9 +439,11 @@ static void handleConfigImport() {
   nextDisplay.glassTint = displayDefaults.glassTint;
   nextDisplay.glassBlur = displayDefaults.glassBlur;
   nextDisplay.glassDim = displayDefaults.glassDim;
+  nextDisplay.glassOn = displayDefaults.glassOn;
   if (!display["glassTint"].isNull()) READ_INT(display, "glassTint", 0, 90, nextDisplay.glassTint, uint8_t);
   if (!display["glassBlur"].isNull()) READ_INT(display, "glassBlur", 0, 24, nextDisplay.glassBlur, uint8_t);
   if (!display["glassDim"].isNull()) READ_INT(display, "glassDim", 0, 60, nextDisplay.glassDim, uint8_t);
+  if (!display["glassOn"].isNull()) READ_INT(display, "glassOn", 20, 100, nextDisplay.glassOn, uint8_t);
 
   READ_BOOL(backlight, "nightEnabled", nextBacklight.nightEnabled);
   READ_INT(backlight, "nightBrightness", 0, 255, nextBacklight.nightBrightness, uint8_t);
@@ -578,12 +582,14 @@ static void handleSaveDisplay() {
   const uint8_t oldRotation = dispSettings.rotation;
   const uint8_t oldTheme = dispSettings.theme;
   dispSettings.theme = (uint8_t)clampedArg("theme", dispSettings.theme, 0, 2);
-  const uint32_t oldGlass = dispSettings.glassTint << 16 | dispSettings.glassBlur << 8 | dispSettings.glassDim;
+  const uint32_t oldGlass = dispSettings.glassOn << 24 | dispSettings.glassTint << 16 |
+                            dispSettings.glassBlur << 8 | dispSettings.glassDim;
   dispSettings.glassTint = (uint8_t)clampedArg("glassTint", dispSettings.glassTint, 0, 90);
   dispSettings.glassBlur = (uint8_t)clampedArg("glassBlur", dispSettings.glassBlur, 0, 24);
   dispSettings.glassDim = (uint8_t)clampedArg("glassDim", dispSettings.glassDim, 0, 60);
-  const bool glassChanged =
-    oldGlass != (uint32_t)(dispSettings.glassTint << 16 | dispSettings.glassBlur << 8 | dispSettings.glassDim);
+  dispSettings.glassOn = (uint8_t)clampedArg("glassOn", dispSettings.glassOn, 20, 100);
+  const bool glassChanged = oldGlass != (uint32_t)(dispSettings.glassOn << 24 | dispSettings.glassTint << 16 |
+                                                   dispSettings.glassBlur << 8 | dispSettings.glassDim);
   dispSettings.rotation = (uint8_t)clampedArg("rotation", dispSettings.rotation, 0, 3);
   brightness = (uint8_t)clampedArg("brightness", brightness, 0, 255);
   dispSettings.tempScaleMax = (uint16_t)clampedArg("tempScale", dispSettings.tempScaleMax, 1, 500);
