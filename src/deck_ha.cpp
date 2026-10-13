@@ -57,7 +57,15 @@ uint32_t s_wantedGen = 1;
 uint32_t s_version = 1;
 struct Call {
   String domain, service, target, data;
+  uint32_t tracking;
 };
+struct CallResultSlot {
+  uint32_t id = 0;
+  bool ready = false;
+  HaCallResult result;
+};
+CallResultSlot s_results[16];
+uint32_t s_nextTracking = 0;
 std::deque<Call> s_calls;
 struct Failure {
   String entity, message;
@@ -74,6 +82,7 @@ std::vector<uint32_t> s_subIds;
 struct Pending {
   uint32_t id;
   String entity;
+  uint32_t tracking;
 };
 std::vector<Pending> s_pending;
 bool s_everConnected = false;
@@ -342,10 +351,30 @@ void applyEvent(JsonObjectConst ev) {
   if (changed) { s_version++; historyLive(time(nullptr)); }
 }
 
+// Called with s_lock held. Keep the state version and time at the actual result.
+void finishCall(uint32_t tracking, const String& entity, bool ok) {
+  if (!tracking) return;
+  for (CallResultSlot& slot : s_results) {
+    if (slot.id != tracking) continue;
+    const Entry* en = findEntry(entity.c_str());
+    slot.result = {ok, millis(), en ? en->e.version : 0};
+    slot.ready = true;
+    return;
+  }
+}
+
 void failPending(const String& message) {
   Lock g;
-  for (const Pending& p : s_pending) s_failures.push_back({p.entity, message});
+  for (const Pending& p : s_pending) {
+    finishCall(p.tracking, p.entity, false);
+    s_failures.push_back({p.entity, message});
+  }
   s_pending.clear();
+  for (const Call& c : s_calls) {
+    finishCall(c.tracking, c.target, false);
+    s_failures.push_back({c.target, message});
+  }
+  s_calls.clear();
 }
 
 void handleText(const uint8_t* payload, size_t len) {
@@ -384,9 +413,11 @@ void handleText(const uint8_t* payload, size_t len) {
     const bool ok = doc["success"] | false;
     for (size_t i = 0; i < s_pending.size(); i++) {
       if (s_pending[i].id != id) continue;
-      if (!ok) {
+      {
         Lock g;
-        s_failures.push_back({s_pending[i].entity, (const char*)(doc["error"]["message"] | "service call failed")});
+        finishCall(s_pending[i].tracking, s_pending[i].entity, ok);
+        if (!ok)
+          s_failures.push_back({s_pending[i].entity, (const char*)(doc["error"]["message"] | "service call failed")});
       }
       s_pending.erase(s_pending.begin() + i);
       return;
@@ -457,7 +488,7 @@ void sendQueuedCalls() {
     Call c;
     {
       Lock g;
-      if (s_calls.empty()) return;
+      if (s_link != HA_CONNECTED || s_calls.empty()) return;
       c = s_calls.front();
       s_calls.pop_front();
     }
@@ -472,8 +503,8 @@ void sendQueuedCalls() {
       JsonDocument data(psram());
       if (!deserializeJson(data, c.data)) d["service_data"] = data.as<JsonObjectConst>();
     }
+    s_pending.push_back({id, c.target, c.tracking});
     sendJson(d);
-    s_pending.push_back({id, c.target});
   }
 }
 
@@ -493,6 +524,7 @@ void haTask(void*) {
       s_started = false;
       s_everConnected = false;
       setLink(HA_NOT_CONFIGURED);
+      failPending("connection to Home Assistant lost");
       {
         Lock g;
         s_error = "";
@@ -509,6 +541,7 @@ void haTask(void*) {
         s_started = false;
       }
       setLink(HA_WAITING_WIFI);
+      failPending("connection to Home Assistant lost");
       vTaskDelay(pdMS_TO_TICKS(500));
       continue;
     }
@@ -660,13 +693,46 @@ uint32_t haStoreVersion() {
   return s_version;
 }
 
+static uint32_t queueService(const String& domain, const String& service, const String& target,
+                             const String& dataJson, bool tracked) {
+  if (!s_lock) return 0;
+  Lock g;
+  if (s_link != HA_CONNECTED || s_calls.size() >= MAX_QUEUED_CALLS) return 0;
+  uint32_t id = 0;
+  if (tracked) {
+    for (CallResultSlot& slot : s_results) {
+      if (slot.id) continue;
+      do { id = ++s_nextTracking; } while (!id);
+      slot.id = id;
+      slot.ready = false;
+      break;
+    }
+    if (!id) return 0;
+  }
+  s_calls.push_back({domain, service, target, dataJson, id});
+  return tracked ? id : 1;
+}
+
 bool haCallService(const String& domain, const String& service, const String& target,
                    const String& dataJson) {
-  if (!s_lock) return false;
+  return queueService(domain, service, target, dataJson, false) != 0;
+}
+
+uint32_t haCallServiceTracked(const String& domain, const String& service, const String& target,
+                              const String& dataJson) {
+  return queueService(domain, service, target, dataJson, true);
+}
+
+bool haTakeCallResult(uint32_t id, HaCallResult& result) {
+  if (!s_lock || !id) return false;
   Lock g;
-  if (s_link != HA_CONNECTED || s_calls.size() >= MAX_QUEUED_CALLS) return false;
-  s_calls.push_back({domain, service, target, dataJson});
-  return true;
+  for (CallResultSlot& slot : s_results) {
+    if (slot.id != id || !slot.ready) continue;
+    result = slot.result;
+    slot.id = 0;
+    return true;
+  }
+  return false;
 }
 
 bool haTakeFailure(String& entity, String& message) {

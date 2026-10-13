@@ -79,6 +79,15 @@ bool haNumericState(const String& state, float& value);
 // service_data object as JSON text (may be empty). False when not connected.
 bool haCallService(const String& domain, const String& service, const String& target,
                    const String& dataJson);
+// Tracked calls reserve a result slot until the UI takes the result. Zero = refused.
+struct HaCallResult {
+  bool ok = false;
+  uint32_t finishedMs = 0;
+  uint32_t entityVersion = 0;  // captured at the result, before later state events
+};
+uint32_t haCallServiceTracked(const String& domain, const String& service, const String& target,
+                              const String& dataJson);
+bool haTakeCallResult(uint32_t id, HaCallResult& result);
 // A failed call's entity and message, one at a time, for the UI to revert and
 // show. False when none is pending.
 bool haTakeFailure(String& entity, String& message);

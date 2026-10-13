@@ -95,9 +95,6 @@ struct TileRt {
   uint32_t iconCp;        // MDI codepoint shown, 0 = LVGL symbol
   bool on;
   uint32_t haVersion;     // last HA entity version applied
-  bool pending;           // optimistic toggle waiting for HA
-  bool pendingOn;
-  uint32_t pendingUntil;
   // Metric and sensor charts
   lv_obj_t* unit;
   lv_obj_t* viz;          // chart or bar
@@ -118,8 +115,7 @@ struct TileRt {
   float frac;
   bool sliding;           // this press became a drag: no tap or hold action
   int16_t slX0;
-  float slFrac0;
-  uint32_t slSentMs, slReleasedMs;
+  float slFrac0, slValue;
   // Clock tiles: hours in sub, then these two; the colon blinks.
   lv_obj_t* colon;
   lv_obj_t* mins;
@@ -448,7 +444,10 @@ void applySensorHistory(TileRt& r) {
 }
 
 // --- Home Assistant binding ------------------------------------------------------------
-constexpr uint32_t PENDING_MS = 4000;  // optimistic toggle waits this long for HA
+constexpr uint32_t TOGGLE_SETTLE_MS = 2000;
+constexpr uint32_t LEVEL_SETTLE_MS = 5000;
+constexpr uint32_t CALL_ANSWER_MS = 6000;
+constexpr uint32_t LEVEL_GAP_MS = 300;
 
 bool haStateOn(const String& domain, const String& st) {
   if (domain == "lock") return st == "locked";
@@ -491,8 +490,12 @@ String prettyState(const String& domain, const HaEntity& e) {
 void toggleService(const String& domain, bool currentlyOn, String& svcDomain, String& svc) {
   svcDomain = domain;
   if (domain == "lock") svc = currentlyOn ? "unlock" : "lock";
-  else if (domain == "media_player") svc = "media_play_pause";
-  else if (domain == "scene") svc = "turn_on";
+  else if (domain == "cover") svc = currentlyOn ? "close_cover" : "open_cover";
+  else if (domain == "media_player") svc = currentlyOn ? "media_pause" : "media_play";
+  else if (domain == "light" || domain == "switch" || domain == "fan" ||
+           domain == "input_boolean" || domain == "automation" || domain == "siren" ||
+           domain == "humidifier") svc = currentlyOn ? "turn_off" : "turn_on";
+  else if (domain == "scene" || domain == "script") svc = "turn_on";
   else if (domain == "button" || domain == "input_button") svc = "press";
   else svc = "toggle";
 }
@@ -551,26 +554,26 @@ String sliderText(const String& d, const HaEntity& e, float frac) {
   return String((int)lroundf(frac * 100)) + "%";
 }
 
-// Set the entity to a level. False when HA did not take the call.
-bool sliderSend(const String& entity, float frac) {
+// Set the entity to a level, with a result slot for the shared wish.
+uint32_t sliderSend(const String& entity, float frac) {
   const String d = entityDomain(entity);
   const int pct = (int)lroundf(constrain(frac, 0.0f, 1.0f) * 100);
   if (d == "light")
-    return pct ? haCallService("light", "turn_on", entity, "{\"brightness_pct\":" + String(pct) + "}")
-               : haCallService("light", "turn_off", entity, "");
+    return pct ? haCallServiceTracked("light", "turn_on", entity, "{\"brightness_pct\":" + String(pct) + "}")
+               : haCallServiceTracked("light", "turn_off", entity, "");
   if (d == "cover")
-    return haCallService("cover", "set_cover_position", entity, "{\"position\":" + String(pct) + "}");
+    return haCallServiceTracked("cover", "set_cover_position", entity, "{\"position\":" + String(pct) + "}");
   if (d == "fan")
-    return pct ? haCallService("fan", "set_percentage", entity, "{\"percentage\":" + String(pct) + "}")
-               : haCallService("fan", "turn_off", entity, "");
+    return pct ? haCallServiceTracked("fan", "set_percentage", entity, "{\"percentage\":" + String(pct) + "}")
+               : haCallServiceTracked("fan", "turn_off", entity, "");
   if (d == "media_player")
-    return haCallService("media_player", "volume_set", entity,
-                         "{\"volume_level\":" + String(pct / 100.0f, 2) + "}");
+    return haCallServiceTracked("media_player", "volume_set", entity,
+                                "{\"volume_level\":" + String(pct / 100.0f, 2) + "}");
   if (d == "input_number" || d == "number") {
     HaEntity e;
     haGetEntity(entity, e);
     const float lo = isnan(e.numMin) ? 0 : e.numMin, hi = isnan(e.numMax) ? 100 : e.numMax;
-    if (hi <= lo) return false;
+    if (hi <= lo) return 0;
     float val = lo + (hi - lo) * frac;
     if (e.numStep > 0) {
       val = lo + lroundf((val - lo) / e.numStep) * e.numStep;
@@ -578,9 +581,237 @@ bool sliderSend(const String& entity, float frac) {
     }
     char num[24];
     snprintf(num, sizeof num, "%.7g", constrain(val, lo, hi));
-    return haCallService(d, "set_value", entity, String("{\"value\":") + num + "}");
+    return haCallServiceTracked(d, "set_value", entity, String("{\"value\":") + num + "}");
   }
-  return false;
+  return 0;
+}
+
+struct WishField {
+  bool active = false, dirty = false;
+  float value = 0;
+  uint32_t order = 0, version = 0;
+};
+struct Wish {
+  String entity;
+  WishField on, level;
+  uint32_t call = 0, sentMs = 0, levelMs = 0;
+  uint32_t resultMs = 0, resultVersion = 0;
+  float sentValue = 0, lastLevel = -1;
+  bool sentLevel = false, levelSent = false, dragging = false;
+  bool answered = false, timedOut = false, holding = false;
+};
+std::vector<Wish> s_wishes;
+uint32_t s_wishOrder = 0;
+
+Wish* findWish(const String& entity) {
+  for (Wish& w : s_wishes) if (w.entity == entity) return &w;
+  return nullptr;
+}
+
+void rememberLevel(Wish& w, const HaEntity& e) {
+  const float f = sliderFrac(entityDomain(w.entity), e);
+  if (f > 0) w.lastLevel = f;
+}
+
+Wish& ensureWish(const String& entity) {
+  if (Wish* w = findWish(entity)) return *w;
+  s_wishes.emplace_back();
+  Wish& w = s_wishes.back();
+  w.entity = entity;
+  HaEntity e;
+  if (haGetEntity(entity, e)) rememberLevel(w, e);
+  return w;
+}
+
+bool levelControlsOn(const String& domain) {
+  return domain == "light" || domain == "fan" || domain == "cover";
+}
+
+bool wishOn(const String& entity, const HaEntity& e) {
+  const String domain = entityDomain(entity);
+  const Wish* w = findWish(entity);
+  if (w && w->on.active) return w->on.value != 0;
+  if (w && w->level.active && levelControlsOn(domain)) return w->level.value > 0;
+  return e.known && e.state != "unavailable" && e.state != "unknown" && haStateOn(domain, e.state);
+}
+
+float wishFrac(const String& entity, const HaEntity& e) {
+  const Wish* w = findWish(entity);
+  if (w && w->on.active && (!w->level.active || (int32_t)(w->on.order - w->level.order) > 0))
+    return w->on.value == 0 ? 0 : w->lastLevel > 0 ? w->lastLevel : 1;
+  if (w && w->level.active) return w->level.value;
+  return sliderFrac(entityDomain(entity), e);
+}
+
+String wishText(const String& entity, const HaEntity& e, bool slider) {
+  const String domain = entityDomain(entity);
+  const Wish* w = findWish(entity);
+  if (slider) {
+    if (w && w->on.active && !w->on.value &&
+        (!w->level.active || (int32_t)(w->on.order - w->level.order) > 0)) return "Off";
+    return sliderText(domain, e, wishFrac(entity, e));
+  }
+  if (w && w->on.active) {
+    const bool on = w->on.value != 0;
+    if (domain == "lock") return on ? "Locked" : "Unlocked";
+    if (domain == "cover") return on ? "Open" : "Closed";
+    if (domain == "media_player") return on ? "Playing" : "Paused";
+    return on ? "On" : "Off";
+  }
+  if (w && w->level.active) return sliderText(domain, e, w->level.value);
+  return prettyState(domain, e);
+}
+
+void applyHaToTile(TileRt& r, bool force);
+
+void showWish(const String& entity) {
+  for (TileRt& r : s_tiles) if (r.def->entity == entity) applyHaToTile(r, true);
+  refreshModal();
+}
+
+void clearWish(Wish& w) {
+  w.on = {};
+  w.level = {};
+  w.dragging = w.holding = false;
+  w.answered = false;
+}
+
+bool sendWish(Wish& w) {
+  if (w.call || (!w.on.dirty && !w.level.dirty)) return true;
+  const bool level = w.level.dirty && (!w.on.dirty || (int32_t)(w.level.order - w.on.order) < 0);
+  const uint32_t now = millis();
+  if (level && w.dragging && w.levelSent && now - w.levelMs < LEVEL_GAP_MS) return true;
+  WishField& f = level ? w.level : w.on;
+  uint32_t call;
+  if (level) call = sliderSend(w.entity, f.value);
+  else {
+    String domain, service;
+    toggleService(entityDomain(w.entity), f.value == 0, domain, service);
+    call = haCallServiceTracked(domain, service, w.entity, "");
+  }
+  if (!call) {
+    clearWish(w);
+    deckToastShow(haLink() == HA_CONNECTED ? "Home Assistant is busy, try again" :
+                                          "Home Assistant is offline", 1800);
+    return false;
+  }
+  w.call = call;
+  w.sentLevel = level;
+  w.sentValue = f.value;
+  w.sentMs = now;
+  w.timedOut = w.answered = false;
+  f.dirty = false;
+  if (level) { w.levelMs = now; w.levelSent = true; }
+  return true;
+}
+
+bool setWish(const String& entity, bool level, float value, bool dragging = false) {
+  Wish& w = ensureWish(entity);
+  WishField& f = level ? w.level : w.on;
+  if (level) w.dragging = dragging;
+  if (!f.active || f.value != value || (level && w.holding)) {
+    HaEntity e;
+    haGetEntity(entity, e);
+    f.version = e.version;
+    f.active = true;
+    f.value = value;
+    f.order = ++s_wishOrder;
+    if (w.call && w.timedOut) { w.sentMs = millis(); w.timedOut = false; }
+    f.dirty = !w.call || w.sentLevel != level || w.sentValue != value;
+    if (levelControlsOn(entityDomain(entity))) {
+      if (level) w.on = {};
+      else { w.level = {}; w.dragging = w.holding = false; }
+    }
+    if (level) w.holding = false;
+    if (level && value > 0) w.lastLevel = value;
+  }
+  const bool ok = sendWish(w);
+  showWish(entity);
+  return ok;
+}
+
+void holdLevel(const String& entity, float value) {
+  Wish& w = ensureWish(entity);
+  w.dragging = true;
+  if (!w.level.active) {
+    w.level.active = w.holding = true;
+    w.level.value = value;
+    w.level.order = ++s_wishOrder;
+  }
+}
+
+void releaseLevel(const String& entity) {
+  if (Wish* w = findWish(entity)) {
+    if (w->holding) { w->level = {}; w->holding = false; }
+    w->dragging = false;
+    sendWish(*w);
+    showWish(entity);
+  }
+}
+
+// Results gate both resends and settling. A missing result keeps the call owned.
+void syncWishes() {
+  const uint32_t now = millis();
+  for (Wish& w : s_wishes) {
+    if (!w.call && !w.on.active && !w.level.active) continue;
+    bool changed = false;
+    HaCallResult result;
+    if (w.call && haTakeCallResult(w.call, result)) {
+      w.call = 0;
+      changed = true;
+      if (!result.ok) clearWish(w);
+      else {
+        WishField& sent = w.sentLevel ? w.level : w.on;
+        if (sent.active && sent.value == w.sentValue) sent.dirty = false;
+        w.answered = true;
+        w.resultMs = result.finishedMs;
+        w.resultVersion = result.entityVersion;
+      }
+    }
+    if (haLink() != HA_CONNECTED && (w.on.active || w.level.active)) {
+      clearWish(w);
+      changed = true;
+    }
+    if (w.call && !w.timedOut && now - w.sentMs >= CALL_ANSWER_MS) {
+      clearWish(w);
+      w.timedOut = true;
+      changed = true;
+      deckToastShow("No answer from Home Assistant", 2000);
+    }
+    if (!w.call && (w.on.dirty || w.level.dirty)) {
+      sendWish(w);
+      changed = changed || w.call || (!w.on.dirty && !w.level.dirty);
+    }
+    HaEntity e;
+    if (haGetEntity(w.entity, e)) {
+      if (w.on.active && !w.on.dirty && !w.level.dirty && e.version != w.on.version &&
+          e.known && e.state != "unavailable" && e.state != "unknown" &&
+          haStateOn(entityDomain(w.entity), e.state) == (w.on.value != 0)) {
+        w.on.active = false;
+        changed = true;
+      }
+      if (!w.call && !w.on.dirty && !w.level.dirty && w.answered && !w.dragging) {
+        const bool newer = e.version != w.resultVersion;
+        const bool matches = e.known && e.state != "unavailable" && e.state != "unknown" &&
+                             haStateOn(entityDomain(w.entity), e.state) == (w.on.value != 0);
+        if (w.on.active && (newer || matches ||
+                            (int32_t)(now - w.resultMs) >= (int32_t)TOGGLE_SETTLE_MS)) {
+          w.on.active = false;
+          changed = true;
+        }
+        if (w.level.active && (newer || (int32_t)(now - w.resultMs) >= (int32_t)LEVEL_SETTLE_MS)) {
+          w.level.active = false;
+          changed = true;
+        }
+      }
+    }
+    if (changed) showWish(w.entity);
+  }
+  s_wishes.erase(std::remove_if(s_wishes.begin(), s_wishes.end(), [](const Wish& w) {
+    if (w.call) return false;
+    for (const TileRt& r : s_tiles) if (r.def->entity == w.entity) return false;
+    return true;
+  }), s_wishes.end());
 }
 
 void setSliderFill(TileRt& r, float frac) {
@@ -602,14 +833,14 @@ void applyHaToTile(TileRt& r, bool force) {
   HaEntity e;
   if (!haGetEntity(d.entity, e)) return;
   if (!force && e.version == r.haVersion) return;
+  if (e.version != r.haVersion)
+    if (Wish* w = findWish(d.entity)) rememberLevel(*w, e);
   r.haVersion = e.version;
   const String domain = entityDomain(d.entity);
   const bool avail = e.known && e.state != "unavailable" && e.state != "unknown";
-  const bool on = avail && haStateOn(domain, e.state);
-  if (r.pending) {
-    if (on != r.pendingOn) return;  // not there yet; the timeout decides
-    r.pending = false;
-  }
+  const bool control = d.type == TILE_TOGGLE || d.type == TILE_SLIDER || d.tap.kind == ACT_TOGGLE;
+  const bool on = control ? wishOn(d.entity, e) : avail && haStateOn(domain, e.state);
+  if (control) r.on = on;
   if (d.type == TILE_TOGGLE) setTileOn(r, on);
   if (r.icon) r.iconCp = showIcon(r.icon, d, &e, on, r.iconPx, r.iconCp);
   lv_obj_set_style_opa(r.obj, avail ? LV_OPA_COVER : LV_OPA_50, 0);
@@ -627,16 +858,10 @@ void applyHaToTile(TileRt& r, bool force) {
     lv_label_set_text(r.unit, numeric && !d.sub.length() ? e.unit.c_str() : "");
     fitValue(r);
   } else if (d.type == TILE_SLIDER) {
-    r.on = on;
-    // While dragging, and briefly after (HA echoes older values), the finger wins.
-    const bool held = lv_obj_has_state(r.obj, LV_STATE_PRESSED) && r.sliding;
-    if (!held && millis() - r.slReleasedMs >= 1500) {
-      const float f = sliderFrac(domain, e);
-      setSliderFill(r, f);
-      if (!d.sub.length()) lv_label_set_text(r.sub, sliderText(domain, e, f).c_str());
-    }
+    setSliderFill(r, wishFrac(d.entity, e));
+    if (!d.sub.length()) lv_label_set_text(r.sub, wishText(d.entity, e, true).c_str());
   } else if (!d.sub.length()) {
-    lv_label_set_text(r.sub, prettyState(domain, e).c_str());
+    lv_label_set_text(r.sub, (control ? wishText(d.entity, e, false) : prettyState(domain, e)).c_str());
     fitValue(r);
   }
   markPageStale(r.page);
@@ -714,6 +939,7 @@ bool ledToHa(uint8_t v) {
 }
 
 void haSync() {
+  syncWishes();
   const uint32_t v = haStoreVersion();
   if (v != s_haSeen) {
     s_haSeen = v;
@@ -729,20 +955,8 @@ void haSync() {
   }
   String ent, msg;
   while (haTakeFailure(ent, msg)) {
-    for (TileRt& r : s_tiles) {
-      if (r.def->entity != ent || !r.pending) continue;
-      r.pending = false;
-      applyHaToTile(r, true);
-    }
     if (ent == s_cfg.ledEntity) ledFromHa(true);  // back to what HA has
     deckToastShow(msg.c_str(), 2500);
-  }
-  const uint32_t now = millis();
-  for (TileRt& r : s_tiles) {
-    if (!r.pending || (int32_t)(now - r.pendingUntil) < 0) continue;
-    r.pending = false;
-    applyHaToTile(r, true);
-    deckToastShow("No answer from Home Assistant", 2000);
   }
 }
 
@@ -773,6 +987,12 @@ void collectEntities() {
   else ledSetHaLevel(LED_HA_NONE);
   s_ledSeen = 0;
   haSetEntities(ids);
+  for (Wish& w : s_wishes) {
+    if (w.holding) w.level = {};
+    w.dragging = w.holding = false;
+  }
+  for (const TileRt& r : s_tiles)
+    if (sliderDomain(entityDomain(r.def->entity))) ensureWish(r.def->entity);
   std::vector<HaHistoryKey> histories;
   for (const TileRt& r : s_tiles)
     if (r.def->type == TILE_SENSOR && r.def->style == METRIC_CHART)
@@ -800,19 +1020,14 @@ void runAction(TileRt& r, const TileAction& a) {
         deckToastShow("Home Assistant is offline", 1800);
         break;
       }
-      String sd, svc;
-      toggleService(domain, r.on, sd, svc);
-      if (!haCallService(sd, svc, entity, "")) {
-        deckToastShow("Home Assistant is busy, try again", 1800);
-        break;
-      }
-      if (r.def->type == TILE_TOGGLE && svc != "turn_on" && svc != "press") {
-        // Optimistic: flip now, confirm or revert when HA reports the state.
-        setTileOn(r, !r.on);
-        r.pending = true;
-        r.pendingOn = r.on;
-        r.pendingUntil = millis() + PENDING_MS;
-        markPageStale(r.page);
+      if (domain == "scene" || domain == "script" || domain == "button" || domain == "input_button") {
+        String sd, svc;
+        toggleService(domain, r.on, sd, svc);
+        if (!haCallService(sd, svc, entity, "")) deckToastShow("Home Assistant is busy, try again", 1800);
+      } else {
+        HaEntity e;
+        haGetEntity(entity, e);
+        setWish(entity, false, wishOn(entity, e) ? 0 : 1);
       }
       break;
     }
@@ -912,7 +1127,7 @@ void tileEvent(lv_event_t* e) {
 bool modalShown();
 
 // Slider tile: a sideways drag moves the level from where it was (no jump to
-// the finger), sending at most every 300 ms and once more on release.
+// the finger). The shared wish coalesces calls and flushes the final value.
 void sliderEvent(lv_event_t* e) {
   const size_t idx = (size_t)(uintptr_t)lv_event_get_user_data(e);
   if (idx >= s_tiles.size()) return;
@@ -924,7 +1139,6 @@ void sliderEvent(lv_event_t* e) {
   }
   lv_point_t p;
   lv_indev_get_point(lv_indev_active(), &p);
-  const uint32_t now = millis();
   if (code == LV_EVENT_PRESSED) {
     r.sliding = false;
     r.slX0 = p.x;
@@ -936,26 +1150,17 @@ void sliderEvent(lv_event_t* e) {
       if (!canSlide || abs(p.x - r.slX0) < 8) return;
       r.sliding = true;
       r.slX0 = p.x;
-      r.slFrac0 = r.frac;
-      r.slSentMs = 0;
+      r.slFrac0 = r.slValue = r.frac;
+      holdLevel(r.def->entity, r.frac);
     }
     const int w = lv_obj_get_width(r.obj);
     const float f = constrain(r.slFrac0 + (p.x - r.slX0) / (float)(w > 0 ? w : 1), 0.0f, 1.0f);
-    if (fabsf(f - r.frac) < 0.005f) return;
-    setSliderFill(r, f);
-    HaEntity he;
-    haGetEntity(r.def->entity, he);
-    if (!r.def->sub.length())
-      lv_label_set_text(r.sub, sliderText(entityDomain(r.def->entity), he, f).c_str());
-    if (now - r.slSentMs >= 300) {
-      r.slSentMs = now;
-      sliderSend(r.def->entity, f);
-    }
+    if (fabsf(f - r.slValue) < 0.005f) return;
+    r.slValue = f;
+    setWish(r.def->entity, true, f, true);
   } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
     if (!r.sliding) return;
-    r.slReleasedMs = now;
-    if (!sliderSend(r.def->entity, r.frac)) deckToastShow("Home Assistant is offline", 1500);
-    markPageStale(r.page);
+    releaseLevel(r.def->entity);
   }
 }
 
@@ -1395,6 +1600,12 @@ void deckToastShow(const char* text, uint32_t holdMs) {
 }
 
 void closeModal() {
+  if (s_modalSlider && s_modalTile >= 0 && s_modalTile < (int)s_tiles.size()) {
+    if (Wish* w = findWish(s_tiles[s_modalTile].def->entity)) {
+      if (w->holding) w->level = {};
+      w->dragging = w->holding = false;
+    }
+  }
   if (s_modalCard) lv_obj_delete(s_modalCard);
   if (s_modalScrim) lv_obj_delete(s_modalScrim);
   s_modalCard = s_modalScrim = nullptr;
@@ -1430,9 +1641,6 @@ void onModalPrimary(lv_event_t*) {
   refreshModal();
 }
 
-uint32_t s_modalSentMs = 0;      // last level call while dragging
-uint32_t s_modalReleasedMs = 0;  // HA echoes old values for a moment after
-
 // The card gets a level slider for lights and for entities that report a level.
 bool modalHasSlider() {
   if (s_modalTile < 0) return false;
@@ -1443,45 +1651,19 @@ bool modalHasSlider() {
   return sliderDomain(d) && haGetEntity(id, e) && sliderFrac(d, e) >= 0;
 }
 
-void sendLevel(int pct) {
+void sendLevel(int pct, bool dragging) {
   if (s_modalTile < 0) return;
-  if (!sliderSend(s_tiles[s_modalTile].def->entity, pct / 100.0f))
-    deckToastShow("Home Assistant is offline", 1500);
-}
-
-// A slider ignores HA for 1.5 s after release; then take HA's value even when
-// it arrived during that time (a stepped number rounds what was sent).
-void settleSliders() {
-  const uint32_t now = millis();
-  for (TileRt& r : s_tiles) {
-    if (!r.slReleasedMs || now - r.slReleasedMs < 1500) continue;
-    r.slReleasedMs = 0;
-    applyHaToTile(r, true);
-  }
-  if (s_modalReleasedMs && now - s_modalReleasedMs >= 1500) {
-    s_modalReleasedMs = 0;
-    refreshModal();
-  }
+  const String& entity = s_tiles[s_modalTile].def->entity;
+  if (dragging) setWish(entity, true, pct / 100.0f, true);
+  else releaseLevel(entity);
 }
 
 void onModalSlider(lv_event_t* e) {
   const lv_event_code_t code = lv_event_get_code(e);
-  const int pct = lv_slider_get_value(s_modalSlider);
-  const uint32_t now = millis();
-  if (code == LV_EVENT_VALUE_CHANGED) {
-    const String& id = s_tiles[s_modalTile].def->entity;
-    HaEntity he;
-    haGetEntity(id, he);
-    lv_label_set_text(s_modalState, sliderText(entityDomain(id), he, pct / 100.0f).c_str());
-    // Live while dragging, but not faster than HA and the device can follow.
-    if (now - s_modalSentMs >= 300) {
-      s_modalSentMs = now;
-      sendLevel(pct);
-    }
-  } else if (code == LV_EVENT_RELEASED) {
-    s_modalReleasedMs = now;
-    sendLevel(pct);
-  }
+  if (code == LV_EVENT_PRESSED && s_modalTile >= 0)
+    holdLevel(s_tiles[s_modalTile].def->entity, lv_slider_get_value(s_modalSlider) / 100.0f);
+  else if (code == LV_EVENT_VALUE_CHANGED || code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST)
+    sendLevel(lv_slider_get_value(s_modalSlider), code == LV_EVENT_VALUE_CHANGED);
 }
 
 void refreshModal() {
@@ -1492,20 +1674,15 @@ void refreshModal() {
     if (r.on != s_confirmOn) closeModal();
     return;
   }
-  const String domain = entityDomain(r.def->entity);
   String st = tileSub(r);
   HaEntity e;
   const bool haKnown = r.def->entity.length() && haGetEntity(r.def->entity, e);
-  if (haKnown) st = prettyState(domain, e);
+  if (haKnown) st = wishText(r.def->entity, e, false);
   if (s_modalSlider) {
-    const bool dragging = lv_obj_has_state(s_modalSlider, LV_STATE_PRESSED);
-    const bool settling = millis() - s_modalReleasedMs < 1500;
-    if (!dragging && !settling) {
-      const float f = haKnown ? sliderFrac(domain, e) : -1;
-      const int pct = f > 0 ? (int)lroundf(f * 100) : 0;
-      lv_slider_set_value(s_modalSlider, pct, LV_ANIM_OFF);  // a light's 0 shows as 1
-      lv_label_set_text(s_modalState, (haKnown && domain != "light" ? sliderText(domain, e, f) : st).c_str());
-    }
+    const float f = haKnown ? wishFrac(r.def->entity, e) : -1;
+    const int pct = f > 0 ? (int)lroundf(f * 100) : 0;
+    lv_slider_set_value(s_modalSlider, pct, LV_ANIM_OFF);
+    lv_label_set_text(s_modalState, (haKnown ? wishText(r.def->entity, e, true) : st).c_str());
   } else {
     lv_label_set_text(s_modalState, st.c_str());
   }
@@ -1532,7 +1709,7 @@ void refreshModal() {
       lv_label_set_text(s_modalRange, range);
     }
   }
-  const bool on = haKnown && haStateOn(domain, e.state);
+  const bool on = haKnown && wishOn(r.def->entity, e);
   s_modalIconCp = showIcon(s_modalIcon, *r.def, haKnown ? &e : nullptr, on, 28, s_modalIconCp);
 }
 
@@ -1616,7 +1793,7 @@ void openModal(int tileIdx) {
     s_modalSlider = sl;
     lv_obj_set_pos(sl, 26, 128);
     lv_obj_set_size(sl, cw - 52, 14);
-    lv_slider_set_range(sl, entityDomain(d.entity) == "light" ? 1 : 0, 100);
+    lv_slider_set_range(sl, 0, 100);
     lv_obj_set_style_bg_color(sl, lv_color_hex(C_TRACK), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(sl, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(sl, lv_color_hex(accent), LV_PART_INDICATOR);
@@ -1624,8 +1801,10 @@ void openModal(int tileIdx) {
     lv_obj_set_style_bg_color(sl, lv_color_hex(0xFFFFFF), LV_PART_KNOB);
     lv_obj_set_style_pad_all(sl, 7, LV_PART_KNOB);
     lv_obj_set_ext_click_area(sl, 18);
+    lv_obj_add_event_cb(sl, onModalSlider, LV_EVENT_PRESSED, nullptr);
     lv_obj_add_event_cb(sl, onModalSlider, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_add_event_cb(sl, onModalSlider, LV_EVENT_RELEASED, nullptr);
+    lv_obj_add_event_cb(sl, onModalSlider, LV_EVENT_PRESS_LOST, nullptr);
   }
 
   if (graph) {
@@ -4003,7 +4182,6 @@ void deckTick() {
   blinkClocks();
   qpUpdateStatus(false);
   haSync();
-  settleSliders();
   httpSync();
   pcCmdSync();
   pairSync();
@@ -4181,13 +4359,7 @@ bool deckTestSlide(const String& tileId, int pct) {
   for (TileRt& r : s_tiles) {
     if (r.def->id != tileId || !r.fill) continue;
     const float f = constrain(pct, 0, 100) / 100.0f;
-    setSliderFill(r, f);
-    HaEntity he;
-    haGetEntity(r.def->entity, he);
-    lv_label_set_text(r.sub, sliderText(entityDomain(r.def->entity), he, f).c_str());
-    r.slReleasedMs = millis();
-    markPageStale(r.page);
-    return sliderSend(r.def->entity, f);
+    return setWish(r.def->entity, true, f);
   }
   return false;
 }
