@@ -143,7 +143,7 @@ function moreRow(t,i){const cf=t.confirm||'';
     h+='<div class="field"><label class="field-label">Style</label><select data-st="'+i+'">'+opt('number','Number',t.style!=='chart')+opt('chart','Chart',t.style==='chart')+'</select></div>';
     if(t.style==='chart')h+='<div class="field"><label class="field-label">History hours</label><input type="number" min="1" max="168" step="1" data-sh="'+i+'" value="'+esc(t.hours==null?24:t.hours)+'"></div>';
     [['warn','Warn at'],['crit','Critical at']].forEach(([k,label])=>{h+='<div class="field"><label class="field-label">'+label+'</label><input type="number" step="any" data-th="'+i+'" data-tk="'+k+'" value="'+esc(t[k]==null?'':t[k])+'" placeholder="Unset"></div>';});
-    h+='<p class="field-hint wide" style="margin:0">Thresholds use the sensor unit; lower than Warn = low is bad.</p>';
+    h+='<p class="field-hint wide" style="margin:0">History defaults to 24 h; longer periods take longer to load from Home Assistant (a chatty sensor over a week can take many seconds). Thresholds use the sensor unit; Critical lower than Warn = low is bad.</p>';
   }
   if(t.type==='action'){const tp=t.tap||{},k=isHttp(t)?'http':(t.tap?'keep':'');
     const kk=isPcCmd(t)?'pc':k;

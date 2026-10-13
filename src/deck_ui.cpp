@@ -424,11 +424,15 @@ bool copyHistoryChart(const TileDef& d, uint8_t hours, uint32_t& version, lv_obj
                       int32_t* points, float& lo, float& hi) {
   float values[HA_HISTORY_POINTS];
   if (!haCopyHistory(d.entity, hours, version, values, lo, hi)) return false;
+  // lo / hi are the period's extremes; the axis follows the plotted bucket means.
+  int32_t low = INT32_MAX, high = INT32_MIN;
   for (int i = 0; i < HA_HISTORY_POINTS; i++) {
     points[i] = isfinite(values[i]) ? historyPoint(values[i]) : LV_CHART_POINT_NONE;
+    if (points[i] == LV_CHART_POINT_NONE) continue;
+    low = min(low, points[i]);
+    high = max(high, points[i]);
   }
-  if (isfinite(lo)) {
-    const int32_t low = historyPoint(lo), high = historyPoint(hi);
+  if (low <= high) {
     const int32_t pad = (int32_t)((int64_t)(high - low) * 15 / 100) + 5;
     lv_chart_set_axis_range(chart, LV_CHART_AXIS_PRIMARY_Y, low - pad, high + pad);
   }
@@ -1522,9 +1526,9 @@ void refreshModal() {
     if (numeric) {
       char range[128];
       if (isfinite(s_modalMin))
-        snprintf(range, sizeof(range), "%uh  Min %.3g / Max %.3g\nNow %.3g %s",
-                 s_modalHours, s_modalMin, s_modalMax, value, e.unit.c_str());
-      else snprintf(range, sizeof(range), "%uh  No history yet\nNow %.3g %s", s_modalHours, value, e.unit.c_str());
+        snprintf(range, sizeof(range), "Last %u h    Min %.3g    Max %.3g %s",
+                 s_modalHours, s_modalMin, s_modalMax, e.unit.c_str());
+      else snprintf(range, sizeof(range), "Last %u h    No history yet", s_modalHours);
       lv_label_set_text(s_modalRange, range);
     }
   }
@@ -1645,7 +1649,7 @@ void openModal(int tileIdx) {
       s_modalRange = lv_label_create(c);
       lv_obj_set_style_text_font(s_modalRange, &deck_font_12, 0);
       lv_label_set_long_mode(s_modalRange, LV_LABEL_LONG_MODE_WRAP);
-      lv_obj_set_size(s_modalRange, cw - 32, 28);
+      lv_obj_set_size(s_modalRange, cw - 32, 18);
       lv_obj_set_pos(s_modalRange, 16, light ? 212 : 196);
     }
   }
