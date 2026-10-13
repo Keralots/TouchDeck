@@ -28,7 +28,7 @@ const CSS=`
 .dk-grid{display:grid;gap:6px;padding:6px;width:100%;max-width:560px;margin:12px 0 6px;background:var(--card-2);border:1px solid var(--line);border-radius:var(--r-md);user-select:none}.dk-grid.pt{max-width:300px}
 .dk-cell{border:1px dashed var(--line);border-radius:8px}
 .dk-gt{position:relative;display:flex;flex-direction:column;justify-content:space-between;gap:4px;min-width:0;min-height:0;overflow:hidden;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);cursor:grab;touch-action:none}
-.dk-gt.sel{outline:2px solid var(--accent);outline-offset:1px}.dk-gt.drag{z-index:5;opacity:.85;cursor:grabbing;box-shadow:0 8px 20px rgba(0,0,0,.35)}
+.dk-gt.sel{outline:2px solid var(--accent);outline-offset:1px}.dk-gt.row{flex-direction:row;align-items:center;justify-content:flex-start;gap:6px;padding:2px 8px}.dk-gt.ic b{display:none}.dk-gt.drag{z-index:5;opacity:.85;cursor:grabbing;box-shadow:0 8px 20px rgba(0,0,0,.35)}
 .dk-gt i{font:20px dkmdi;font-style:normal;line-height:1}.dk-gt i.tx{font:600 11px var(--mono)}
 .dk-gt b{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dk-rs{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 55%,var(--mute) 55%);opacity:.7}
@@ -150,25 +150,28 @@ $('dkHaSave').onclick=async()=>{const b=new URLSearchParams();b.set('url',$('dkH
 $('dkHaForget').onclick=async()=>{if(!confirm('Remove the Home Assistant address and token from the device?'))return;try{await api('/api/ha/forget',{method:'POST'});haStatus();}catch(e){alert(e.message);}};
 
 /* pages and tiles */
-/* Grid and positions are per orientation (ori is the one being edited). */
+/* Grid and positions are per orientation (ori is the one being edited).
+   The editor counts positions and spans in half cells (deck.json: 1.5). */
 const DEF={landscape:[4,3],portrait:[3,4]};
 const grid=p=>{const l=(p.layouts&&p.layouts[ori])||{};return [gi(l.cols,DEF[ori][0]),gi(l.rows,DEF[ori][1])];};
 const tpos=t=>(t.pos&&t.pos[ori])||{};
 const cl=(v,a,b)=>Math.min(b,Math.max(a,v==null?a:Math.round(v)));
 /* Like the firmware's parser: a non-integer takes the default, an integer is clamped to 1..6. */
 const gi=(v,d)=>Number.isInteger(v)?Math.min(6,Math.max(1,v)):d;
-const tdim=t=>{const q=tpos(t);return [gi(q.w,1),gi(q.h,1)];};
-const tileSize=t=>tdim(t).join('x');
-const cell=(x,y,w,h)=>{const q={x:x,y:y};if(w>1)q.w=w;if(h>1)q.h=h;return q;};
+/* Like the firmware: a number rounds to the nearest half cell and is clamped, anything else takes the default. */
+const hv=(v,d,a,b)=>typeof v==='number'&&isFinite(v)?Math.min(b,Math.max(a,Math.round(v*2))):d;
+const tdim=t=>{const q=tpos(t);return [hv(q.w,2,1,12),hv(q.h,2,1,12)];};
+const tileSize=t=>tdim(t).map(v=>String(v/2)).join('x');
+const cell=(x,y,w,h)=>{const q={x:x/2,y:y/2};if(w!==2)q.w=w/2;if(h!==2)q.h=h/2;return q;};
 function setPos(t,q){t.pos=t.pos||{};if(Object.keys(q).length)t.pos[ori]=q;else delete t.pos[ori];if(!Object.keys(t.pos).length)delete t.pos;}
-function setSize(t,v){const [w,h]=v.split('x').map(Number);const q=Object.assign({},tpos(t));delete q.w;delete q.h;if(w>1)q.w=w;if(h>1)q.h=h;setPos(t,q);}
-const sizeSel=(t,i)=>{const s=tileSize(t),o=['1x1','2x1','1x2','2x2'];if(!o.includes(s))o.push(s);return '<select data-s="'+i+'">'+o.map(v=>'<option'+(v===s?' selected':'')+'>'+v+'</option>').join('')+'</select>';};
+function setSize(t,v){const [w,h]=v.split('x').map(Number);const q=Object.assign({},tpos(t));delete q.w;delete q.h;if(w!==1)q.w=w;if(h!==1)q.h=h;setPos(t,q);}
+const sizeSel=(t,i)=>{const s=tileSize(t),o=['1x1','1.5x1','2x1','3x1','1x1.5','1.5x1.5','1x2','2x2'];if(!o.includes(s))o.push(s);return '<select data-s="'+i+'">'+o.map(v=>'<option'+(v===s?' selected':'')+'>'+v+'</option>').join('')+'</select>';};
 /* Where each tile lands, by the firmware's rule: explicit cells first, then
    the rest flow into the first free place that fits. null = not shown. */
-function layout(p){const [c,r]=grid(p);const used=[...Array(r)].map(()=>Array(c).fill(false));const at=p.tiles.map(()=>null);
+function layout(p){const [gc,gr]=grid(p),c=gc*2,r=gr*2;const used=[...Array(r)].map(()=>Array(c).fill(false));const at=p.tiles.map(()=>null);
   const fits=(x,y,w,h)=>{if(x+w>c||y+h>r)return false;for(let j=y;j<y+h;j++)for(let i=x;i<x+w;i++)if(used[j][i])return false;return true;};
   const put=(k,x,y,w,h)=>{for(let j=y;j<y+h;j++)for(let i=x;i<x+w;i++)used[j][i]=true;at[k]={x:x,y:y,w:w,h:h};};
-  p.tiles.forEach((t,k)=>{const q=tpos(t),[w,h]=tdim(t);if(Number.isInteger(q.x)&&Number.isInteger(q.y)){const x=cl(q.x,0,15),y=cl(q.y,0,15);if(fits(x,y,w,h))put(k,x,y,w,h);}});
+  p.tiles.forEach((t,k)=>{const q=tpos(t),[w,h]=tdim(t);if(typeof q.x==='number'&&typeof q.y==='number'){const x=hv(q.x,0,0,30),y=hv(q.y,0,0,30);if(fits(x,y,w,h))put(k,x,y,w,h);}});
   p.tiles.forEach((t,k)=>{if(at[k])return;const [w,h]=tdim(t);for(let y=0;y<r&&!at[k];y++)for(let x=0;x<c&&!at[k];x++)if(fits(x,y,w,h))put(k,x,y,w,h);});
   return at;}
 /* Pin every placed tile where it shows, so a drag changes only what moved.
@@ -178,18 +181,18 @@ const free=(at,k,q,c,r)=>q.x>=0&&q.y>=0&&q.x+q.w<=c&&q.y+q.h<=r&&at.every((o,j)=
 function gtile(t,k,a){const m=t.type==='metric',mm=m&&mlist(t).find(x=>x.id===t.metric),en=entMap[t.entity],d=domainOf(t.entity);
   const col=t.color||(m?PAL[((t.metric||1)-1)%8]:(COL[d]||'#7DB5FF')),cp=m?0:tileCp(t);
   const nm=t.label||(m?(mm?mm.name:'Metric #'+t.metric):(en&&en.name)||t.entity||'Tile');
-  return '<div class="dk-gt'+(k===sel?' sel':'')+'" data-g="'+k+'"'+(a?' style="grid-area:'+(a.y+1)+'/'+(a.x+1)+'/span '+a.h+'/span '+a.w+'"':'')+'><i style="color:'+col+'"'+(cp?'':' class="tx"')+'>'+(cp?String.fromCodePoint(cp):(m?'PC':esc((d||'?').slice(0,2).toUpperCase())))+'</i><b>'+esc(nm)+'</b>'+(a?'<span class="dk-rs" data-rs="'+k+'"></span>':'')+'</div>';}
+  return '<div class="dk-gt'+(k===sel?' sel':'')+(a&&a.h<2?' row':'')+(a&&a.h<2&&a.w<2?' ic':'')+'" data-g="'+k+'"'+(a?' style="grid-area:'+(a.y+1)+'/'+(a.x+1)+'/span '+a.h+'/span '+a.w+'"':'')+'><i style="color:'+col+'"'+(cp?'':' class="tx"')+'>'+(cp?String.fromCodePoint(cp):(m?'PC':esc((d||'?').slice(0,2).toUpperCase())))+'</i><b>'+esc(nm)+'</b>'+(a?'<span class="dk-rs" data-rs="'+k+'"></span>':'')+'</div>';}
 /* Drag a tile to a free place or onto a tile of its size (swap); the corner
    handle resizes. A press without movement selects the tile. */
 function gdrag(e,p,at,k,size){if(e.button>0)return;e.preventDefault();e.stopPropagation();
-  const n=e.currentTarget,tile=size?n.parentElement:n,g=$('dkGrid'),gh=$('dkGhost'),[c,r]=grid(p);
+  const n=e.currentTarget,tile=size?n.parentElement:n,g=$('dkGrid'),gh=$('dkGhost'),[gc,gr]=grid(p),c=gc*2,r=gr*2;
   const b=g.getBoundingClientRect(),cs=getComputedStyle(g),pad=parseFloat(cs.paddingLeft)||0,gap=parseFloat(cs.columnGap)||0;
   const sx=(b.width-2*pad+gap)/c,sy=(b.height-2*pad+gap)/r;
   const a=at[k],[tw,th]=tdim(p.tiles[k]),tb=tile.getBoundingClientRect();
   const ox=a?e.clientX-tb.left:sx/2,oy=a?e.clientY-tb.top:sy/2;
   let moved=false,tgt=null;n.setPointerCapture(e.pointerId);
   n.onpointermove=ev=>{const dx=ev.clientX-e.clientX,dy=ev.clientY-e.clientY;if(!moved&&Math.abs(dx)+Math.abs(dy)<6)return;moved=true;tile.classList.add('drag');
-    if(size)tgt={x:a.x,y:a.y,w:cl(Math.round((ev.clientX-b.left-pad)/sx)-a.x,1,Math.min(6,c-a.x)),h:cl(Math.round((ev.clientY-b.top-pad)/sy)-a.y,1,Math.min(6,r-a.y))};
+    if(size)tgt={x:a.x,y:a.y,w:cl(Math.round((ev.clientX-b.left-pad)/sx)-a.x,1,c-a.x),h:cl(Math.round((ev.clientY-b.top-pad)/sy)-a.y,1,r-a.y)};
     else{tile.style.transform='translate('+dx+'px,'+dy+'px)';if(tw>c||th>r){tgt=null;gh.hidden=true;return;}
       tgt={x:cl((ev.clientX-ox-b.left-pad)/sx,0,c-tw),y:cl((ev.clientY-oy-b.top-pad)/sy,0,r-th),w:tw,h:th};}
     tgt.j=-1;tgt.ok=free(at,k,tgt,c,r);
@@ -204,20 +207,20 @@ function renderTabs(){const ps=pages();if(cur>=ps.length)cur=Math.max(0,ps.lengt
 /* A page stacked below the one before it (same group) is in its column. */
 const stackedAt=(ps,i)=>i>0&&!!ps[i].group&&ps[i].group===ps[i-1].group;
 function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.innerHTML='<p class="dk-empty">No deck pages. Add one with "+ Page".</p>';return;}
-  const p=ps[cur];const [c,r]=grid(p),land=ori==='landscape',at=layout(p),lost=p.tiles.map((t,k)=>k).filter(k=>!at[k]);let cells=0;at.forEach(a=>{if(a)cells+=a.w*a.h;});
+  const p=ps[cur];const [c,r]=grid(p),land=ori==='landscape',at=layout(p),lost=p.tiles.map((t,k)=>k).filter(k=>!at[k]);let cells=0;at.forEach(a=>{if(a)cells+=a.w*a.h/4;});
   let h='<div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Layout</span>'+[['landscape','Landscape'],['portrait','Portrait']].map(o=>'<button type="button" class="chip page-tab'+(o[0]===ori?' on':'')+'" data-o="'+o[0]+'">'+o[1]+'</button>').join('')+'</div>';
   h+='<div class="grid-2"><div class="field"><label class="field-label">Page name</label><input type="text" id="dkPName" value="'+esc(p.name||'')+'"></div><div class="field"><label class="field-label">Grid (columns x rows)</label><div class="dk-row"><select id="dkPCols" style="width:auto">'+(land?[2,3,4,5,6]:[2,3,4]).map(n=>'<option'+(n===c?' selected':'')+'>'+n+'</option>').join('')+'</select><span>x</span><select id="dkPRows" style="width:auto">'+(land?[2,3,4]:[2,3,4,5,6]).map(n=>'<option'+(n===r?' selected':'')+'>'+n+'</option>').join('')+'</select><button type="button" class="btn btn-danger" id="dkPDel" style="margin-left:auto">Delete page</button></div></div></div>';
   h+='<label class="check-row standalone"><input type="checkbox" id="dkPStack"'+(stackedAt(ps,cur)?' checked':'')+(cur===0?' disabled':'')+'><span class="check-box"></span><span class="check-text"><strong>Below the previous page</strong><span class="ct-hint">Stacked pages form one column: swipe up and down between them, left and right to the next column.</span></span></label>';
-  let g='';for(let y=0;y<r;y++)for(let x=0;x<c;x++)g+='<div class="dk-cell" style="grid-area:'+(y+1)+'/'+(x+1)+'"></div>';
+  let g='';for(let y=0;y<r;y++)for(let x=0;x<c;x++)g+='<div class="dk-cell" style="grid-area:'+(2*y+1)+'/'+(2*x+1)+'/span 2/span 2"></div>';
   const hd=$('dkHeader').checked?30:0;
-  h+='<div class="dk-grid'+(land?'':' pt')+'" id="dkGrid" style="grid-template-columns:repeat('+c+',minmax(0,1fr));grid-template-rows:repeat('+r+',minmax(0,1fr));aspect-ratio:'+(land?480:320)+'/'+((land?320:480)-hd)+'">'+g+p.tiles.map((t,k)=>at[k]?gtile(t,k,at[k]):'').join('')+'<div class="dk-ghost" id="dkGhost" hidden></div></div>';
+  h+='<div class="dk-grid'+(land?'':' pt')+'" id="dkGrid" style="grid-template-columns:repeat('+2*c+',minmax(0,1fr));grid-template-rows:repeat('+2*r+',minmax(0,1fr));aspect-ratio:'+(land?480:320)+'/'+((land?320:480)-hd)+'">'+g+p.tiles.map((t,k)=>at[k]?gtile(t,k,at[k]):'').join('')+'<div class="dk-ghost" id="dkGhost" hidden></div></div>';
   if(lost.length)h+='<p class="dk-cap over">No room on the page for these: drag one to a free place, make it smaller or remove it.</p><div class="dk-tray">'+lost.map(k=>gtile(p.tiles[k],k,null)).join('')+'</div>';
-  h+='<p class="field-hint">Drag a tile to move it, or onto a tile of the same size to swap them; the corner handle resizes. Tap a tile to find it in the list.</p>';
+  h+='<p class="field-hint">Drag a tile to move it, or onto a tile of the same size to swap them; the corner handle resizes. Both go in half-cell steps. Tap a tile to find it in the list.</p>';
   h+='<div class="dk-tiles">'+p.tiles.map((t,i)=>{if(t.type==='metric')return metricRow(t,i);const d=domainOf(t.entity);const en=entMap[t.entity];const nm=en&&en.name?en.name:(t.entity||'No entity');
     const cp=tileCp(t);
     return '<div class="dk-tile'+(i===sel?' sel':'')+'"><button type="button" class="dk-ic'+(cp?' mdi':'')+'" data-ic="'+i+'" title="'+esc(cp?(t.icon||(en&&en.icon)||'automatic'):'Choose an icon')+'" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+(cp?String.fromCodePoint(cp):esc((d||'?').slice(0,2).toUpperCase()))+'</button><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="dk-tsub">'+esc(t.entity||(isHttp(t)?'HTTP '+(t.tap.method||'GET')+' '+(t.tap.url||''):isPcCmd(t)?'PC command: '+((PCCMD.find(c=>c[0]===t.tap.cmd)||[0,t.tap.cmd])[1]):'no entity'))+(en&&en.state?' - '+esc(en.state)+(en.unit?' '+esc(en.unit):''):'')+'</div></div>'+
     '<div class="dk-tact"><select data-t="'+i+'"><option value="toggle"'+(t.type==='toggle'?' selected':'')+'>Switch</option><option value="action"'+(t.type==='action'?' selected':'')+'>Button</option><option value="sensor"'+(t.type==='sensor'?' selected':'')+'>Sensor</option>'+(SLIDER.includes(d)||t.type==='slider'?'<option value="slider"'+(t.type==='slider'?' selected':'')+'>Slider</option>':'')+'</select>'+sizeSel(t,i)+'<button type="button" class="btn" data-e="'+i+'">Entity</button><button type="button" class="btn'+(i===more?' on':'')+'" data-mo="'+i+'" title="More options">&#8943;</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div>'+(i===more?moreRow(t,i):'')+'</div>';}).join('')+'</div>';
-  h+='<p class="dk-cap">'+cells+' of '+(c*r)+' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddPcCmd">+ Add PC control</button></div>'+pcList()+'<p class="field-hint">Chart and Bar need a 2x1 or bigger tile (a 1x1 tile shows the number), so picking one makes a 1x1 tile 2x1.</p>';
+  h+='<p class="dk-cap">'+(+cells.toFixed(2))+' of '+(c*r)+' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddPcCmd">+ Add PC control</button></div>'+pcList()+'<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a smaller one shows the number), so picking one makes a 1x1 tile 2x1.</p>';
   el.innerHTML=h;
   $('dkPName').oninput=e=>{p.name=e.target.value;setDirty(true);renderTabs();};
   const setGrid=(gc,gr)=>{p.layouts=p.layouts||{};p.layouts[ori]={cols:gc,rows:gr};setDirty(true);renderPage();};

@@ -12,6 +12,9 @@ WebSocket API and receives PC metrics over UDP on the LAN.
 
 - **Pages of tiles** in a grid (up to 6x4 per page): switches, buttons and
   sensors from Home Assistant, and PC metric tiles (number, chart or bar).
+  Tiles are placed and sized in half-cell steps (1x1.5, 1.5x1, 0.5x0.5...);
+  text and icons scale with the tile, so small tiles shrink instead of
+  overlapping.
 - **Columns:** pages stacked into a column. Swipe left and right between
   columns, up and down between the pages of a column.
 - **Home Assistant:** live state over the WebSocket API, optimistic toggles,
@@ -51,7 +54,7 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
   diagnostics.
 - **Pages & tiles:** Home Assistant address and token, the icon font, pages,
   tiles, entity and icon pickers, columns, and a grid editor: drag tiles to
-  move or swap them, resize from the corner, separately for landscape and
+  move or swap them, resize from the corner (half-cell steps), separately for landscape and
   portrait.
 - **Display:** rotation, theme (Midnight or Daylight), brightness, night
   schedule, PC metric tile scales.

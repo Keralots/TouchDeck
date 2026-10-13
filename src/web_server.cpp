@@ -1052,7 +1052,7 @@ static void handleDeckConfirm() {
 }
 
 // POST /api/deck/edit?op=open|move|remove|done|cancel[&tile=<index>&x=&y=&w=&h=]
-// - bench hook, drives the on-device edit mode.
+// - bench hook, drives the on-device edit mode. x, y, w, h in half cells.
 static void handleDeckEdit() {
   const bool ok = deckTestEdit(server.arg("op"), server.arg("tile").toInt(), server.arg("x").toInt(),
                                server.arg("y").toInt(), server.arg("w").toInt(), server.arg("h").toInt());

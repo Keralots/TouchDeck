@@ -79,10 +79,11 @@ struct TileAction {
 };
 
 // set = an explicit cell (x, y). w and h always apply: a tile with only a
-// span flows into the next free place that fits it.
+// span flows into the next free place that fits it. All four in half cells
+// (deck.json takes 0.5 steps: "w": 1.5).
 struct TilePos {
   bool set = false;
-  uint8_t x = 0, y = 0, w = 1, h = 1;
+  uint8_t x = 0, y = 0, w = 2, h = 2;
 };
 
 struct TileDef {

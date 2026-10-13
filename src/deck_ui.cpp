@@ -85,6 +85,7 @@ struct TileRt {
   lv_obj_t* name;
   lv_obj_t* sub;
   lv_obj_t* icon;
+  lv_obj_t* chip;
   int iconPx;
   uint32_t iconCp;        // MDI codepoint shown, 0 = LVGL symbol
   bool on;
@@ -98,7 +99,13 @@ struct TileRt {
   lv_chart_series_t* ser;
   int32_t* pts;           // chart points (PC_HISTORY_LEN), LVGL heap
   bool warn;
-  bool compact;           // 1x1 number tile: value font shrinks to fit
+  const lv_font_t* valFont;  // metric value font picked by fitTile, shrinks per value
+  int16_t valW;              // room for value + unit
+  bool besideName;           // chart: the value shares the top line with the name
+  int16_t chipRoom;          // sensor: icon width the reading may take over
+  const lv_font_t* nameFont;  // largest name font, null = fixed one-line name
+  int16_t nameArea, nameW;    // room for the name
+  int16_t fitW, fitH;        // tile size the layout was fitted to
   // Slider tiles: the fill behind the content shows the level (0..1).
   lv_obj_t* fill;
   float frac;
@@ -362,6 +369,8 @@ void pairSync();
 void refreshModal();
 void deckToastShow(const char* text, uint32_t holdMs);
 void qpSyncValues();
+void fitValue(TileRt& r);
+void fitNameText(TileRt& r);
 
 // --- Home Assistant binding ------------------------------------------------------------
 constexpr uint32_t PENDING_MS = 4000;  // optimistic toggle waits this long for HA
@@ -503,8 +512,9 @@ void setSliderFill(TileRt& r, float frac) {
   r.frac = frac < 0 ? 0 : frac;
   const int w = lv_obj_get_width(r.obj), h = lv_obj_get_height(r.obj);
   if (w <= 0) return;  // not laid out yet: SIZE_CHANGED comes back here
-  // The fill starts at the tile edge, outside the 9 px padding.
-  lv_obj_set_pos(r.fill, -9, -9);
+  // The fill starts at the tile edge, outside the padding.
+  const int pad = lv_obj_get_style_pad_left(r.obj, LV_PART_MAIN);
+  lv_obj_set_pos(r.fill, -pad, -pad);
   lv_obj_set_size(r.fill, (int)lroundf(w * r.frac), h);
   if (r.frac <= 0) lv_obj_add_flag(r.fill, LV_OBJ_FLAG_HIDDEN);
   else lv_obj_remove_flag(r.fill, LV_OBJ_FLAG_HIDDEN);
@@ -528,7 +538,10 @@ void applyHaToTile(TileRt& r, bool force) {
   if (d.type == TILE_TOGGLE) setTileOn(r, on);
   r.iconCp = showIcon(r.icon, d, &e, on, r.iconPx, r.iconCp);
   lv_obj_set_style_opa(r.obj, avail ? LV_OPA_COVER : LV_OPA_50, 0);
-  if (!d.label.length() && e.name.length()) lv_label_set_text(r.name, e.name.c_str());
+  if (!d.label.length() && e.name.length() && strcmp(lv_label_get_text(r.name), e.name.c_str())) {
+    lv_label_set_text(r.name, e.name.c_str());
+    fitNameText(r);
+  }
   if (d.type == TILE_SLIDER) {
     r.on = on;
     // While dragging, and briefly after (HA echoes older values), the finger wins.
@@ -540,6 +553,7 @@ void applyHaToTile(TileRt& r, bool force) {
     }
   } else if (!d.sub.length()) {
     lv_label_set_text(r.sub, prettyState(domain, e).c_str());
+    fitValue(r);
   }
   markPageStale(r.page);
 }
@@ -1631,6 +1645,329 @@ void setText(lv_obj_t* l, const char* text) {
   if (strcmp(lv_label_get_text(l), text)) lv_label_set_text(l, text);
 }
 
+// --- Tile fitting -----------------------------------------------------------------------
+// A tile picks its padding, icon chip and type sizes from its pixel size (grid,
+// span, top bar), so small tiles shrink text instead of overlapping it. Runs
+// again on every size change.
+constexpr int WIDE_W = 150;      // content width that earns the larger fonts
+constexpr int NAME_LINE_SP = -2;  // Montserrat's line height has room for accents
+
+int lineH(const lv_font_t* f) { return lv_font_get_line_height(f); }
+int textH(const lv_font_t* f, int lines) { return lines * lineH(f) + (lines - 1) * NAME_LINE_SP; }
+
+void showObj(lv_obj_t* o, bool on) {
+  if (!o) return;
+  if (on) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+  else lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+}
+
+void setFont(lv_obj_t* o, const lv_font_t* f) {
+  if (lv_obj_get_style_text_font(o, LV_PART_MAIN) != f) lv_obj_set_style_text_font(o, f, 0);
+}
+
+void fitName(lv_obj_t* name, const lv_font_t* f, int lines) {
+  setFont(name, f);
+  lv_obj_set_style_text_line_space(name, NAME_LINE_SP, 0);
+  lv_obj_set_width(name, lv_pct(100));
+  lv_obj_set_height(name, LV_SIZE_CONTENT);
+  lv_obj_set_style_max_height(name, textH(f, lines), 0);
+}
+
+void fitChip(TileRt& r, int size) {
+  lv_obj_set_size(r.chip, size, size);
+  const int px = size >= 28 ? 20 : 16;
+  if (px != r.iconPx) {
+    r.iconPx = px;
+    HaEntity e;
+    const bool known = r.def->entity.length() && haGetEntity(r.def->entity, e);
+    r.iconCp = showIcon(r.icon, *r.def, known ? &e : nullptr, r.on, px, 0);
+  }
+}
+
+int textW(const char* text, const lv_font_t* f) {
+  lv_point_t s;
+  lv_text_get_size(&s, text, f, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  return s.x;
+}
+
+// Lines of f that fit in h px, at most 3.
+int linesIn(const lv_font_t* f, int h) {
+  int n = 0;
+  while (n < 3 && textH(f, n + 1) <= h) n++;
+  return n;
+}
+
+// No word wider than the line (LVGL would break it mid-word) and the wrapped
+// text within the lines.
+bool nameFits(const char* text, const lv_font_t* f, int w, int lines) {
+  char word[48];
+  for (const char* p = text; *p;) {
+    while (*p == ' ') p++;
+    size_t n = 0;
+    while (p[n] && p[n] != ' ') n++;
+    if (n) {
+      const size_t k = LV_MIN(n, sizeof(word) - 1);
+      memcpy(word, p, k);
+      word[k] = 0;
+      if (textW(word, f) > w) return false;
+    }
+    p += n;
+  }
+  lv_point_t s;
+  lv_text_get_size(&s, text, f, 0, NAME_LINE_SP, w, LV_TEXT_FLAG_NONE);
+  return s.y <= textH(f, lines);
+}
+
+// The name font: the fitted one, or smaller until the name fits whole (12 px
+// truncates). Up to three lines where the tile is tall enough.
+void fitNameText(TileRt& r) {
+  if (!r.nameFont) return;
+  static const lv_font_t* const kSteps[] = {&deck_font_20, &deck_font_14, &deck_font_12};
+  const char* text = lv_label_get_text(r.name);
+  const lv_font_t* f = r.nameFont;
+  int lines = 1;
+  bool from = false;
+  for (const lv_font_t* s : kSteps) {
+    from = from || s == r.nameFont;
+    if (!from) continue;
+    f = s;
+    lines = LV_MAX(1, linesIn(s, r.nameArea));
+    if (nameFits(text, s, r.nameW, lines)) break;
+  }
+  fitName(r.name, f, lines);
+}
+
+// Action, toggle and slider: icon top left, state top right, name at the
+// bottom; a one-line row on short wide tiles; the icon alone on tiny ones.
+void fitButton(TileRt& r, int cw, int ch) {
+  struct Opt {
+    int chip;
+    const lv_font_t* font;
+    int lines;
+    bool wideOnly;
+  };
+  static const Opt kOpts[] = {
+      {30, &deck_font_20, 2, true}, {30, &deck_font_20, 1, true}, {30, &deck_font_14, 2, false},
+      {22, &deck_font_12, 2, false}, {30, &deck_font_14, 1, false}, {22, &deck_font_12, 1, false},
+  };
+  for (const Opt& o : kOpts) {
+    if (cw < 40 || (o.wideOnly && cw < WIDE_W) || o.chip + textH(o.font, o.lines) > ch) continue;
+    fitChip(r, o.chip);
+    lv_obj_align(r.chip, LV_ALIGN_TOP_LEFT, 0, 0);
+    r.nameFont = o.font;
+    r.nameArea = ch - o.chip;
+    r.nameW = cw;
+    fitNameText(r);
+    lv_obj_align(r.name, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    // The state beside the icon, smaller or gone when "Off" would not fit.
+    const int room = cw - o.chip - 6;
+    const lv_font_t* sf = o.chip >= 30 && textW("Off", &deck_font_14) <= room ? &deck_font_14 : &deck_font_12;
+    setFont(r.sub, sf);
+    lv_obj_set_size(r.sub, lv_pct(100), lineH(sf));
+    lv_obj_set_style_pad_left(r.sub, o.chip + 6, 0);  // clear of the icon
+    lv_obj_align(r.sub, LV_ALIGN_TOP_RIGHT, 0, (o.chip - lineH(sf)) / 2);
+    showObj(r.name, true);
+    showObj(r.sub, textW("Off", sf) <= room);
+    return;
+  }
+  r.nameFont = nullptr;
+  if (cw >= 80) {
+    fitChip(r, 22);
+    lv_obj_align(r.chip, LV_ALIGN_LEFT_MID, 0, 0);
+    const bool state = cw >= 140;
+    fitName(r.name, &deck_font_12, 1);
+    lv_obj_set_width(r.name, cw - 28 - (state ? 48 : 0));
+    lv_obj_align(r.name, LV_ALIGN_LEFT_MID, 28, 0);
+    setFont(r.sub, &deck_font_12);
+    lv_obj_set_size(r.sub, 44, lineH(&deck_font_12));
+    lv_obj_set_style_pad_left(r.sub, 0, 0);
+    lv_obj_align(r.sub, LV_ALIGN_RIGHT_MID, 0, 0);
+    showObj(r.name, true);
+    showObj(r.sub, state);
+    return;
+  }
+  const int s = LV_MIN(30, LV_MIN(cw, ch));
+  fitChip(r, s);
+  lv_obj_center(r.chip);
+  showObj(r.name, false);
+  showObj(r.sub, false);
+}
+
+// Sensor: the reading big at the top with a small icon top right, the name
+// under it; a row (name left, reading right) on short tiles.
+void fitSensor(TileRt& r, int cw, int ch) {
+  struct Opt {
+    const lv_font_t* val;
+    const lv_font_t* name;
+    int lines;
+    bool wideOnly;
+  };
+  static const Opt kOpts[] = {
+      {&deck_font_28, &deck_font_20, 2, true},  {&deck_font_28, &deck_font_20, 1, true},
+      {&deck_font_28, &deck_font_14, 1, true},  {&deck_font_20, &deck_font_14, 2, false},
+      {&deck_font_20, &deck_font_12, 2, false}, {&deck_font_20, &deck_font_14, 1, false},
+      {&deck_font_20, &deck_font_12, 1, false}, {&deck_font_14, &deck_font_12, 1, false},
+  };
+  for (const Opt& o : kOpts) {
+    if ((o.wideOnly && cw < WIDE_W) || lineH(o.val) + textH(o.name, o.lines) > ch) continue;
+    const int chip = o.val == &deck_font_14 ? 18 : 22;
+    fitChip(r, chip);
+    lv_obj_align(r.chip, LV_ALIGN_TOP_RIGHT, 2, -2);
+    setFont(r.sub, o.val);
+    lv_obj_set_size(r.sub, lv_pct(100), lineH(o.val));
+    lv_obj_set_style_text_align(r.sub, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_align(r.sub, LV_ALIGN_TOP_LEFT, 0, 0);
+    r.valFont = o.val;
+    r.valW = cw - chip;
+    r.chipRoom = chip;
+    fitValue(r);
+    r.nameFont = o.name;
+    r.nameArea = ch - lineH(o.val);
+    r.nameW = cw;
+    fitNameText(r);
+    lv_obj_align(r.name, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    showObj(r.name, true);
+    return;
+  }
+  const lv_font_t* vf = ch >= lineH(&deck_font_20) ? &deck_font_20 : &deck_font_14;
+  showObj(r.chip, false);
+  r.chipRoom = 0;
+  r.nameFont = nullptr;
+  lv_obj_set_style_pad_right(r.sub, 0, 0);
+  lv_obj_set_style_text_align(r.sub, LV_TEXT_ALIGN_RIGHT, 0);
+  const bool name = cw >= 80;
+  lv_obj_set_size(r.sub, name ? cw / 2 : cw, lineH(vf));
+  lv_obj_align(r.sub, name ? LV_ALIGN_RIGHT_MID : LV_ALIGN_CENTER, 0, 0);
+  r.valFont = vf;
+  r.valW = name ? cw / 2 : cw;
+  fitValue(r);
+  fitName(r.name, &deck_font_12, 1);
+  lv_obj_set_width(r.name, cw - cw / 2 - 4);
+  lv_obj_align(r.name, LV_ALIGN_LEFT_MID, 0, 0);
+  showObj(r.name, name);
+}
+
+// Sensor reading or metric value: the largest font, from the fitted one down,
+// that fits the room left next to the unit.
+void fitValue(TileRt& r) {
+  if (!r.valFont) return;
+  static const lv_font_t* const kSteps[] = {&lv_font_montserrat_40, &deck_font_28, &deck_font_20,
+                                            &deck_font_14, &deck_font_12};
+  int room = r.valW;
+  if (r.unit) {
+    lv_point_t u;
+    lv_text_get_size(&u, lv_label_get_text(r.unit), lv_obj_get_style_text_font(r.unit, LV_PART_MAIN), 0, 0,
+                     LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    room -= 4 + u.x;
+  }
+  if (r.besideName)
+    room -= LV_MIN(textW(lv_label_get_text(r.name), lv_obj_get_style_text_font(r.name, LV_PART_MAIN)),
+                   r.valW * 55 / 100) + 8;
+  const char* text = lv_label_get_text(r.sub);
+  // A sensor's icon gives way when the reading does not fit beside it.
+  if (r.chipRoom) {
+    const bool chip = textW(text, r.valFont) <= room;
+    showObj(r.chip, chip);
+    lv_obj_set_style_pad_right(r.sub, chip ? r.chipRoom : 0, 0);
+    if (!chip) room += r.chipRoom;
+  }
+  const lv_font_t* f = r.valFont;
+  bool from = false;
+  for (const lv_font_t* s : kSteps) {
+    from = from || s == r.valFont;
+    if (!from) continue;
+    f = s;
+    if (textW(text, s) <= room) break;
+  }
+  setFont(r.sub, f);
+}
+
+// PC metric: a chart or bar under a smaller number on wide tiles with the
+// room, else the name on top and the number big at the bottom, else a row.
+void fitMetric(TileRt& r, int cw, int ch) {
+  const TileDef& d = *r.def;
+  lv_obj_t* row = lv_obj_get_parent(r.sub);
+  // Bar: name, number and the 8 px bar stacked; chart: the line under the number.
+  const lv_font_t* nf = ch >= 64 ? &deck_font_20 : &deck_font_14;
+  const bool viz = r.viz && cw >= WIDE_W &&
+                   (d.style == METRIC_BAR ? ch >= lineH(nf) + lineH(&deck_font_28) * 3 / 4 + 10 : ch >= 44);
+  showObj(r.viz, viz);
+  r.besideName = viz && d.style != METRIC_BAR;
+  if (viz) {
+    setFont(r.name, nf);
+    lv_obj_set_size(r.name, d.style == METRIC_BAR ? lv_pct(100) : lv_pct(55), lineH(nf));
+    lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, 0, -2);
+    setFont(r.unit, &deck_font_14);
+    r.valFont = &deck_font_28;
+    if (d.style == METRIC_BAR) {
+      r.valW = cw;
+      lv_obj_align(row, LV_ALIGN_BOTTOM_LEFT, 0, -10);
+    } else {
+      r.valW = cw;
+      lv_obj_align(row, LV_ALIGN_TOP_RIGHT, 0, -6);
+      lv_obj_set_height(r.viz, LV_MIN(ch * 62 / 100, ch - 22));
+    }
+    showObj(r.name, true);
+    fitValue(r);
+    return;
+  }
+  // Digits have no accents or descenders: a quarter of the value's line box is air.
+  struct Opt {
+    const lv_font_t* name;
+    const lv_font_t* val;
+    const lv_font_t* unit;
+    bool wideOnly;
+  };
+  static const Opt kOpts[] = {
+      {&deck_font_20, &lv_font_montserrat_40, &deck_font_20, true},
+      {&deck_font_14, &deck_font_28, &deck_font_14, false},
+      {&deck_font_12, &deck_font_20, &deck_font_12, false},
+  };
+  for (const Opt& o : kOpts) {
+    if ((o.wideOnly && cw < WIDE_W) || lineH(o.name) + lineH(o.val) * 3 / 4 > ch) continue;
+    setFont(r.name, o.name);
+    lv_obj_set_size(r.name, lv_pct(100), lineH(o.name));
+    lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, 0, -2);
+    setFont(r.unit, o.unit);
+    r.valFont = o.val;
+    r.valW = cw;
+    lv_obj_align(row, LV_ALIGN_BOTTOM_LEFT, 0, 2);
+    showObj(r.name, true);
+    fitValue(r);
+    return;
+  }
+  const bool name = cw >= 80;
+  setFont(r.name, &deck_font_12);
+  lv_obj_set_size(r.name, cw / 2 - 4, lineH(&deck_font_12));
+  lv_obj_align(r.name, LV_ALIGN_LEFT_MID, 0, 0);
+  showObj(r.name, name);
+  setFont(r.unit, &deck_font_12);
+  r.valFont = ch >= lineH(&deck_font_20) ? &deck_font_20 : &deck_font_14;
+  r.valW = name ? cw / 2 : cw;
+  lv_obj_align(row, name ? LV_ALIGN_RIGHT_MID : LV_ALIGN_CENTER, 0, 0);
+  fitValue(r);
+}
+
+void fitTile(TileRt& r) {
+  const int w = lv_obj_get_width(r.obj), h = lv_obj_get_height(r.obj);
+  if (w <= 0 || h <= 0 || (w == r.fitW && h == r.fitH)) return;
+  r.fitW = w;
+  r.fitH = h;
+  const int m = LV_MIN(w, h);
+  const int pad = m >= 80 ? 9 : m >= 56 ? 7 : 5;
+  lv_obj_set_style_pad_all(r.obj, pad, 0);
+  const int cw = w - 2 * pad, ch = h - 2 * pad;
+  if (r.def->type == TILE_METRIC) fitMetric(r, cw, ch);
+  else if (r.def->type == TILE_SENSOR) fitSensor(r, cw, ch);
+  else fitButton(r, cw, ch);
+  markPageStale(r.page);
+}
+
+void fitEvent(lv_event_t* e) {
+  const size_t idx = (size_t)(uintptr_t)lv_event_get_user_data(e);
+  if (idx < s_tiles.size()) fitTile(s_tiles[idx]);
+}
+
 // Pull the latest companion packet into one metric tile.
 void applyPcToTile(TileRt& r) {
   const TileDef& d = *r.def;
@@ -1649,16 +1986,7 @@ void applyPcToTile(TileRt& r) {
   formatMetricText(*m, m->value, mt);
   setText(r.sub, mt.value);
   setText(r.unit, mt.unit);
-  if (r.compact) {
-    // "2.3k RPM" overflows a narrow 1x1 tile at 28 px: drop the value to 20 px.
-    lv_point_t v, u;
-    lv_text_get_size(&v, mt.value, &deck_font_28, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    lv_text_get_size(&u, mt.unit, &deck_font_14, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    lv_obj_update_layout(r.obj);
-    const bool fits = v.x + 4 + u.x <= lv_obj_get_content_width(r.obj);
-    const lv_font_t* f = fits ? &deck_font_28 : &deck_font_20;
-    if (lv_obj_get_style_text_font(r.sub, LV_PART_MAIN) != f) lv_obj_set_style_text_font(r.sub, f, 0);
-  }
+  fitValue(r);
 
   const float scale = metricScaleMax(*m, d.scaleMax);
   const float pct = scale > 0 ? m->value * 100.0f / scale : 0;
@@ -1697,23 +2025,18 @@ void applyPcToTile(TileRt& r) {
   }
 }
 
-// Number big at the bottom, or a chart / bar under a smaller number (2x1 and
-// up only; a 1x1 tile always shows the number).
-void makeMetricContent(TileRt& r, lv_obj_t* t, int w, int h) {
+// Number big at the bottom, or a chart / bar under a smaller number (wide
+// tiles only; fitMetric hides the chart on small ones).
+void makeMetricContent(TileRt& r, lv_obj_t* t) {
   const TileDef& d = *r.def;
-  const bool roomy = w >= 2 || h >= 2;
-  const MetricStyle style = roomy ? d.style : METRIC_NUMBER;
+  const MetricStyle style = d.style;
   const uint32_t accent = metricAccent(d);
   lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);  // read-only
 
   r.name = lv_label_create(t);
   lv_label_set_text(r.name, d.label.length() ? d.label.c_str() : "");
-  const lv_font_t* nameFont = roomy ? &deck_font_20 : &deck_font_14;
-  lv_obj_set_style_text_font(r.name, nameFont, 0);
   lv_obj_set_style_text_color(r.name, lv_color_hex(accent), 0);
   lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
-  lv_obj_set_size(r.name, lv_pct(100), lv_font_get_line_height(nameFont));
-  lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, 0, -2);
 
   // Value and unit side by side, bottoms aligned.
   lv_obj_t* row = lv_obj_create(t);
@@ -1730,17 +2053,9 @@ void makeMetricContent(TileRt& r, lv_obj_t* t, int w, int h) {
   lv_obj_set_style_text_opa(r.unit, LV_OPA_70, 0);
   lv_obj_set_style_pad_bottom(r.unit, 4, 0);
 
-  if (style == METRIC_NUMBER) {
-    lv_obj_set_style_text_font(r.sub, roomy ? &lv_font_montserrat_40 : &deck_font_28, 0);
-    lv_obj_set_style_text_font(r.unit, roomy ? &deck_font_20 : &deck_font_14, 0);
-    lv_obj_align(row, LV_ALIGN_BOTTOM_LEFT, 0, 2);
-    r.compact = !roomy;
-    return;
-  }
-  lv_obj_set_style_text_font(r.sub, &deck_font_28, 0);
-  lv_obj_set_style_text_font(r.unit, &deck_font_14, 0);
+  // Fonts and places come from fitMetric once the tile has its size.
+  if (style == METRIC_NUMBER) return;
   if (style == METRIC_BAR) {
-    lv_obj_align(row, LV_ALIGN_LEFT_MID, 0, 4);
     r.viz = lv_bar_create(t);
     lv_obj_set_size(r.viz, lv_pct(100), 8);
     lv_obj_align(r.viz, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -1751,8 +2066,6 @@ void makeMetricContent(TileRt& r, lv_obj_t* t, int w, int h) {
     return;
   }
   // Chart: the number top right, the line under it.
-  lv_obj_align(row, LV_ALIGN_TOP_RIGHT, 0, -6);
-  lv_obj_set_width(r.name, lv_pct(55));
   r.viz = lv_chart_create(t);
   lv_obj_remove_style_all(r.viz);
   lv_obj_set_size(r.viz, lv_pct(100), lv_pct(62));
@@ -1813,9 +2126,11 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     r.def = &def;
     r.page = page;
     r.obj = t;
-    makeMetricContent(r, t, w, h);
+    makeMetricContent(r, t);
+    const size_t idx = s_tiles.size();
     s_tiles.push_back(r);
     applyPcToTile(s_tiles.back());
+    lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
     return;
   }
 
@@ -1842,36 +2157,17 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_t* ic = lv_label_create(chip);
   lv_obj_center(ic);
 
-  // Layout: icon top left with the state top right next to it, the name at
-  // the bottom over up to two lines (bigger on wide tiles). A sensor shows
-  // its reading big at the top instead, with a small icon top right.
-  const bool wide = w >= 2;
-  const lv_font_t* nameFont = wide ? &deck_font_20 : &deck_font_14;
+  // Fonts and places come from fitTile once the tile has its size.
   lv_obj_t* name = lv_label_create(t);
   lv_label_set_text(name, tileLabel(def).c_str());
-  lv_obj_set_style_text_font(name, nameFont, 0);
   lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
-  lv_obj_set_width(name, lv_pct(100));
-  lv_obj_set_height(name, LV_SIZE_CONTENT);
-  lv_obj_set_style_max_height(name, 2 * lv_font_get_line_height(nameFont), 0);
-  lv_obj_align(name, LV_ALIGN_BOTTOM_LEFT, 0, 2);
   lv_obj_t* sub = lv_label_create(t);
   lv_label_set_long_mode(sub, LV_LABEL_LONG_MODE_DOTS);
   if (def.type == TILE_SENSOR) {
-    lv_obj_set_size(chip, 22, 22);
-    lv_obj_align(chip, LV_ALIGN_TOP_RIGHT, 2, -2);
-    const lv_font_t* valFont = wide ? &deck_font_28 : &deck_font_20;
-    lv_obj_set_style_text_font(sub, valFont, 0);
-    lv_obj_set_size(sub, lv_pct(100), lv_font_get_line_height(valFont));
-    lv_obj_set_style_pad_right(sub, 22, 0);  // clear of the icon
-    lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_text_opa(name, LV_OPA_70, 0);
   } else {
     lv_obj_set_style_text_opa(sub, LV_OPA_70, 0);
     lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_size(sub, lv_pct(100), lv_font_get_line_height(&deck_font_14));
-    lv_obj_set_style_pad_left(sub, 36, 0);  // clear of the icon
-    lv_obj_align(sub, LV_ALIGN_TOP_RIGHT, 0, 7);
   }
 
   const int iconPx = def.type == TILE_SENSOR ? 16 : 20;
@@ -1882,12 +2178,14 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   r.name = name;
   r.sub = sub;
   r.icon = ic;
+  r.chip = chip;
   r.iconPx = iconPx;
   r.iconCp = showIcon(ic, def, nullptr, false, iconPx, 0);
   r.fill = fill;
   lv_label_set_text(sub, tileSub(r).c_str());
   const size_t idx = s_tiles.size();
   s_tiles.push_back(r);
+  lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
   lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
   lv_obj_add_event_cb(t, tileEvent, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)idx);
   if (fill)
@@ -1914,15 +2212,15 @@ void layoutHeader(Page& p) {
 
 // Where each tile of a page lands: explicit cells first (in tile order), then
 // the rest flow into the first free place that fits. The portal grid editor
-// mirrors this rule (layout() in deck_web.h).
+// mirrors this rule (layout() in deck_web.h). Cells count in half cells.
 struct Cell {
   bool placed;
   int x, y, w, h;
 };
 
 void placeTiles(const PageDef& def, int orient, std::vector<Cell>& out) {
-  const int cols = def.cols[orient], rows = def.rows[orient];
-  bool used[6][6] = {};
+  const int cols = def.cols[orient] * 2, rows = def.rows[orient] * 2;
+  bool used[12][12] = {};
   auto fits = [&](int x, int y, int tw, int th) {
     if (x + tw > cols || y + th > rows) return false;
     for (int yy = y; yy < y + th; yy++)
@@ -1937,7 +2235,7 @@ void placeTiles(const PageDef& def, int orient, std::vector<Cell>& out) {
     c.x = x;
     c.y = y;
   };
-  out.assign(def.tiles.size(), Cell{false, 0, 0, 1, 1});
+  out.assign(def.tiles.size(), Cell{false, 0, 0, 2, 2});
   for (size_t i = 0; i < def.tiles.size(); i++) {
     const TilePos& ps = def.tiles[i].pos[orient];
     out[i].w = ps.w;
@@ -1979,10 +2277,11 @@ void addTilesPage(const PageDef& def) {
   lv_obj_set_style_text_color(p.wifi, lv_color_hex(C_DIM), 0);
   lv_obj_align(p.wifi, LV_ALIGN_TOP_RIGHT, -62, 8);
 
-  const int cols = def.cols[orient], rows = def.rows[orient];
-  // Static descriptor arrays per page (LVGL keeps the pointers).
-  static int32_t colDsc[MAX_PAGES][8];
-  static int32_t rowDsc[MAX_PAGES][8];
+  // Two tracks per cell: tiles sit and span in half cells. Static descriptor
+  // arrays per page (LVGL keeps the pointers).
+  const int cols = def.cols[orient] * 2, rows = def.rows[orient] * 2;
+  static int32_t colDsc[MAX_PAGES][13];
+  static int32_t rowDsc[MAX_PAGES][13];
   for (int i = 0; i < cols; i++) colDsc[page][i] = LV_GRID_FR(1);
   colDsc[page][cols] = LV_GRID_TEMPLATE_LAST;
   for (int i = 0; i < rows; i++) rowDsc[page][i] = LV_GRID_FR(1);
@@ -2041,7 +2340,7 @@ struct EditState {
   lv_obj_t* ghost = nullptr;
   int cfgPage = -1;  // index into s_cfg.pages
   String name;
-  int orient = 0, cols = 1, rows = 1, cw = 1, ch = 1;
+  int orient = 0, cols = 1, rows = 1, cw = 1, ch = 1;  // in half cells, px per half cell
   std::vector<EdTile> tiles;
   bool dirty = false;
   enum Pending : uint8_t { P_NONE, P_SAVE, P_CANCEL } pending = P_NONE;
@@ -2136,8 +2435,8 @@ void edDragEvent(lv_event_t* e) {
     const float sx = s_ed.cw + ED_GAP, sy = s_ed.ch + ED_GAP;
     Cell c = t.c;
     if (sizing) {
-      c.w = constrain((int)lroundf((p.x - ED_PAD) / sx) - c.x, 1, min(6, s_ed.cols - c.x));
-      c.h = constrain((int)lroundf((p.y - ED_BAR_H) / sy) - c.y, 1, min(6, s_ed.rows - c.y));
+      c.w = constrain((int)lroundf((p.x - ED_PAD) / sx) - c.x, 1, s_ed.cols - c.x);
+      c.h = constrain((int)lroundf((p.y - ED_BAR_H) / sy) - c.y, 1, s_ed.rows - c.y);
     } else {
       lv_obj_set_pos(t.box, s_ed.bx0 + dx, s_ed.by0 + dy);
       c.x = constrain((int)lroundf((s_ed.bx0 + dx - ED_PAD) / sx), 0, s_ed.cols - c.w);
@@ -2377,7 +2676,7 @@ void edMakeBox(int k, const TileDef& d);
 bool edAdd(const String& entity, const String& name) {
   int live = 0;
   for (const EdTile& t : s_ed.tiles) live += !t.removed;
-  Cell c = {true, 0, 0, 1, 1};
+  Cell c = {true, 0, 0, 2, 2};
   bool found = false;
   for (int y = 0; y < s_ed.rows && !found; y++)
     for (int x = 0; x < s_ed.cols && !found; x++) {
@@ -2609,19 +2908,24 @@ void edMakeBox(int k, const TileDef& d) {
   lv_obj_set_style_border_color(b, lv_color_hex(accent), 0);
   lv_obj_set_style_pad_all(b, 8, 0);
   s_ed.tiles[k].box = b;
-  edPlace(b, s_ed.tiles[k].c);
+  const Cell& c = s_ed.tiles[k].c;
+  edPlace(b, c);
+  // Half-cell boxes: a smaller x and grip, so part of the box is left to drag.
+  const bool small = c.w * s_ed.cw < 70 || c.h * s_ed.ch < 50;
+  const int xs = small ? 20 : 30, gs = small ? 22 : 34;
 
   lv_obj_t* name = lv_label_create(b);
   lv_label_set_text(name, edTileName(d).c_str());
   lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
   // Full width, mid height: below the x and above the grip.
   lv_obj_set_width(name, lv_pct(100));
-  lv_obj_set_style_max_height(name, 2 * lv_font_get_line_height(&deck_font_14), 0);
-  lv_obj_align(name, LV_ALIGN_LEFT_MID, 0, 6);
+  if (small) lv_obj_set_style_text_font(name, &deck_font_12, 0);
+  lv_obj_set_style_max_height(name, small ? lineH(&deck_font_12) : 2 * lineH(&deck_font_14), 0);
+  lv_obj_align(name, LV_ALIGN_LEFT_MID, 0, small ? 0 : 6);
 
   lv_obj_t* x = lv_obj_create(b);
   lv_obj_remove_style_all(x);
-  lv_obj_set_size(x, 30, 30);
+  lv_obj_set_size(x, xs, xs);
   lv_obj_align(x, LV_ALIGN_TOP_RIGHT, 8, -8);
   lv_obj_set_style_radius(x, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_color(x, lv_color_hex(0x3A2226), 0);
@@ -2635,14 +2939,14 @@ void edMakeBox(int k, const TileDef& d) {
   // Resize grip: an L-shaped corner mark with a finger-sized hit area.
   lv_obj_t* g = lv_obj_create(b);
   lv_obj_remove_style_all(g);
-  lv_obj_set_size(g, 34, 34);
+  lv_obj_set_size(g, gs, gs);
   lv_obj_align(g, LV_ALIGN_BOTTOM_RIGHT, 8, 8);
   lv_obj_add_flag(g, LV_OBJ_FLAG_PRESS_LOCK);
   for (int i = 0; i < 2; i++) {
     lv_obj_t* bar = lv_obj_create(g);
     lv_obj_remove_style_all(bar);
     lv_obj_remove_flag(bar, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(bar, i ? 3 : 14, i ? 14 : 3);
+    lv_obj_set_size(bar, i ? 3 : gs * 14 / 34, i ? gs * 14 / 34 : 3);
     lv_obj_set_style_bg_color(bar, lv_color_hex(C_CLOCK), 0);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     lv_obj_align(bar, LV_ALIGN_BOTTOM_RIGHT, -7, -7);
@@ -2664,8 +2968,8 @@ void edOpen(int page) {
   s_ed.cfgPage = (int)(&def - &s_cfg.pages[0]);
   s_ed.name = def.name.length() ? def.name : def.id;
   s_ed.orient = w > h ? ORIENT_LANDSCAPE : ORIENT_PORTRAIT;
-  s_ed.cols = def.cols[s_ed.orient];
-  s_ed.rows = def.rows[s_ed.orient];
+  s_ed.cols = def.cols[s_ed.orient] * 2;  // half cells
+  s_ed.rows = def.rows[s_ed.orient] * 2;
   s_ed.cw = (w - 2 * ED_PAD - (s_ed.cols - 1) * ED_GAP) / s_ed.cols;
   s_ed.ch = (h - ED_BAR_H - ED_PAD - (s_ed.rows - 1) * ED_GAP) / s_ed.rows;
 
@@ -2694,15 +2998,15 @@ void edOpen(int page) {
   lv_obj_set_style_text_color(done, lv_color_hex(C_TEXT_ON), 0);
   lv_obj_add_event_cb(done, edDoneEvent, LV_EVENT_CLICKED, nullptr);
 
-  for (int y = 0; y < s_ed.rows; y++)
-    for (int x = 0; x < s_ed.cols; x++) {
+  for (int y = 0; y < s_ed.rows; y += 2)
+    for (int x = 0; x < s_ed.cols; x += 2) {
       lv_obj_t* o = lv_obj_create(root);
       lv_obj_remove_style_all(o);
       lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
       lv_obj_set_style_radius(o, 12, 0);
       lv_obj_set_style_border_width(o, 1, 0);
       lv_obj_set_style_border_color(o, lv_color_hex(C_TRACK), 0);
-      edPlace(o, Cell{true, x, y, 1, 1});
+      edPlace(o, Cell{true, x, y, 2, 2});
     }
 
   std::vector<Cell> cells;
@@ -2745,6 +3049,19 @@ void edClose() {
 // The stored deck.json with this page's positions (pinned for every placed
 // tile, in the current orientation) and removals. Tiles match by index: the
 // parser keeps every tile of a page in file order. Other fields stay as they are.
+// A cell back into deck.json units: whole numbers stay integers, w/h 1 left out.
+void putHalf(JsonObject q, const char* key, int v) {
+  if (v % 2) q[key] = v / 2.0f;
+  else q[key] = v / 2;
+}
+
+void putHalves(JsonObject q, const Cell& c) {
+  putHalf(q, "x", c.x);
+  putHalf(q, "y", c.y);
+  if (c.w != 2) putHalf(q, "w", c.w);
+  if (c.h != 2) putHalf(q, "h", c.h);
+}
+
 bool edBuild(String& out, String& err) {
   String text;
   deckConfigText(text);
@@ -2784,10 +3101,7 @@ bool edBuild(String& out, String& err) {
     }
     JsonObject pos = tv["pos"].is<JsonObject>() ? tv["pos"].as<JsonObject>() : tv["pos"].to<JsonObject>();
     JsonObject q = pos[key].to<JsonObject>();
-    q["x"] = t.c.x;
-    q["y"] = t.c.y;
-    if (t.c.w > 1) q["w"] = t.c.w;
-    if (t.c.h > 1) q["h"] = t.c.h;
+    putHalves(q, t.c);
   }
   for (size_t i = own; i-- > 0;)
     if (s_ed.tiles[i].removed) tiles.remove(i);
@@ -2800,10 +3114,7 @@ bool edBuild(String& out, String& err) {
     tv["type"] = d.type == TILE_TOGGLE ? "toggle" : d.type == TILE_SENSOR ? "sensor" : "action";
     tv["entity"] = d.entity;
     JsonObject q = tv["pos"][key].to<JsonObject>();
-    q["x"] = t.c.x;
-    q["y"] = t.c.y;
-    if (t.c.w > 1) q["w"] = t.c.w;
-    if (t.c.h > 1) q["h"] = t.c.h;
+    putHalves(q, t.c);
   }
   out = "";
   serializeJson(doc, out);

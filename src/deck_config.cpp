@@ -150,13 +150,19 @@ bool parseAction(JsonVariantConst v, TileAction& a, String* err, const String& w
   return true;
 }
 
+// A number of cells in half cells (1.5 -> 3), rounded to the nearest half.
+uint8_t halves(JsonVariantConst v, int def, int lo, int hi) {
+  if (!v.is<float>()) return (uint8_t)def;
+  return (uint8_t)constrain((int)lroundf(v.as<float>() * 2), lo, hi);
+}
+
 void parsePos(JsonVariantConst v, TilePos& p) {
   if (v.isNull()) return;
-  p.set = v["x"].is<int>() && v["y"].is<int>();
-  p.x = (uint8_t)constrain((int)(v["x"] | 0), 0, 15);
-  p.y = (uint8_t)constrain((int)(v["y"] | 0), 0, 15);
-  p.w = (uint8_t)constrain((int)(v["w"] | 1), 1, 6);
-  p.h = (uint8_t)constrain((int)(v["h"] | 1), 1, 6);
+  p.set = v["x"].is<float>() && v["y"].is<float>();
+  p.x = halves(v["x"], 0, 0, 30);
+  p.y = halves(v["y"], 0, 0, 30);
+  p.w = halves(v["w"], 2, 1, 12);
+  p.h = halves(v["h"], 2, 1, 12);
 }
 
 void parseGrid(JsonVariantConst v, uint8_t& cols, uint8_t& rows) {
