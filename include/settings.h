@@ -39,6 +39,7 @@ struct DisplaySettings {
 
 constexpr uint8_t THEME_MIDNIGHT = 0;
 constexpr uint8_t THEME_DAYLIGHT = 1;
+constexpr uint8_t THEME_GLASS = 2;  // Midnight colours, glass tiles over a wallpaper
 
 // Network settings. NVS blob "net", layout shared with StatNode.
 struct NetworkSettings {

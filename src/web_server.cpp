@@ -15,6 +15,7 @@
 #include "deck_http.h"
 #include "deck_web.h"
 #include "deck_icons.h"
+#include "deck_wall.h"
 #include "deck_sys.h"
 #include <LittleFS.h>
 #include <WebServer.h>
@@ -423,7 +424,7 @@ static void handleConfigImport() {
   READ_INT(display, "tempScale", 1, 500, nextDisplay.tempScaleMax, uint16_t);
   READ_INT(display, "powerScale", 1, 65535, nextDisplay.powerScaleW, uint16_t);
   READ_INT(display, "warnThreshold", 0, 100, nextDisplay.warnThresholdPct, uint8_t);
-  READ_INT(display, "theme", 0, 1, nextDisplay.theme, uint8_t);
+  READ_INT(display, "theme", 0, 2, nextDisplay.theme, uint8_t);
 
   READ_BOOL(backlight, "nightEnabled", nextBacklight.nightEnabled);
   READ_INT(backlight, "nightBrightness", 0, 255, nextBacklight.nightBrightness, uint8_t);
@@ -561,7 +562,7 @@ static void handleLedPreview() {
 static void handleSaveDisplay() {
   const uint8_t oldRotation = dispSettings.rotation;
   const uint8_t oldTheme = dispSettings.theme;
-  dispSettings.theme = (uint8_t)clampedArg("theme", dispSettings.theme, 0, 1);
+  dispSettings.theme = (uint8_t)clampedArg("theme", dispSettings.theme, 0, 2);
   dispSettings.rotation = (uint8_t)clampedArg("rotation", dispSettings.rotation, 0, 3);
   brightness = (uint8_t)clampedArg("brightness", brightness, 0, 255);
   dispSettings.tempScaleMax = (uint16_t)clampedArg("tempScale", dispSettings.tempScaleMax, 1, 500);
@@ -957,6 +958,90 @@ static void handleIconsFinish() {
   handleIconsStatus();
 }
 
+// --- Glass wallpaper (raw RGB565 per orientation, made by the portal) ---------------
+static const char* const WALL_UPLOAD = "/wall.up";
+static File wallUpload;
+static String wallError;
+
+static const char* wallFile(bool portrait) { return deck::wallPath(portrait ? 320 : 480, portrait ? 480 : 320); }
+
+// GET /api/deck/wallpaper -> {"landscape", "portrait"}: which files exist.
+static void handleWallStatus() {
+  JsonDocument doc;
+  const bool fs = deck::deckFsReady();
+  doc["landscape"] = fs && LittleFS.exists(wallFile(false));
+  doc["portrait"] = fs && LittleFS.exists(wallFile(true));
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+// POST /api/deck/wallpaper?o=l|p (multipart "wall", 480x320 or 320x480 RGB565).
+static void handleWallUpload() {
+  if (!multipartRequest()) return;
+  HTTPUpload& up = server.upload();
+  if (up.status == UPLOAD_FILE_START) {
+    wallError = "";
+    if (!deck::deckFsReady()) {
+      wallError = "file system not available";
+      return;
+    }
+    LittleFS.remove(WALL_UPLOAD);
+    wallUpload = LittleFS.open(WALL_UPLOAD, "w");
+    if (!wallUpload) wallError = "cannot create the file";
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    esp_task_wdt_reset();
+    if (wallUpload && wallUpload.write(up.buf, up.currentSize) != up.currentSize) {
+      wallError = "flash full";
+      wallUpload.close();
+    }
+  } else if (up.status == UPLOAD_FILE_END || up.status == UPLOAD_FILE_ABORTED) {
+    if (wallUpload) wallUpload.close();
+    if (up.status == UPLOAD_FILE_ABORTED) wallError = "upload aborted";
+  }
+}
+
+static void handleWallFinish() {
+  const bool portrait = server.arg("o") == "p";
+  String err = wallError;
+  wallError = "";
+  if (!err.length()) {
+    File f = LittleFS.open(WALL_UPLOAD, "r");
+    const size_t size = f ? f.size() : 0;
+    if (f) f.close();
+    if (size != 480 * 320 * 2) err = "expected a 480x320 RGB565 picture";
+  }
+  if (!err.length()) {
+    LittleFS.remove(wallFile(portrait));
+    if (!LittleFS.rename(WALL_UPLOAD, wallFile(portrait))) err = "could not store the picture";
+  }
+  if (err.length()) {
+    LittleFS.remove(WALL_UPLOAD);
+    sendJsonMessage(400, false, err.c_str());
+    return;
+  }
+  deckReloadWallpaper();
+  handleWallStatus();
+}
+
+// POST /api/deck/wallpaper/remove?o=l|p. Its own route: a route with an upload
+// callback loses the query arguments of a POST that is not multipart.
+static void handleWallRemove() {
+  if (deck::deckFsReady()) LittleFS.remove(wallFile(server.arg("o") == "p"));
+  deckReloadWallpaper();
+  handleWallStatus();
+}
+
+// POST /api/deck/bench?n=5 - bench hook, time a render of the shown page.
+static void handleDeckBench() {
+  uint32_t avg = 0, mx = 0;
+  if (!deckBenchRender(server.hasArg("n") ? server.arg("n").toInt() : 5, avg, mx)) {
+    sendJsonMessage(409, false, "Not possible now");
+    return;
+  }
+  server.send(200, "application/json", String("{\"avg_us\":") + avg + ",\"max_us\":" + mx + "}");
+}
+
 // POST /api/deck/prefs?header=0|1 - deck display preferences.
 static void handleDeckPrefs() {
   if (server.hasArg("header")) deckSetHeader(server.arg("header") != "0");
@@ -1276,6 +1361,10 @@ void initWebServer() {
   server.on("/deck", HTTP_GET, handleDeckPage);
   server.on("/deck.js", HTTP_GET, handleDeckJs);
   server.on("/api/deck/icons", HTTP_GET, handleIconsStatus);
+  server.on("/api/deck/wallpaper", HTTP_GET, handleWallStatus);
+  server.on("/api/deck/wallpaper", HTTP_POST, handleWallFinish, handleWallUpload);
+  server.on("/api/deck/wallpaper/remove", HTTP_POST, handleWallRemove);
+  server.on("/api/deck/bench", HTTP_POST, handleDeckBench);
   server.on("/api/deck/prefs", HTTP_POST, handleDeckPrefs);
   server.on("/api/deck/icons", HTTP_POST, handleIconsFinish, handleIconsUpload);
   server.on("/mdi.ttf", HTTP_GET, handleIconsFont);

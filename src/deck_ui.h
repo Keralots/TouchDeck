@@ -22,8 +22,14 @@ void deckToast(const char* text);
 void deckRefreshNow();
 // Rotation changed in the portal: re-layout everything at the new size.
 void deckApplyRotation(uint8_t rotation);
-// Switch the colour theme (THEME_MIDNIGHT / THEME_DAYLIGHT); rebuilds the pages.
+// Switch the colour theme (THEME_MIDNIGHT / THEME_DAYLIGHT / THEME_GLASS);
+// rebuilds the pages.
 void deckApplyTheme(uint8_t theme);
+// A wallpaper file was replaced or removed: reload it (Glass rebuilds the pages).
+void deckReloadWallpaper();
+// Bench hook (/api/deck/bench): render the shown page into its page image n
+// times and time it.
+bool deckBenchRender(int n, uint32_t& avgUs, uint32_t& maxUs);
 // Portal save: validate, store /deck.json and rebuild the pages in place.
 bool deckApplyConfig(const String& text, String& err);
 // Portal upload: load the MDI font stored at uploaded, keep it as the icon

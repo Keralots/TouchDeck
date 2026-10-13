@@ -125,8 +125,8 @@ void loadSettings() {
     dispSettings.powerScaleW = prefs.getUShort("pscale", dispSettings.powerScaleW);
     dispSettings.warnThresholdPct = prefs.getUChar("warnpct", dispSettings.warnThresholdPct);
   }
-  dispSettings.theme = prefs.getUChar("theme", THEME_MIDNIGHT) == THEME_DAYLIGHT ? THEME_DAYLIGHT
-                                                                                : THEME_MIDNIGHT;
+  dispSettings.theme = prefs.getUChar("theme", THEME_MIDNIGHT);
+  if (dispSettings.theme > THEME_GLASS) dispSettings.theme = THEME_MIDNIGHT;
   if (prefs.getBytesLength("net") == sizeof(NetworkSettings))
     prefs.getBytes("net", &netSettings, sizeof(NetworkSettings));
   if (prefs.getBytesLength("backlight") == sizeof(BacklightSettings)) {

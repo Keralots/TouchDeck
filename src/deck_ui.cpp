@@ -6,6 +6,7 @@
 #include "deck_icons.h"
 #include "deck_sys.h"
 #include "deck_touch.h"
+#include "deck_wall.h"
 #include "display_ui.h"
 #include "settings.h"
 #include "led.h"
@@ -32,19 +33,20 @@ constexpr uint32_t SNAP_SPACING_MS = 40;
 constexpr uint32_t STATS_MS = 10000;
 constexpr uint32_t SLIDE_MS = 280;
 
-// Theme colours (D11): Midnight (mockup A, default) or Daylight, set by
+// Theme colours (D11): Midnight (mockup A, default), Daylight, or Glass
+// (Midnight text, tiles of tinted glass over a wallpaper), set by
 // setPalette() before the pages are built.
 uint8_t s_theme = 0;
 uint32_t C_BG, C_TILE, C_TILE_PRESSED, C_TILE_LINE, C_CHIP, C_TEXT, C_TEXT_ON, C_TITLE,
     C_CLOCK, C_OK, C_DIM, C_PANEL, C_TRACK, C_BUTTON;
 
 void setPalette(uint8_t theme) {
-  s_theme = theme == THEME_DAYLIGHT ? THEME_DAYLIGHT : THEME_MIDNIGHT;
-  const bool day = s_theme == THEME_DAYLIGHT;
+  s_theme = theme <= THEME_GLASS ? theme : THEME_MIDNIGHT;
+  const bool day = s_theme == THEME_DAYLIGHT, glass = s_theme == THEME_GLASS;
   C_BG = day ? 0xECEFF3 : 0x0D0F13;
-  C_TILE = day ? 0xFFFFFF : 0x1A1D23;
-  C_TILE_PRESSED = day ? 0xDFE3E9 : 0x2A2F38;
-  C_TILE_LINE = day ? 0xD9DDE4 : 0x1A1D23;
+  C_TILE = day ? 0xFFFFFF : glass ? 0x0B0E13 : 0x1A1D23;  // glass: the tint
+  C_TILE_PRESSED = day ? 0xDFE3E9 : glass ? 0x000000 : 0x2A2F38;
+  C_TILE_LINE = day ? 0xD9DDE4 : glass ? 0xFFFFFF : 0x1A1D23;
   C_CHIP = day ? 0xE9ECF1 : 0x272B33;
   C_TEXT = day ? 0x1D2129 : 0xE6E8EC;
   C_TEXT_ON = 0x221602;
@@ -73,6 +75,7 @@ struct Page {
   lv_obj_t* wifi;
   lv_obj_t* grid;
   lv_draw_buf_t* snap;
+  lv_draw_buf_t* glass;  // Glass theme: the baked background
   const PageDef* def;
   bool stale;
 };
@@ -1627,6 +1630,7 @@ lv_obj_t* makeRoot(int w, int h) {
   lv_obj_set_size(r, w, h);
   lv_obj_set_style_bg_color(r, lv_color_hex(C_BG), 0);
   lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+  if (s_theme == THEME_GLASS && wallSharp()) lv_obj_set_style_bg_image_src(r, wallSharp(), 0);
   lv_obj_remove_flag(r, LV_OBJ_FLAG_SCROLLABLE);
   return r;
 }
@@ -2035,7 +2039,9 @@ void makeMetricContent(TileRt& r, lv_obj_t* t) {
 
   r.name = lv_label_create(t);
   lv_label_set_text(r.name, d.label.length() ? d.label.c_str() : "");
-  lv_obj_set_style_text_color(r.name, lv_color_hex(accent), 0);
+  // On glass the accent alone is hard to read: lift it toward white.
+  const lv_color_t nameCol = lv_color_hex(accent);
+  lv_obj_set_style_text_color(r.name, s_theme == THEME_GLASS ? lv_color_mix(lv_color_white(), nameCol, 110) : nameCol, 0);
   lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
 
   // Value and unit side by side, bottoms aligned.
@@ -2096,6 +2102,15 @@ void pcSync(bool force) {
   }
 }
 
+// Glass tiles are see-through: their glass is baked into the page
+// background (bakeGlass); pressed and on states draw over it.
+void glassStyle(lv_obj_t* t) {
+  lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_bg_opa(t, LV_OPA_30, LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(t, LV_OPA_80, LV_STATE_CHECKED);
+  lv_obj_set_style_border_width(t, 0, 0);
+}
+
 void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, int w, int h) {
   const String domain = entityDomain(def.entity);
   const uint32_t accent = def.hasColor ? def.color : domainColor(domain);
@@ -2120,6 +2135,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_transform_height(t, -3, LV_STATE_PRESSED);
   lv_obj_set_style_transition(t, &s_pressTrans, 0);
   lv_obj_set_style_transition(t, &s_pressTrans, LV_STATE_PRESSED);
+  if (s_theme == THEME_GLASS && wallBlur()) glassStyle(t);
 
   if (def.type == TILE_METRIC) {
     TileRt r = {};
@@ -2194,6 +2210,59 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
       lv_obj_add_event_cb(t, sliderEvent, c, (void*)(uintptr_t)idx);
 }
 
+// Glass: the page background is baked once the tiles are laid out: the
+// wallpaper, and under each tile the blurred wallpaper cut to its rounded
+// rect with the tint and a hairline. A page render is then one image copy
+// instead of per-tile blending.
+void bakeGlass(Page& p) {
+  const lv_image_dsc_t* sharp = wallSharp();
+  const lv_image_dsc_t* blur = wallBlur();
+  if (!sharp || !blur || !p.root || !p.grid) return;
+  const int w = sharp->header.w, h = sharp->header.h;
+  if (!p.glass) p.glass = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
+  if (!p.glass) return;
+  lv_obj_update_layout(p.root);
+  for (int y = 0; y < h; y++)
+    memcpy(p.glass->data + y * p.glass->header.stride, sharp->data + y * sharp->header.stride, w * 2);
+  lv_obj_t* cv = lv_canvas_create(p.root);
+  lv_obj_add_flag(cv, LV_OBJ_FLAG_HIDDEN);
+  lv_canvas_set_draw_buf(cv, p.glass);
+  lv_layer_t layer;
+  lv_canvas_init_layer(cv, &layer);
+  const lv_area_t all = {0, 0, w - 1, h - 1};
+  lv_area_t rc;
+  lv_obj_get_coords(p.root, &rc);
+  for (uint32_t i = 0; i < lv_obj_get_child_count(p.grid); i++) {
+    lv_obj_t* t = lv_obj_get_child(p.grid, i);
+    lv_area_t tc;
+    lv_obj_get_coords(t, &tc);
+    lv_area_move(&tc, -rc.x1, -rc.y1);
+    const int r = lv_obj_get_style_radius(t, LV_PART_MAIN);
+    lv_draw_image_dsc_t id;
+    lv_draw_image_dsc_init(&id);
+    id.src = blur;
+    id.image_area = tc;  // the radius mask works on this area
+    id.clip_radius = r;
+    layer._clip_area = tc;
+    lv_draw_image(&layer, &id, &all);
+    layer._clip_area = all;
+    lv_draw_rect_dsc_t rd;
+    lv_draw_rect_dsc_init(&rd);
+    rd.radius = r;
+    rd.bg_color = lv_color_hex(C_TILE);
+    rd.bg_opa = LV_OPA_40;
+    rd.border_color = lv_color_white();
+    rd.border_opa = LV_OPA_20;
+    rd.border_width = 1;
+    lv_draw_rect(&layer, &rd, &tc);
+  }
+  lv_canvas_finish_layer(cv, &layer);
+  lv_obj_delete(cv);
+  lv_obj_set_style_bg_image_src(p.root, p.glass, 0);
+  lv_obj_invalidate(p.root);
+  p.stale = true;
+}
+
 // Shows or hides a tiles page's top bar; the grid takes the freed height.
 void layoutHeader(Page& p) {
   if (!p.grid) return;
@@ -2208,6 +2277,7 @@ void layoutHeader(Page& p) {
   lv_obj_set_size(p.grid, w, h - top);
   lv_obj_set_style_pad_top(p.grid, s_header ? 2 : 8, 0);
   p.stale = true;
+  if (p.glass) bakeGlass(p);  // the tiles moved
 }
 
 // Where each tile of a page lands: explicit cells first (in tile order), then
@@ -3142,6 +3212,8 @@ void edFinish() {
 
 void buildPages() {
   const int w = logicalW();
+  if (s_theme == THEME_GLASS) wallLoad(w, logicalH());
+  else wallFree();
   s_count = 0;
   s_tiles.clear();
   s_zonesDirty = true;
@@ -3177,6 +3249,8 @@ void buildPages() {
   // Inactive pages wait just off the right edge: they keep their layout and
   // can be snapshotted, but their invalidations are clipped away.
   for (int i = 0; i < s_count; i++) lv_obj_set_pos(s_pages[i].root, i == active ? 0 : w, 0);
+  if (s_theme == THEME_GLASS)
+    for (int i = 0; i < s_count; i++) bakeGlass(s_pages[i]);
   s_lastMinute = -1;
   s_lastWifi = -1;
   buildQuickPanel();
@@ -3195,6 +3269,7 @@ void destroyPages() {
   for (int i = 0; i < s_count; i++) {
     if (s_pages[i].root) lv_obj_delete(s_pages[i].root);
     if (s_pages[i].snap) lv_draw_buf_destroy(s_pages[i].snap);
+    if (s_pages[i].glass) lv_draw_buf_destroy(s_pages[i].glass);
     s_pages[i] = {};
   }
   s_count = 0;
@@ -3572,6 +3647,50 @@ void deckApplyTheme(uint8_t theme) {
   buildPages();
   s_gen++;
   lv_obj_invalidate(lv_screen_active());
+}
+
+void deckReloadWallpaper() {
+  if (!s_disp || s_theme != THEME_GLASS) return;
+  panelQuiesce();
+  releaseSwipe();
+  destroyPages();
+  wallFree();
+  buildPages();
+  s_gen++;
+  lv_obj_invalidate(lv_screen_active());
+}
+
+bool deckBenchRender(int n, uint32_t& avgUs, uint32_t& maxUs) {
+  if (!s_disp || !s_count) return false;
+  const int a = sh.active;
+  Page& pg = s_pages[a];
+  if (!pg.snap) return false;
+  portENTER_CRITICAL(&s_mux);
+  const bool owned = sh.owned;
+  if (!owned) {
+    sh.busy[a] = true;
+    sh.valid[a] = false;
+  }
+  portEXIT_CRITICAL(&s_mux);
+  if (owned) return false;
+  lv_obj_update_layout(pg.root);
+  uint64_t sum = 0;
+  maxUs = 0;
+  n = constrain(n, 1, 20);
+  for (int i = 0; i < n; i++) {
+    const uint32_t t0 = micros();
+    lv_snapshot_reshape_draw_buf(pg.root, pg.snap);
+    lv_snapshot_take_to_draw_buf(pg.root, LV_COLOR_FORMAT_RGB565, pg.snap);
+    const uint32_t dt = micros() - t0;
+    sum += dt;
+    if (dt > maxUs) maxUs = dt;
+  }
+  avgUs = (uint32_t)(sum / n);
+  portENTER_CRITICAL(&s_mux);
+  sh.busy[a] = false;
+  portEXIT_CRITICAL(&s_mux);
+  pg.stale = true;
+  return true;
 }
 
 bool deckApplyConfig(const String& text, String& err) {
