@@ -24,6 +24,14 @@
 //   "warn": 25, "crit": 30 } (thresholds optional, in the sensor unit).
 // crit < warn means lower is worse; otherwise higher is worse.
 //
+// An HTTP sensor uses "http" instead of "entity":
+// { "type": "sensor", "http": { "url": "http://host/usage",
+//   "path": "cpu.used", "poll": 30, "headers": { "Name": "value" } },
+//   "unit": "%", "style": "number" | "chart", "warn": 70, "crit": 90 }.
+// GET only; poll = 5..3600 seconds (default 30). Dot paths accept array
+// indexes; empty path reads a scalar body. Charts keep 48 numeric readings.
+// HTTP sensors have no default tap/hold action or HA detail card.
+//
 // "type": "clock": the time, and the date when the tile has room
 // (24h and time zone from the device settings). Read-only.
 //
@@ -97,10 +105,18 @@ struct TilePos {
   uint8_t x = 0, y = 0, w = 2, h = 2;
 };
 
+struct HttpSensorDef {
+  bool enabled = false;
+  String url, headers, path;
+  uint16_t poll = 30;
+};
+
 struct TileDef {
   String id;
   TileType type = TILE_ACTION;
   String entity, label, sub, icon;
+  HttpSensorDef http;
+  String unit;  // HTTP sensor: unit for JSON numbers only
   bool hasColor = false;
   uint32_t color = 0;
   bool hasTextColor = false, hasChartColor = false;

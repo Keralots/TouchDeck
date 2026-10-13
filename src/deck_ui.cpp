@@ -392,10 +392,9 @@ uint32_t sensorLine(const TileRt& r) {
          d.hasColor ? d.color : domainColor(entityDomain(d.entity));
 }
 
-void sensorThreshold(TileRt& r, const HaEntity& e) {
+void sensorThreshold(TileRt& r, bool numeric, float value) {
   const TileDef& d = *r.def;
-  float value;
-  if (!e.known || !haNumericState(e.state, value)) r.threshold = 0;
+  if (!numeric) r.threshold = 0;
   else {
     const bool low = d.hasWarn && d.hasCrit && d.crit < d.warn;
     auto active = [&](float threshold, bool held) {
@@ -416,13 +415,10 @@ int32_t historyPoint(float value) {
   return (int32_t)lround(constrain((double)value * 10, -1000000000.0, 1000000000.0));
 }
 
-bool copyHistoryChart(const TileDef& d, uint8_t hours, uint32_t& version, lv_obj_t* chart,
-                      int32_t* points, float& lo, float& hi) {
-  float values[HA_HISTORY_POINTS];
-  if (!haCopyHistory(d.entity, hours, version, values, lo, hi)) return false;
-  // lo / hi are the period's extremes; the axis follows the plotted bucket means.
+void plotHistory(lv_obj_t* chart, int32_t* points, const float* values, int count) {
+  // Scale to the plotted readings, with padding above and below.
   int32_t low = INT32_MAX, high = INT32_MIN;
-  for (int i = 0; i < HA_HISTORY_POINTS; i++) {
+  for (int i = 0; i < count; i++) {
     points[i] = isfinite(values[i]) ? historyPoint(values[i]) : LV_CHART_POINT_NONE;
     if (points[i] == LV_CHART_POINT_NONE) continue;
     low = min(low, points[i]);
@@ -433,11 +429,18 @@ bool copyHistoryChart(const TileDef& d, uint8_t hours, uint32_t& version, lv_obj
     lv_chart_set_axis_range(chart, LV_CHART_AXIS_PRIMARY_Y, low - pad, high + pad);
   }
   lv_chart_refresh(chart);
+}
+
+bool copyHistoryChart(const TileDef& d, uint8_t hours, uint32_t& version, lv_obj_t* chart,
+                      int32_t* points, float& lo, float& hi) {
+  float values[HA_HISTORY_POINTS];
+  if (!haCopyHistory(d.entity, hours, version, values, lo, hi)) return false;
+  plotHistory(chart, points, values, HA_HISTORY_POINTS);
   return true;
 }
 
 void applySensorHistory(TileRt& r) {
-  if (r.def->type != TILE_SENSOR || !r.viz || !r.pts) return;
+  if (r.def->type != TILE_SENSOR || r.def->http.enabled || !r.viz || !r.pts) return;
   float lo, hi;
   if (copyHistoryChart(*r.def, r.def->hours, r.historyVersion, r.viz, r.pts, lo, hi))
     markPageStale(r.page);
@@ -829,7 +832,7 @@ void setSliderFill(TileRt& r, float frac) {
 // Pull the latest HA state into one tile's widgets.
 void applyHaToTile(TileRt& r, bool force) {
   const TileDef& d = *r.def;
-  if (!d.entity.length()) return;
+  if (d.http.enabled || !d.entity.length()) return;
   HaEntity e;
   if (!haGetEntity(d.entity, e)) return;
   if (!force && e.version == r.haVersion) return;
@@ -848,7 +851,11 @@ void applyHaToTile(TileRt& r, bool force) {
     lv_label_set_text(r.name, e.name.c_str());
     fitNameText(r);
   }
-  if (d.type == TILE_SENSOR) sensorThreshold(r, e);
+  if (d.type == TILE_SENSOR) {
+    float value = 0;
+    const bool numeric = e.known && haNumericState(e.state, value);
+    sensorThreshold(r, numeric, value);
+  }
   if (d.type == TILE_SENSOR && d.style == METRIC_CHART) {
     float value;
     const bool numeric = e.known && haNumericState(e.state, value);
@@ -969,8 +976,42 @@ void pcCmdSync() {
   }
 }
 
+uint32_t s_httpSeen = 0;
+
+void applyHttpToTile(TileRt& r) {
+  const TileDef& d = *r.def;
+  if (!d.http.enabled) return;
+  HttpSensorValue value;
+  const bool found = httpSensorRead(d.http, value);
+  const bool numeric = found && !value.offline && value.present && value.numeric;
+  String text = "--";
+  if (found && !value.offline && value.present) {
+    if (numeric) {
+      char number[48];
+      snprintf(number, sizeof(number), fabsf(value.number - roundf(value.number)) < 0.05f ? "%.0f" : "%.1f", value.number);
+      text = number;
+      if (d.style != METRIC_CHART && d.unit.length())
+        text += (d.unit.startsWith("\xC2\xB0") ? "" : " ") + d.unit;
+    }
+  }
+  const char* shown = found && !value.offline && value.present && !value.numeric && value.text
+                          ? value.text.get() : text.c_str();
+  lv_label_set_text(r.sub, shown);
+  if (r.unit) lv_label_set_text(r.unit, numeric ? d.unit.c_str() : "");
+  lv_obj_set_style_opa(r.obj, !found || value.offline ? LV_OPA_50 : LV_OPA_COVER, 0);
+  sensorThreshold(r, numeric, value.number);
+  if (found && r.viz && r.pts) plotHistory(r.viz, r.pts, value.history, HTTP_HISTORY_POINTS);
+  fitValue(r);
+  markPageStale(r.page);
+}
+
 // Finished HTTP tile actions: a short toast either way.
 void httpSync() {
+  const uint32_t version = httpSensorVersion();
+  if (version != s_httpSeen) {
+    s_httpSeen = version;
+    for (TileRt& r : s_tiles) applyHttpToTile(r);
+  }
   HttpOutcome o;
   while (httpTakeResult(o)) {
     const bool ok = o.code >= 200 && o.code < 300;
@@ -980,6 +1021,9 @@ void httpSync() {
 }
 
 void collectEntities() {
+  httpSetSensors(s_cfg);
+  s_httpSeen = 0;
+  for (TileRt& r : s_tiles) applyHttpToTile(r);
   std::vector<String> ids;
   for (const TileRt& r : s_tiles)
     if (r.def->entity.length()) ids.push_back(r.def->entity);
@@ -995,7 +1039,7 @@ void collectEntities() {
     if (sliderDomain(entityDomain(r.def->entity))) ensureWish(r.def->entity);
   std::vector<HaHistoryKey> histories;
   for (const TileRt& r : s_tiles)
-    if (r.def->type == TILE_SENSOR && r.def->style == METRIC_CHART)
+    if (r.def->type == TILE_SENSOR && !r.def->http.enabled && r.def->style == METRIC_CHART)
       histories.push_back({r.def->entity, r.def->hours});
   haSetHistory(histories);
   s_historySeen = 0;
@@ -1108,6 +1152,7 @@ const char* actionVerb(const TileRt& r, const TileAction& a) {
 
 void requestAction(TileRt& r, bool hold) {
   const TileAction& a = hold ? r.def->hold : r.def->tap;
+  if (r.def->http.enabled && a.kind == ACT_NONE) return;
   if (needsConfirm(r, a)) openConfirm((int)(&r - &s_tiles[0]), hold);
   else runAction(r, a);
 }
@@ -2455,7 +2500,7 @@ void makeMetricContent(TileRt& r, lv_obj_t* t) {
   lv_obj_align(r.viz, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_chart_set_type(r.viz, LV_CHART_TYPE_LINE);
   lv_chart_set_div_line_count(r.viz, 0, 0);
-  const int count = sensor ? HA_HISTORY_POINTS : PC_HISTORY_LEN;
+  const int count = sensor ? (d.http.enabled ? HTTP_HISTORY_POINTS : HA_HISTORY_POINTS) : PC_HISTORY_LEN;
   lv_chart_set_point_count(r.viz, count);
   lv_obj_set_style_line_width(r.viz, 2, LV_PART_ITEMS);
   lv_obj_set_style_width(r.viz, 0, LV_PART_INDICATOR);

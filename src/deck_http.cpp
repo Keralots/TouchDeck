@@ -2,6 +2,9 @@
 #include "deck_http.h"
 #include <HTTPClient.h>
 #include <WiFi.h>
+#include <ArduinoJson.h>
+#include <esp_heap_caps.h>
+#include <algorithm>
 
 namespace deck {
 namespace {
@@ -10,6 +13,7 @@ struct Job {
   TileAction a;
   String label;
   uint32_t ticket;  // portal test, 0 = a tile
+  bool sensor = false;
 };
 
 QueueHandle_t s_jobs = nullptr;
@@ -21,10 +25,216 @@ uint32_t s_nextTicket = 1;
 struct TestResult {
   uint32_t ticket = 0;
   int code = 0;
-  String err, body;
+  String err;
+  std::shared_ptr<char> body;
 };
 TestResult s_tests[4];
 uint8_t s_testNext = 0;
+
+struct PsramAllocator : ArduinoJson::Allocator {
+  void* allocate(size_t n) override { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM); }
+  void deallocate(void* p) override { heap_caps_free(p); }
+  void* reallocate(void* p, size_t n) override { return heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM); }
+};
+template<class T> struct PsramVectorAllocator {
+  using value_type = T;
+  PsramVectorAllocator() = default;
+  template<class U> PsramVectorAllocator(const PsramVectorAllocator<U>&) {}
+  T* allocate(size_t n) { return (T*)heap_caps_malloc(n * sizeof(T), MALLOC_CAP_SPIRAM); }
+  void deallocate(T* p, size_t) { heap_caps_free(p); }
+  template<class U> bool operator==(const PsramVectorAllocator<U>&) const { return true; }
+  template<class U> bool operator!=(const PsramVectorAllocator<U>&) const { return false; }
+};
+template<class T> using PsramVector = std::vector<T, PsramVectorAllocator<T>>;
+struct PathValue {
+  String path;
+  HttpSensorValue value;
+  explicit PathValue(const String& p) : path(p) {
+    for (float& v : value.history) v = NAN;
+  }
+};
+struct Source {
+  String url, headers, err;
+  uint16_t poll = 30;
+  uint32_t lastOk = 0, next = 0;
+  bool ok = false, attempted = false, offline = false;
+  PsramVector<PathValue> paths;
+};
+PsramVector<Source> s_sources;
+uint32_t s_sensorVersion = 1, s_sourceGeneration = 0;
+size_t s_pollNext = 0;
+
+String canonicalHeaders(const String& headers) {
+  std::vector<String> lines;
+  for (int at = 0; at < (int)headers.length();) {
+    int nl = headers.indexOf('\n', at);
+    if (nl < 0) nl = headers.length();
+    lines.push_back(headers.substring(at, nl));
+    at = nl + 1;
+  }
+  std::sort(lines.begin(), lines.end(), [](const String& a, const String& b) { return a.compareTo(b) < 0; });
+  String out;
+  for (const String& line : lines) out += line + "\n";
+  return out;
+}
+
+class PollBody : public Stream {
+ public:
+  char* data = (char*)heap_caps_malloc(32769, MALLOC_CAP_SPIRAM);
+  size_t size = 0;
+  bool overflow = false;
+  ~PollBody() { heap_caps_free(data); }
+  size_t write(uint8_t c) override { return write(&c, 1); }
+  size_t write(const uint8_t* p, size_t n) override {
+    const size_t take = min(n, (size_t)32768 - size);
+    if (take) memcpy(data + size, p, take);
+    size += take;
+    data[size] = 0;
+    if (take != n) overflow = true;
+    return take;
+  }
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int peek() override { return -1; }
+  void flush() override {}
+};
+
+void addHeaders(HTTPClient& http, const String& headers) {
+  for (int at = 0; at < (int)headers.length();) {
+    int nl = headers.indexOf('\n', at);
+    if (nl < 0) nl = headers.length();
+    const String line = headers.substring(at, nl);
+    const int colon = line.indexOf(':');
+    if (colon > 0) http.addHeader(line.substring(0, colon), line.substring(colon + 2));
+    at = nl + 1;
+  }
+}
+
+void fetchSensor(const TileAction& a, PollBody& body, int& code, String& err) {
+  code = 0;
+  if (!body.data) { err = "No PSRAM for HTTP body"; return; }
+  body.data[0] = 0;
+  if (WiFi.status() != WL_CONNECTED) { err = "WiFi is offline"; return; }
+  HTTPClient http;
+  http.setConnectTimeout(3000);
+  http.setTimeout(6000);
+  http.setReuse(false);
+  http.useHTTP10(true);
+  if (!http.begin(a.url)) { err = "bad url"; return; }
+  addHeaders(http, a.headers);
+  const int rc = http.GET();
+  if (rc > 0) {
+    code = rc;
+    if (http.getSize() > 32768) err = "HTTP body exceeds 32 KB";
+    else {
+      const int n = http.writeToStream(&body);
+      if (body.overflow) err = "HTTP body exceeds 32 KB";
+      else if (n < 0) err = HTTPClient::errorToString(n);
+    }
+    if (!err.length() && (rc < 200 || rc >= 300)) err = "HTTP " + String(rc);
+  } else err = HTTPClient::errorToString(rc);
+  http.end();
+}
+
+JsonVariantConst atPath(JsonVariantConst value, const String& path) {
+  if (!path.length()) return value;
+  for (int at = 0; at <= (int)path.length();) {
+    int dot = path.indexOf('.', at);
+    if (dot < 0) dot = path.length();
+    const String key = path.substring(at, dot);
+    if (!key.length()) return JsonVariantConst();
+    bool digits = true;
+    size_t index = 0;
+    for (size_t i = 0; i < key.length(); i++) {
+      if (key[i] < '0' || key[i] > '9') { digits = false; break; }
+    }
+    if (digits) {
+      for (size_t i = 0; i < key.length(); i++) {
+        if (index > (SIZE_MAX - 9) / 10) return JsonVariantConst();
+        index = index * 10 + key[i] - '0';
+      }
+      value = value.as<JsonArrayConst>()[index];
+    } else value = value.as<JsonObjectConst>()[key];
+    if (dot == (int)path.length()) return value;
+    at = dot + 1;
+  }
+  return JsonVariantConst();
+}
+
+std::shared_ptr<char> copyText(const char* text, size_t len) {
+  char* copy = (char*)heap_caps_malloc(len + 1, MALLOC_CAP_SPIRAM);
+  if (!copy) return {};
+  memcpy(copy, text, len);
+  copy[len] = 0;
+  return std::shared_ptr<char>(copy, heap_caps_free);
+}
+
+void updatePath(PathValue& p, JsonVariantConst v) {
+  auto& out = p.value;
+  out.present = out.numeric = false;
+  out.text.reset();
+  if (v.is<bool>() || v.is<const char*>()) {
+    const char* text = v.is<bool>() ? (v.as<bool>() ? "On" : "Off") : v.as<const char*>();
+    out.text = copyText(text, strlen(text));
+    out.present = (bool)out.text;
+  } else if (v.is<double>()) {
+    out.number = v.as<float>();
+    out.present = out.numeric = isfinite(out.number);
+    if (out.numeric) {
+      memmove(out.history, out.history + 1, sizeof(float) * (HTTP_HISTORY_POINTS - 1));
+      out.history[HTTP_HISTORY_POINTS - 1] = out.number;
+    }
+  }
+}
+
+void pollOne() {
+  TileAction a;
+  size_t index = SIZE_MAX;
+  uint32_t generation;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  const uint32_t now = millis();
+  if (WiFi.status() == WL_CONNECTED) {
+    for (size_t n = 0; n < s_sources.size(); n++) {
+      const size_t i = (s_pollNext + n) % s_sources.size();
+      const Source& s = s_sources[i];
+      if ((int32_t)(now - s.next) < 0) continue;
+      index = i;
+      a.url = s.url;
+      a.headers = s.headers;
+      break;
+    }
+  }
+  generation = s_sourceGeneration;
+  xSemaphoreGive(s_lock);
+  if (index == SIZE_MAX || uxQueueMessagesWaiting(s_jobs)) return;
+  PollBody body;
+  int code;
+  String err;
+  const uint32_t started = millis();
+  fetchSensor(a, body, code, err);
+  PsramAllocator allocator;
+  JsonDocument doc(&allocator);
+  if (!err.length()) {
+    const auto de = deserializeJson(doc, body.data, body.size);
+    if (de) err = String("JSON: ") + de.c_str();
+  }
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (generation == s_sourceGeneration && index < s_sources.size()) {
+    Source& s = s_sources[index];
+    s.err = err;
+    s.attempted = true;
+    s.next = started + (uint32_t)s.poll * 1000;
+    s_pollNext = (index + 1) % s_sources.size();
+    if (!err.length()) {
+      s.lastOk = millis();
+      s.ok = true;
+      for (PathValue& p : s.paths) updatePath(p, atPath(doc.as<JsonVariantConst>(), p.path));
+    }
+    s.offline = !s.ok || millis() - s.lastOk > (uint32_t)s.poll * 3000;
+    ++s_sensorVersion;
+  }
+  xSemaphoreGive(s_lock);
+}
 
 void run(const Job& j, int& code, String& err, String* body) {
   code = 0;
@@ -43,14 +253,7 @@ void run(const Job& j, int& code, String& err, String* body) {
     return;
   }
   if (j.a.ctype.length()) http.addHeader("Content-Type", j.a.ctype);
-  for (int at = 0; at < (int)j.a.headers.length();) {
-    int nl = j.a.headers.indexOf('\n', at);
-    if (nl < 0) nl = j.a.headers.length();
-    const String line = j.a.headers.substring(at, nl);
-    const int colon = line.indexOf(':');
-    if (colon > 0) http.addHeader(line.substring(0, colon), line.substring(colon + 2));
-    at = nl + 1;
-  }
+  addHeaders(http, j.a.headers);
   const int rc = http.sendRequest(j.a.method.c_str(), (uint8_t*)j.a.body.c_str(), j.a.body.length());
   if (rc > 0) {
     code = rc;
@@ -82,10 +285,22 @@ void run(const Job& j, int& code, String& err, String* body) {
 void task(void*) {
   for (;;) {
     Job* j = nullptr;
-    if (xQueueReceive(s_jobs, &j, portMAX_DELAY) != pdTRUE || !j) continue;
+    if (xQueueReceive(s_jobs, &j, pdMS_TO_TICKS(100)) != pdTRUE || !j) {
+      pollOne();
+      continue;
+    }
     int code;
-    String err, body;
-    run(*j, code, err, j->ticket ? &body : nullptr);
+    String err;
+    std::shared_ptr<char> body;
+    if (j->sensor) {
+      PollBody reply;
+      fetchSensor(j->a, reply, code, err);
+      if (reply.data) body = copyText(reply.data, min(reply.size, (size_t)8192));
+    } else {
+      String text;
+      run(*j, code, err, j->ticket ? &text : nullptr);
+      if (j->ticket) body = copyText(text.c_str(), text.length());
+    }
     Serial.printf("[http] %s %s -> %d %s\n", j->a.method.c_str(), j->a.url.c_str(), code, err.c_str());
     if (j->ticket) {
       xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -112,9 +327,9 @@ bool ensureTask() {
   return xTaskCreatePinnedToCore(task, "deck_http", 6144, nullptr, 3, &s_task, 0) == pdPASS;
 }
 
-bool enqueue(const TileAction& a, const String& label, uint32_t ticket) {
+bool enqueue(const TileAction& a, const String& label, uint32_t ticket, bool sensor = false) {
   if (!ensureTask()) return false;
-  Job* j = new Job{a, label, ticket};
+  Job* j = new Job{a, label, ticket, sensor};
   if (xQueueSend(s_jobs, &j, 0) == pdTRUE) return true;
   delete j;
   return false;
@@ -132,12 +347,12 @@ bool httpTakeResult(HttpOutcome& out) {
   return true;
 }
 
-uint32_t httpTestStart(const TileAction& a) {
+uint32_t httpTestStart(const TileAction& a, bool sensor) {
   const uint32_t t = s_nextTicket++;
-  return enqueue(a, "", t) ? t : 0;
+  return enqueue(a, "", t, sensor) ? t : 0;
 }
 
-bool httpTestResult(uint32_t ticket, int& code, String& err, String& body) {
+bool httpTestResult(uint32_t ticket, int& code, String& err, std::shared_ptr<char>& body) {
   if (!s_lock) return false;
   xSemaphoreTake(s_lock, portMAX_DELAY);
   bool done = false;
@@ -150,6 +365,80 @@ bool httpTestResult(uint32_t ticket, int& code, String& err, String& body) {
   }
   xSemaphoreGive(s_lock);
   return done;
+}
+
+void httpSetSensors(const DeckConfig& cfg) {
+  bool any = false;
+  for (const auto& page : cfg.pages) for (const auto& tile : page.tiles) any |= tile.http.enabled;
+  if (!any && !s_task) return;
+  if (!ensureTask()) return;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  PsramVector<Source> next;
+  for (const auto& page : cfg.pages) for (const auto& tile : page.tiles) {
+    const auto& d = tile.http;
+    if (!d.enabled) continue;
+    const String headers = canonicalHeaders(d.headers);
+    auto source = std::find_if(next.begin(), next.end(), [&](const Source& s) {
+      return s.url == d.url && s.headers == headers;
+    });
+    if (source == next.end()) {
+      Source s;
+      s.url = d.url;
+      s.headers = headers;
+      s.poll = d.poll;
+      next.push_back(std::move(s));
+      source = next.end() - 1;
+    } else source->poll = min(source->poll, d.poll);
+    auto path = std::find_if(source->paths.begin(), source->paths.end(), [&](const PathValue& p) { return p.path == d.path; });
+    if (path == source->paths.end()) source->paths.emplace_back(d.path);
+  }
+  for (Source& s : next) for (const Source& old : s_sources) {
+    if (s.url != old.url || s.headers != old.headers) continue;
+    s.ok = old.ok;
+    s.attempted = old.attempted;
+    s.lastOk = old.lastOk;
+    s.err = old.err;
+    s.offline = !s.ok ? s.attempted : millis() - s.lastOk > (uint32_t)s.poll * 3000;
+    for (PathValue& p : s.paths) for (const PathValue& prev : old.paths)
+      if (p.path == prev.path) p.value = prev.value;
+  }
+  s_sources = std::move(next);
+  s_pollNext = 0;
+  ++s_sourceGeneration;
+  ++s_sensorVersion;
+  xSemaphoreGive(s_lock);
+}
+
+uint32_t httpSensorVersion() {
+  if (!s_lock) return 0;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  const uint32_t now = millis();
+  for (Source& s : s_sources) {
+    const bool offline = s.ok ? now - s.lastOk > (uint32_t)s.poll * 3000 : s.attempted;
+    if (offline != s.offline) { s.offline = offline; ++s_sensorVersion; }
+  }
+  const uint32_t v = s_sensorVersion;
+  xSemaphoreGive(s_lock);
+  return v;
+}
+
+bool httpSensorRead(const HttpSensorDef& def, HttpSensorValue& out) {
+  if (!s_lock) return false;
+  const String headers = canonicalHeaders(def.headers);
+  bool found = false;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  for (const Source& s : s_sources) {
+    if (s.url != def.url || s.headers != headers) continue;
+    for (const PathValue& p : s.paths) if (p.path == def.path) {
+      out = p.value;
+      out.offline = s.offline;
+      found = true;
+      break;
+    }
+    break;
+  }
+  xSemaphoreGive(s_lock);
+  return found;
 }
 
 }  // namespace deck

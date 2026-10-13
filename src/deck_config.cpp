@@ -61,6 +61,29 @@ bool parseColor(const char* s, uint32_t& out) {
   return true;
 }
 
+bool parseHttp(JsonVariantConst v, TileAction& a, String* err, const String& where) {
+  a.url = (const char*)(v["url"] | "");
+  if (a.url.startsWith("https://")) {
+    if (err) *err = where + ": https is not supported, use http on the LAN";
+    return false;
+  }
+  if (!a.url.startsWith("http://") || a.url.length() < 8 || a.url.length() > 512) {
+    if (err) *err = where + ": http needs an http:// url (max 512 characters)";
+    return false;
+  }
+  for (JsonPairConst kv : v["headers"].as<JsonObjectConst>()) {
+    const String name = kv.key().c_str();
+    const String val = kv.value().as<const char*>() ? kv.value().as<const char*>() : "";
+    if (!name.length() || name.indexOf(':') >= 0 || (name + val).indexOf('\n') >= 0 ||
+        (name + val).indexOf('\r') >= 0) {
+      if (err) *err = where + ": bad http header '" + name + "'";
+      return false;
+    }
+    a.headers += name + ": " + val + "\n";
+  }
+  return true;
+}
+
 bool parseAction(JsonVariantConst v, TileAction& a, String* err, const String& where) {
   a = TileAction();
   if (v.isNull()) return true;
@@ -80,15 +103,7 @@ bool parseAction(JsonVariantConst v, TileAction& a, String* err, const String& w
     }
   } else if (!strcmp(kind, "http")) {
     a.kind = ACT_HTTP;
-    a.url = (const char*)(v["url"] | "");
-    if (a.url.startsWith("https://")) {
-      if (err) *err = where + ": https is not supported, use http on the LAN";
-      return false;
-    }
-    if (!a.url.startsWith("http://") || a.url.length() < 8 || a.url.length() > 512) {
-      if (err) *err = where + ": http action needs an http:// url (max 512 characters)";
-      return false;
-    }
+    if (!parseHttp(v, a, err, where)) return false;
     // A JSON body may be given as an object; it is sent as application/json.
     JsonVariantConst body = v["body"];
     if (body.is<const char*>()) a.body = (const char*)body;
@@ -109,17 +124,6 @@ bool parseAction(JsonVariantConst v, TileAction& a, String* err, const String& w
         a.method != "DELETE") {
       if (err) *err = where + ": unknown http method '" + a.method + "'";
       return false;
-    }
-    // "headers": { "Name": "value" } -> "Name: value\n" lines.
-    for (JsonPairConst kv : v["headers"].as<JsonObjectConst>()) {
-      const String name = kv.key().c_str();
-      const String val = kv.value().as<const char*>() ? kv.value().as<const char*>() : "";
-      if (!name.length() || name.indexOf(':') >= 0 || (name + val).indexOf('\n') >= 0 ||
-          (name + val).indexOf('\r') >= 0) {
-        if (err) *err = where + ": bad http header '" + name + "'";
-        return false;
-      }
-      a.headers += name + ": " + val + "\n";
     }
   } else if (!strcmp(kind, "pc")) {
     static const char* const kCmds[] = {"media_play_pause", "media_next", "media_prev", "media_stop",
@@ -270,6 +274,20 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         continue;  // read-only: no tap or hold actions
       }
       if (t.type == TILE_SENSOR) {
+        if (!tv["http"].isNull()) {
+          TileAction source;
+          if (!tv["http"].is<JsonObjectConst>() || !parseHttp(tv["http"], source, err, where + " http")) {
+            if (err && !err->length()) *err = where + ": http must be an object";
+            return false;
+          }
+          t.http.enabled = true;
+          t.http.url = source.url;
+          t.http.headers = source.headers;
+          t.http.path = (const char*)(tv["http"]["path"] | "");
+          t.http.poll = (uint16_t)constrain((int)(tv["http"]["poll"] | 30), 5, 3600);
+          t.unit = (const char*)(tv["unit"] | "");
+          t.entity = "";
+        }
         t.style = !strcmp(tv["style"] | "number", "chart") ? METRIC_CHART : METRIC_NUMBER;
         t.hours = (uint8_t)constrain((int)(tv["hours"] | 24), 1, 168);
         t.warn = tv["warn"] | 0.0f;
@@ -293,13 +311,13 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       // Defaults: a toggle toggles, anything holds to its detail card.
       if (tv["tap"].isNull() && t.type == TILE_TOGGLE) t.tap.kind = ACT_TOGGLE;
       // A read-only sensor opens its card on a tap too.
-      if (tv["tap"].isNull() && t.type == TILE_SENSOR) t.tap.kind = ACT_MORE_INFO;
+      if (tv["tap"].isNull() && t.type == TILE_SENSOR && !t.http.enabled) t.tap.kind = ACT_MORE_INFO;
       // A slider toggles on a tap; a number has no on/off, so its card opens.
       if (tv["tap"].isNull() && t.type == TILE_SLIDER)
         t.tap.kind = t.entity.startsWith("input_number.") || t.entity.startsWith("number.")
                          ? ACT_MORE_INFO
                          : ACT_TOGGLE;
-      if (tv["hold"].isNull()) t.hold.kind = ACT_MORE_INFO;
+      if (tv["hold"].isNull() && !t.http.enabled) t.hold.kind = ACT_MORE_INFO;
       p.tiles.push_back(t);
     }
     cfg.pages.push_back(p);

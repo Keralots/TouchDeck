@@ -22,6 +22,7 @@
 #include <ArduinoJson.h>
 #include <Update.h>
 #include <esp_task_wdt.h>
+#include <esp_heap_caps.h>
 #include "esp_ota_ops.h"
 #include <WiFi.h>
 #include <time.h>
@@ -1094,7 +1095,7 @@ static void handleDeckCard() {
 }
 
 // POST /api/deck/http-test, body = an "http" action object: queue it, answer
-// {ticket}. GET /api/deck/http-test?ticket=N: {done, code, err, body}.
+// {ticket}. GET ?ticket=N: {done, code, err, body}. POST ?sensor=1 tests a sensor GET.
 static void handleHttpTestPost() {
   String err;
   deck::TileAction a;
@@ -1103,7 +1104,12 @@ static void handleHttpTestPost() {
     sendJsonMessage(400, false, err.length() ? err.c_str() : "Not an http action");
     return;
   }
-  const uint32_t t = deck::httpTestStart(a);
+  const bool sensor = server.arg("sensor") == "1";
+  if (sensor && (a.method != "GET" || a.body.length())) {
+    sendJsonMessage(400, false, "HTTP sensors use GET without a body");
+    return;
+  }
+  const uint32_t t = deck::httpTestStart(a, sensor);
   if (!t) {
     sendJsonMessage(503, false, "Busy, try again");
     return;
@@ -1112,18 +1118,31 @@ static void handleHttpTestPost() {
 }
 
 static void handleHttpTestGet() {
+  struct Allocator : ArduinoJson::Allocator {
+    void* allocate(size_t n) override { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM); }
+    void deallocate(void* p) override { heap_caps_free(p); }
+    void* reallocate(void* p, size_t n) override { return heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM); }
+  } allocator;
   int code = 0;
-  String err, body;
-  JsonDocument doc;
+  String err;
+  std::shared_ptr<char> body;
+  JsonDocument doc(&allocator);
   doc["done"] = deck::httpTestResult((uint32_t)server.arg("ticket").toInt(), code, err, body);
   if (doc["done"]) {
     doc["code"] = code;
     doc["err"] = err;
-    doc["body"] = body;
+    doc["body"] = body ? body.get() : "";
   }
-  String out;
-  serializeJson(doc, out);
-  server.send(200, "application/json", out);
+  const size_t len = measureJson(doc);
+  char* out = (char*)heap_caps_malloc(len + 1, MALLOC_CAP_SPIRAM);
+  if (!out || doc.overflowed()) {
+    heap_caps_free(out);
+    sendJsonMessage(503, false, "No PSRAM for HTTP test result");
+    return;
+  }
+  serializeJson(doc, out, len + 1);
+  streamAsset(out, len, "application/json", "no-store");
+  heap_caps_free(out);
 }
 
 // Pairing, called by the companion: POST /api/pc/pair?id=<pc_id> shows a code

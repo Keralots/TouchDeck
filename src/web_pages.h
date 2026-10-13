@@ -96,7 +96,7 @@ static const char PAGE_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
   <div class="save-bar hidden" id="saveBar"><div class="save-bar-inner"><div class="save-meta clean" id="saveMeta"><span class="dot"></span><span class="txt">All saved</span></div><button type="button" class="btn btn-lg" id="revertBtn">Revert changes</button><button type="button" class="btn btn-accent btn-lg" id="saveBtn"><span class="gl"></span><span id="saveBtnText">Save settings</span></button></div></div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 </div>
-  <script src="/portal.js?v=35"></script>
+  <script src="/portal.js?v=36"></script>
 </body>
 </html>)HTML";
 

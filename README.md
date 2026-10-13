@@ -104,6 +104,36 @@ is sent as application/json, other text as text/plain) and `"headers"`
 anyone on your network can read through the portal, so keep important
 passwords out of it.
 
+## HTTP sensors
+
+Use "+ Add HTTP sensor" to poll a LAN JSON endpoint and show one value.
+Test fetches the reply from the device; click a JSON leaf to select its path.
+For example, a PC endpoint returning `{"claude":{"five_hour":{"used":18}}}`:
+
+```json
+{ "type": "sensor", "label": "Claude 5h", "icon": "mdi:robot",
+  "http": { "url": "http://192.168.0.10:8760/usage",
+            "path": "claude.five_hour.used", "poll": 60 },
+  "unit": "%", "style": "chart", "warn": 70, "crit": 90 }
+```
+
+`http.url` uses plain http and GET only. `http.path` selects dot-separated
+keys; numeric segments index arrays (`items.0.value`). An empty path reads a
+bare number or string. `http.poll` is seconds, 5..3600, default 30. Optional
+`http.headers` is a `{"Name":"value"}` object, with the same visibility as
+HTTP button headers. Tasmota's `http://<ip>/cm?cmnd=<command>` URL form is
+another possible source; choose a path from that command's actual reply.
+
+Optional `unit` is appended only to JSON numbers, formatted with at most one
+decimal. Strings display as received, booleans as On/Off. `style` is `number`
+or `chart`; charts keep the last 48 numeric readings since boot. `warn` and
+`crit` use the same numeric thresholds as HA sensors, including lower-is-worse.
+Tiles sharing a URL and headers share one request at their shortest poll
+interval. A missing path shows `--`; failed first polls or replies older than
+three poll intervals show `--` at half opacity. Polling runs only with WiFi,
+with a 32 KB response limit. Tiles are read-only by default; explicit `tap`
+and `hold` actions still work, without a default HA card.
+
 ## PC stats and control: TouchDeck Companion
 
 The companion runs on the PC, reads the sensors and pushes a JSON packet to
