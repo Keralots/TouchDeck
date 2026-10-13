@@ -24,6 +24,8 @@ const CSS=`
 .dk-tile.sel{border-color:var(--accent)}
 .dk-more{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;padding-top:10px;border-top:1px solid var(--line)}
 .dk-more .field{margin:0}.dk-more .wide{grid-column:1/-1}.dk-more select,.dk-more input,.dk-more textarea{max-width:none;padding:7px 10px;font-size:13px}
+.dk-sw{gap:6px;flex-wrap:wrap}.dk-sw input[type=color]{width:40px;height:30px;padding:2px;border:1px solid var(--line-2);border-radius:8px;background:var(--card);cursor:pointer}
+.dk-swb{width:24px;height:24px;padding:0;border:2px solid transparent;border-radius:50%;cursor:pointer}.dk-swb.on{border-color:var(--ink)}
 .dk-more textarea{width:100%;min-height:58px;font:12px var(--mono);background:var(--card);color:var(--ink);border:1px solid var(--line-2);border-radius:var(--r-md);resize:vertical}
 .dk-grid{display:grid;gap:6px;padding:6px;width:100%;max-width:560px;margin:12px 0 6px;background:var(--card-2);border:1px solid var(--line);border-radius:var(--r-md);user-select:none}.dk-grid.pt{max-width:300px}
 .dk-cell{border:1px dashed var(--line);border-radius:8px}
@@ -99,8 +101,16 @@ function pcList(){if(!pcs.length)return '';return '<p class="field-hint">PCs: '+
 function metricRow(t,i){const ml=mlist(t),m=ml.find(x=>x.id===t.metric);const col=t.color||PAL[((t.metric||1)-1)%8];
   const opts=ml.map(x=>'<option value="'+x.id+'"'+(x.id===t.metric?' selected':'')+'>'+esc(x.name)+' ('+esc(Math.round(x.value*10)/10)+' '+esc(x.unit)+')</option>').join('')+(m?'':'<option value="'+t.metric+'" selected>#'+t.metric+' (not in the last packet)</option>');
   return '<div class="dk-tile'+(i===sel?' sel':'')+'"><div class="dk-ic" style="background:'+col+'">PC</div><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(m?m.name:'Metric')+'"><div class="dk-tsub">'+(pcs.length>1&&pcOf(t)?esc(pcOf(t).name)+' ':'PC ')+'metric #'+t.metric+(m?' - '+esc(Math.round(m.value*10)/10)+' '+esc(m.unit):'')+'</div></div>'+
-  '<div class="dk-tact">'+pcSel(t,i)+'<select data-m="'+i+'">'+opts+'</select><select data-st="'+i+'">'+[['number','Number'],['chart','Chart'],['bar','Bar']].map(o=>'<option value="'+o[0]+'"'+((t.style||'number')===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>'+sizeSel(t,i)+'<button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div></div>';}
-/* A tile's "more options" panel: confirm, and for buttons the tap action. */
+  '<div class="dk-tact">'+pcSel(t,i)+'<select data-m="'+i+'">'+opts+'</select><select data-st="'+i+'">'+[['number','Number'],['chart','Chart'],['bar','Bar']].map(o=>'<option value="'+o[0]+'"'+((t.style||'number')===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>'+sizeSel(t,i)+'<button type="button" class="btn'+(i===more?' on':'')+'" data-mo="'+i+'" title="More options">&#8943;</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div>'+(i===more?'<div class="dk-more">'+colorField(t,i)+'</div>':'')+'</div>';}
+/* The tile's accent colour: a picker, a few presets, Auto = no "color" in deck.json. */
+const SW=['#F6C56B','#FFB35C','#FF8A7A','#E66767','#D55181','#B3A6FF','#9085E9','#7DB5FF','#3987E5','#5CC9A7','#00A35C','#C98500'];
+const autoCol=t=>t.type==='metric'?PAL[((t.metric||1)-1)%8]:(COL[domainOf(t.entity)]||'#7DB5FF');
+function colorField(t,i){const c=(t.color||autoCol(t)).toLowerCase(),on=(t.color||'').toLowerCase();
+  const what=t.type==='metric'?'the chart or bar line and the name':t.type==='toggle'?'the icon, and the whole tile while it is on':t.type==='slider'?'the icon and the level fill':'the icon';
+  return '<div class="field wide"><label class="field-label">Colour</label><div class="dk-row dk-sw"><input type="color" data-co="'+i+'" value="'+c+'" title="Any colour">'+
+    SW.map(s=>'<button type="button" class="dk-swb'+(on===s.toLowerCase()?' on':'')+'" data-cs="'+i+'" data-v="'+s+'" style="background:'+s+'" title="'+s+'"></button>').join('')+
+    '<button type="button" class="btn'+(t.color?'':' on')+'" data-ca="'+i+'">Auto</button></div><p class="field-hint" style="margin:4px 0 0">Colours '+what+'. Auto picks it from the '+(t.type==='metric'?'metric':'entity type')+'.</p></div>';}
+/* A tile's "more options" panel: confirm, colour, and for buttons the tap action. */
 const opt=(v,l,on)=>'<option value="'+esc(v)+'"'+(on?' selected':'')+'>'+esc(l)+'</option>';
 const isHttp=t=>!!(t.tap&&t.tap.action==='http');
 const isPcCmd=t=>!!(t.tap&&t.tap.action==='pc');
@@ -130,7 +140,7 @@ function moreRow(t,i){const cf=t.confirm||'';
       '<div class="field"><label class="field-label">Content type</label><input type="text" data-hc="'+i+'" value="'+esc(tp.contentType||'')+'" placeholder="automatic" spellcheck="false"></div>'+
       '<div class="field wide"><div class="dk-row"><button type="button" class="btn" data-ht="'+i+'">Test</button><span class="dk-tsub" id="dkHt'+i+'" style="margin:0;white-space:normal;flex:1">Sends the request from the device and shows the answer.</span></div></div>'+
       '<p class="field-hint wide" style="margin:0">Plain http on the local network. A body that starts with { or [ goes out as application/json, other text as text/plain. The request is stored in the deck configuration, which anyone on your network can read through this portal: avoid putting important passwords in it.</p>';}}
-  return h+'</div>';}
+  return h+colorField(t,i)+'</div>';}
 function parseHdrs(s){const o={};s.split('\n').forEach(l=>{const c=l.indexOf(':');if(c>0){const k=l.slice(0,c).trim(),v=l.slice(c+1).trim();if(k)o[k]=v;}});return o;}
 async function testHttp(t,i){const out=$('dkHt'+i);out.textContent='Sending...';
   try{const r=await api('/api/deck/http-test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(t.tap)});
@@ -242,6 +252,9 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   el.querySelectorAll('[data-x]').forEach(x=>x.onclick=()=>{p.tiles.splice(+x.dataset.x,1);sel=-1;more=-1;setDirty(true);renderPage();});
   el.querySelectorAll('[data-mo]').forEach(x=>x.onclick=()=>{const i=+x.dataset.mo;more=more===i?-1:i;renderPage();});
   el.querySelectorAll('[data-cf]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.cf];if(e.target.value)t.confirm=e.target.value;else delete t.confirm;setDirty(true);});
+  el.querySelectorAll('[data-co]').forEach(x=>{x.oninput=e=>{p.tiles[+x.dataset.co].color=e.target.value.toUpperCase();setDirty(true);};x.onchange=()=>renderPage();});
+  el.querySelectorAll('[data-cs]').forEach(x=>x.onclick=()=>{p.tiles[+x.dataset.cs].color=x.dataset.v;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-ca]').forEach(x=>x.onclick=()=>{delete p.tiles[+x.dataset.ca].color;setDirty(true);renderPage();});
   $('dkAddTile').onclick=()=>openPicker(-1);
   $('dkAddPcCmd').onclick=()=>{const t={id:'c'+Date.now().toString(36),type:'action'};pcCmdSet(t,'media_play_pause');p.tiles.push(t);more=p.tiles.length-1;setDirty(true);renderPage();};
   $('dkAddHttp').onclick=()=>{p.tiles.push({id:'h'+Date.now().toString(36),type:'action',label:'HTTP',icon:'mdi:web',tap:{action:'http',method:'GET',url:'http://'}});more=p.tiles.length-1;setDirty(true);renderPage();};
