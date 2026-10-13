@@ -47,6 +47,15 @@ static inline float pcHistoryAt(const SlotHistory& h, uint8_t i) {
 // a PC survive reboots; the first one is the default PC.
 #define MAX_PCS 4
 
+// What the companion reports about the PC itself ("pcstate"); -1 = unknown.
+struct PcState {
+  int8_t vol;     // master volume 0..100
+  int8_t mute;    // 0 / 1
+  int8_t media;   // PC_MEDIA_*, -1 = no media session
+  char   title[200], artist[200];  // UTF-8, up to 48 characters each
+};
+enum : int8_t { PC_MEDIA_STOPPED = 0, PC_MEDIA_PAUSED, PC_MEDIA_PLAYING };
+
 struct PcSource {
   bool     used;
   char     id[17];
@@ -58,6 +67,7 @@ struct PcSource {
   bool     paired;
   uint8_t  key[32];      // shared HMAC key from pairing (NVS only, never in the API)
   PcMetricData data;
+  PcState state;
   SlotHistory hist[MAX_METRICS + 1];  // by metric id; index 0 stays empty
 };
 
@@ -83,6 +93,8 @@ bool pcForget(const String& id);
 
 // Lookup for the metric tiles. Null when the PC is offline or lacks the id.
 const PcMetric* pcMetricFind(const PcSource* pc, uint8_t id);
+// The PC's reported state; null when it is offline.
+const PcState* pcStateOf(const PcSource* pc);
 
 // --- PC control -------------------------------------------------------------
 // A command goes to the PC's cmd_port as {"pc","cmd","nonce","sig"}, sig =

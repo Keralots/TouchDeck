@@ -691,7 +691,7 @@
  *  #define LV_FONT_CUSTOM_DECLARE   LV_FONT_DECLARE(my_font_1) LV_FONT_DECLARE(my_font_2)
  *  @endcode
  */
-#define LV_FONT_CUSTOM_DECLARE LV_FONT_DECLARE(deck_font_12) LV_FONT_DECLARE(deck_font_14) LV_FONT_DECLARE(deck_font_20) LV_FONT_DECLARE(deck_font_28)
+#define LV_FONT_CUSTOM_DECLARE LV_FONT_DECLARE(deck_font_12) LV_FONT_DECLARE(deck_font_14) LV_FONT_DECLARE(deck_font_20) LV_FONT_DECLARE(deck_font_28) LV_FONT_DECLARE(deck_font_clock_56) LV_FONT_DECLARE(deck_font_clock_72)
 
 /** Always set a default font */
 #define LV_FONT_DEFAULT &deck_font_14

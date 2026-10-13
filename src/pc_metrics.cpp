@@ -98,6 +98,32 @@ void pcMetricsRestartUdp() {
   Serial.println("pc_metrics: UDP socket re-bound");
 }
 
+// Track names use typographic quotes, dashes and ellipses the deck fonts lack
+// (they stop at Latin Extended-A): turn them into ASCII, in place.
+static void asciiPunct(char* s) {
+  char* out = s;
+  for (const char* p = s; *p;) {
+    const uint8_t* u = (const uint8_t*)p;
+    if (u[0] == 0xE2 && u[1] == 0x80 && u[2]) {
+      const char* rep = nullptr;
+      switch (u[2]) {
+        case 0x98: case 0x99: rep = "'"; break;
+        case 0x9C: case 0x9D: rep = "\""; break;
+        case 0x93: case 0x94: rep = "-"; break;
+        case 0xA6: rep = "..."; break;
+      }
+      if (rep) {
+        // "..." takes three bytes, as many as it replaces: out never passes p.
+        while (*rep) *out++ = *rep++;
+        p += 3;
+        continue;
+      }
+    }
+    *out++ = *p++;
+  }
+  *out = 0;
+}
+
 static void trimTrailingSpaces(char* s) {
   size_t n = strlen(s);
   while (n > 0 && s[n - 1] == ' ') s[--n] = '\0';
@@ -183,6 +209,27 @@ static void parsePacket(const char* json, IPAddress from, bool serial) {
   for (JsonVariantConst v : doc["nonces"].as<JsonArrayConst>())
     if (n < 4) strlcpy(pc->nonces[n++], v | "", sizeof(pc->nonces[0]));
   PcMetricData& d = pc->data;
+
+  PcState& st = pc->state;
+  JsonObjectConst ps = doc["pcstate"];
+  st.vol = ps["vol"].is<int>() ? (int8_t)constrain(ps["vol"].as<int>(), 0, 100) : -1;
+  st.mute = ps["mute"].is<bool>() ? (int8_t)ps["mute"].as<bool>() : -1;
+  JsonObjectConst media = ps["media"];
+  const char* ms = media["status"] | "";
+  st.media = media.isNull() ? -1 : !strcmp(ms, "playing") ? PC_MEDIA_PLAYING
+                                  : !strcmp(ms, "paused") ? PC_MEDIA_PAUSED : PC_MEDIA_STOPPED;
+  strlcpy(st.title, media["title"] | "", sizeof(st.title));
+  strlcpy(st.artist, media["artist"] | "", sizeof(st.artist));
+  asciiPunct(st.title);
+  asciiPunct(st.artist);
+  // A state-only packet (sent when the state changes between metrics
+  // packets) leaves the metrics and the chart history alone.
+  if (doc["metrics"].isNull() && !ps.isNull()) {
+    d.lastReceived = millis();
+    d.online = true;
+    s_version++;
+    return;
+  }
 
   d.status = doc["status"] | PC_STATUS_OK;
 
@@ -492,6 +539,10 @@ bool pcPairPending(String& pcName, String& code) {
   pcName = pc ? pc->name : "PC";
   code = s_pair.code;
   return true;
+}
+
+const PcState* pcStateOf(const PcSource* pc) {
+  return pc && pc->data.online ? &pc->state : nullptr;
 }
 
 const PcMetric* pcMetricFind(const PcSource* pc, uint8_t id) {

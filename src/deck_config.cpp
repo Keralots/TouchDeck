@@ -241,6 +241,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       else if (!strcmp(tt, "sensor")) t.type = TILE_SENSOR;
       else if (!strcmp(tt, "slider")) t.type = TILE_SLIDER;
       else if (!strcmp(tt, "metric")) t.type = TILE_METRIC;
+      else if (!strcmp(tt, "clock")) t.type = TILE_CLOCK;
       else {
         if (err) *err = where + ": unknown type '" + tt + "'";
         return false;
@@ -250,6 +251,8 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       t.sub = (const char*)(tv["sub"] | "");
       t.icon = (const char*)(tv["icon"] | "");
       t.hasColor = parseColor(tv["color"] | (const char*)nullptr, t.color);
+      t.hasTextColor = parseColor(tv["textColor"] | (const char*)nullptr, t.textColor);
+      t.hasChartColor = parseColor(tv["chartColor"] | (const char*)nullptr, t.chartColor);
       parsePos(tv["pos"]["landscape"], t.pos[ORIENT_LANDSCAPE]);
       parsePos(tv["pos"]["portrait"], t.pos[ORIENT_PORTRAIT]);
       if (t.type == TILE_METRIC) {
@@ -265,6 +268,10 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         t.scaleMax = (uint16_t)constrain((int)(tv["scaleMax"] | 0), 0, 65535);
         p.tiles.push_back(t);
         continue;  // read-only: no tap or hold actions
+      }
+      if (t.type == TILE_CLOCK) {
+        p.tiles.push_back(t);
+        continue;
       }
       if (!parseAction(tv["tap"], t.tap, err, where + " tap")) return false;
       if (!parseAction(tv["hold"], t.hold, err, where + " hold")) return false;

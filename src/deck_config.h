@@ -19,6 +19,12 @@
 //   "pc": "<companion pc_id>" (optional, default the first known PC),
 //   "style": "number" | "chart" | "bar", "scaleMax": 0 (= by unit) }.
 //
+// "type": "clock": the time, and the date when the tile has room
+// (24h and time zone from the device settings). Read-only.
+//
+// "textColor": "#RRGGBB" (optional) colours the tile's text; for a metric
+// tile "chartColor" colours the chart or bar line apart from "color" (the name).
+//
 // "type": "slider": the tile is a level control (light brightness, cover
 // position, fan speed, media volume, input_number / number); drag sideways to
 // set it, tap toggles (numbers: opens the card).
@@ -56,7 +62,7 @@ constexpr int ORIENT_PORTRAIT = 1;
 constexpr int MAX_DECK_PAGES = 8;
 constexpr int MAX_PAGE_TILES = 24;
 
-enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER };
+enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER, TILE_CLOCK };
 enum MetricStyle : uint8_t { METRIC_NUMBER = 0, METRIC_CHART, METRIC_BAR };
 enum ActionKind : uint8_t {
   ACT_NONE = 0,
@@ -92,6 +98,8 @@ struct TileDef {
   String entity, label, sub, icon;
   bool hasColor = false;
   uint32_t color = 0;
+  bool hasTextColor = false, hasChartColor = false;
+  uint32_t textColor = 0, chartColor = 0;
   TilePos pos[2];
   TileAction tap, hold;
   ConfirmMode confirm = CONFIRM_NONE;

@@ -116,6 +116,10 @@ struct TileRt {
   int16_t slX0;
   float slFrac0;
   uint32_t slSentMs, slReleasedMs;
+  // Clock tiles: hours in sub, then these two; the colon blinks.
+  lv_obj_t* colon;
+  lv_obj_t* mins;
+  bool colonLit;
 };
 
 lv_display_t* s_disp = nullptr;
@@ -310,6 +314,7 @@ uint32_t showIcon(lv_obj_t* label, const TileDef& d, const HaEntity* e, bool on,
 
 String tileLabel(const TileDef& t) {
   if (t.label.length()) return t.label;
+  if (t.type == TILE_CLOCK) return "Clock";
   const int dot = t.entity.indexOf('.');
   if (dot > 0) return t.entity.substring(dot + 1);
   return t.id.length() ? t.id : String("Tile");
@@ -1645,6 +1650,9 @@ uint32_t metricAccent(const TileDef& d) {
   return d.hasColor ? d.color : kMetricPalette[(d.metric - 1) % 8];
 }
 
+uint32_t metricChart(const TileDef& d) { return d.hasChartColor ? d.chartColor : metricAccent(d); }
+uint32_t tileText(const TileDef& d) { return d.hasTextColor ? d.textColor : C_TEXT; }
+
 void setText(lv_obj_t* l, const char* text) {
   if (strcmp(lv_label_get_text(l), text)) lv_label_set_text(l, text);
 }
@@ -1952,6 +1960,36 @@ void fitMetric(TileRt& r, int cw, int ch) {
   fitValue(r);
 }
 
+// Clock: the largest time that fits, the date under it when there is room
+// (a one step smaller time is worth it for the date).
+void fitClock(TileRt& r, int cw, int ch) {
+  static const lv_font_t* const kTime[] = {&deck_font_clock_72, &deck_font_clock_56, &lv_font_montserrat_40,
+                                           &deck_font_28, &deck_font_20, &deck_font_14};
+  constexpr int N = sizeof(kTime) / sizeof(kTime[0]);
+  const lv_font_t* df = ch >= 120 ? &deck_font_20 : &deck_font_14;
+  const bool ampm = !netSettings.use24h;
+  auto unitFont = [](const lv_font_t* f) { return lineH(f) >= 48 ? &deck_font_20 : &deck_font_14; };
+  int best = N - 1, dated = -1;
+  for (int i = N - 1; i >= 0; i--) {
+    const lv_font_t* f = kTime[i];
+    // Digits have no accents or descenders: a quarter of the line box is air.
+    const int w = textW("00:00", f) + (ampm ? 4 + textW("PM", unitFont(f)) : 0), h = lineH(f) * 3 / 4;
+    if (w > cw || h > ch) continue;
+    best = i;
+    if (h + lineH(df) <= ch) dated = i;
+  }
+  const bool date = dated >= 0 && dated <= best + 1;
+  const lv_font_t* f = kTime[date ? dated : best];
+  setFont(r.sub, f);
+  setFont(r.colon, f);
+  setFont(r.mins, f);
+  setFont(r.unit, unitFont(f));
+  lv_obj_set_style_pad_bottom(r.unit, (lineH(f) - lineH(unitFont(f))) / 5, 0);  // share the baseline
+  setFont(r.name, df);
+  lv_obj_set_style_margin_top(r.name, -lineH(f) / 8, 0);
+  showObj(r.name, date);
+}
+
 void fitTile(TileRt& r) {
   const int w = lv_obj_get_width(r.obj), h = lv_obj_get_height(r.obj);
   if (w <= 0 || h <= 0 || (w == r.fitW && h == r.fitH)) return;
@@ -1962,6 +2000,7 @@ void fitTile(TileRt& r) {
   lv_obj_set_style_pad_all(r.obj, pad, 0);
   const int cw = w - 2 * pad, ch = h - 2 * pad;
   if (r.def->type == TILE_METRIC) fitMetric(r, cw, ch);
+  else if (r.def->type == TILE_CLOCK) fitClock(r, cw, ch);
   else if (r.def->type == TILE_SENSOR) fitSensor(r, cw, ch);
   else fitButton(r, cw, ch);
   markPageStale(r.page);
@@ -1999,9 +2038,9 @@ void applyPcToTile(TileRt& r) {
   const bool warn = enter > 0 && (r.warn ? pct >= enter - 5 : pct >= enter);
   if (warn != r.warn) {
     r.warn = warn;
-    lv_obj_set_style_text_color(r.sub, lv_color_hex(warn ? C_WARN : C_TEXT), 0);
+    lv_obj_set_style_text_color(r.sub, lv_color_hex(warn ? C_WARN : tileText(d)), 0);
   }
-  const uint32_t accent = warn ? C_WARN : metricAccent(d);
+  const uint32_t accent = warn ? C_WARN : metricChart(d);
   if (r.viz && d.style == METRIC_BAR) {
     lv_bar_set_value(r.viz, (int32_t)constrain(pct, 0.0f, 100.0f), LV_ANIM_OFF);
     lv_obj_set_style_bg_color(r.viz, lv_color_hex(accent), LV_PART_INDICATOR);
@@ -2068,7 +2107,7 @@ void makeMetricContent(TileRt& r, lv_obj_t* t) {
     lv_bar_set_range(r.viz, 0, 100);
     lv_obj_set_style_bg_color(r.viz, lv_color_hex(C_TRACK), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(r.viz, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(r.viz, lv_color_hex(accent), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(r.viz, lv_color_hex(metricChart(d)), LV_PART_INDICATOR);
     return;
   }
   // Chart: the number top right, the line under it.
@@ -2083,10 +2122,96 @@ void makeMetricContent(TileRt& r, lv_obj_t* t) {
   lv_obj_set_style_width(r.viz, 0, LV_PART_INDICATOR);
   lv_obj_set_style_height(r.viz, 0, LV_PART_INDICATOR);
   lv_obj_remove_flag(r.viz, LV_OBJ_FLAG_CLICKABLE);
-  r.ser = lv_chart_add_series(r.viz, lv_color_hex(accent), LV_CHART_AXIS_PRIMARY_Y);
+  r.ser = lv_chart_add_series(r.viz, lv_color_hex(metricChart(d)), LV_CHART_AXIS_PRIMARY_Y);
   r.pts = (int32_t*)lv_malloc(sizeof(int32_t) * PC_HISTORY_LEN);
   for (int i = 0; i < PC_HISTORY_LEN; i++) r.pts[i] = LV_CHART_POINT_NONE;
   lv_chart_set_series_ext_y_array(r.viz, r.ser, r.pts);
+}
+
+// A PC command tile shows what its PC reports: the volume, mute (lit while
+// muted), the track. A fixed "sub" wins; only the portal's default icon and
+// label follow (Play / pause then shows the track as its name).
+void applyPcStateToTile(TileRt& r) {
+  const TileDef& d = *r.def;
+  if (d.tap.kind != ACT_PC || !r.sub) return;
+  const String& cmd = d.tap.cmd;
+  const PcState* st = pcStateOf(pcSource(d.tap.pc));
+  String sub;
+  const char* icon = nullptr;
+  bool on = false;
+  if (st && cmd == "volume_mute") {
+    on = st->mute == 1;
+    sub = on ? String("Muted") : st->vol >= 0 ? String(st->vol) + "%" : String();
+    if (st->mute >= 0) icon = on ? "volume-off" : "volume-high";
+  } else if (st && (cmd == "volume_up" || cmd == "volume_down")) {
+    if (st->vol >= 0) sub = String(st->vol) + "%";
+  } else if (st && cmd.startsWith("media_") && st->media >= 0) {
+    sub = st->title;
+    if (st->artist[0]) sub += sub.length() ? String(" - ") + st->artist : String(st->artist);
+    if (cmd == "media_play_pause") icon = st->media == PC_MEDIA_PLAYING ? "pause" : "play";
+  }
+  bool changed = false;
+  if (cmd == "media_play_pause" && r.name && (d.label.isEmpty() || d.label == "Play / pause")) {
+    String name = tileLabel(d);
+    if (st && st->media >= 0 && st->title[0]) {
+      name = st->title;
+      sub = st->artist;
+    }
+    if (name != lv_label_get_text(r.name)) {
+      lv_label_set_text(r.name, name.c_str());
+      fitNameText(r);
+      changed = true;
+    }
+  }
+  if (!d.sub.length() && sub != lv_label_get_text(r.sub)) {
+    lv_label_set_text(r.sub, sub.c_str());
+    changed = true;
+  }
+  if (on != r.on) {
+    setTileOn(r, on);
+    changed = true;
+  }
+  if ((cmd == "volume_mute" || cmd == "media_play_pause") &&
+      (d.icon.isEmpty() || d.icon == "mdi:volume-mute" || d.icon == "mdi:play-pause")) {
+    const uint32_t was = r.iconCp;
+    const lv_font_t* f = iconFont(r.iconPx);
+    const uint32_t cp = icon && f ? iconCodepoint(icon) : 0;
+    if (cp && cp != r.iconCp) {
+      char u[5];
+      iconUtf8(cp, u);
+      lv_obj_set_style_text_font(r.icon, f, 0);
+      lv_label_set_text(r.icon, u);
+      r.iconCp = cp;
+    } else if (!cp) {
+      r.iconCp = showIcon(r.icon, d, nullptr, false, r.iconPx, r.iconCp);  // back to the default
+    }
+    changed = changed || r.iconCp != was;
+  }
+  if (changed) markPageStale(r.page);
+}
+
+// Clock tile text; "--:--" until the time is synced.
+void applyClock(TileRt& r) {
+  static const char* const kDay[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+  static const char* const kMon[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+  char h[4] = "--", m[4] = "--", date[20] = "";
+  const char* ap = "";
+  const time_t epoch = time(nullptr);
+  if (epoch >= 1609459200) {
+    struct tm lt;
+    localtime_r(&epoch, &lt);
+    snprintf(h, sizeof(h), netSettings.use24h ? "%02d" : "%d",
+             netSettings.use24h ? lt.tm_hour : (lt.tm_hour + 11) % 12 + 1);
+    snprintf(m, sizeof(m), "%02d", lt.tm_min);
+    if (!netSettings.use24h) ap = lt.tm_hour < 12 ? "AM" : "PM";
+    snprintf(date, sizeof(date), "%s %d %s", kDay[lt.tm_wday], lt.tm_mday, kMon[lt.tm_mon]);
+  }
+  setText(r.sub, h);
+  setText(r.mins, m);
+  setText(r.unit, ap);
+  setText(r.name, date);
+  markPageStale(r.page);
 }
 
 uint32_t s_pcSeen = 0;
@@ -2096,6 +2221,7 @@ void pcSync(bool force) {
   if (!force && pcVersion() == s_pcSeen) return;
   s_pcSeen = pcVersion();
   for (TileRt& r : s_tiles) {
+    if (r.def->tap.kind == ACT_PC) applyPcStateToTile(r);
     if (r.def->type != TILE_METRIC) continue;
     applyPcToTile(r);
     markPageStale(r.page);
@@ -2125,7 +2251,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_pad_all(t, 9, 0);
   lv_obj_set_style_bg_color(t, lv_color_hex(C_TILE), 0);
   lv_obj_set_style_bg_color(t, lv_color_hex(accent), LV_STATE_CHECKED);
-  lv_obj_set_style_text_color(t, lv_color_hex(C_TEXT), 0);
+  lv_obj_set_style_text_color(t, lv_color_hex(tileText(def)), 0);
   lv_obj_set_style_text_color(t, lv_color_hex(C_TEXT_ON), LV_STATE_CHECKED);
   // Press feedback: the card darkens and shrinks a little, eased in 90 ms.
   lv_obj_set_style_bg_color(t, lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
@@ -2146,6 +2272,44 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     const size_t idx = s_tiles.size();
     s_tiles.push_back(r);
     applyPcToTile(s_tiles.back());
+    lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
+    return;
+  }
+
+  // Clock: the time ("color") over the date, centred; fitClock sizes them.
+  if (def.type == TILE_CLOCK) {
+    lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);  // read-only
+    lv_obj_set_flex_flow(t, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(t, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    TileRt r = {};
+    r.def = &def;
+    r.page = page;
+    r.obj = t;
+    lv_obj_t* row = lv_obj_create(t);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+    lv_obj_set_style_pad_column(row, 4, 0);
+    lv_obj_remove_flag(row, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+    lv_obj_t* hm = lv_obj_create(row);
+    lv_obj_remove_style_all(hm);
+    lv_obj_set_size(hm, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(hm, LV_FLEX_FLOW_ROW);
+    lv_obj_remove_flag(hm, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+    if (def.hasColor) lv_obj_set_style_text_color(hm, lv_color_hex(def.color), 0);
+    r.sub = lv_label_create(hm);
+    r.colon = lv_label_create(hm);
+    lv_label_set_text(r.colon, ":");
+    r.colonLit = true;
+    r.mins = lv_label_create(hm);
+    r.unit = lv_label_create(row);
+    lv_obj_set_style_text_opa(r.unit, LV_OPA_70, 0);
+    r.name = lv_label_create(t);
+    lv_obj_set_style_text_opa(r.name, LV_OPA_70, 0);
+    const size_t idx = s_tiles.size();
+    s_tiles.push_back(r);
+    applyClock(s_tiles.back());
     lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
     return;
   }
@@ -2201,6 +2365,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_label_set_text(sub, tileSub(r).c_str());
   const size_t idx = s_tiles.size();
   s_tiles.push_back(r);
+  if (def.tap.kind == ACT_PC) applyPcStateToTile(s_tiles.back());
   lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
   lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
   lv_obj_add_event_cb(t, tileEvent, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)idx);
@@ -3490,6 +3655,22 @@ void refreshOneSnapshot() {
   s_lastSnapMs = millis();
 }
 
+// The colon of the shown page's clocks blinks with the second; other pages
+// keep it lit, so their images stay valid.
+void blinkClocks() {
+  struct timeval tv;
+  gettimeofday(&tv, nullptr);
+  const bool lit = tv.tv_sec < 1609459200 || tv.tv_usec < 500000;
+  for (TileRt& r : s_tiles) {
+    if (!r.colon) continue;
+    const bool on = lit || r.page != sh.active;
+    if (on == r.colonLit) continue;
+    r.colonLit = on;
+    lv_obj_set_style_text_opa(r.colon, on ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+    if (r.page != sh.active) markPageStale(r.page);
+  }
+}
+
 // Header clock and WiFi indicator, checked once a second; page images are
 // only marked stale when something visible changed.
 void updateHeaders() {
@@ -3521,6 +3702,8 @@ void updateHeaders() {
     lv_label_set_text(s_pages[i].clock, buf);
     s_pages[i].stale = true;
   }
+  for (TileRt& r : s_tiles)
+    if (r.def->type == TILE_CLOCK) applyClock(r);
 }
 
 void logStats() {
@@ -3634,6 +3817,7 @@ void deckTick() {
 
   if (s_ed.pending != EditState::P_NONE) edFinish();
   updateHeaders();
+  blinkClocks();
   qpUpdateStatus(false);
   haSync();
   settleSliders();
@@ -3801,7 +3985,7 @@ bool deckTestCard(const String& tileId) {
 bool deckTestTap(const String& tileId, bool hold) {
   if (s_ed.root) return false;
   for (TileRt& r : s_tiles) {
-    if (r.def->id != tileId || r.def->type == TILE_METRIC) continue;
+    if (r.def->id != tileId || r.def->type == TILE_METRIC || r.def->type == TILE_CLOCK) continue;
     const TileAction& a = hold ? r.def->hold : r.def->tap;
     if (a.kind == ACT_PC) return false;  // PC commands require a real touch.
     requestAction(r, hold);

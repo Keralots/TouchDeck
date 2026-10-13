@@ -102,14 +102,28 @@ function metricRow(t,i){const ml=mlist(t),m=ml.find(x=>x.id===t.metric);const co
   const opts=ml.map(x=>'<option value="'+x.id+'"'+(x.id===t.metric?' selected':'')+'>'+esc(x.name)+' ('+esc(Math.round(x.value*10)/10)+' '+esc(x.unit)+')</option>').join('')+(m?'':'<option value="'+t.metric+'" selected>#'+t.metric+' (not in the last packet)</option>');
   return '<div class="dk-tile'+(i===sel?' sel':'')+'"><div class="dk-ic" style="background:'+col+'">PC</div><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(m?m.name:'Metric')+'"><div class="dk-tsub">'+(pcs.length>1&&pcOf(t)?esc(pcOf(t).name)+' ':'PC ')+'metric #'+t.metric+(m?' - '+esc(Math.round(m.value*10)/10)+' '+esc(m.unit):'')+'</div></div>'+
   '<div class="dk-tact">'+pcSel(t,i)+'<select data-m="'+i+'">'+opts+'</select><select data-st="'+i+'">'+[['number','Number'],['chart','Chart'],['bar','Bar']].map(o=>'<option value="'+o[0]+'"'+((t.style||'number')===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>'+sizeSel(t,i)+'<button type="button" class="btn'+(i===more?' on':'')+'" data-mo="'+i+'" title="More options">&#8943;</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div>'+(i===more?'<div class="dk-more">'+colorField(t,i)+'</div>':'')+'</div>';}
-/* The tile's accent colour: a picker, a few presets, Auto = no "color" in deck.json. */
+/* Tile colours: a picker, presets, Auto = the key left out of deck.json. */
 const SW=['#F6C56B','#FFB35C','#FF8A7A','#E66767','#D55181','#B3A6FF','#9085E9','#7DB5FF','#3987E5','#5CC9A7','#00A35C','#C98500'];
+const TXT=['#FFFFFF','#E6E8EC','#1D2129'];
 const autoCol=t=>t.type==='metric'?PAL[((t.metric||1)-1)%8]:(COL[domainOf(t.entity)]||'#7DB5FF');
-function colorField(t,i){const c=(t.color||autoCol(t)).toLowerCase(),on=(t.color||'').toLowerCase();
-  const what=t.type==='metric'?'the chart or bar line and the name':t.type==='toggle'?'the icon, and the whole tile while it is on':t.type==='slider'?'the icon and the level fill':'the icon';
-  return '<div class="field wide"><label class="field-label">Colour</label><div class="dk-row dk-sw"><input type="color" data-co="'+i+'" value="'+c+'" title="Any colour">'+
-    SW.map(s=>'<button type="button" class="dk-swb'+(on===s.toLowerCase()?' on':'')+'" data-cs="'+i+'" data-v="'+s+'" style="background:'+s+'" title="'+s+'"></button>').join('')+
-    '<button type="button" class="btn'+(t.color?'':' on')+'" data-ca="'+i+'">Auto</button></div><p class="field-hint" style="margin:4px 0 0">Colours '+what+'. Auto picks it from the '+(t.type==='metric'?'metric':'entity type')+'.</p></div>';}
+/* WCAG contrast against a dark tile (Midnight, Glass) and a light one (Daylight). */
+const lum=h=>{const v=[1,3,5].map(i=>parseInt(h.substr(i,2),16)/255).map(c=>c<=0.03928?c/12.92:Math.pow((c+0.055)/1.055,2.4));return 0.2126*v[0]+0.7152*v[1]+0.0722*v[2];};
+const contrast=(a,b)=>{const x=lum(a),y=lum(b);return (Math.max(x,y)+0.05)/(Math.min(x,y)+0.05);};
+function readHint(c){if(!c)return '';const w=[];if(contrast(c,'#1A1D23')<3)w.push('Midnight and Glass');if(contrast(c,'#FFFFFF')<3)w.push('Daylight');return w.length?' <b>Hard to read on '+w.join(' and ')+'.</b>':'';}
+function colRow(t,i,k,label,auto,hint,sw){const c=(t[k]||auto).toLowerCase(),on=(t[k]||'').toLowerCase();
+  return '<div class="field wide"><label class="field-label">'+label+'</label><div class="dk-row dk-sw"><input type="color" data-co="'+i+'" data-ck="'+k+'" value="'+c+'" title="Any colour">'+
+    (sw||SW).map(s=>'<button type="button" class="dk-swb'+(on===s.toLowerCase()?' on':'')+'" data-cs="'+i+'" data-ck="'+k+'" data-v="'+s+'" style="background:'+s+'" title="'+s+'"></button>').join('')+
+    '<button type="button" class="btn'+(t[k]?'':' on')+'" data-ca="'+i+'" data-ck="'+k+'">Auto</button></div><p class="field-hint" style="margin:4px 0 0">'+hint+'</p></div>';}
+function colorField(t,i){const tx=TXT.concat(SW),theme='Auto uses the theme text colour.';
+  if(t.type==='clock')return colRow(t,i,'color','Time colour','#E6E8EC',theme+readHint(t.color),tx)+colRow(t,i,'textColor','Date colour','#E6E8EC',theme+readHint(t.textColor),tx);
+  const m=t.type==='metric';
+  const what=m?'the name, and the chart or bar line unless Chart colour is set':t.type==='toggle'?'the icon, and the whole tile while it is on':t.type==='slider'?'the icon and the level fill':'the icon';
+  let h=colRow(t,i,'color','Colour',autoCol(t),'Colours '+what+'. Auto picks it from the '+(m?'metric':'entity type')+'.');
+  if(m)h+=colRow(t,i,'chartColor','Chart colour',t.color||autoCol(t),'The chart or bar line. Auto follows Colour.');
+  return h+colRow(t,i,'textColor','Text colour','#E6E8EC',(m?'The value. ':'')+theme+readHint(t.textColor),tx);}
+/* The clock tile: no entity or actions, just its size and colours. */
+function clockRow(t,i){return '<div class="dk-tile'+(i===sel?' sel':'')+'"><div class="dk-ic" style="background:'+(t.color||'#E6E8EC')+'">12</div><div class="dk-tmain"><b>Clock</b><div class="dk-tsub">Time and date (24h and time zone from Time settings)</div></div>'+
+  '<div class="dk-tact">'+sizeSel(t,i)+'<button type="button" class="btn'+(i===more?' on':'')+'" data-mo="'+i+'" title="More options">&#8943;</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div>'+(i===more?'<div class="dk-more">'+colorField(t,i)+'</div>':'')+'</div>';}
 /* A tile's "more options" panel: confirm, colour, and for buttons the tap action. */
 const opt=(v,l,on)=>'<option value="'+esc(v)+'"'+(on?' selected':'')+'>'+esc(l)+'</option>';
 const isHttp=t=>!!(t.tap&&t.tap.action==='http');
@@ -189,9 +203,9 @@ function layout(p){const [gc,gr]=grid(p),c=gc*2,r=gr*2;const used=[...Array(r)].
 function pinAll(p,at){p.tiles.forEach((t,k)=>{const a=at[k];if(a){setPos(t,cell(a.x,a.y,a.w,a.h));return;}const q=Object.assign({},tpos(t));delete q.x;delete q.y;setPos(t,q);});}
 const free=(at,k,q,c,r)=>q.x>=0&&q.y>=0&&q.x+q.w<=c&&q.y+q.h<=r&&at.every((o,j)=>j===k||!o||o.x>=q.x+q.w||o.x+o.w<=q.x||o.y>=q.y+q.h||o.y+o.h<=q.y);
 function gtile(t,k,a){const m=t.type==='metric',mm=m&&mlist(t).find(x=>x.id===t.metric),en=entMap[t.entity],d=domainOf(t.entity);
-  const col=t.color||(m?PAL[((t.metric||1)-1)%8]:(COL[d]||'#7DB5FF')),cp=m?0:tileCp(t);
-  const nm=t.label||(m?(mm?mm.name:'Metric #'+t.metric):(en&&en.name)||t.entity||'Tile');
-  return '<div class="dk-gt'+(k===sel?' sel':'')+(a&&a.h<2?' row':'')+(a&&a.h<2&&a.w<2?' ic':'')+'" data-g="'+k+'"'+(a?' style="grid-area:'+(a.y+1)+'/'+(a.x+1)+'/span '+a.h+'/span '+a.w+'"':'')+'><i style="color:'+col+'"'+(cp?'':' class="tx"')+'>'+(cp?String.fromCodePoint(cp):(m?'PC':esc((d||'?').slice(0,2).toUpperCase())))+'</i><b>'+esc(nm)+'</b>'+(a?'<span class="dk-rs" data-rs="'+k+'"></span>':'')+'</div>';}
+  const ck=t.type==='clock',col=t.color||(m?PAL[((t.metric||1)-1)%8]:ck?'#E6E8EC':(COL[d]||'#7DB5FF')),cp=m||ck?0:tileCp(t);
+  const nm=ck?'Clock':t.label||(m?(mm?mm.name:'Metric #'+t.metric):(en&&en.name)||t.entity||'Tile');
+  return '<div class="dk-gt'+(k===sel?' sel':'')+(a&&a.h<2?' row':'')+(a&&a.h<2&&a.w<2?' ic':'')+'" data-g="'+k+'"'+(a?' style="grid-area:'+(a.y+1)+'/'+(a.x+1)+'/span '+a.h+'/span '+a.w+'"':'')+'><i style="color:'+col+'"'+(cp?'':' class="tx"')+'>'+(cp?String.fromCodePoint(cp):(m?'PC':ck?'12':esc((d||'?').slice(0,2).toUpperCase())))+'</i><b>'+esc(nm)+'</b>'+(a?'<span class="dk-rs" data-rs="'+k+'"></span>':'')+'</div>';}
 /* Drag a tile to a free place or onto a tile of its size (swap); the corner
    handle resizes. A press without movement selects the tile. */
 function gdrag(e,p,at,k,size){if(e.button>0)return;e.preventDefault();e.stopPropagation();
@@ -226,11 +240,11 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   h+='<div class="dk-grid'+(land?'':' pt')+'" id="dkGrid" style="grid-template-columns:repeat('+2*c+',minmax(0,1fr));grid-template-rows:repeat('+2*r+',minmax(0,1fr));aspect-ratio:'+(land?480:320)+'/'+((land?320:480)-hd)+'">'+g+p.tiles.map((t,k)=>at[k]?gtile(t,k,at[k]):'').join('')+'<div class="dk-ghost" id="dkGhost" hidden></div></div>';
   if(lost.length)h+='<p class="dk-cap over">No room on the page for these: drag one to a free place, make it smaller or remove it.</p><div class="dk-tray">'+lost.map(k=>gtile(p.tiles[k],k,null)).join('')+'</div>';
   h+='<p class="field-hint">Drag a tile to move it, or onto a tile of the same size to swap them; the corner handle resizes. Both go in half-cell steps. Tap a tile to find it in the list.</p>';
-  h+='<div class="dk-tiles">'+p.tiles.map((t,i)=>{if(t.type==='metric')return metricRow(t,i);const d=domainOf(t.entity);const en=entMap[t.entity];const nm=en&&en.name?en.name:(t.entity||'No entity');
+  h+='<div class="dk-tiles">'+p.tiles.map((t,i)=>{if(t.type==='metric')return metricRow(t,i);if(t.type==='clock')return clockRow(t,i);const d=domainOf(t.entity);const en=entMap[t.entity];const nm=en&&en.name?en.name:(t.entity||'No entity');
     const cp=tileCp(t);
     return '<div class="dk-tile'+(i===sel?' sel':'')+'"><button type="button" class="dk-ic'+(cp?' mdi':'')+'" data-ic="'+i+'" title="'+esc(cp?(t.icon||(en&&en.icon)||'automatic'):'Choose an icon')+'" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+(cp?String.fromCodePoint(cp):esc((d||'?').slice(0,2).toUpperCase()))+'</button><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="dk-tsub">'+esc(t.entity||(isHttp(t)?'HTTP '+(t.tap.method||'GET')+' '+(t.tap.url||''):isPcCmd(t)?'PC command: '+((PCCMD.find(c=>c[0]===t.tap.cmd)||[0,t.tap.cmd])[1]):'no entity'))+(en&&en.state?' - '+esc(en.state)+(en.unit?' '+esc(en.unit):''):'')+'</div></div>'+
     '<div class="dk-tact"><select data-t="'+i+'"><option value="toggle"'+(t.type==='toggle'?' selected':'')+'>Switch</option><option value="action"'+(t.type==='action'?' selected':'')+'>Button</option><option value="sensor"'+(t.type==='sensor'?' selected':'')+'>Sensor</option>'+(SLIDER.includes(d)||t.type==='slider'?'<option value="slider"'+(t.type==='slider'?' selected':'')+'>Slider</option>':'')+'</select>'+sizeSel(t,i)+'<button type="button" class="btn" data-e="'+i+'">Entity</button><button type="button" class="btn'+(i===more?' on':'')+'" data-mo="'+i+'" title="More options">&#8943;</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div>'+(i===more?moreRow(t,i):'')+'</div>';}).join('')+'</div>';
-  h+='<p class="dk-cap">'+(+cells.toFixed(2))+' of '+(c*r)+' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddPcCmd">+ Add PC control</button></div>'+pcList()+'<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a smaller one shows the number), so picking one makes a 1x1 tile 2x1.</p>';
+  h+='<p class="dk-cap">'+(+cells.toFixed(2))+' of '+(c*r)+' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddPcCmd">+ Add PC control</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button></div>'+pcList()+'<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a smaller one shows the number), so picking one makes a 1x1 tile 2x1.</p>';
   el.innerHTML=h;
   $('dkPName').oninput=e=>{p.name=e.target.value;setDirty(true);renderTabs();};
   const setGrid=(gc,gr)=>{p.layouts=p.layouts||{};p.layouts[ori]={cols:gc,rows:gr};setDirty(true);renderPage();};
@@ -252,10 +266,11 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   el.querySelectorAll('[data-x]').forEach(x=>x.onclick=()=>{p.tiles.splice(+x.dataset.x,1);sel=-1;more=-1;setDirty(true);renderPage();});
   el.querySelectorAll('[data-mo]').forEach(x=>x.onclick=()=>{const i=+x.dataset.mo;more=more===i?-1:i;renderPage();});
   el.querySelectorAll('[data-cf]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.cf];if(e.target.value)t.confirm=e.target.value;else delete t.confirm;setDirty(true);});
-  el.querySelectorAll('[data-co]').forEach(x=>{x.oninput=e=>{p.tiles[+x.dataset.co].color=e.target.value.toUpperCase();setDirty(true);};x.onchange=()=>renderPage();});
-  el.querySelectorAll('[data-cs]').forEach(x=>x.onclick=()=>{p.tiles[+x.dataset.cs].color=x.dataset.v;setDirty(true);renderPage();});
-  el.querySelectorAll('[data-ca]').forEach(x=>x.onclick=()=>{delete p.tiles[+x.dataset.ca].color;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-co]').forEach(x=>{x.oninput=e=>{p.tiles[+x.dataset.co][x.dataset.ck]=e.target.value.toUpperCase();setDirty(true);};x.onchange=()=>renderPage();});
+  el.querySelectorAll('[data-cs]').forEach(x=>x.onclick=()=>{p.tiles[+x.dataset.cs][x.dataset.ck]=x.dataset.v;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-ca]').forEach(x=>x.onclick=()=>{delete p.tiles[+x.dataset.ca][x.dataset.ck];setDirty(true);renderPage();});
   $('dkAddTile').onclick=()=>openPicker(-1);
+  $('dkAddClock').onclick=()=>{const t={id:'k'+Date.now().toString(36),type:'clock'};setSize(t,'2x1');p.tiles.push(t);setDirty(true);renderPage();};
   $('dkAddPcCmd').onclick=()=>{const t={id:'c'+Date.now().toString(36),type:'action'};pcCmdSet(t,'media_play_pause');p.tiles.push(t);more=p.tiles.length-1;setDirty(true);renderPage();};
   $('dkAddHttp').onclick=()=>{p.tiles.push({id:'h'+Date.now().toString(36),type:'action',label:'HTTP',icon:'mdi:web',tap:{action:'http',method:'GET',url:'http://'}});more=p.tiles.length-1;setDirty(true);renderPage();};
   const tapOf=x=>p.tiles[+(x.dataset.ak||x.dataset.hm||x.dataset.hu||x.dataset.hb||x.dataset.hh||x.dataset.hc||x.dataset.ht)];
