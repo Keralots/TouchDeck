@@ -53,6 +53,7 @@ struct PcSource {
   char     name[24];
   IPAddress ip;          // where its last packet came from
   uint16_t cmdPort;      // its command listener ("cmd_port"), 0 = none
+  bool     viaSerial;    // its latest packet came over the USB cable
   char     nonces[4][17];  // one-time nonces from its latest packet, "" = used
   bool     paired;
   uint8_t  key[32];      // shared HMAC key from pairing (NVS only, never in the API)
@@ -91,6 +92,7 @@ const PcMetric* pcMetricFind(const PcSource* pc, uint8_t id);
 //
 // Pairing (the companion calls it): pcPairStart shows a 6-digit code on the
 // device; pcPairConfirm with that code returns the new key once.
+// Over the USB cable the same JSON travels as "@TD <json>" lines on Serial.
 bool pcSendCommand(const String& pcId, const char* cmd, String& err);
 struct PcCmdResult {
   String pcName, cmd, msg;

@@ -91,6 +91,8 @@ bool improvSetupTick() {
   return false;
 }
 
+bool improvSetupActive() { return improvInited; }
+
 bool improvSetupExpired() {
   return improvInited && (int32_t)(millis() - improvDeadline) >= 0;
 }

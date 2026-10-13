@@ -17,6 +17,7 @@ import webbrowser
 from app_state import AppState
 from config_model import normalize_config
 import pc_control
+import serial_link
 import server as srv
 
 try:
@@ -32,6 +33,7 @@ _stop = threading.Event()
 _httpd = None
 _core = None
 _state = None
+_serial_link = None
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +65,8 @@ def gui_quit():
     global _quitting
     _quitting = True
     _stop.set()
+    if _serial_link is not None:
+        _serial_link.stop()
     if _httpd is not None:
         try:
             _httpd.shutdown()
@@ -157,7 +161,8 @@ def _monitor_loop():
             gen = g
             last_good = {}
         metrics = cfg.get("metrics") or []
-        if not metrics or not cfg.get("esp32_ip"):
+        usb_connected = _serial_link is not None and _serial_link.is_connected()
+        if not metrics or (not cfg.get("esp32_ip") and not usb_connected):
             _state.set_monitoring(False)
             _stop.wait(1.0)
             continue
@@ -184,13 +189,18 @@ def _monitor_loop():
                 # A paired device can send one command per nonce (see pc_control).
                 payload["cmd_port"] = int(cfg.get("cmd_port") or pc_control.DEFAULT_CMD_PORT)
                 payload["nonces"] = [pc_control.NONCES.issue() for _ in range(4)]
-            sock.sendto(json.dumps(payload).encode("utf-8"), (cfg["esp32_ip"], cfg["udp_port"]))
+            if _serial_link is not None and _serial_link.is_connected():
+                _serial_link.send(payload)
+            elif cfg.get("esp32_ip"):
+                sock.sendto(json.dumps(payload).encode("utf-8"), (cfg["esp32_ip"], cfg["udp_port"]))
             _state.update_values(values)
         except Exception as e:
             print("send error: %s" % e)
 
         # Light reachability probe for the status readout (every ~10s).
-        if now - last_reach_check >= 10:
+        if usb_connected:
+            _state.set_reachable(True)
+        elif cfg.get("esp32_ip") and now - last_reach_check >= 10:
             last_reach_check = now
             try:
                 with socket.create_connection((cfg["esp32_ip"], 80), timeout=0.5):
@@ -281,7 +291,7 @@ def _tray_ready(icon, notify_startup):
 # Entry point (called from core.main on the primary launch)
 # ---------------------------------------------------------------------------
 def run(core, start_hidden=False, notify_startup=False):
-    global _core, _state, _httpd, _window
+    global _core, _state, _httpd, _window, _serial_link
     _core = core
 
     loaded = core.load_config() or dict(core.DEFAULT_CONFIG)
@@ -296,9 +306,11 @@ def run(core, start_hidden=False, notify_startup=False):
     print("Config UI at %s" % url)
 
     threading.Thread(target=_detect_source, daemon=True, name="detect-source").start()
-    threading.Thread(target=_monitor_loop, daemon=True, name="monitor").start()
     threading.Thread(target=pc_control.listen, args=(_state, _stop), daemon=True,
                      name="pc-control").start()
+    _serial_link = serial_link.SerialLink(_state, _stop)
+    _serial_link.start()
+    threading.Thread(target=_monitor_loop, daemon=True, name="monitor").start()
 
     if not WEBVIEW_AVAILABLE:
         # No native window backend: serve and open the browser instead.
@@ -331,3 +343,4 @@ def run(core, start_hidden=False, notify_startup=False):
     webview.start(lambda: _start_background(tray_icon, notify_startup))
     # webview.start returns when the window is destroyed (tray Quit).
     _stop.set()
+    _serial_link.stop()

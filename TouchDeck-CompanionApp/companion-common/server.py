@@ -20,6 +20,7 @@ from config_model import (
     sensor_key,
 )
 from constants import MAX_METRICS
+import serial_link
 
 
 _CTYPES = {
@@ -212,10 +213,15 @@ def apply_connection(core, state, form):
         value = form.get(name)
         return value[0] if isinstance(value, list) and value else default
 
+    config = state.get_config()
+    config["serial_port"] = field("serial_port", config.get("serial_port", "auto"))
+    config = normalize_config(config)
     supports_source = bool(getattr(core, "SUPPORTS_SOURCE_SELECT", False))
     sources = tuple(getattr(core, "SENSOR_SOURCES", ("auto",)))
     try:
-        address = _device_address(field("esp32_ip", ""))
+        address = field("esp32_ip", config.get("esp32_ip", "")).strip()
+        if address:
+            address = _device_address(address)
         port = int(field("udp_port", "4210"))
         interval = float(field("update_interval", "3"))
         source = field("sensor_source", "auto").lower()
@@ -229,7 +235,6 @@ def apply_connection(core, state, form):
     except ValueError as exc:
         return {"success": False, "message": str(exc)}
 
-    config = normalize_config(state.get_config())
     config["esp32_ip"] = address
     config["udp_port"] = port
     config["update_interval"] = interval
@@ -249,7 +254,7 @@ def apply_connection(core, state, form):
         except Exception as exc:
             print("source switch failed: %s" % exc)
     result = {"success": True, "esp32_ip": address, "udp_port": port,
-              "update_interval": interval}
+              "update_interval": interval, "serial_port": config["serial_port"]}
     if resolved:
         result.update({"sensor_source": source, "resolved_source": resolved})
     return result
@@ -422,6 +427,8 @@ class _Handler(BaseHTTPRequestHandler):
                     "version": CONFIG_VERSION,
                     "ip": config.get("esp32_ip", ""),
                     "udp_port": config.get("udp_port", 4210),
+                    "serial_port": config.get("serial_port", "auto"),
+                    "serial_link": serial_link.status(),
                     "update_interval": config.get("update_interval", 3),
                     "pc_name": config.get("pc_name", ""),
                     "paired": bool(config.get("pc_key")),

@@ -88,6 +88,7 @@ def normalize_config(config):
     out = copy.deepcopy(config or {})
     out["version"] = CONFIG_VERSION
     out.setdefault("esp32_ip", "")
+    out["serial_port"] = str(out.get("serial_port") or "auto").strip()[:64] or "auto"
     out.setdefault("udp_port", 4210)
     out.setdefault("update_interval", 3)
     out.setdefault("metrics", [])

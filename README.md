@@ -96,21 +96,35 @@ is sent as application/json, other text as text/plain) and `"headers"`
 anyone on your network can read through the portal, so keep important
 passwords out of it.
 
-## PC stats: StatNode Companion
+## PC stats and control: TouchDeck Companion
 
 The companion runs on the PC, reads the sensors and pushes a JSON packet to
-UDP port `4210` of the device every second. A copy of it lives in
-[`StatNode-CompanionApp/`](StatNode-CompanionApp/) (it is shared with the
-StatNode project).
+UDP port `4210` of the device every second. It lives in
+[`TouchDeck-CompanionApp/`](TouchDeck-CompanionApp/) (forked from the StatNode
+companion; it runs side by side with the StatNode, SmallOLED and
+AnimatedPixelClock companions).
 
 - **Windows:** reads [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor),
   which must be running (as administrator for full coverage), with its remote
   web server enabled (port `8085`) or through WMI.
 - **Linux:** reads the sensors directly.
 
-The companion UI opens at `http://127.0.0.1:8740`; point it at the device IP.
+The companion UI opens at `http://127.0.0.1:8750`; point it at the device IP.
 The PC and the device must share a subnet with UDP `4210` reachable. Add metric
 tiles in **Pages & tiles** with "+ Add PC metric".
+
+- **Several PCs:** each companion sends its own id and name (Connection page,
+  "This PC's name"); the device keeps up to four PCs and a metric tile picks
+  one.
+- **Control:** on the companion's Device page, "Pair for control" shows a code
+  on the device; type it in. Tiles made with "+ Add PC control" then send
+  media keys, volume, lock, sleep, restart or shut down to that PC (Sleep,
+  Restart and Shut down ask on the device first). Commands are signed with
+  the key from pairing and arrive on UDP `4211` (allow it in the firewall).
+- **USB cable:** when the device is plugged into the PC, the companion finds
+  it (Espressif USB serial, 303A:1001) and sends metrics and commands over the
+  cable instead of WiFi. While it holds the port, USB flashing and the serial
+  monitor cannot open it: use OTA, or set "USB cable" to Off.
 
 ## Hardware
 

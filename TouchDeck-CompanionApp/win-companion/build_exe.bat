@@ -58,6 +58,9 @@ if exist dist  rmdir /s /q dist
   --hidden-import app_state ^
   --hidden-import config_model ^
   --hidden-import pc_control ^
+  --hidden-import serial ^
+  --hidden-import serial.tools.list_ports ^
+  --hidden-import serial_link ^
   --collect-all webview ^
   --collect-all pythonnet ^
   --collect-all pystray ^

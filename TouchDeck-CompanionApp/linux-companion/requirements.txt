@@ -4,6 +4,7 @@
 #
 # There is NO build step on Linux - run it straight from source.
 
+pyserial        # Optional USB cable transport
 psutil          # CPU / RAM / disk / temps / fans / net (always available)
 pywebview       # native config window (falls back to the browser if GTK libs absent)
 

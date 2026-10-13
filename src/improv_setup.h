@@ -28,5 +28,7 @@ bool improvSetupTick();
 // True once the setup window has elapsed without success. Callers should
 // then improvSetupEnd() to release resources; AP stays up regardless.
 bool improvSetupExpired();
+// True while the setup window listens for Improv on Serial.
+bool improvSetupActive();
 
 void improvSetupEnd();

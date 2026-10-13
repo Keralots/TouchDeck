@@ -34,7 +34,11 @@ qa('.nav-item').forEach(function(button){button.addEventListener('click',functio
 $('navToggle').addEventListener('click',function(){var open=document.documentElement.classList.toggle('nav-open');this.setAttribute('aria-expanded',String(open))});
 $('navScrim').addEventListener('click',function(){document.documentElement.classList.remove('nav-open');$('navToggle').setAttribute('aria-expanded','false')});
 
-async function loadInfo(){var info=await api('/api/info');app.info=info;app.maxMetrics=info.max_metrics||20;setText('topVersion',info.version);setText('aboutVersion',info.version);$('esp32_ip').value=info.ip||'';$('udp_port').value=info.udp_port||4210;$('update_interval').value=info.update_interval||3;$('pc_name').value=info.pc_name||'';showPaired(!!info.paired);setText('cmdPort',info.cmd_port||4211);$('sourceField').classList.toggle('hidden',!info.source_select);$('sensor_source').value=info.sensor_source||'auto';setText('srDevice',info.ip||'-')}
+function renderSerialStatus(info){var link=info.serial_link||{};setText('serialStatus',link.connected?'Connected on '+link.port:'Not connected')}
+async function refreshSerialStatus(){try{renderSerialStatus(await api('/api/info'))}catch(error){}}
+function setSerialPort(value){var select=$('serial_port');qa('option[data-custom]',select).forEach(function(option){option.remove()});if(value!=='auto'&&value!=='off'){var option=new Option(value,value);option.dataset.custom='1';select.add(option)}select.value=value}
+
+async function loadInfo(){var info=await api('/api/info');app.info=info;setSerialPort(info.serial_port||'auto');renderSerialStatus(info);app.maxMetrics=info.max_metrics||20;setText('topVersion',info.version);setText('aboutVersion',info.version);$('esp32_ip').value=info.ip||'';$('udp_port').value=info.udp_port||4210;$('update_interval').value=info.update_interval||3;$('pc_name').value=info.pc_name||'';showPaired(!!info.paired);setText('cmdPort',info.cmd_port||4211);$('sourceField').classList.toggle('hidden',!info.source_select);$('sensor_source').value=info.sensor_source||'auto';setText('srDevice',info.ip||'-')}
 
 function selectedSensors(){var byKey={};app.sensors.forEach(function(sensor){byKey[sensor.key]=sensor});return app.selectedKeys.map(function(key){return byKey[key]}).filter(Boolean)}
 function valueText(sensor){var live=app.live[sensor.metric_id];var value=live&&live.value!=null?live.value:sensor.current_value;return value==null?'-':String(value)+' '+(sensor.unit||'')}
@@ -53,7 +57,7 @@ $('selectedTray').addEventListener('click',async function(event){var button=even
 $('sensorSearch').addEventListener('input',renderSensors);
 $('rescanBtn').addEventListener('click',async function(){this.disabled=true;try{await loadSensors(true);showToast('Sensor list refreshed.')}catch(error){showToast(error.message,true)}finally{this.disabled=false}});
 
-async function saveConnection(){try{var data=await api('/api/connection',{method:'POST',body:formBody($('connectionForm'))});app.info.ip=data.esp32_ip;setText('srDevice',data.esp32_ip);showToast('Connection settings saved.');await refreshDevice(true)}catch(error){showToast(error.message,true)}}
+async function saveConnection(){try{var data=await api('/api/connection',{method:'POST',body:formBody($('connectionForm'))});app.info.ip=data.esp32_ip;setText('srDevice',data.esp32_ip);showToast('Connection settings saved.');await refreshSerialStatus();await refreshDevice(true)}catch(error){showToast(error.message,true)}}
 $('saveConnBtn').addEventListener('click',saveConnection);
 $('testConnBtn').addEventListener('click',async function(){this.disabled=true;var result=$('connResult');try{var data=await api('/api/test',{method:'POST',body:formBody($('connectionForm'))});result.classList.remove('hidden');result.classList.toggle('warn',!data.compatible);result.innerHTML='<span class="note-k">Test</span><span>'+esc(data.message)+'</span>';renderDevice(data)}catch(error){result.classList.remove('hidden');result.classList.add('warn');result.innerHTML='<span class="note-k">Test</span><span>'+esc(error.message)+'</span>'}finally{this.disabled=false}});
 
@@ -80,5 +84,5 @@ async function importText(text){var parsed=JSON.parse(text);var data=await api('
 $('importBtn').addEventListener('click',async function(){try{if(window.pywebview&&window.pywebview.api&&window.pywebview.api.open_text){var result=await window.pywebview.api.open_text();if(result&&result.ok)await importText(result.text)}else{$('importFile').click()}}catch(error){showToast(error.message,true)}});
 $('importFile').addEventListener('change',async function(){if(!this.files.length)return;try{await importText(await this.files[0].text())}catch(error){showToast(error.message,true)}this.value=''});
 
-async function start(){try{await loadInfo();await Promise.all([loadSensors(false),loadAutostart(),refreshLocalStatus(),refreshDevice(false),refreshLive()]);setDirty(false)}catch(error){showToast(error.message,true)}setInterval(refreshLocalStatus,3000);setInterval(refreshLive,3000);setInterval(function(){refreshDevice(false);if(document.querySelector('.page[data-page="device"]').classList.contains('active'))refreshPreview()},5000)}
+async function start(){try{await loadInfo();await Promise.all([loadSensors(false),loadAutostart(),refreshLocalStatus(),refreshDevice(false),refreshLive()]);setDirty(false)}catch(error){showToast(error.message,true)}setInterval(refreshLocalStatus,3000);setInterval(refreshSerialStatus,3000);setInterval(refreshLive,3000);setInterval(function(){refreshDevice(false);if(document.querySelector('.page[data-page="device"]').classList.contains('active'))refreshPreview()},5000)}
 start();

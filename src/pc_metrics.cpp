@@ -12,6 +12,7 @@
 #include <esp_random.h>
 #include <mbedtls/md.h>
 #include <vector>
+#include "improv_setup.h"
 
 PcSource* pcSources = nullptr;
 
@@ -160,7 +161,7 @@ static void handleAck(JsonDocument& doc) {
   }
 }
 
-static void parsePacket(const char* json, IPAddress from) {
+static void parsePacket(const char* json, IPAddress from, bool serial) {
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, json);
   if (err) {
@@ -173,7 +174,8 @@ static void parsePacket(const char* json, IPAddress from) {
   }
   PcSource* pc = sourceForPacket(doc["pc_id"] | "", doc["pc_name"] | "");
   if (!pc) return;
-  pc->ip = from;
+  pc->viaSerial = serial;
+  if (!serial) pc->ip = from;
   pc->cmdPort = doc["cmd_port"] | 0;
   // A few nonces per packet, so quick taps (volume) need not wait for the next one.
   memset(pc->nonces, 0, sizeof(pc->nonces));
@@ -253,8 +255,42 @@ static void parsePacket(const char* json, IPAddress from) {
   }
 }
 
-bool pcMetricsHandle() {
+// USB cable: the companion writes "@TD <json>" lines (the same JSON as UDP)
+// between the device's log lines; "@TD {"hello":1}" asks who is there.
+static char s_line[PC_PACKET_BUF_SIZE];
+static size_t s_lineLen = 0;
+static bool s_lineOver = false;
+
+static bool serialPoll() {
+  if (improvSetupActive()) return false;  // Improv owns the port in setup mode
   bool parsed = false;
+  int budget = 4096;  // bytes per loop pass, so a flood cannot stall the UI
+  while (budget-- > 0 && Serial.available() > 0) {
+    const int c = Serial.read();
+    if (c < 0) break;
+    if (c != '\n') {
+      if (s_lineLen < sizeof(s_line) - 1) s_line[s_lineLen++] = (char)c;
+      else s_lineOver = true;
+      continue;
+    }
+    if (s_lineLen && s_line[s_lineLen - 1] == '\r') s_lineLen--;
+    s_line[s_lineLen] = 0;
+    const bool ours = !s_lineOver && s_lineLen > 4 && !strncmp(s_line, "@TD ", 4);
+    s_lineLen = 0;
+    s_lineOver = false;
+    if (!ours) continue;
+    if (strstr(s_line + 4, "\"hello\"")) {
+      Serial.printf("\n@TD {\"hello\":\"%s\",\"fw\":\"%s\"}\n", PRODUCT_NAME, FW_VERSION);
+      continue;
+    }
+    parsePacket(s_line + 4, IPAddress(), true);
+    parsed = true;
+  }
+  return parsed;
+}
+
+bool pcMetricsHandle() {
+  bool parsed = serialPoll();
   int packetSize = udp.parsePacket();
   if (packetSize) {
     static char buffer[PC_PACKET_BUF_SIZE];
@@ -267,7 +303,7 @@ bool pcMetricsHandle() {
       int len = udp.read(buffer, sizeof(buffer) - 1);
       if (len > 0) {
         buffer[len] = '\0';
-        parsePacket(buffer, udp.remoteIP());
+        parsePacket(buffer, udp.remoteIP(), false);
         parsed = true;
       }
     }
@@ -335,7 +371,7 @@ bool pcSendCommand(const String& pcId, const char* cmd, String& err) {
     err = String(pc->name) + " is not paired";
     return false;
   }
-  if (!pc->data.online || !pc->cmdPort) {
+  if (!pc->data.online || (!pc->cmdPort && !pc->viaSerial)) {
     err = String(pc->name) + (pc->data.online ? " does not take commands" : " is offline");
     return false;
   }
@@ -363,11 +399,16 @@ bool pcSendCommand(const String& pcId, const char* cmd, String& err) {
   doc["sig"] = sig;
   String out;
   serializeJson(doc, out);
-  udp.beginPacket(pc->ip, pc->cmdPort);
-  udp.write((const uint8_t*)out.c_str(), out.length());
-  if (!udp.endPacket()) {
-    err = "send failed";
-    return false;
+  if (pc->viaSerial) {
+    // A leading newline ends any half-written log line first.
+    Serial.printf("\n@TD %s\n", out.c_str());
+  } else {
+    udp.beginPacket(pc->ip, pc->cmdPort);
+    udp.write((const uint8_t*)out.c_str(), out.length());
+    if (!udp.endPacket()) {
+      err = "send failed";
+      return false;
+    }
   }
   s_pending.push_back({pc->id, nonce, cmd, millis()});
   nonce[0] = 0;  // single use; the next metrics packet brings new ones

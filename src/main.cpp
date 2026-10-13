@@ -19,6 +19,8 @@
 static const uint32_t WDT_TIMEOUT_S = 30;
 
 void setup() {
+  // Companion metrics arrive over the cable as ~1 KB lines; HWCDC's default is 256.
+  Serial.setRxBufferSize(4096);
   Serial.begin(115200);
   delay(200);
   Serial.println();
