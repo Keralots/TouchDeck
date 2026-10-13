@@ -62,6 +62,19 @@ bool haGetEntity(const String& id, HaEntity& out);
 // Bumps on any entity change or link change.
 uint32_t haStoreVersion();
 
+constexpr int HA_HISTORY_POINTS = 48;
+struct HaHistoryKey {
+  String entity;
+  uint8_t hours = 24;
+};
+// Shared series, copied under the HA lock. NaN means no data.
+void haSetHistory(const std::vector<HaHistoryKey>& keys);
+void haDetailHistory(const String& entity, uint8_t hours = 24);
+bool haCopyHistory(const String& entity, uint8_t hours, uint32_t& version, float* points,
+                   float& low, float& high);
+uint32_t haHistoryVersion();
+bool haNumericState(const String& state, float& value);
+
 // Queue a service call. target = entity_id (may be empty), dataJson = the
 // service_data object as JSON text (may be empty). False when not connected.
 bool haCallService(const String& domain, const String& service, const String& target,

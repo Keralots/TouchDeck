@@ -19,6 +19,11 @@
 //   "pc": "<companion pc_id>" (optional, default the first known PC),
 //   "style": "number" | "chart" | "bar", "scaleMax": 0 (= by unit) }.
 //
+// A sensor tile: { "type": "sensor", "entity": "sensor.temperature",
+//   "style": "number" | "chart", "hours": 24 (1..168),
+//   "warn": 25, "crit": 30 } (thresholds optional, in the sensor unit).
+// crit < warn means lower is worse; otherwise higher is worse.
+//
 // "type": "clock": the time, and the date when the tile has room
 // (24h and time zone from the device settings). Read-only.
 //
@@ -106,6 +111,9 @@ struct TileDef {
   uint8_t metric = 0;  // TILE_METRIC: companion metric id
   String pc;           // TILE_METRIC: companion pc_id, "" = the first known PC
   MetricStyle style = METRIC_NUMBER;
+  uint8_t hours = 24;  // TILE_SENSOR: history period, 1..168 hours
+  bool hasWarn = false, hasCrit = false;
+  float warn = 0, crit = 0;
   uint16_t scaleMax = 0;  // 0 = full scale by unit
 };
 

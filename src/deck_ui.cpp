@@ -32,6 +32,8 @@ constexpr int HEADER_H = 30;
 constexpr uint32_t SNAP_SPACING_MS = 40;
 constexpr uint32_t STATS_MS = 10000;
 constexpr uint32_t SLIDE_MS = 280;
+constexpr uint32_t C_WARN = 0xE5A50A;
+constexpr uint32_t C_CRIT = 0xE5484D;
 
 // Theme colours (D11): Midnight (mockup A, default), Daylight, or Glass
 // (Midnight text, tiles of tinted glass over a wallpaper), set by
@@ -96,12 +98,14 @@ struct TileRt {
   bool pending;           // optimistic toggle waiting for HA
   bool pendingOn;
   uint32_t pendingUntil;
-  // PC metric tiles
+  // Metric and sensor charts
   lv_obj_t* unit;
   lv_obj_t* viz;          // chart or bar
   lv_chart_series_t* ser;
-  int32_t* pts;           // chart points (PC_HISTORY_LEN), LVGL heap
+  int32_t* pts;           // chart points, LVGL heap
   bool warn;
+  uint8_t threshold;
+  uint32_t historyVersion;
   const lv_font_t* valFont;  // metric value font picked by fitTile, shrinks per value
   int16_t valW;              // room for value + unit
   bool besideName;           // chart: the value shares the top line with the name
@@ -379,6 +383,65 @@ void deckToastShow(const char* text, uint32_t holdMs);
 void qpSyncValues();
 void fitValue(TileRt& r);
 void fitNameText(TileRt& r);
+uint32_t tileText(const TileDef& d);
+void showObj(lv_obj_t* o, bool on);
+
+uint32_t sensorColour(const TileRt& r) {
+  return r.threshold == 2 ? C_CRIT : r.threshold == 1 ? C_WARN : tileText(*r.def);
+}
+
+uint32_t sensorLine(const TileRt& r) {
+  const TileDef& d = *r.def;
+  return r.threshold ? sensorColour(r) : d.hasChartColor ? d.chartColor :
+         d.hasColor ? d.color : domainColor(entityDomain(d.entity));
+}
+
+void sensorThreshold(TileRt& r, const HaEntity& e) {
+  const TileDef& d = *r.def;
+  float value;
+  if (!e.known || !haNumericState(e.state, value)) r.threshold = 0;
+  else {
+    const bool low = d.hasWarn && d.hasCrit && d.crit < d.warn;
+    auto active = [&](float threshold, bool held) {
+      const float margin = held ? max(0.01f, fabsf(threshold) * 0.01f) : 0;
+      return low ? (held ? value < threshold + margin : value <= threshold) :
+                   (held ? value > threshold - margin : value >= threshold);
+    };
+    if (d.hasCrit && active(d.crit, r.threshold == 2)) r.threshold = 2;
+    else if (d.hasWarn && active(d.warn, r.threshold >= 1)) r.threshold = 1;
+    else r.threshold = 0;
+  }
+  lv_obj_set_style_text_color(r.sub, lv_color_hex(sensorColour(r)), 0);
+  if (r.viz && r.ser) lv_chart_set_series_color(r.viz, r.ser, lv_color_hex(sensorLine(r)));
+}
+
+// Leave room for axis padding and the LVGL missing-point sentinel.
+int32_t historyPoint(float value) {
+  return (int32_t)lround(constrain((double)value * 10, -1000000000.0, 1000000000.0));
+}
+
+bool copyHistoryChart(const TileDef& d, uint8_t hours, uint32_t& version, lv_obj_t* chart,
+                      int32_t* points, float& lo, float& hi) {
+  float values[HA_HISTORY_POINTS];
+  if (!haCopyHistory(d.entity, hours, version, values, lo, hi)) return false;
+  for (int i = 0; i < HA_HISTORY_POINTS; i++) {
+    points[i] = isfinite(values[i]) ? historyPoint(values[i]) : LV_CHART_POINT_NONE;
+  }
+  if (isfinite(lo)) {
+    const int32_t low = historyPoint(lo), high = historyPoint(hi);
+    const int32_t pad = (int32_t)((int64_t)(high - low) * 15 / 100) + 5;
+    lv_chart_set_axis_range(chart, LV_CHART_AXIS_PRIMARY_Y, low - pad, high + pad);
+  }
+  lv_chart_refresh(chart);
+  return true;
+}
+
+void applySensorHistory(TileRt& r) {
+  if (r.def->type != TILE_SENSOR || !r.viz || !r.pts) return;
+  float lo, hi;
+  if (copyHistoryChart(*r.def, r.def->hours, r.historyVersion, r.viz, r.pts, lo, hi))
+    markPageStale(r.page);
+}
 
 // --- Home Assistant binding ------------------------------------------------------------
 constexpr uint32_t PENDING_MS = 4000;  // optimistic toggle waits this long for HA
@@ -544,13 +607,22 @@ void applyHaToTile(TileRt& r, bool force) {
     r.pending = false;
   }
   if (d.type == TILE_TOGGLE) setTileOn(r, on);
-  r.iconCp = showIcon(r.icon, d, &e, on, r.iconPx, r.iconCp);
+  if (r.icon) r.iconCp = showIcon(r.icon, d, &e, on, r.iconPx, r.iconCp);
   lv_obj_set_style_opa(r.obj, avail ? LV_OPA_COVER : LV_OPA_50, 0);
   if (!d.label.length() && e.name.length() && strcmp(lv_label_get_text(r.name), e.name.c_str())) {
     lv_label_set_text(r.name, e.name.c_str());
     fitNameText(r);
   }
-  if (d.type == TILE_SLIDER) {
+  if (d.type == TILE_SENSOR) sensorThreshold(r, e);
+  if (d.type == TILE_SENSOR && d.style == METRIC_CHART) {
+    float value;
+    const bool numeric = e.known && haNumericState(e.state, value);
+    char text[32];
+    if (numeric) snprintf(text, sizeof(text), fabsf(value - roundf(value)) < 0.05f ? "%.0f" : "%.1f", value);
+    lv_label_set_text(r.sub, d.sub.length() ? d.sub.c_str() : numeric ? text : prettyState(domain, e).c_str());
+    lv_label_set_text(r.unit, numeric && !d.sub.length() ? e.unit.c_str() : "");
+    fitValue(r);
+  } else if (d.type == TILE_SLIDER) {
     r.on = on;
     // While dragging, and briefly after (HA echoes older values), the finger wins.
     const bool held = lv_obj_has_state(r.obj, LV_STATE_PRESSED) && r.sliding;
@@ -567,6 +639,7 @@ void applyHaToTile(TileRt& r, bool force) {
 }
 
 uint32_t s_haSeen = 0;
+uint32_t s_historySeen = 0;
 
 // The LED's day level from its HA entity, when that entity changed (force:
 // also when not, to undo a refused slider write). A state that is not a level
@@ -644,6 +717,12 @@ void haSync() {
     refreshModal();
     ledFromHa(false);
   }
+  const uint32_t historyVersion = haHistoryVersion();
+  if (historyVersion != s_historySeen) {
+    s_historySeen = historyVersion;
+    for (TileRt& r : s_tiles) applySensorHistory(r);
+    refreshModal();
+  }
   String ent, msg;
   while (haTakeFailure(ent, msg)) {
     for (TileRt& r : s_tiles) {
@@ -690,6 +769,12 @@ void collectEntities() {
   else ledSetHaLevel(LED_HA_NONE);
   s_ledSeen = 0;
   haSetEntities(ids);
+  std::vector<HaHistoryKey> histories;
+  for (const TileRt& r : s_tiles)
+    if (r.def->type == TILE_SENSOR && r.def->style == METRIC_CHART)
+      histories.push_back({r.def->entity, r.def->hours});
+  haSetHistory(histories);
+  s_historySeen = 0;
   s_haSeen = 0;  // re-apply everything to the new widgets
   for (TileRt& r : s_tiles) applyHaToTile(r, true);
 }
@@ -1237,6 +1322,13 @@ lv_obj_t* s_modalBtnLbl = nullptr;
 lv_obj_t* s_modalSlider = nullptr;
 lv_obj_t* s_modalIcon = nullptr;
 uint32_t s_modalIconCp = 0;
+lv_obj_t* s_modalChart = nullptr;
+lv_obj_t* s_modalRange = nullptr;
+lv_chart_series_t* s_modalSeries = nullptr;
+int32_t* s_modalPoints = nullptr;
+uint32_t s_modalHistoryVersion = 0;
+uint8_t s_modalHours = 24;
+float s_modalMin = NAN, s_modalMax = NAN;
 // Confirm dialog (shares the card slot): which action waits, the tile state it
 // was asked for, and the auto-cancel timer.
 int8_t s_confirmHold = -1;  // -1 = the card is a detail card
@@ -1304,6 +1396,13 @@ void closeModal() {
   s_modalCard = s_modalScrim = nullptr;
   s_modalSlider = nullptr;
   s_modalIcon = nullptr;
+  s_modalChart = s_modalRange = nullptr;
+  s_modalSeries = nullptr;
+  heap_caps_free(s_modalPoints);
+  s_modalPoints = nullptr;
+  s_modalHistoryVersion = 0;
+  s_modalMin = s_modalMax = NAN;
+  haDetailHistory("");
   s_modalTile = -1;
   s_confirmHold = -1;
   if (s_confirmTimer) lv_timer_delete(s_confirmTimer);
@@ -1408,6 +1507,27 @@ void refreshModal() {
   }
   if (r.def->type == TILE_TOGGLE || (r.def->type == TILE_SLIDER && r.def->tap.kind == ACT_TOGGLE))
     lv_label_set_text(s_modalBtnLbl, actionVerb(r, r.def->tap));
+  if (s_modalChart) {
+    float value;
+    const bool numeric = haKnown && e.known && haNumericState(e.state, value);
+    if (numeric) {
+      haDetailHistory(r.def->entity, s_modalHours);
+      copyHistoryChart(*r.def, s_modalHours, s_modalHistoryVersion, s_modalChart,
+                       s_modalPoints, s_modalMin, s_modalMax);
+    }
+    showObj(s_modalChart, numeric);
+    showObj(s_modalRange, numeric);
+    lv_chart_set_series_color(s_modalChart, s_modalSeries, lv_color_hex(sensorLine(r)));
+    lv_obj_set_style_text_color(s_modalState, lv_color_hex(sensorColour(r)), 0);
+    if (numeric) {
+      char range[128];
+      if (isfinite(s_modalMin))
+        snprintf(range, sizeof(range), "%uh  Min %.3g / Max %.3g\nNow %.3g %s",
+                 s_modalHours, s_modalMin, s_modalMax, value, e.unit.c_str());
+      else snprintf(range, sizeof(range), "%uh  No history yet\nNow %.3g %s", s_modalHours, value, e.unit.c_str());
+      lv_label_set_text(s_modalRange, range);
+    }
+  }
   const bool on = haKnown && haStateOn(domain, e.state);
   s_modalIconCp = showIcon(s_modalIcon, *r.def, haKnown ? &e : nullptr, on, 28, s_modalIconCp);
 }
@@ -1423,6 +1543,10 @@ void openModal(int tileIdx) {
   const uint32_t accent = d.hasColor ? d.color : domainColor(entityDomain(d.entity));
   s_modalTile = tileIdx;
   const bool light = modalHasSlider();
+  HaEntity he;
+  float hv;
+  const bool haKnown = d.entity.length() && haGetEntity(d.entity, he);
+  const bool graph = d.type == TILE_SENSOR && haKnown && he.known && haNumericState(he.state, hv);
 
   s_modalScrim = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_modalScrim);
@@ -1432,7 +1556,7 @@ void openModal(int tileIdx) {
   lv_obj_add_event_cb(s_modalScrim, onModalScrim, LV_EVENT_CLICKED, nullptr);
 
   const int cw = w - 40 < 380 ? w - 40 : 380;
-  const int ch = light ? 236 : 196;
+  const int ch = graph ? (light ? 304 : 284) : light ? 236 : 196;
   lv_obj_t* c = lv_obj_create(lv_layer_top());
   s_modalCard = c;
   lv_obj_remove_style_all(c);
@@ -1462,8 +1586,7 @@ void openModal(int tileIdx) {
   // Name and entity id: one line each, cut with dots (ids get long).
   lv_obj_t* name = lv_label_create(c);
   String title = tileLabel(d);
-  HaEntity he;
-  if (!d.label.length() && d.entity.length() && haGetEntity(d.entity, he) && he.name.length())
+  if (!d.label.length() && haKnown && he.name.length())
     title = he.name;
   lv_label_set_text(name, title.c_str());
   lv_obj_set_style_text_font(name, &deck_font_20, 0);
@@ -1499,6 +1622,32 @@ void openModal(int tileIdx) {
     lv_obj_set_ext_click_area(sl, 18);
     lv_obj_add_event_cb(sl, onModalSlider, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_add_event_cb(sl, onModalSlider, LV_EVENT_RELEASED, nullptr);
+  }
+
+  if (graph) {
+    s_modalHours = d.style == METRIC_CHART ? d.hours : 24;
+    s_modalPoints = (int32_t*)heap_caps_malloc(sizeof(int32_t) * HA_HISTORY_POINTS, MALLOC_CAP_SPIRAM);
+    if (s_modalPoints) {
+      s_modalChart = lv_chart_create(c);
+      lv_obj_remove_style_all(s_modalChart);
+      lv_obj_set_pos(s_modalChart, 16, light ? 154 : 112);
+      lv_obj_set_size(s_modalChart, cw - 32, light ? 50 : 76);
+      lv_chart_set_type(s_modalChart, LV_CHART_TYPE_LINE);
+      lv_chart_set_div_line_count(s_modalChart, 0, 0);
+      lv_chart_set_point_count(s_modalChart, HA_HISTORY_POINTS);
+      lv_obj_set_style_line_width(s_modalChart, 2, LV_PART_ITEMS);
+      lv_obj_set_style_width(s_modalChart, 0, LV_PART_INDICATOR);
+      lv_obj_set_style_height(s_modalChart, 0, LV_PART_INDICATOR);
+      lv_obj_remove_flag(s_modalChart, LV_OBJ_FLAG_CLICKABLE);
+      s_modalSeries = lv_chart_add_series(s_modalChart, lv_color_hex(sensorLine(r)), LV_CHART_AXIS_PRIMARY_Y);
+      for (int i = 0; i < HA_HISTORY_POINTS; i++) s_modalPoints[i] = LV_CHART_POINT_NONE;
+      lv_chart_set_series_ext_y_array(s_modalChart, s_modalSeries, s_modalPoints);
+      s_modalRange = lv_label_create(c);
+      lv_obj_set_style_text_font(s_modalRange, &deck_font_12, 0);
+      lv_label_set_long_mode(s_modalRange, LV_LABEL_LONG_MODE_WRAP);
+      lv_obj_set_size(s_modalRange, cw - 32, 28);
+      lv_obj_set_pos(s_modalRange, 16, light ? 212 : 196);
+    }
   }
 
   const int bw = (cw - 16 * 2 - 10) / 2;
@@ -1644,7 +1793,6 @@ lv_obj_t* makeRoot(int w, int h) {
 // Identity colours by metric id.
 constexpr uint32_t kMetricPalette[8] = {0x3987E5, 0x00A35C, 0xD55181, 0xC98500,
                                         0x199E70, 0xD95926, 0x9085E9, 0xE66767};
-constexpr uint32_t C_WARN = 0xE5A50A;
 
 uint32_t metricAccent(const TileDef& d) {
   return d.hasColor ? d.color : kMetricPalette[(d.metric - 1) % 8];
@@ -2003,7 +2151,7 @@ void fitTile(TileRt& r) {
   const int pad = m >= 80 ? 9 : m >= 56 ? 7 : 5;
   lv_obj_set_style_pad_all(r.obj, pad, 0);
   const int cw = w - 2 * pad, ch = h - 2 * pad;
-  if (r.def->type == TILE_METRIC) fitMetric(r, cw, ch);
+  if (r.def->type == TILE_METRIC || (r.def->type == TILE_SENSOR && r.def->style == METRIC_CHART)) fitMetric(r, cw, ch);
   else if (r.def->type == TILE_CLOCK) fitClock(r, cw, ch);
   else if (r.def->type == TILE_SENSOR) fitSensor(r, cw, ch);
   else fitButton(r, cw, ch);
@@ -2079,11 +2227,12 @@ void applyPcToTile(TileRt& r) {
 void makeMetricContent(TileRt& r, lv_obj_t* t) {
   const TileDef& d = *r.def;
   const MetricStyle style = d.style;
-  const uint32_t accent = metricAccent(d);
-  lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);  // read-only
+  const bool sensor = d.type == TILE_SENSOR;
+  const uint32_t accent = sensor ? sensorLine(r) : metricAccent(d);
+  if (!sensor) lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);  // read-only
 
   r.name = lv_label_create(t);
-  lv_label_set_text(r.name, d.label.length() ? d.label.c_str() : "");
+  lv_label_set_text(r.name, d.label.length() ? d.label.c_str() : sensor ? tileLabel(d).c_str() : "");
   // On glass the accent alone is hard to read: lift it toward white.
   const lv_color_t nameCol = lv_color_hex(accent);
   lv_obj_set_style_text_color(r.name, s_theme == THEME_GLASS ? lv_color_mix(lv_color_white(), nameCol, 110) : nameCol, 0);
@@ -2123,14 +2272,16 @@ void makeMetricContent(TileRt& r, lv_obj_t* t) {
   lv_obj_align(r.viz, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_chart_set_type(r.viz, LV_CHART_TYPE_LINE);
   lv_chart_set_div_line_count(r.viz, 0, 0);
-  lv_chart_set_point_count(r.viz, PC_HISTORY_LEN);
+  const int count = sensor ? HA_HISTORY_POINTS : PC_HISTORY_LEN;
+  lv_chart_set_point_count(r.viz, count);
   lv_obj_set_style_line_width(r.viz, 2, LV_PART_ITEMS);
   lv_obj_set_style_width(r.viz, 0, LV_PART_INDICATOR);
   lv_obj_set_style_height(r.viz, 0, LV_PART_INDICATOR);
   lv_obj_remove_flag(r.viz, LV_OBJ_FLAG_CLICKABLE);
-  r.ser = lv_chart_add_series(r.viz, lv_color_hex(metricChart(d)), LV_CHART_AXIS_PRIMARY_Y);
-  r.pts = (int32_t*)lv_malloc(sizeof(int32_t) * PC_HISTORY_LEN);
-  for (int i = 0; i < PC_HISTORY_LEN; i++) r.pts[i] = LV_CHART_POINT_NONE;
+  r.ser = lv_chart_add_series(r.viz, lv_color_hex(sensor ? sensorLine(r) : metricChart(d)), LV_CHART_AXIS_PRIMARY_Y);
+  r.pts = (int32_t*)lv_malloc(sizeof(int32_t) * count);
+  if (!r.pts) { lv_obj_delete(r.viz); r.viz = nullptr; r.ser = nullptr; return; }
+  for (int i = 0; i < count; i++) r.pts[i] = LV_CHART_POINT_NONE;
   lv_chart_set_series_ext_y_array(r.viz, r.ser, r.pts);
 }
 
@@ -2285,7 +2436,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_transition(t, &s_pressTrans, LV_STATE_PRESSED);
   if (glass) glassStyle(t, accent);
 
-  if (def.type == TILE_METRIC) {
+  if (def.type == TILE_METRIC || (def.type == TILE_SENSOR && def.style == METRIC_CHART)) {
     TileRt r = {};
     r.def = &def;
     r.page = page;
@@ -2293,7 +2444,13 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     makeMetricContent(r, t);
     const size_t idx = s_tiles.size();
     s_tiles.push_back(r);
-    applyPcToTile(s_tiles.back());
+    if (def.type == TILE_METRIC) applyPcToTile(s_tiles.back());
+    else {
+      applyHaToTile(s_tiles.back(), true);
+      applySensorHistory(s_tiles.back());
+      lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
+      lv_obj_add_event_cb(t, tileEvent, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)idx);
+    }
     lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
     return;
   }

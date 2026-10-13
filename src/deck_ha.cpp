@@ -78,10 +78,141 @@ struct Pending {
 std::vector<Pending> s_pending;
 bool s_everConnected = false;
 
+// --- History store and worker handle, guarded by s_lock ---
+struct HistoryData {
+  float value[HA_HISTORY_POINTS], weight[HA_HISTORY_POINTS];
+  float low[HA_HISTORY_POINTS], high[HA_HISTORY_POINTS];
+  time_t end = 0, cursor = 0;
+  float live = NAN;
+};
+struct History {
+  HaHistoryKey key;
+  HistoryData data, tail;
+  bool configured = false, detail = false, fetching = false;
+  uint32_t id = 0, request = 0, version = 0, due = 0;
+};
+std::vector<History*> s_history;
+uint32_t s_histVersion = 1, s_histId = 0;
+TaskHandle_t s_histTask = nullptr;
+void historyTask(void*);
+
+void clearHistory(HistoryData& d, time_t end, float live) {
+  for (int i = 0; i < HA_HISTORY_POINTS; i++) {
+    d.value[i] = d.low[i] = d.high[i] = NAN;
+    d.weight[i] = 0;
+  }
+  d.end = d.cursor = end;
+  d.live = live;
+}
+
+void addHistory(HistoryData& d, int i, float value, float seconds) {
+  if (!isfinite(value) || seconds <= 0) return;
+  const float total = d.weight[i] + seconds;
+  d.value[i] = d.weight[i] > 0 ? (float)(((double)d.value[i] * d.weight[i] +
+                                       (double)value * seconds) / total) : value;
+  d.weight[i] = total;
+  d.low[i] = isnan(d.low[i]) ? value : min(d.low[i], value);
+  d.high[i] = isnan(d.high[i]) ? value : max(d.high[i], value);
+}
+
+void shiftHistory(HistoryData& d, time_t end, int width) {
+  const int n = (int)min((time_t)HA_HISTORY_POINTS, (end - d.end) / width);
+  if (n <= 0) return;
+  for (int i = 0; i < HA_HISTORY_POINTS; i++) {
+    d.value[i] = i + n < HA_HISTORY_POINTS ? d.value[i + n] : NAN;
+    d.weight[i] = i + n < HA_HISTORY_POINTS ? d.weight[i + n] : 0;
+    d.low[i] = i + n < HA_HISTORY_POINTS ? d.low[i + n] : NAN;
+    d.high[i] = i + n < HA_HISTORY_POINTS ? d.high[i + n] : NAN;
+  }
+  d.end = end;
+}
+
+bool advanceHistory(HistoryData& d, uint8_t hours, time_t now) {
+  if (!d.end || now <= d.cursor) return false;
+  const int width = hours * 3600 / HA_HISTORY_POINTS;
+  const time_t end = now > d.end ? d.end + ((now - d.end + width - 1) / width) * width : d.end;
+  const bool shifted = end != d.end;
+  shiftHistory(d, end, width);
+  const time_t start = d.end - hours * 3600;
+  time_t at = max(d.cursor, start);
+  bool changed = shifted;
+  while (at < now) {
+    const int i = min(HA_HISTORY_POINTS - 1, (int)((at - start) / width));
+    const time_t to = min(now, start + (i + 1) * width);
+    const float before = d.value[i], low = d.low[i], high = d.high[i];
+    addHistory(d, i, d.live, (float)(to - at));
+    changed = changed || (isfinite(before) != isfinite(d.value[i])) ||
+              (isfinite(before) && (before != d.value[i] || low != d.low[i] || high != d.high[i]));
+    at = to;
+  }
+  d.cursor = now;
+  return changed;
+}
+
+// Called with s_lock held; integrate the old state before accepting the new one.
+void historyLive(time_t now) {
+  if (now < 1609459200) return;
+  for (History* h : s_history) {
+    bool changed = advanceHistory(h->data, h->key.hours, now);
+    float value = NAN;
+    if (s_link == HA_CONNECTED)
+      for (const Entry& en : s_store)
+        if (en.id == h->key.entity && en.e.known) { haNumericState(en.e.state, value); break; }
+    if (!h->data.end) clearHistory(h->data, now, value);
+    h->data.live = value;
+    if (h->fetching) {
+      advanceHistory(h->tail, h->key.hours, now);
+      h->tail.live = value;
+    }
+    if (changed) h->version = ++s_histVersion;
+  }
+}
+
+History* findHistory(const String& entity, uint8_t hours) {
+  for (History* h : s_history)
+    if (h->key.entity == entity && h->key.hours == hours) return h;
+  return nullptr;
+}
+
+History* ensureHistory(const String& entity, uint8_t hours) {
+  if (!entity.length()) return nullptr;
+  if (History* h = findHistory(entity, hours)) return h;
+  void* mem = heap_caps_malloc(sizeof(History), MALLOC_CAP_SPIRAM);
+  if (!mem) return nullptr;
+  History* h = new (mem) History;
+  h->key.entity = entity;
+  h->key.hours = hours;
+  h->id = ++s_histId;
+  clearHistory(h->data, 0, NAN);
+  clearHistory(h->tail, 0, NAN);
+  s_history.push_back(h);
+  return h;
+}
+
+void pruneHistory() {
+  for (auto it = s_history.begin(); it != s_history.end();) {
+    History* h = *it;
+    if (h->configured || h->detail) { ++it; continue; }
+    h->~History();
+    heap_caps_free(h);
+    it = s_history.erase(it);
+  }
+}
+
+void startHistoryTask() {
+  if (!s_histTask && !s_history.empty())
+    xTaskCreatePinnedToCore(historyTask, "deck_hist", 6144, nullptr, 2, &s_histTask, 0);
+}
+
 void setLink(HaLink l, const String& err = String()) {
   Lock g;
   if (s_link != l || (err.length() && err != s_error)) s_version++;
+  const bool connected = l == HA_CONNECTED && s_link != l;
+  historyLive(time(nullptr));
   s_link = l;
+  if (connected) for (History* h : s_history) { h->due = 0; h->request++; }
+  if (l != HA_CONNECTED)
+    for (History* h : s_history) h->data.live = h->tail.live = NAN;
   if (err.length()) s_error = err;
   if (l == HA_CONNECTED) s_error = "";
 }
@@ -208,7 +339,7 @@ void applyEvent(JsonObjectConst ev) {
     en->e.version++;
     changed = true;
   }
-  if (changed) s_version++;
+  if (changed) { s_version++; historyLive(time(nullptr)); }
 }
 
 void failPending(const String& message) {
@@ -402,6 +533,12 @@ void haTask(void*) {
       Serial.printf("HA: connecting to %s:%u\n", host.c_str(), (unsigned)port);
     }
     s_ws.loop();
+    static uint32_t lastHistory = 0;
+    if (millis() - lastHistory >= 1000) {
+      lastHistory = millis();
+      Lock g;
+      historyLive(time(nullptr));
+    }
     if (haLink() == HA_CONNECTED) {
       uint32_t wantedGen;
       {
@@ -707,6 +844,225 @@ bool openHa(HTTPClient& http, const char* path, String& token, String& err) {
   return true;
 }
 
+// ISO timestamps are UTC or carry an explicit offset; mktime would use local TZ.
+bool historyEpoch(const char* s, time_t& epoch) {
+  int y, m, d, hh, mm, ss, n = 0;
+  if (sscanf(s, "%4d-%2d-%2dT%2d:%2d:%2d%n", &y, &m, &d, &hh, &mm, &ss, &n) != 6 ||
+      y < 1970 || m < 1 || m > 12 || d < 1 || d > 31 || hh < 0 || hh > 23 ||
+      mm < 0 || mm > 59 || ss < 0 || ss > 59) return false;
+  static const int monthDays[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  const bool leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+  if (d > monthDays[m - 1] + (m == 2 && leap ? 1 : 0)) return false;
+  const char* p = s + n;
+  if (*p == '.') { p++; if (!isdigit(*p)) return false; while (isdigit(*p)) p++; }
+  int offset = 0;
+  if (*p == 'Z' && !p[1]) { p++; }
+  else if (*p == '+' || *p == '-') {
+    const int sign = *p++ == '+' ? 1 : -1;
+    int oh, om, used = 0;
+    if (sscanf(p, "%2d:%2d%n", &oh, &om, &used) != 2 || p[used] ||
+        oh < 0 || oh > 23 || om < 0 || om > 59) return false;
+    offset = sign * (oh * 3600 + om * 60);
+    p += used;
+  } else return false;
+  if (*p) return false;
+  y -= m <= 2;
+  const int era = y / 400, yo = y - era * 400;
+  const int doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  const int days = era * 146097 + yo * 365 + yo / 4 - yo / 100 + doy - 719468;
+  epoch = (time_t)((int64_t)days * 86400 + hh * 3600 + mm * 60 + ss - offset);
+  return true;
+}
+
+String historyIso(time_t epoch) {
+  struct tm utc;
+  gmtime_r(&epoch, &utc);
+  char text[24];
+  strftime(text, sizeof(text), "%Y-%m-%dT%H:%M:%SZ", &utc);
+  return String(text);
+}
+
+String historyEscape(const String& text) {
+  String out;
+  for (size_t i = 0; i < text.length(); i++) {
+    const unsigned char c = text[i];
+    if (isalnum(c) || c == '_' || c == '.' || c == '-') out += (char)c;
+    else { char hex[4]; snprintf(hex, sizeof(hex), "%%%02X", c); out += hex; }
+  }
+  return out;
+}
+
+// A reply can run to megabytes (a power sensor over a week), so it is parsed
+// one state at a time off the socket through a small buffer.
+struct HistoryStream {
+  WiFiClient* in;
+  uint32_t deadline;
+  bool timedOut = false;
+  int back = -1;
+  size_t pos = 0, len = 0;
+  uint8_t buf[512];
+  int read() {
+    if (back >= 0) {
+      const int c = back;
+      back = -1;
+      return c;
+    }
+    while (pos >= len) {
+      if ((int32_t)(millis() - deadline) >= 0) {
+        timedOut = true;
+        return -1;
+      }
+      const int avail = in->available();
+      if (avail > 0) {
+        const int got = in->read(buf, min((size_t)avail, sizeof(buf)));
+        if (got > 0) { len = got; pos = 0; }
+      } else if (!in->connected()) {
+        return -1;
+      } else {
+        vTaskDelay(1);
+      }
+    }
+    return buf[pos++];
+  }
+  size_t readBytes(char* out, size_t n) {
+    size_t i = 0;
+    for (int c; i < n && (c = read()) >= 0; i++) out[i] = (char)c;
+    return i;
+  }
+  int next() {
+    int c;
+    do c = read();
+    while (c == ' ' || c == '\n' || c == '\r' || c == '\t');
+    return c;
+  }
+};
+
+// slow: the reply did not arrive in time (too much history), retry much later.
+bool fetchHistory(const HaHistoryKey& key, time_t now, HistoryData& out, String& err, bool& slow) {
+  const time_t start = now - key.hours * 3600;
+  clearHistory(out, now, NAN);
+  HTTPClient http;
+  String token;
+  const String path = "/api/history/period/" + historyIso(start) + "?filter_entity_id=" +
+                      historyEscape(key.entity) + "&end_time=" + historyIso(now) +
+                      "&minimal_response&no_attributes";
+  if (!openHa(http, path.c_str(), token, err)) return false;
+  http.setConnectTimeout(3000);
+  const int code = http.GET();
+  if (code != 200) { err = "HTTP " + String(code); http.end(); return false; }
+  HistoryStream s{http.getStreamPtr(), millis() + 20000};
+  time_t at = start;
+  float value = NAN;
+  const int width = key.hours * 3600 / HA_HISTORY_POINTS;
+  auto hold = [&](time_t until) {
+    until = min(now, until);
+    while (at < until) {
+      const int i = min(HA_HISTORY_POINTS - 1, (int)((at - start) / width));
+      const time_t to = min(until, start + (i + 1) * width);
+      addHistory(out, i, value, (float)(to - at));
+      at = to;
+    }
+  };
+  JsonDocument filter(psram()), doc(psram());
+  filter["state"] = true;
+  filter["last_changed"] = true;
+  // [[{...}, {...}]], or [] when the entity has no history.
+  bool valid = s.next() == '[';
+  int c = valid ? s.next() : -1;
+  if (c != ']') {
+    valid = valid && c == '[';
+    c = valid ? s.next() : -1;
+    time_t previous = 0;
+    unsigned records = 0;
+    while (valid && c != ']') {
+      s.back = c;
+      if (deserializeJson(doc, s, DeserializationOption::Filter(filter))) { valid = false; break; }
+      time_t stamp;
+      if (!historyEpoch(doc["last_changed"] | "", stamp) || (previous && stamp < previous)) {
+        valid = false;
+        break;
+      }
+      previous = stamp;
+      if (++records % 128 == 0) vTaskDelay(1);
+      if (stamp <= now) {
+        if (stamp > start) hold(stamp);
+        haNumericState(String(doc["state"] | ""), value);
+      }
+      c = s.next();
+      if (c == ',') c = s.next();
+      else if (c != ']') valid = false;
+    }
+  }
+  http.end();
+  if (!valid) {
+    slow = s.timedOut;
+    err = slow ? "history timed out" : "bad history reply";
+    return false;
+  }
+  hold(now);
+  return true;
+}
+
+void historyTask(void*) {
+  size_t next = 0;
+  for (;;) {
+    HaHistoryKey key;
+    uint32_t id = 0, request = 0, credentials = 0;
+    const time_t now = time(nullptr);
+    {
+      Lock g;
+      if (s_link == HA_CONNECTED && now >= 1609459200) {
+        for (size_t n = 0; n < s_history.size(); n++) {
+          const size_t i = (next + n) % s_history.size();
+          History* h = s_history[i];
+          if (h->due && (int32_t)(millis() - h->due) < 0) continue;
+          next = (i + 1) % s_history.size();
+          key = h->key;
+          id = h->id;
+          request = h->request;
+          credentials = s_credGen;
+          clearHistory(h->tail, now, h->data.live);
+          h->fetching = true;
+          break;
+        }
+      }
+    }
+    if (!id) { vTaskDelay(pdMS_TO_TICKS(250)); continue; }
+    HistoryData* result = (HistoryData*)heap_caps_malloc(sizeof(HistoryData), MALLOC_CAP_SPIRAM);
+    String err;
+    bool slow = false;
+    const bool ok = result && fetchHistory(key, now, *result, err, slow);
+    if (!result) err = "out of memory";
+    {
+      Lock g;
+      History* h = findHistory(key.entity, key.hours);
+      if (h && h->id == id) {
+        historyLive(time(nullptr));
+        h->fetching = false;
+        if (h->request == request && s_credGen == credentials) {
+          h->due = millis() + (ok || slow ? 15 * 60 * 1000 : 60 * 1000);
+          if (ok) {
+            shiftHistory(*result, h->tail.end, key.hours * 3600 / HA_HISTORY_POINTS);
+            for (int i = 0; i < HA_HISTORY_POINTS; i++) {
+              addHistory(*result, i, h->tail.value[i], h->tail.weight[i]);
+              if (!isfinite(h->tail.low[i])) continue;
+              result->low[i] = min(result->low[i], h->tail.low[i]);
+              result->high[i] = max(result->high[i], h->tail.high[i]);
+            }
+            result->cursor = h->tail.cursor;
+            result->live = h->tail.live;
+            h->data = *result;
+            h->version = ++s_histVersion;
+          }
+        }
+      }
+    }
+    heap_caps_free(result);
+    if (!ok) Serial.printf("HA: history %s (%uh) failed: %s\n", key.entity.c_str(), key.hours, err.c_str());
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
+}
+
 bool fetchViaTemplate(String& out, size_t& count, String& err) {
   HTTPClient http;
   String token;
@@ -816,6 +1172,69 @@ bool storeList(const String& listJson, size_t count, String& doc) {
 }
 
 }  // namespace
+
+bool haNumericState(const String& state, float& value) {
+  char* end = nullptr;
+  value = strtof(state.c_str(), &end);
+  if (end != state.c_str() && end && !*end && isfinite(value)) return true;
+  value = NAN;
+  return false;
+}
+
+void haSetHistory(const std::vector<HaHistoryKey>& keys) {
+  Lock g;
+  bool changed = false;
+  for (History* h : s_history) {
+    bool wanted = false;
+    for (const HaHistoryKey& key : keys)
+      wanted = wanted || (h->key.entity == key.entity && h->key.hours == constrain(key.hours, 1, 168));
+    changed = changed || (h->configured != wanted);
+    h->configured = false;
+  }
+  for (const HaHistoryKey& key : keys) {
+    changed = changed || !findHistory(key.entity, constrain(key.hours, 1, 168));
+    History* h = ensureHistory(key.entity, constrain(key.hours, 1, 168));
+    if (h) h->configured = true;
+  }
+  pruneHistory();
+  if (changed) for (History* h : s_history) { h->due = 0; h->request++; }
+  historyLive(time(nullptr));
+  startHistoryTask();
+}
+
+void haDetailHistory(const String& entity, uint8_t hours) {
+  if (!s_lock) return;
+  Lock g;
+  History* existing = findHistory(entity, constrain(hours, 1, 168));
+  if (existing && existing->detail) return;
+  for (History* h : s_history) h->detail = false;
+  History* h = ensureHistory(entity, constrain(hours, 1, 168));
+  if (h) h->detail = true;
+  pruneHistory();
+  historyLive(time(nullptr));
+  startHistoryTask();
+}
+
+bool haCopyHistory(const String& entity, uint8_t hours, uint32_t& version, float* points,
+                   float& low, float& high) {
+  Lock g;
+  History* h = findHistory(entity, hours);
+  if (!h || !h->version || h->version == version) return false;
+  memcpy(points, h->data.value, sizeof(h->data.value));
+  low = high = NAN;
+  for (int i = 0; i < HA_HISTORY_POINTS; i++) {
+    if (!isfinite(h->data.low[i])) continue;
+    low = isnan(low) ? h->data.low[i] : min(low, h->data.low[i]);
+    high = isnan(high) ? h->data.high[i] : max(high, h->data.high[i]);
+  }
+  version = h->version;
+  return true;
+}
+
+uint32_t haHistoryVersion() {
+  Lock g;
+  return s_histVersion;
+}
 
 const char* haEntityListPath() { return LIST_PATH; }
 

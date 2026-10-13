@@ -269,6 +269,14 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         p.tiles.push_back(t);
         continue;  // read-only: no tap or hold actions
       }
+      if (t.type == TILE_SENSOR) {
+        t.style = !strcmp(tv["style"] | "number", "chart") ? METRIC_CHART : METRIC_NUMBER;
+        t.hours = (uint8_t)constrain((int)(tv["hours"] | 24), 1, 168);
+        t.warn = tv["warn"] | 0.0f;
+        t.crit = tv["crit"] | 0.0f;
+        t.hasWarn = tv["warn"].is<float>() && isfinite(t.warn);
+        t.hasCrit = tv["crit"].is<float>() && isfinite(t.crit);
+      }
       if (t.type == TILE_CLOCK) {
         p.tiles.push_back(t);
         continue;

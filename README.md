@@ -22,6 +22,10 @@ WebSocket API and receives PC metrics over UDP on the LAN.
   slider (light brightness, cover position, fan speed, volume, numbers).
   Icons come from Material Design Icons, the set Home Assistant uses (the
   font is installed from the portal).
+- **Sensor history:** `style: "chart"` and `hours` (1..168, default 24) show
+  Home Assistant history; the detail card includes min / max / now. Optional
+  `warn` and `crit` thresholds colour the value and line amber or red;
+  `crit` below `warn` makes lower values worse, such as battery levels.
 - **Slider tiles:** a light, cover, fan, media player or number as a tile
   that fills to its level; drag sideways on it to change the level (the page
   does not swipe there), tap to toggle, hold for the card. Pick "Slider" as

@@ -139,6 +139,12 @@ const tapName=a=>a.action==='page'?'Open page '+a.page:a.action==='call-service'
 const hdrText=h=>Object.keys(h||{}).map(k=>k+': '+h[k]).join('\n');
 function moreRow(t,i){const cf=t.confirm||'';
   let h='<div class="dk-more"><div class="field"><label class="field-label">Confirm on the device</label><select data-cf="'+i+'">'+[['','No'],['off','Before turning off'],['always','Before every action']].map(o=>opt(o[0],o[1],cf===o[0])).join('')+'</select></div>';
+  if(t.type==='sensor'){
+    h+='<div class="field"><label class="field-label">Style</label><select data-st="'+i+'">'+opt('number','Number',t.style!=='chart')+opt('chart','Chart',t.style==='chart')+'</select></div>';
+    if(t.style==='chart')h+='<div class="field"><label class="field-label">History hours</label><input type="number" min="1" max="168" step="1" data-sh="'+i+'" value="'+esc(t.hours==null?24:t.hours)+'"></div>';
+    [['warn','Warn at'],['crit','Critical at']].forEach(([k,label])=>{h+='<div class="field"><label class="field-label">'+label+'</label><input type="number" step="any" data-th="'+i+'" data-tk="'+k+'" value="'+esc(t[k]==null?'':t[k])+'" placeholder="Unset"></div>';});
+    h+='<p class="field-hint wide" style="margin:0">Thresholds use the sensor unit; lower than Warn = low is bad.</p>';
+  }
   if(t.type==='action'){const tp=t.tap||{},k=isHttp(t)?'http':(t.tap?'keep':'');
     const kk=isPcCmd(t)?'pc':k;
     h+='<div class="field"><label class="field-label">On tap</label><select data-ak="'+i+'">'+opt('','Home Assistant entity',kk==='')+opt('http','HTTP request',kk==='http')+opt('pc','PC command',kk==='pc')+(kk==='keep'?opt('keep',tapName(tp),true):'')+'</select></div>';
@@ -277,6 +283,8 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   el.querySelectorAll('[data-x]').forEach(x=>x.onclick=()=>{p.tiles.splice(+x.dataset.x,1);sel=-1;more=-1;setDirty(true);renderPage();});
   el.querySelectorAll('[data-mo]').forEach(x=>x.onclick=()=>{const i=+x.dataset.mo;more=more===i?-1:i;renderPage();});
   el.querySelectorAll('[data-cf]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.cf];if(e.target.value)t.confirm=e.target.value;else delete t.confirm;setDirty(true);});
+  el.querySelectorAll('[data-sh]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.sh],v=e.target.value.trim();if(v&&Number.isFinite(+v)){t.hours=Math.max(1,Math.min(168,Math.round(+v)));x.value=t.hours;}else delete t.hours;setDirty(true);});
+  el.querySelectorAll('[data-th]').forEach(x=>x.oninput=e=>{const t=p.tiles[+x.dataset.th],k=x.dataset.tk,v=e.target.value.trim();if(v&&Number.isFinite(+v))t[k]=+v;else delete t[k];setDirty(true);});
   el.querySelectorAll('[data-co]').forEach(x=>{x.oninput=e=>{p.tiles[+x.dataset.co][x.dataset.ck]=e.target.value.toUpperCase();setDirty(true);};x.onchange=()=>renderPage();});
   el.querySelectorAll('[data-cs]').forEach(x=>x.onclick=()=>{p.tiles[+x.dataset.cs][x.dataset.ck]=x.dataset.v;setDirty(true);renderPage();});
   el.querySelectorAll('[data-ca]').forEach(x=>x.onclick=()=>{delete p.tiles[+x.dataset.ca][x.dataset.ck];setDirty(true);renderPage();});
