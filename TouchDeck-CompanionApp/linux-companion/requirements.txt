@@ -9,6 +9,7 @@ psutil          # CPU / RAM / disk / temps / fans / net (always available)
 pywebview       # native config window (falls back to the browser if GTK libs absent)
 
 # Optional:
+# PC state on tiles: install system packages playerctl and pulseaudio-utils (pactl).
 pynvml          # NVIDIA GPU sensors (AMD uses sysfs, no package needed)
 pystray         # system-tray icon (needs AppIndicator/GTK on some desktops)
 pillow          # tray icon image (used by pystray)

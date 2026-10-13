@@ -8,7 +8,6 @@ gui_* chokepoint (the EdgeChromium backend marshals show/hide/destroy onto the
 GUI thread internally).
 """
 
-import json
 import socket
 import threading
 import time
@@ -17,6 +16,7 @@ import webbrowser
 from app_state import AppState
 from config_model import normalize_config
 import pc_control
+import pc_state
 import serial_link
 import server as srv
 
@@ -65,6 +65,7 @@ def gui_quit():
     global _quitting
     _quitting = True
     _stop.set()
+    pc_state.STATE.stop()
     if _serial_link is not None:
         _serial_link.stop()
     if _httpd is not None:
@@ -137,6 +138,45 @@ def _detect_source():
 # ---------------------------------------------------------------------------
 # UDP monitor loop (reads the live config from AppState each tick)
 # ---------------------------------------------------------------------------
+def _packet_identity(cfg):
+    payload = {"pc_id": cfg.get("pc_id", ""), "pc_name": cfg.get("pc_name", "")}
+    if cfg.get("pc_key"):
+        payload["cmd_port"] = int(cfg.get("cmd_port") or pc_control.DEFAULT_CMD_PORT)
+        payload["nonces"] = [pc_control.NONCES.issue() for _ in range(4)]
+    return payload
+
+
+def _send_packet(sock, cfg, payload):
+    payload, data = pc_state.encode_packet(payload)
+    if _serial_link is not None and _serial_link.is_connected():
+        _serial_link.send(payload)
+    elif cfg.get("esp32_ip"):
+        sock.sendto(data, (cfg["esp32_ip"], cfg["udp_port"]))
+
+
+def _wait_for_metrics(sock, deadline, next_state_send):
+    while not _stop.wait(0):
+        now = time.monotonic()
+        if now >= deadline:
+            break
+        if pc_state.STATE.changed.is_set() and now >= next_state_send:
+            pc_state.STATE.changed.clear()
+            cfg = _state.get_config()
+            payload = _packet_identity(cfg)
+            payload["pcstate"] = pc_state.STATE.read()
+            try:
+                _send_packet(sock, cfg, payload)
+            except Exception as e:
+                print("state send error: %s" % e)
+            next_state_send = time.monotonic() + 0.25
+        delay = min(0.05, max(0, deadline - time.monotonic()))
+        if pc_state.STATE.changed.is_set():
+            _stop.wait(min(delay, max(0, next_state_send - time.monotonic())))
+        else:
+            pc_state.STATE.changed.wait(delay)
+    return next_state_send
+
+
 def _monitor_loop():
     core = _core
     if core.PYTHONCOM_AVAILABLE:
@@ -153,6 +193,7 @@ def _monitor_loop():
     gen = _state.generation()
     last_lhm_check = 0.0
     last_reach_check = 0.0
+    next_state_send = 0.0
 
     while not _stop.is_set():
         cfg = _state.get_config()
@@ -164,7 +205,10 @@ def _monitor_loop():
         usb_connected = _serial_link is not None and _serial_link.is_connected()
         if not metrics or (not cfg.get("esp32_ip") and not usb_connected):
             _state.set_monitoring(False)
-            _stop.wait(1.0)
+            if cfg.get("esp32_ip") or usb_connected:
+                next_state_send = _wait_for_metrics(sock, time.monotonic() + 1.0, next_state_send)
+            else:
+                _stop.wait(1.0)
             continue
         _state.set_monitoring(True)
         now = time.time()
@@ -183,16 +227,12 @@ def _monitor_loop():
         try:
             snapshot = core.build_snapshot(cfg)
             payload, values, _fresh, last_good, _stale = core.collect_metrics(cfg, snapshot, last_good, status)
-            payload["pc_id"] = cfg.get("pc_id", "")
-            payload["pc_name"] = cfg.get("pc_name", "")
-            if cfg.get("pc_key"):
-                # A paired device can send one command per nonce (see pc_control).
-                payload["cmd_port"] = int(cfg.get("cmd_port") or pc_control.DEFAULT_CMD_PORT)
-                payload["nonces"] = [pc_control.NONCES.issue() for _ in range(4)]
-            if _serial_link is not None and _serial_link.is_connected():
-                _serial_link.send(payload)
-            elif cfg.get("esp32_ip"):
-                sock.sendto(json.dumps(payload).encode("utf-8"), (cfg["esp32_ip"], cfg["udp_port"]))
+            payload.update(_packet_identity(cfg))
+            pc_state.STATE.changed.clear()
+            state = pc_state.STATE.read()
+            if state:
+                payload["pcstate"] = state
+            _send_packet(sock, cfg, payload)
             _state.update_values(values)
         except Exception as e:
             print("send error: %s" % e)
@@ -214,7 +254,8 @@ def _monitor_loop():
         # period is the interval, falling back to a small floor when a cycle
         # overruns so a slow sensor source can't spin us into a tight send loop.
         interval = max(0.2, float(cfg.get("update_interval", 3)))
-        _stop.wait(max(0.05, interval - (time.time() - now)))
+        deadline = time.monotonic() + max(0.05, interval - (time.time() - now))
+        next_state_send = _wait_for_metrics(sock, deadline, next_state_send)
 
     try:
         sock.close()
@@ -299,6 +340,7 @@ def run(core, start_hidden=False, notify_startup=False):
     if config != loaded:
         core.save_config(config)
     _state = AppState(config)
+    pc_state.STATE.start()
 
     _httpd, port = srv.make_server(core, _state)
     srv.serve(_httpd)
@@ -343,4 +385,5 @@ def run(core, start_hidden=False, notify_startup=False):
     webview.start(lambda: _start_background(tray_icon, notify_startup))
     # webview.start returns when the window is destroyed (tray Quit).
     _stop.set()
+    pc_state.STATE.stop()
     _serial_link.stop()

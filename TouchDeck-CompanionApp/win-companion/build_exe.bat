@@ -58,6 +58,14 @@ if exist dist  rmdir /s /q dist
   --hidden-import app_state ^
   --hidden-import config_model ^
   --hidden-import pc_control ^
+  --hidden-import pc_state ^
+  --hidden-import pycaw.pycaw ^
+  --hidden-import comtypes.stream ^
+  --hidden-import comtypes.gen ^
+  --hidden-import winrt.windows.media.control ^
+  --hidden-import winrt.windows.foundation ^
+  --hidden-import winrt.windows.foundation.collections ^
+  --hidden-import winrt.runtime ^
   --hidden-import serial ^
   --hidden-import serial.tools.list_ports ^
   --hidden-import serial_link ^

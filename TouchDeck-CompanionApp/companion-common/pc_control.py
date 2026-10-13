@@ -24,6 +24,8 @@ import sys
 import threading
 import time
 
+import pc_state
+
 DEFAULT_CMD_PORT = 4211
 NONCE_TTL = 30.0
 COMMANDS = ("media_play_pause", "media_next", "media_prev", "media_stop",
@@ -161,6 +163,8 @@ def run_command(cmd):
         _run_windows(cmd)
     else:
         _run_linux(cmd)
+    if cmd.startswith(("volume_", "media_")):
+        pc_state.STATE.request_poll()
 
 
 def execute(cmd):
