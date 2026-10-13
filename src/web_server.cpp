@@ -886,6 +886,10 @@ static void handleHaEntities() {
   server.send(200, "application/json", out);
 }
 
+// WebServer hands a non-form POST body to a route's upload callback too, where
+// server.upload() is a null reference: upload callbacks bail out on those.
+static bool multipartRequest() { return server.header("Content-Type").startsWith("multipart/form-data"); }
+
 // --- Icon font (MDI TTF on LittleFS) ------------------------------------------
 static const char* const ICONS_UPLOAD = "/mdi.ttf.up";
 static File iconUpload;
@@ -915,6 +919,7 @@ static void handleIconsFont() {
 
 // POST /api/deck/icons (multipart "font") - store, then load on finish.
 static void handleIconsUpload() {
+  if (!multipartRequest()) return;
   HTTPUpload& up = server.upload();
   if (up.status == UPLOAD_FILE_START) {
     iconError = "";
@@ -1121,7 +1126,10 @@ static void otaFail(const String& message) {
   otaFailedAt = millis();
 }
 
+static bool otaSucceeded = false;  // this request carried a complete image
+
 static void handleOtaUpload() {
+  if (!multipartRequest()) return;
   HTTPUpload& upload = server.upload();
 
   if (upload.status == UPLOAD_FILE_START) {
@@ -1175,6 +1183,7 @@ static void handleOtaUpload() {
     if (Update.end(true)) {
       Serial.printf("OTA: success, %u bytes\n", upload.totalSize);
       otaInProgress = false;
+      otaSucceeded = true;
       deck::sysOtaResult(true, "");
       deckRefreshNow();
     } else {
@@ -1188,6 +1197,8 @@ static void handleOtaUpload() {
 }
 
 static void handleOtaFinish() {
+  if (!otaError.length() && !otaSucceeded) otaError = "No firmware file in the request";
+  otaSucceeded = false;
   if (otaError.length() > 0) {
     JsonDocument doc;
     doc["status"] = "error";
@@ -1276,8 +1287,8 @@ void initWebServer() {
   server.on("/api/ha/entities", HTTP_GET, handleHaEntities);
   server.on("/ota/upload", HTTP_POST, handleOtaFinish, handleOtaUpload);
 
-  const char* headers[] = { "X-MD5" };
-  server.collectHeaders(headers, 1);
+  const char* headers[] = { "X-MD5", "Content-Type" };
+  server.collectHeaders(headers, 2);
 
   server.onNotFound(handleNotFound);
   server.begin();
