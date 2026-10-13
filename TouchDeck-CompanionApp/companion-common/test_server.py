@@ -1,4 +1,6 @@
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 from app_state import AppState
@@ -94,6 +96,51 @@ class CompanionServerModel(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertNotIn("layout", self.core.saved)
         self.assertEqual(2, len({m["id"] for m in self.core.saved["metrics"]}))
+
+
+    def test_connection_save_cannot_restore_a_forgotten_key(self):
+        self.state.set_config(dict(self.state.get_config(), pc_key="11" * 32))
+        saving = threading.Event()
+        forget_waiting = threading.Event()
+        release_save = threading.Event()
+        lock = threading.Lock()
+        saved_keys = []
+
+        class ObservedLock:
+            def __enter__(self):
+                if saving.is_set():
+                    forget_waiting.set()
+                lock.acquire()
+
+            def __exit__(self, *args):
+                lock.release()
+
+        def save(config):
+            if config.get("pc_key"):
+                saving.set()
+                if not release_save.wait(2):
+                    raise RuntimeError("Connection save was not released")
+            saved_keys.append(config["pc_key"])
+            self.core.saved = config
+            return True
+
+        with mock.patch.object(server, "_CONFIG_LOCK", ObservedLock()), \
+                mock.patch.object(self.core, "save_config", side_effect=save), \
+                ThreadPoolExecutor(max_workers=2) as pool:
+            connection = pool.submit(server.apply_connection, self.core, self.state,
+                                     {"esp32_ip": ["touchdeck.local"]})
+            try:
+                self.assertTrue(saving.wait(2))
+                forget = pool.submit(server.pair_forget, self.core, self.state)
+                self.assertTrue(forget_waiting.wait(2))
+            finally:
+                release_save.set()
+            self.assertTrue(connection.result(timeout=2)["success"])
+            self.assertTrue(forget.result(timeout=2)["success"])
+        self.assertEqual(["11" * 32, ""], saved_keys)
+        self.assertEqual("", self.state.get_config()["pc_key"])
+        self.assertEqual("", self.core.saved["pc_key"])
+        self.assertEqual("touchdeck.local", self.state.get_config()["esp32_ip"])
 
 
 if __name__ == "__main__":

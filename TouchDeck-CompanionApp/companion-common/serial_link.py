@@ -166,7 +166,8 @@ class SerialLink:
             ok, why = pc_control.verify(self._state.get_config(), packet)
             if ok:
                 ok, why = pc_control.execute(packet["cmd"])
-        except (TypeError, ValueError):
+        except Exception as exc:
+            print("serial_link: command packet failed: %s" % exc)
             ok, why = False, "invalid command packet"
         self.send({"ack": packet.get("nonce", ""), "ok": ok, "msg": why})
 

@@ -66,17 +66,28 @@ def sign(key_hex, pc_id, nonce, cmd):
 
 def verify(config, packet):
     """Return (ok, reason) for a command packet."""
+    if not isinstance(config, dict) or not isinstance(packet, dict):
+        return False, "invalid command packet"
+    pc, cmd, nonce, sig = (packet.get(field) for field in ("pc", "cmd", "nonce", "sig"))
+    if not all(isinstance(value, str) for value in (pc, cmd, nonce)):
+        return False, "invalid command packet"
+    if (not isinstance(sig, str) or len(sig) != 64
+            or any(ch not in "0123456789abcdefABCDEF" for ch in sig)):
+        return False, "bad signature"
     key = config.get("pc_key") or ""
     if not key:
         return False, "this PC is not paired"
-    if packet.get("pc") != config.get("pc_id"):
+    if pc != config.get("pc_id"):
         return False, "command for another PC"
-    cmd, nonce, sig = packet.get("cmd", ""), packet.get("nonce", ""), packet.get("sig", "")
     if cmd not in COMMANDS:
         return False, "unknown command"
     # Check the signature before spending the nonce, so a forged packet cannot
     # use up the one the device is about to send.
-    if not hmac.compare_digest(sign(key, config.get("pc_id", ""), nonce, cmd), str(sig)):
+    try:
+        expected = sign(key, pc, nonce, cmd)
+    except (TypeError, ValueError):
+        return False, "invalid command packet"
+    if not hmac.compare_digest(expected, sig):
         return False, "bad signature"
     if not NONCES.consume(nonce):
         return False, "expired or reused"
@@ -198,12 +209,16 @@ def listen(state, stop):
                 continue
         except Exception:
             continue
-        ok, why = verify(state.get_config(), packet)
-        if ok:
-            ok, why = execute(packet["cmd"])
-            print("pc_control: %s -> %s %s" % (packet["cmd"], "ok" if ok else "failed", why))
-        else:
-            print("pc_control: refused %s from %s: %s" % (packet.get("cmd"), addr[0], why))
+        try:
+            ok, why = verify(state.get_config(), packet)
+            if ok:
+                ok, why = execute(packet["cmd"])
+                print("pc_control: %s -> %s %s" % (packet["cmd"], "ok" if ok else "failed", why))
+            else:
+                print("pc_control: refused %s from %s: %s" % (packet.get("cmd"), addr[0], why))
+        except Exception as exc:
+            print("pc_control: command packet failed: %s" % exc)
+            ok, why = False, "invalid command packet"
         reply = {"ack": packet.get("nonce", ""), "ok": ok, "msg": why}
         try:
             sock.sendto(json.dumps(reply).encode("utf-8"), addr)

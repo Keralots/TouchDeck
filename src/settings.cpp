@@ -176,7 +176,10 @@ bool factoryResetSettings() {
   prefs.begin(NVS_NAMESPACE, false);
   const bool cleared = prefs.clear();
   prefs.end();
-  return cleared;
+  if (!prefs.begin("deckpc", false)) return false;
+  const bool pcsCleared = prefs.clear();
+  prefs.end();
+  return cleared && pcsCleared;
 }
 
 // ---------------------------------------------------------------------------

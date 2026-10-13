@@ -229,6 +229,22 @@ def test_bad_signature_and_execution_failure_are_acknowledged(rig, monkeypatch):
         "ack": packet["nonce"], "ok": False, "msg": "Command failed"}
 
 
+@pytest.mark.parametrize("failing", ["verify", "execute"])
+def test_dispatch_survives_unexpected_command_exceptions(rig, monkeypatch, capsys, failing):
+    connect(rig)
+    verify = mock.Mock(return_value=(True, ""))
+    execute = mock.Mock(return_value=(True, ""))
+    (verify if failing == "verify" else execute).side_effect = [RuntimeError("packet failed"), (True, "")]
+    monkeypatch.setattr(pc_control, "verify", verify)
+    monkeypatch.setattr(pc_control, "execute", execute)
+    rig.link._dispatch(command(rig.state))
+    assert not json.loads(rig.port.writes[-1][4:])["ok"]
+    assert "packet failed" in capsys.readouterr().out
+    rig.link._dispatch(command(rig.state))
+    assert json.loads(rig.port.writes[-1][4:])["ok"]
+    assert rig.link.is_connected()
+
+
 @pytest.mark.parametrize("short_write", [False, True])
 def test_write_failure_disconnects(rig, short_write):
     connect(rig)

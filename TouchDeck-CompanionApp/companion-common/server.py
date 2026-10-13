@@ -5,6 +5,7 @@ import json
 import os
 import socket
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -28,6 +29,8 @@ _CTYPES = {
     ".css": "text/css; charset=utf-8",
     ".js": "application/javascript; charset=utf-8",
 }
+# Keep config reads, disk saves and state updates in one transaction.
+_CONFIG_LOCK = threading.Lock()
 _DIRECT_HTTP = urllib_request.build_opener(urllib_request.ProxyHandler({}))
 
 
@@ -166,98 +169,102 @@ def device_status(state, address=None, timeout=2.0):
 
 def apply_select(core, state, keys):
     """Update the in-memory selection without changing existing metric IDs."""
-    ensure_discovered(core)
-    config = normalize_config(state.get_config())
-    previous = {sensor_key(metric): metric for metric in config.get("metrics", [])}
-    metrics = []
-    seen = set()
-    for key in (keys or []):
-        key = str(key)
-        if key in seen or len(metrics) >= MAX_METRICS:
-            continue
-        sensor = find_sensor_by_key(core, key)
-        if not sensor:
-            continue
-        seen.add(key)
-        metric = copy.deepcopy(sensor)
-        metric["id"] = metric_id_for(config, key)
-        old = previous.get(key, {})
-        metric["custom_label"] = clean_stream_label(old.get("custom_label", ""))
-        metrics.append(metric)
-    config["metrics"] = metrics
-    state.set_config(normalize_config(config))
-    return {"success": True, "count": len(metrics)}
+    with _CONFIG_LOCK:
+        ensure_discovered(core)
+        config = normalize_config(state.get_config())
+        previous = {sensor_key(metric): metric for metric in config.get("metrics", [])}
+        metrics = []
+        seen = set()
+        for key in (keys or []):
+            key = str(key)
+            if key in seen or len(metrics) >= MAX_METRICS:
+                continue
+            sensor = find_sensor_by_key(core, key)
+            if not sensor:
+                continue
+            seen.add(key)
+            metric = copy.deepcopy(sensor)
+            metric["id"] = metric_id_for(config, key)
+            old = previous.get(key, {})
+            metric["custom_label"] = clean_stream_label(old.get("custom_label", ""))
+            metrics.append(metric)
+        config["metrics"] = metrics
+        state.set_config(normalize_config(config))
+        return {"success": True, "count": len(metrics)}
 
 
 def apply_labels(state, labels):
-    config = normalize_config(state.get_config())
-    labels = labels if isinstance(labels, dict) else {}
-    for metric in config.get("metrics", []):
-        key = sensor_key(metric)
-        if key in labels:
-            metric["custom_label"] = clean_stream_label(labels[key])
-    state.set_config(normalize_config(config))
-    return {"success": True, "maxLength": MAX_STREAM_LABEL}
+    with _CONFIG_LOCK:
+        config = normalize_config(state.get_config())
+        labels = labels if isinstance(labels, dict) else {}
+        for metric in config.get("metrics", []):
+            key = sensor_key(metric)
+            if key in labels:
+                metric["custom_label"] = clean_stream_label(labels[key])
+        state.set_config(normalize_config(config))
+        return {"success": True, "maxLength": MAX_STREAM_LABEL}
 
 
 def apply_save(core, state):
-    config = normalize_config(state.get_config())
-    if not core.save_config(config):
-        return {"success": False, "message": "Could not write the configuration file."}
-    state.set_config(config)
-    return {"success": True, "message": "Sensor stream configuration saved."}
+    with _CONFIG_LOCK:
+        config = normalize_config(state.get_config())
+        if not core.save_config(config):
+            return {"success": False, "message": "Could not write the configuration file."}
+        state.set_config(config)
+        return {"success": True, "message": "Sensor stream configuration saved."}
 
 
 def apply_connection(core, state, form):
-    def field(name, default=""):
-        value = form.get(name)
-        return value[0] if isinstance(value, list) and value else default
+    with _CONFIG_LOCK:
+        def field(name, default=""):
+            value = form.get(name)
+            return value[0] if isinstance(value, list) and value else default
 
-    config = state.get_config()
-    config["serial_port"] = field("serial_port", config.get("serial_port", "auto"))
-    config = normalize_config(config)
-    supports_source = bool(getattr(core, "SUPPORTS_SOURCE_SELECT", False))
-    sources = tuple(getattr(core, "SENSOR_SOURCES", ("auto",)))
-    try:
-        address = field("esp32_ip", config.get("esp32_ip", "")).strip()
-        if address:
-            address = _device_address(address)
-        port = int(field("udp_port", "4210"))
-        interval = float(field("update_interval", "3"))
-        source = field("sensor_source", "auto").lower()
-        pc_name = clean_pc_name(field("pc_name", ""))
-        if port < 1 or port > 65535:
-            raise ValueError("Port must be between 1 and 65535.")
-        if interval < 0.5:
-            raise ValueError("Update interval must be at least 0.5 seconds.")
-        if supports_source and source not in sources:
-            raise ValueError("Unknown sensor source.")
-    except ValueError as exc:
-        return {"success": False, "message": str(exc)}
-
-    config["esp32_ip"] = address
-    config["udp_port"] = port
-    config["update_interval"] = interval
-    if pc_name:
-        config["pc_name"] = pc_name
-    if supports_source:
-        config["sensor_source"] = source
-    if not core.save_config(config):
-        return {"success": False, "message": "Could not write the configuration file."}
-    state.set_config(config)
-
-    resolved = None
-    if supports_source:
+        config = state.get_config()
+        config["serial_port"] = field("serial_port", config.get("serial_port", "auto"))
+        config = normalize_config(config)
+        supports_source = bool(getattr(core, "SUPPORTS_SOURCE_SELECT", False))
+        sources = tuple(getattr(core, "SENSOR_SOURCES", ("auto",)))
         try:
-            resolved = core.resolve_source(source)
-            state.set_source_text(core.source_text())
-        except Exception as exc:
-            print("source switch failed: %s" % exc)
-    result = {"success": True, "esp32_ip": address, "udp_port": port,
-              "update_interval": interval, "serial_port": config["serial_port"]}
-    if resolved:
-        result.update({"sensor_source": source, "resolved_source": resolved})
-    return result
+            address = field("esp32_ip", config.get("esp32_ip", "")).strip()
+            if address:
+                address = _device_address(address)
+            port = int(field("udp_port", "4210"))
+            interval = float(field("update_interval", "3"))
+            source = field("sensor_source", "auto").lower()
+            pc_name = clean_pc_name(field("pc_name", ""))
+            if port < 1 or port > 65535:
+                raise ValueError("Port must be between 1 and 65535.")
+            if interval < 0.5:
+                raise ValueError("Update interval must be at least 0.5 seconds.")
+            if supports_source and source not in sources:
+                raise ValueError("Unknown sensor source.")
+        except ValueError as exc:
+            return {"success": False, "message": str(exc)}
+
+        config["esp32_ip"] = address
+        config["udp_port"] = port
+        config["update_interval"] = interval
+        if pc_name:
+            config["pc_name"] = pc_name
+        if supports_source:
+            config["sensor_source"] = source
+        if not core.save_config(config):
+            return {"success": False, "message": "Could not write the configuration file."}
+        state.set_config(config)
+
+        resolved = None
+        if supports_source:
+            try:
+                resolved = core.resolve_source(source)
+                state.set_source_text(core.source_text())
+            except Exception as exc:
+                print("source switch failed: %s" % exc)
+        result = {"success": True, "esp32_ip": address, "udp_port": port,
+                  "update_interval": interval, "serial_port": config["serial_port"]}
+        if resolved:
+            result.update({"sensor_source": source, "resolved_source": resolved})
+        return result
 
 
 def do_test(state, form):
@@ -295,48 +302,52 @@ def pair_start(state):
 
 def pair_confirm(core, state, code_text):
     """Send the code shown on the device; store the key it answers with."""
-    config = normalize_config(state.get_config())
-    code_text = "".join(ch for ch in str(code_text or "") if ch.isdigit())
-    if len(code_text) != 6:
-        return {"success": False, "message": "Enter the 6 digits shown on the device."}
-    try:
-        status, body = _post_device(config.get("esp32_ip", ""), "/api/pc/pair/confirm",
-                                    {"id": config.get("pc_id", ""), "code": code_text})
-    except Exception as exc:
-        return {"success": False, "message": "Could not reach the device: %s" % exc}
-    key = str(body.get("key") or "")
-    if status != 200 or len(key) != 64:
-        return {"success": False, "message": body.get("message", "HTTP %d" % status)}
-    config["pc_key"] = key
-    if not core.save_config(config):
-        return {"success": False, "message": "Could not write the configuration file."}
-    state.set_config(config)
-    return {"success": True, "message": "Paired. Control tiles on the device can now reach this PC."}
+    with _CONFIG_LOCK:
+        config = normalize_config(state.get_config())
+        code_text = "".join(ch for ch in str(code_text or "") if ch.isdigit())
+        if len(code_text) != 6:
+            return {"success": False, "message": "Enter the 6 digits shown on the device."}
+        try:
+            status, body = _post_device(config.get("esp32_ip", ""), "/api/pc/pair/confirm",
+                                        {"id": config.get("pc_id", ""), "code": code_text})
+        except Exception as exc:
+            return {"success": False, "message": "Could not reach the device: %s" % exc}
+        key = str(body.get("key") or "")
+        if status != 200 or len(key) != 64:
+            return {"success": False, "message": body.get("message", "HTTP %d" % status)}
+        config["pc_key"] = key
+        if not core.save_config(config):
+            return {"success": False, "message": "Could not write the configuration file."}
+        state.set_config(config)
+        return {"success": True, "message": "Paired. Control tiles on the device can now reach this PC."}
 
 
 def pair_forget(core, state):
-    config = normalize_config(state.get_config())
-    config["pc_key"] = ""
-    if not core.save_config(config):
-        return {"success": False, "message": "Could not write the configuration file."}
-    state.set_config(config)
-    return {"success": True, "message": "Unpaired. Forget this PC in the device portal too."}
+    with _CONFIG_LOCK:
+        config = normalize_config(state.get_config())
+        config["pc_key"] = ""
+        if not core.save_config(config):
+            return {"success": False, "message": "Could not write the configuration file."}
+        state.set_config(config)
+        return {"success": True, "message": "Unpaired. Forget this PC in the device portal too."}
 
 
 def apply_revert(core, state):
-    config = normalize_config(core.load_config() or dict(core.DEFAULT_CONFIG))
-    state.set_config(config)
-    return {"success": True}
+    with _CONFIG_LOCK:
+        config = normalize_config(core.load_config() or dict(core.DEFAULT_CONFIG))
+        state.set_config(config)
+        return {"success": True}
 
 
 def apply_import(core, state, config):
-    if not isinstance(config, dict) or not isinstance(config.get("metrics"), list):
-        return {"success": False, "message": "This is not a companion configuration."}
-    migrated = normalize_config(config)
-    if not core.save_config(migrated):
-        return {"success": False, "message": "Could not write the imported configuration."}
-    state.set_config(migrated)
-    return {"success": True, "message": "Configuration imported and migrated to version %s." % CONFIG_VERSION}
+    with _CONFIG_LOCK:
+        if not isinstance(config, dict) or not isinstance(config.get("metrics"), list):
+            return {"success": False, "message": "This is not a companion configuration."}
+        migrated = normalize_config(config)
+        if not core.save_config(migrated):
+            return {"success": False, "message": "Could not write the imported configuration."}
+        state.set_config(migrated)
+        return {"success": True, "message": "Configuration imported and migrated to version %s." % CONFIG_VERSION}
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -515,5 +526,4 @@ def make_server(core, state, host="127.0.0.1", port=DEFAULT_UI_PORT):
 
 
 def serve(httpd):
-    import threading
     threading.Thread(target=httpd.serve_forever, daemon=True, name="http-server").start()

@@ -2901,11 +2901,13 @@ void destroyPages() {
 lv_obj_t* s_pairCard = nullptr;
 lv_obj_t* s_pairScrim = nullptr;
 uint32_t s_pairChecked = 0;
+String s_pairName, s_pairCode;
 
 void pairClose() {
   if (s_pairCard) lv_obj_delete(s_pairCard);
   if (s_pairScrim) lv_obj_delete(s_pairScrim);
   s_pairCard = s_pairScrim = nullptr;
+  s_pairName = s_pairCode = "";
   setModalOpen(s_modalCard != nullptr);
 }
 
@@ -2924,7 +2926,10 @@ void pairSync() {
     if (s_pairCard) pairClose();
     return;
   }
-  if (s_pairCard) return;
+  if (s_pairCard && name == s_pairName && code == s_pairCode) return;
+  if (s_pairCard) pairClose();
+  s_pairName = name;
+  s_pairCode = code;
   const int w = logicalW(), h = logicalH();
   s_pairScrim = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_pairScrim);
@@ -3337,6 +3342,8 @@ bool deckTestTap(const String& tileId, bool hold) {
   if (s_ed.root) return false;
   for (TileRt& r : s_tiles) {
     if (r.def->id != tileId || r.def->type == TILE_METRIC) continue;
+    const TileAction& a = hold ? r.def->hold : r.def->tap;
+    if (a.kind == ACT_PC) return false;  // PC commands require a real touch.
     requestAction(r, hold);
     return true;
   }
@@ -3359,7 +3366,10 @@ bool deckTestSlide(const String& tileId, int pct) {
 }
 
 bool deckTestConfirm(bool ok) {
-  if (s_confirmHold < 0) return false;
+  if (s_confirmHold < 0 || s_modalTile < 0 || (size_t)s_modalTile >= s_tiles.size()) return false;
+  const TileDef& d = *s_tiles[s_modalTile].def;
+  const TileAction& a = s_confirmHold ? d.hold : d.tap;
+  if (a.kind == ACT_PC) return false;  // PC commands require a real touch.
   if (ok) onConfirmOk(nullptr);
   else closeModal();
   return true;

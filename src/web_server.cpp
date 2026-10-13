@@ -736,6 +736,11 @@ static void handleApiStatus() {
 //  cannot change while the handler streams it.
 // ---------------------------------------------------------------------------
 static void handleLiveScreenshot() {
+  String name, code;
+  if (pcPairPending(name, code)) {
+    sendJsonMessage(409, false, "Pairing in progress");
+    return;
+  }
   const uint16_t* fb = deck::panelLatestLvFrame();
   if (!fb) {
     server.send(503, "text/plain", "No frame yet");

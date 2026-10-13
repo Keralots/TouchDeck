@@ -279,7 +279,7 @@ static bool serialPoll() {
     s_lineLen = 0;
     s_lineOver = false;
     if (!ours) continue;
-    if (strstr(s_line + 4, "\"hello\"")) {
+    if (!strncmp(s_line + 4, "{\"hello\":", 9)) {
       Serial.printf("\n@TD {\"hello\":\"%s\",\"fw\":\"%s\"}\n", PRODUCT_NAME, FW_VERSION);
       continue;
     }
