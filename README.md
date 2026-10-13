@@ -174,3 +174,8 @@ Built on [LVGL](https://lvgl.io/),
 (vendored under `lib/ImprovWiFi`). Fonts: Montserrat (SIL OFL 1.1) with the
 LVGL symbol set (Font Awesome Free); icons: Material Design Icons, installed on
 the device by the user.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The vendored Improv WiFi library keeps its own
+MIT license in `lib/ImprovWiFi/LICENSE`.
