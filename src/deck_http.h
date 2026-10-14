@@ -5,6 +5,7 @@
 
 #include <Arduino.h>
 #include <memory>
+#include <vector>
 #include "deck_config.h"
 
 namespace deck {
@@ -35,7 +36,15 @@ struct HttpSensorValue {
 
 void httpSetSensors(const DeckConfig& cfg);
 uint32_t httpSensorVersion();
-bool httpSensorRead(const HttpSensorDef& def, HttpSensorValue& out);
+bool httpSensorRead(const HttpSensorDef& def, const String& path, HttpSensorValue& out);
+
+// A detail template split into text and "{path|unit}" fields.
+struct DetailPart {
+  bool field = false;
+  String text;  // literal text, or the field's JSON path
+  String unit;  // field: show a number as a duration in this unit
+};
+std::vector<DetailPart> httpParseDetail(const String& tmpl);
 
 }  // namespace deck
 
