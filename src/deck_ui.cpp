@@ -5342,6 +5342,7 @@ void deckReleaseIcons() {
 String deckPrintersJson() {
   JsonDocument doc;
   JsonArray arr = doc["printers"].to<JsonArray>();
+  doc["stack_free"] = printersStackFree();
   PrinterState* s = (PrinterState*)heap_caps_malloc(sizeof(PrinterState), MALLOC_CAP_SPIRAM);
   if (s) new (s) PrinterState();
   for (const PrinterDef& d : s_cfg.printers) {

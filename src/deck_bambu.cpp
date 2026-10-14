@@ -53,6 +53,7 @@ struct Slot {
 Slot s_slots[PRN_MAX];
 TaskHandle_t s_task = nullptr;
 uint32_t s_version = 1, s_generation = 0;
+volatile uint32_t s_stackFree = 0;  // worker's stack high water mark
 
 bool current(int index, uint32_t generation) {
   Lock lock;
@@ -652,6 +653,7 @@ void task(void*) {
       Serial.printf("[bambu] stack free minimum: %u bytes\n", (unsigned)uxTaskGetStackHighWaterMark(nullptr));
       lastStackLog = millis();
     }
+    s_stackFree = uxTaskGetStackHighWaterMark(nullptr);
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
   }
   Serial.printf("[bambu] stopped, stack free minimum: %u bytes\n", (unsigned)uxTaskGetStackHighWaterMark(nullptr));
@@ -755,6 +757,8 @@ bool printerRead(const String& id, PrinterState& out) {
 }
 
 uint32_t printersVersion() { Lock lock; return s_version; }
+
+uint32_t printersStackFree() { return s_stackFree; }
 
 bool printerLight(const String& id, bool on) {
   Lock lock;

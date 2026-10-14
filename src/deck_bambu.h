@@ -96,6 +96,8 @@ bool printerRead(const String& id, PrinterState& out);
 uint32_t printersVersion();
 // Chamber light (both bars on H2C/H2D). Queued; false when not online.
 bool printerLight(const String& id, bool on);
+// Least free stack the worker has had (bytes), 0 = it has not run yet.
+uint32_t printersStackFree();
 // Name of a stg_cur stage ("Bed Leveling"), nullptr for printing / idle / unknown.
 const char* printerStageName(int stage);
 
