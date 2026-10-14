@@ -37,6 +37,23 @@ constexpr uint32_t STATS_MS = 10000;
 constexpr uint32_t SLIDE_MS = 280;
 constexpr uint32_t C_WARN = 0xE5A50A;
 constexpr uint32_t C_CRIT = 0xE5484D;
+constexpr uint32_t GLASS_BORDER_COLOR = 0xFFFFFF;
+constexpr lv_opa_t GLASS_BORDER_OPA = LV_OPA_20;
+constexpr int GLASS_BORDER_WIDTH = 1;
+
+struct GlassCacheEntry {
+  String id;
+  std::vector<uint32_t> key;
+  lv_draw_buf_t* buffer = nullptr;
+};
+GlassCacheEntry s_glassCache[MAX_PAGES];
+
+void clearGlassCache() {
+  for (GlassCacheEntry& c : s_glassCache) {
+    if (c.buffer) lv_draw_buf_destroy(c.buffer);
+    c = {};
+  }
+}
 
 // Theme colours (D11): Midnight (mockup A, default), Daylight, or Glass
 // (Midnight text, tiles of tinted glass over a wallpaper), set by
@@ -46,6 +63,7 @@ uint32_t C_BG, C_TILE, C_TILE_PRESSED, C_TILE_LINE, C_CHIP, C_TEXT, C_TEXT_ON, C
     C_CLOCK, C_OK, C_DIM, C_PANEL, C_TRACK, C_BUTTON;
 
 void setPalette(uint8_t theme) {
+  clearGlassCache();
   s_theme = theme <= THEME_GLASS ? theme : THEME_MIDNIGHT;
   const bool day = s_theme == THEME_DAYLIGHT, glass = s_theme == THEME_GLASS;
   C_BG = day ? 0xECEFF3 : 0x0D0F13;
@@ -81,6 +99,7 @@ struct Page {
   lv_obj_t* grid;
   lv_draw_buf_t* snap;
   lv_draw_buf_t* glass;  // Glass theme: the baked background
+  std::vector<uint32_t> glassKey;  // empty until a bake finishes
   const PageDef* def;
   bool stale;
 };
@@ -3704,25 +3723,51 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
       lv_obj_add_event_cb(t, sliderEvent, c, (void*)(uintptr_t)idx);
 }
 
+// Keep the exact draw inputs, including child order, to avoid hash collisions.
+// Coordinates are page-relative so moving a page offscreen does not change its key.
+std::vector<uint32_t> glassKey(Page& p) {
+  if (!wallSharp() || !wallBlur() || !p.root || !p.grid) return {};
+  lv_obj_update_layout(p.root);
+  std::vector<uint32_t> key = {
+      wallGeneration(), (uint32_t)logicalW(), (uint32_t)logicalH(), (uint32_t)panelRotation(),
+      s_theme, C_TILE, dispSettings.glassTint, dispSettings.glassBlur, dispSettings.glassDim,
+      dispSettings.glassOn, GLASS_BORDER_COLOR, GLASS_BORDER_OPA, GLASS_BORDER_WIDTH};
+  const uint32_t count = lv_obj_get_child_count(p.grid);
+  key.reserve(key.size() + 1 + count * 5);
+  key.push_back(count);
+  lv_area_t rc;
+  lv_obj_get_coords(p.root, &rc);
+  for (uint32_t i = 0; i < count; i++) {
+    lv_obj_t* t = lv_obj_get_child(p.grid, i);
+    lv_area_t tc;
+    lv_obj_get_coords(t, &tc);
+    lv_area_move(&tc, -rc.x1, -rc.y1);
+    for (int32_t v : {tc.x1, tc.y1, tc.x2, tc.y2, lv_obj_get_style_radius(t, LV_PART_MAIN)})
+      key.push_back((uint32_t)v);
+  }
+  return key;
+}
+
 // Glass: the page background is baked once the tiles are laid out: the
 // wallpaper, and under each tile the blurred wallpaper cut to its rounded
 // rect with the tint and a hairline. A page render is then one image copy
 // instead of per-tile blending.
-void bakeGlass(Page& p) {
+bool bakeGlass(Page& p) {
+  p.glassKey.clear();  // a partial bake must never be reused
   const lv_image_dsc_t* sharp = wallSharp();
   const lv_image_dsc_t* blur = wallBlur();
-  if (!sharp || !blur || !p.root || !p.grid) return;
+  if (!sharp || !blur || !p.root || !p.grid) return false;
   const int w = sharp->header.w, h = sharp->header.h;
   if (!p.glass) p.glass = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
-  if (!p.glass) return;
+  if (!p.glass) return false;
   for (int y = 0; y < h; y++)
     memcpy(p.glass->data + y * p.glass->header.stride, sharp->data + y * sharp->header.stride, w * 2);
   // The glass is drawn in ARGB8888 over nothing, then laid over the picture
   // and dithered to RGB565 once: blending in RGB565 left coloured bands.
   lv_draw_buf_t* top = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_ARGB8888, 0);
-  if (!top) return;
+  if (!top) return false;
   lv_draw_buf_clear(top, nullptr);
-  lv_obj_update_layout(p.root);
+  std::vector<uint32_t> key = glassKey(p);
   lv_obj_t* cv = lv_canvas_create(p.root);
   lv_obj_add_flag(cv, LV_OBJ_FLAG_HIDDEN);
   lv_canvas_set_draw_buf(cv, top);
@@ -3750,9 +3795,9 @@ void bakeGlass(Page& p) {
     rd.radius = r;
     rd.bg_color = lv_color_hex(C_TILE);
     rd.bg_opa = (lv_opa_t)(dispSettings.glassTint * 255 / 100);
-    rd.border_color = lv_color_white();
-    rd.border_opa = LV_OPA_20;
-    rd.border_width = 1;
+    rd.border_color = lv_color_hex(GLASS_BORDER_COLOR);
+    rd.border_opa = GLASS_BORDER_OPA;
+    rd.border_width = GLASS_BORDER_WIDTH;
     lv_draw_rect(&layer, &rd, &tc);
   }
   lv_canvas_finish_layer(cv, &layer);
@@ -3777,6 +3822,8 @@ void bakeGlass(Page& p) {
   lv_obj_set_style_bg_image_src(p.root, p.glass, 0);
   lv_obj_invalidate(p.root);
   p.stale = true;
+  p.glassKey.swap(key);
+  return true;
 }
 
 // Shows or hides a tiles page's top bar; the grid takes the freed height.
@@ -4766,8 +4813,37 @@ void buildPages() {
   // Inactive pages wait just off the right edge: they keep their layout and
   // can be snapshotted, but their invalidations are clipped away.
   for (int i = 0; i < s_count; i++) lv_obj_set_pos(s_pages[i].root, i == active ? 0 : w, 0);
-  if (s_theme == THEME_GLASS)
-    for (int i = 0; i < s_count; i++) bakeGlass(s_pages[i]);
+  unsigned baked = 0, reused = 0;
+  uint32_t bakeMs = 0;
+  if (s_theme == THEME_GLASS) {
+    for (int i = 0; i < s_count; i++) {
+      Page& p = s_pages[i];
+      std::vector<uint32_t> key = glassKey(p);
+      if (key.empty()) continue;
+      for (GlassCacheEntry& c : s_glassCache) {
+        if (!c.buffer || c.id != p.def->id || c.key != key) continue;
+        p.glass = c.buffer;
+        c.buffer = nullptr;
+        p.glassKey.swap(key);
+        lv_obj_set_style_bg_image_src(p.root, p.glass, 0);
+        lv_obj_invalidate(p.root);
+        p.stale = true;
+        reused++;
+        break;
+      }
+    }
+  }
+  // Drop removed or changed pages before allocating any replacement bakes.
+  clearGlassCache();
+  if (s_theme == THEME_GLASS) {
+    for (int i = 0; i < s_count; i++) {
+      if (s_pages[i].glass) continue;
+      const uint32_t start = millis();
+      if (bakeGlass(s_pages[i])) baked++;
+      bakeMs += millis() - start;
+    }
+  }
+  Serial.printf("Deck: glass %u baked, %u reused, %lu ms\n", baked, reused, (unsigned long)bakeMs);
   s_lastMinute = -1;
   s_lastWifi = -1;
   buildQuickPanel();
@@ -4779,11 +4855,20 @@ void setPager(int page) {
   panelSetPager(sh.nCols, c, sh.colLen[c], page - sh.colFirst[c]);
 }
 
-void destroyPages() {
+void destroyPages(bool keepGlass = false) {
+  clearGlassCache();
   edClose();
   closeModal();
   destroyQuickPanel();
   for (int i = 0; i < s_count; i++) {
+    Page& p = s_pages[i];
+    if (keepGlass && s_theme == THEME_GLASS && p.glass && p.def && !p.glassKey.empty()) {
+      GlassCacheEntry& c = s_glassCache[i];
+      c.id = p.def->id;  // the config may be replaced before buildPages
+      c.key.swap(p.glassKey);
+      c.buffer = p.glass;
+      p.glass = nullptr;
+    }
     if (s_pages[i].root) lv_obj_delete(s_pages[i].root);
     if (s_pages[i].snap) lv_draw_buf_destroy(s_pages[i].snap);
     if (s_pages[i].glass) lv_draw_buf_destroy(s_pages[i].glass);
@@ -5046,7 +5131,7 @@ void printerSync() {
     s_prnRebuild = false;
     if (pages) {
       stopGestures();
-      destroyPages();
+      destroyPages(true);
       buildPages();
       s_gen++;
       lv_obj_invalidate(lv_screen_active());
@@ -5272,7 +5357,7 @@ bool deckApplyConfig(const String& text, String& err) {
   if (!deckConfigStore(text, next, err)) return false;
   // Tiles point into s_cfg: tear the pages down before replacing it.
   stopGestures();
-  destroyPages();
+  destroyPages(true);
   s_cfg = next;
   buildPages();
   s_gen++;

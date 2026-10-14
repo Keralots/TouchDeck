@@ -17,6 +17,8 @@ const char* wallPath(int w, int h);
 // False only when PSRAM is short.
 bool wallLoad(int w, int h, int blurR, int dimPct);
 void wallFree();
+// Changes whenever the images are freed or reloaded, including failed loads.
+uint32_t wallGeneration();
 // The picture (RGB565, dimmed for the text on it) and its blurred copy
 // (RGB888, so the glass keeps its precision until wallDither565);
 // nullptr when not loaded.
