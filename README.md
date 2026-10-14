@@ -26,6 +26,8 @@ WebSocket API and receives PC metrics over UDP on the LAN.
   Home Assistant history; the detail card includes min / max / now. Optional
   `warn` and `crit` thresholds colour the value and line amber or red;
   `crit` below `warn` makes lower values worse, such as battery levels.
+  `"format": "duration"` shows a reading in s, min, h or d as `1h 49m` or
+  `3d 2h` (uptime, time left on a print, a battery runtime).
 - **Slider tiles:** a light, cover, fan, media player or number as a tile
   that fills to its level; drag sideways on it to change the level (the page
   does not swipe there), tap to toggle, hold for the card. Pick "Slider" as
@@ -114,7 +116,8 @@ For example, a PC endpoint returning `{"claude":{"five_hour":{"used":18}}}`:
 { "type": "sensor", "label": "Claude 5h", "icon": "mdi:robot",
   "http": { "url": "http://192.168.0.10:8760/usage",
             "path": "claude.five_hour.used", "poll": 60 },
-  "unit": "%", "style": "chart", "warn": 70, "crit": 90 }
+  "unit": "%", "style": "chart", "warn": 70, "crit": 90,
+  "detail": "reset {claude.five_hour.reset_min|min}" }
 ```
 
 `http.url` uses plain http and GET only. `http.path` selects dot-separated
@@ -133,6 +136,16 @@ interval. A missing path shows `--`; failed first polls or replies older than
 three poll intervals show `--` at half opacity. Polling runs only with WiFi,
 with a 32 KB response limit. Tiles are read-only by default; explicit `tap`
 and `hold` actions still work, without a default HA card.
+
+`"format": "duration"` reads `unit` as the input unit (s, min, h, d) and shows
+the number as `1h 49m` instead.
+
+`detail` adds a small line under the name, built from the same reply:
+`{path}` inserts a value, `{path|min}` shows a number of minutes as a
+duration (also `s`, `h`, `d`), anything else is literal text, for example
+`"{StatusSNS.ENERGY.Voltage} V  {StatusSNS.ENERGY.Current} A"`. In the portal,
+Test shows "+ Detail" next to each value. The line gives way on tiles too
+small for it.
 
 ## PC stats and control: TouchDeck Companion
 

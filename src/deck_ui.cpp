@@ -116,6 +116,7 @@ struct TileRt {
   bool sliding;           // this press became a drag: no tap or hold action
   int16_t slX0;
   float slFrac0, slValue;
+  lv_obj_t* detail;       // HTTP sensor: the "detail" line
   // Clock tiles: hours in sub, then these two; the colon blinks.
   lv_obj_t* colon;
   lv_obj_t* mins;
@@ -458,6 +459,27 @@ bool haStateOn(const String& domain, const String& st) {
   if (domain == "media_player") return st == "playing";
   if (domain == "climate") return st != "off" && st.length();
   return st == "on" || st == "home";
+}
+
+// A reading with at most one decimal.
+void formatReading(float v, char* out, size_t n) {
+  snprintf(out, n, fabsf(v - roundf(v)) < 0.05f ? "%.0f" : "%.1f", v);
+}
+
+// A number in s / min / h / d as "45s", "31m", "1h 49m", "3d 2h"; false for
+// other units.
+bool formatDuration(float v, const String& unit, char* out, size_t n) {
+  const double scale = unit == "ms" ? 0.001 : unit == "s" ? 1 : unit == "min" ? 60 :
+                       unit == "h" ? 3600 : unit == "d" ? 86400 : 0;
+  if (!scale || !isfinite(v)) return false;
+  const double secs = fmin(fabs(v * scale), 4e9);
+  const char* sign = v < 0 ? "-" : "";
+  const uint32_t t = (uint32_t)secs, d = t / 86400, h = t % 86400 / 3600, m = t % 3600 / 60;
+  if (t < 60 && scale < 60) snprintf(out, n, "%s%lus", sign, (unsigned long)t);
+  else if (t < 3600) snprintf(out, n, "%s%lum", sign, (unsigned long)m);
+  else if (t < 86400) snprintf(out, n, m ? "%s%luh %lum" : "%s%luh", sign, (unsigned long)h, (unsigned long)m);
+  else snprintf(out, n, h ? "%s%lud %luh" : "%s%lud", sign, (unsigned long)d, (unsigned long)h);
+  return true;
 }
 
 String prettyState(const String& domain, const HaEntity& e) {
@@ -860,15 +882,21 @@ void applyHaToTile(TileRt& r, bool force) {
     float value;
     const bool numeric = e.known && haNumericState(e.state, value);
     char text[32];
-    if (numeric) snprintf(text, sizeof(text), fabsf(value - roundf(value)) < 0.05f ? "%.0f" : "%.1f", value);
+    const bool dur = numeric && d.duration && formatDuration(value, e.unit, text, sizeof(text));
+    if (numeric && !dur) formatReading(value, text, sizeof(text));
     lv_label_set_text(r.sub, d.sub.length() ? d.sub.c_str() : numeric ? text : prettyState(domain, e).c_str());
-    lv_label_set_text(r.unit, numeric && !d.sub.length() ? e.unit.c_str() : "");
+    lv_label_set_text(r.unit, numeric && !dur && !d.sub.length() ? e.unit.c_str() : "");
     fitValue(r);
   } else if (d.type == TILE_SLIDER) {
     setSliderFill(r, wishFrac(d.entity, e));
     if (!d.sub.length()) lv_label_set_text(r.sub, wishText(d.entity, e, true).c_str());
   } else if (!d.sub.length()) {
-    lv_label_set_text(r.sub, (control ? wishText(d.entity, e, false) : prettyState(domain, e)).c_str());
+    float value;
+    char text[32];
+    if (d.type == TILE_SENSOR && d.duration && e.known && haNumericState(e.state, value) &&
+        formatDuration(value, e.unit, text, sizeof(text)))
+      lv_label_set_text(r.sub, text);
+    else lv_label_set_text(r.sub, (control ? wishText(d.entity, e, false) : prettyState(domain, e)).c_str());
     fitValue(r);
   }
   markPageStale(r.page);
@@ -978,26 +1006,45 @@ void pcCmdSync() {
 
 uint32_t s_httpSeen = 0;
 
+// The detail line: literal text and fields from the same reply ("--" while missing).
+String httpDetail(const TileDef& d) {
+  String out;
+  for (const DetailPart& part : httpParseDetail(d.detail)) {
+    if (!part.field) { out += part.text; continue; }
+    HttpSensorValue v;
+    char buf[48];
+    if (!httpSensorRead(d.http, part.text, v) || v.offline || !v.present) out += "--";
+    else if (!v.numeric) out += v.text ? v.text.get() : "--";
+    else {
+      if (!part.unit.length() || !formatDuration(v.number, part.unit, buf, sizeof(buf)))
+        formatReading(v.number, buf, sizeof(buf));
+      out += buf;
+    }
+  }
+  return out;
+}
+
 void applyHttpToTile(TileRt& r) {
   const TileDef& d = *r.def;
   if (!d.http.enabled) return;
   HttpSensorValue value;
-  const bool found = httpSensorRead(d.http, value);
+  const bool found = httpSensorRead(d.http, d.http.path, value);
   const bool numeric = found && !value.offline && value.present && value.numeric;
   String text = "--";
-  if (found && !value.offline && value.present) {
-    if (numeric) {
-      char number[48];
-      snprintf(number, sizeof(number), fabsf(value.number - roundf(value.number)) < 0.05f ? "%.0f" : "%.1f", value.number);
-      text = number;
-      if (d.style != METRIC_CHART && d.unit.length())
-        text += (d.unit.startsWith("\xC2\xB0") ? "" : " ") + d.unit;
-    }
+  char number[48];
+  const bool dur = numeric && d.duration && formatDuration(value.number, d.unit, number, sizeof(number));
+  if (dur) text = number;
+  else if (numeric) {
+    formatReading(value.number, number, sizeof(number));
+    text = number;
+    if (d.style != METRIC_CHART && d.unit.length())
+      text += (d.unit.startsWith("\xC2\xB0") ? "" : " ") + d.unit;
   }
   const char* shown = found && !value.offline && value.present && !value.numeric && value.text
                           ? value.text.get() : text.c_str();
   lv_label_set_text(r.sub, shown);
-  if (r.unit) lv_label_set_text(r.unit, numeric ? d.unit.c_str() : "");
+  if (r.unit) lv_label_set_text(r.unit, numeric && !dur ? d.unit.c_str() : "");
+  if (r.detail) lv_label_set_text(r.detail, httpDetail(d).c_str());
   lv_obj_set_style_opa(r.obj, !found || value.offline ? LV_OPA_50 : LV_OPA_COVER, 0);
   sensorThreshold(r, numeric, value.number);
   if (found && r.viz && r.pts) plotHistory(r.viz, r.pts, value.history, HTTP_HISTORY_POINTS);
@@ -2181,6 +2228,15 @@ void fitButton(TileRt& r, int cw, int ch) {
   showObj(r.sub, false);
 }
 
+void fitDetail(TileRt& r, const lv_font_t* f, int w, lv_align_t align, int y, bool show) {
+  if (!r.detail) return;
+  showObj(r.detail, show);
+  if (!show) return;
+  setFont(r.detail, f);
+  lv_obj_set_size(r.detail, w, lineH(f));
+  lv_obj_align(r.detail, align, 0, y);
+}
+
 // Sensor: the reading big at the top with a small icon top right, the name
 // under it; a row (name left, reading right) on short tiles.
 void fitSensor(TileRt& r, int cw, int ch) {
@@ -2196,8 +2252,11 @@ void fitSensor(TileRt& r, int cw, int ch) {
       {&deck_font_20, &deck_font_12, 2, false}, {&deck_font_20, &deck_font_14, 1, false},
       {&deck_font_20, &deck_font_12, 1, false}, {&deck_font_14, &deck_font_12, 1, false},
   };
+  for (int pass = r.detail ? 0 : 1; pass < 2; pass++)
   for (const Opt& o : kOpts) {
-    if ((o.wideOnly && cw < WIDE_W) || lineH(o.val) + textH(o.name, o.lines) > ch) continue;
+    const lv_font_t* df = o.val == &deck_font_28 ? &deck_font_14 : &deck_font_12;
+    const int dh = pass ? 0 : lineH(df);
+    if ((o.wideOnly && cw < WIDE_W) || lineH(o.val) + textH(o.name, o.lines) + dh > ch) continue;
     const int chip = o.val == &deck_font_14 ? 18 : 22;
     fitChip(r, chip);
     lv_obj_align(r.chip, LV_ALIGN_TOP_RIGHT, 2, -2);
@@ -2210,14 +2269,16 @@ void fitSensor(TileRt& r, int cw, int ch) {
     r.chipRoom = chip;
     fitValue(r);
     r.nameFont = o.name;
-    r.nameArea = ch - lineH(o.val);
+    r.nameArea = ch - lineH(o.val) - dh;
     r.nameW = cw;
     fitNameText(r);
-    lv_obj_align(r.name, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_align(r.name, LV_ALIGN_BOTTOM_LEFT, 0, -dh);
     showObj(r.name, true);
+    fitDetail(r, df, cw, LV_ALIGN_BOTTOM_LEFT, 0, !pass);
     return;
   }
   const lv_font_t* vf = ch >= lineH(&deck_font_20) ? &deck_font_20 : &deck_font_14;
+  showObj(r.detail, false);
   showObj(r.chip, false);
   r.chipRoom = 0;
   r.nameFont = nullptr;
@@ -2293,7 +2354,10 @@ void fitMetric(TileRt& r, int cw, int ch) {
     } else {
       r.valW = cw;
       lv_obj_align(row, LV_ALIGN_TOP_RIGHT, 0, -6);
-      lv_obj_set_height(r.viz, LV_MIN(ch * 62 / 100, ch - 22));
+      const int top = lineH(nf) - 2 + lineH(&deck_font_12);
+      const bool detail = r.detail && ch - top >= 24;
+      lv_obj_set_height(r.viz, LV_MIN(ch * 62 / 100, detail ? ch - top : ch - 22));
+      fitDetail(r, &deck_font_12, cw * 55 / 100, LV_ALIGN_TOP_LEFT, lineH(nf) - 2, detail);
     }
     showObj(r.name, true);
     fitValue(r);
@@ -2311,8 +2375,10 @@ void fitMetric(TileRt& r, int cw, int ch) {
       {&deck_font_14, &deck_font_28, &deck_font_14, false},
       {&deck_font_12, &deck_font_20, &deck_font_12, false},
   };
+  for (int pass = r.detail ? 0 : 1; pass < 2; pass++)
   for (const Opt& o : kOpts) {
-    if ((o.wideOnly && cw < WIDE_W) || lineH(o.name) + lineH(o.val) * 3 / 4 > ch) continue;
+    const int dh = pass ? 0 : lineH(&deck_font_12);
+    if ((o.wideOnly && cw < WIDE_W) || lineH(o.name) + dh + lineH(o.val) * 3 / 4 > ch) continue;
     setFont(r.name, o.name);
     lv_obj_set_size(r.name, lv_pct(100), lineH(o.name));
     lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, 0, -2);
@@ -2321,9 +2387,11 @@ void fitMetric(TileRt& r, int cw, int ch) {
     r.valW = cw;
     lv_obj_align(row, LV_ALIGN_BOTTOM_LEFT, 0, 2);
     showObj(r.name, true);
+    fitDetail(r, &deck_font_12, cw, LV_ALIGN_TOP_LEFT, lineH(o.name) - 2, !pass);
     fitValue(r);
     return;
   }
+  showObj(r.detail, false);
   const bool name = cw >= 80;
   setFont(r.name, &deck_font_12);
   lv_obj_set_size(r.name, cw / 2 - 4, lineH(&deck_font_12));
@@ -2450,6 +2518,15 @@ void applyPcToTile(TileRt& r) {
   }
 }
 
+lv_obj_t* makeDetail(lv_obj_t* t, const TileDef& d) {
+  if (!d.http.enabled || !d.detail.length()) return nullptr;
+  lv_obj_t* l = lv_label_create(t);
+  lv_label_set_text(l, "");
+  lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_style_text_opa(l, LV_OPA_70, 0);
+  return l;
+}
+
 // Number big at the bottom, or a chart / bar under a smaller number (wide
 // tiles only; fitMetric hides the chart on small ones).
 void makeMetricContent(TileRt& r, lv_obj_t* t) {
@@ -2480,6 +2557,7 @@ void makeMetricContent(TileRt& r, lv_obj_t* t) {
   lv_label_set_text(r.unit, "");
   lv_obj_set_style_text_opa(r.unit, LV_OPA_70, 0);
   lv_obj_set_style_pad_bottom(r.unit, 4, 0);
+  if (sensor) r.detail = makeDetail(t, d);
 
   // Fonts and places come from fitMetric once the tile has its size.
   if (style == METRIC_NUMBER) return;
@@ -2769,6 +2847,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   r.iconPx = iconPx;
   r.iconCp = showIcon(ic, def, nullptr, false, iconPx, 0);
   r.fill = fill;
+  if (def.type == TILE_SENSOR) r.detail = makeDetail(t, def);
   lv_label_set_text(sub, tileSub(r).c_str());
   const size_t idx = s_tiles.size();
   s_tiles.push_back(r);

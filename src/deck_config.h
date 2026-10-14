@@ -23,6 +23,7 @@
 //   "style": "number" | "chart", "hours": 24 (1..168),
 //   "warn": 25, "crit": 30 } (thresholds optional, in the sensor unit).
 // crit < warn means lower is worse; otherwise higher is worse.
+// "format": "duration" shows a number in s / min / h / d as "1h 49m".
 //
 // An HTTP sensor uses "http" instead of "entity":
 // { "type": "sensor", "http": { "url": "http://host/usage",
@@ -31,6 +32,8 @@
 // GET only; poll = 5..3600 seconds (default 30). Dot paths accept array
 // indexes; empty path reads a scalar body. Charts keep 48 numeric readings.
 // HTTP sensors have no default tap/hold action or HA detail card.
+// "detail": "reset {claude.five_hour.reset_min|min}" adds a small line with
+// values from the same reply; "|unit" formats a number as a duration.
 //
 // "type": "clock": the time, and the date when the tile has room
 // (24h and time zone from the device settings). Read-only.
@@ -117,6 +120,8 @@ struct TileDef {
   String entity, label, sub, icon;
   HttpSensorDef http;
   String unit;  // HTTP sensor: unit for JSON numbers only
+  String detail;  // HTTP sensor: second line template, see above
+  bool duration = false;  // sensor: "format": "duration"
   bool hasColor = false;
   uint32_t color = 0;
   bool hasTextColor = false, hasChartColor = false;

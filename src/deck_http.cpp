@@ -389,8 +389,13 @@ void httpSetSensors(const DeckConfig& cfg) {
       next.push_back(std::move(s));
       source = next.end() - 1;
     } else source->poll = min(source->poll, d.poll);
-    auto path = std::find_if(source->paths.begin(), source->paths.end(), [&](const PathValue& p) { return p.path == d.path; });
-    if (path == source->paths.end()) source->paths.emplace_back(d.path);
+    std::vector<String> paths{d.path};
+    for (const DetailPart& part : httpParseDetail(tile.detail))
+      if (part.field) paths.push_back(part.text);
+    for (const String& want : paths) {
+      auto path = std::find_if(source->paths.begin(), source->paths.end(), [&](const PathValue& p) { return p.path == want; });
+      if (path == source->paths.end()) source->paths.emplace_back(want);
+    }
   }
   for (Source& s : next) for (const Source& old : s_sources) {
     if (s.url != old.url || s.headers != old.headers) continue;
@@ -422,14 +427,14 @@ uint32_t httpSensorVersion() {
   return v;
 }
 
-bool httpSensorRead(const HttpSensorDef& def, HttpSensorValue& out) {
+bool httpSensorRead(const HttpSensorDef& def, const String& path, HttpSensorValue& out) {
   if (!s_lock) return false;
   const String headers = canonicalHeaders(def.headers);
   bool found = false;
   xSemaphoreTake(s_lock, portMAX_DELAY);
   for (const Source& s : s_sources) {
     if (s.url != def.url || s.headers != headers) continue;
-    for (const PathValue& p : s.paths) if (p.path == def.path) {
+    for (const PathValue& p : s.paths) if (p.path == path) {
       out = p.value;
       out.offline = s.offline;
       found = true;
@@ -439,6 +444,31 @@ bool httpSensorRead(const HttpSensorDef& def, HttpSensorValue& out) {
   }
   xSemaphoreGive(s_lock);
   return found;
+}
+
+std::vector<DetailPart> httpParseDetail(const String& tmpl) {
+  std::vector<DetailPart> parts;
+  for (int at = 0; at < (int)tmpl.length();) {
+    const int open = tmpl.indexOf('{', at);
+    const int close = open < 0 ? -1 : tmpl.indexOf('}', open);
+    DetailPart text;
+    text.text = tmpl.substring(at, close < 0 ? tmpl.length() : open);
+    if (text.text.length()) parts.push_back(text);
+    if (close < 0) break;
+    DetailPart field;
+    field.field = true;
+    field.text = tmpl.substring(open + 1, close);
+    const int bar = field.text.indexOf('|');
+    if (bar >= 0) {
+      field.unit = field.text.substring(bar + 1);
+      field.text.remove(bar);
+    }
+    field.text.trim();
+    field.unit.trim();
+    parts.push_back(field);
+    at = close + 1;
+  }
+  return parts;
 }
 
 }  // namespace deck

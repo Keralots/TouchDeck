@@ -142,6 +142,7 @@ function moreRow(t,i){const cf=t.confirm||'';
   let h='<div class="dk-more"><div class="field"><label class="field-label">Confirm on the device</label><select data-cf="'+i+'">'+[['','No'],['off','Before turning off'],['always','Before every action']].map(o=>opt(o[0],o[1],cf===o[0])).join('')+'</select></div>';
   if(t.type==='sensor'){
     h+='<div class="field"><label class="field-label">Style</label><select data-st="'+i+'">'+opt('number','Number',t.style!=='chart')+opt('chart','Chart',t.style==='chart')+'</select></div>';
+    h+='<div class="field"><label class="field-label">Show as</label><select data-fm="'+i+'" title="Duration turns a number in s, min, h or d into 1h 49m">'+opt('','Value',t.format!=='duration')+opt('duration','Duration (s, min, h, d)',t.format==='duration')+'</select></div>';
     if(t.style==='chart'&&!isHttpSensor(t))h+='<div class="field"><label class="field-label">History hours</label><input type="number" min="1" max="168" step="1" data-sh="'+i+'" value="'+esc(t.hours==null?24:t.hours)+'"></div>';
     [['warn','Warn at'],['crit','Critical at']].forEach(([k,label])=>{h+='<div class="field"><label class="field-label">'+label+'</label><input type="number" step="any" data-th="'+i+'" data-tk="'+k+'" value="'+esc(t[k]==null?'':t[k])+'" placeholder="Unset"></div>';});
     if(!isHttpSensor(t))h+='<p class="field-hint wide" style="margin:0">History defaults to 24 h; longer periods take longer to load from Home Assistant (a chatty sensor over a week can take many seconds). Thresholds use the sensor unit; Critical lower than Warn = low is bad.</p>';
@@ -164,7 +165,8 @@ function moreRow(t,i){const cf=t.confirm||'';
   return h+colorField(t,i)+'</div>';}
 function parseHdrs(s){const o={};s.split('\n').forEach(l=>{const c=l.indexOf(':');if(c>0){const k=l.slice(0,c).trim(),v=l.slice(c+1).trim();if(k)o[k]=v;}});return o;}
 function httpSensorFields(t,i){const h=t.http;
-  return '<div class="dk-more">'+[['url','URL','http://192.168.0.10:8760/usage'],['path','JSON path','claude.five_hour.used'],['poll','Poll (s)','30'],['unit','Unit','%']].map(([k,label,ph])=>'<div class="field'+(k==='url'?' wide':'')+'"><label class="field-label">'+label+'</label><input '+(k==='poll'?'type="number" min="5" max="3600" step="1"':'type="text"')+' data-hs="'+i+'" data-hsk="'+k+'" value="'+esc(k==='unit'?(t.unit||''):h[k]==null?'':h[k])+'" placeholder="'+ph+'" spellcheck="false"></div>').join('')+
+  return '<div class="dk-more">'+[['url','URL','http://192.168.0.10:8760/usage'],['path','JSON path','claude.five_hour.used'],['poll','Poll (s)','30'],['unit','Unit','%'],['detail','Detail line','reset {claude.five_hour.reset_min|min}']].map(([k,label,ph])=>'<div class="field'+(k==='url'||k==='detail'?' wide':'')+'"><label class="field-label">'+label+'</label><input '+(k==='poll'?'type="number" min="5" max="3600" step="1"':'type="text"')+' data-hs="'+i+'" data-hsk="'+k+'" value="'+esc(k==='unit'||k==='detail'?(t[k]||''):h[k]==null?'':h[k])+'" placeholder="'+ph+'" spellcheck="false"></div>').join('')+
+    '<p class="field-hint wide" style="margin:0">Detail line: a small line under the name. {path} inserts a value from the same reply, {path|min} shows a number of minutes as 1h 49m (also s, h, d). Test, then + Detail next to a value adds it.</p>'+
     '<div class="field wide"><label class="field-label">Headers (Name: value)</label><textarea data-hsh="'+i+'" spellcheck="false">'+esc(hdrText(h.headers))+'</textarea></div>'+
     '<div class="field wide"><button type="button" class="btn" data-hst="'+i+'">Test</button><div id="dkHs'+i+'" style="max-height:260px;overflow:auto;overflow-wrap:anywhere">Fetch JSON from the device, then click a value to select its path.</div></div></div>';}
 function sensorTree(out,data,t,i){
@@ -176,7 +178,10 @@ function sensorTree(out,data,t,i){
       Object.entries(value).forEach(([k,v])=>add(inner,v,path.concat(k),k,usable&&k!==''&&!k.includes('.')&&(Array.isArray(value)||!/^\d+$/.test(k))));
     }else{
       const row=document.createElement('div'),b=document.createElement('button');b.type='button';b.className='btn';b.style.whiteSpace='normal';b.textContent=label+': '+JSON.stringify(value);b.disabled=!usable;
-      b.onclick=()=>{t.http.path=path.join('.');const input=document.querySelector('[data-hs="'+i+'"][data-hsk="path"]');if(input)input.value=t.http.path;selected.textContent=(t.http.path||'(whole body)')+' = '+JSON.stringify(value);setDirty(true);};row.appendChild(b);parent.appendChild(row);
+      b.onclick=()=>{t.http.path=path.join('.');const input=document.querySelector('[data-hs="'+i+'"][data-hsk="path"]');if(input)input.value=t.http.path;selected.textContent=(t.http.path||'(whole body)')+' = '+JSON.stringify(value);setDirty(true);};row.appendChild(b);
+      if(usable&&path.length){const a=document.createElement('button');a.type='button';a.className='btn';a.textContent='+ Detail';a.style.marginLeft='6px';
+        a.onclick=()=>{t.detail=(t.detail?t.detail+' ':'')+'{'+path.join('.')+'}';const input=document.querySelector('[data-hs="'+i+'"][data-hsk="detail"]');if(input)input.value=t.detail;setDirty(true);};row.appendChild(a);}
+      parent.appendChild(row);
     }
   };
   const selected=document.createElement('div');out.appendChild(selected);add(tree,data,[],'JSON',true);out.appendChild(tree);
@@ -309,6 +314,7 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   el.querySelectorAll('[data-x]').forEach(x=>x.onclick=()=>{p.tiles.splice(+x.dataset.x,1);sel=-1;more=-1;setDirty(true);renderPage();});
   el.querySelectorAll('[data-mo]').forEach(x=>x.onclick=()=>{const i=+x.dataset.mo;more=more===i?-1:i;renderPage();});
   el.querySelectorAll('[data-cf]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.cf];if(e.target.value)t.confirm=e.target.value;else delete t.confirm;setDirty(true);});
+  el.querySelectorAll('[data-fm]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.fm];if(e.target.value)t.format=e.target.value;else delete t.format;setDirty(true);});
   el.querySelectorAll('[data-sh]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.sh],v=e.target.value.trim();if(v&&Number.isFinite(+v)){t.hours=Math.max(1,Math.min(168,Math.round(+v)));x.value=t.hours;}else delete t.hours;setDirty(true);});
   el.querySelectorAll('[data-th]').forEach(x=>x.oninput=e=>{const t=p.tiles[+x.dataset.th],k=x.dataset.tk,v=e.target.value.trim();if(v&&Number.isFinite(+v))t[k]=+v;else delete t[k];setDirty(true);});
   el.querySelectorAll('[data-co]').forEach(x=>{x.oninput=e=>{p.tiles[+x.dataset.co][x.dataset.ck]=e.target.value.toUpperCase();setDirty(true);};x.onchange=()=>renderPage();});
@@ -316,7 +322,7 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   el.querySelectorAll('[data-ca]').forEach(x=>x.onclick=()=>{delete p.tiles[+x.dataset.ca][x.dataset.ck];setDirty(true);renderPage();});
   $('dkAddTile').onclick=()=>openPicker(-1);
   $('dkAddHttpSensor').onclick=()=>{p.tiles.push({id:'s'+Date.now().toString(36),type:'sensor',http:{url:'',path:'',poll:30}});setDirty(true);renderPage();};
-  el.querySelectorAll('[data-hs]').forEach(x=>{const update=()=>{const t=p.tiles[+x.dataset.hs],k=x.dataset.hsk,v=x.value;if(k==='unit'){if(v)t.unit=v;else delete t.unit;}else if(k==='poll'){t.http.poll=Math.max(5,Math.min(3600,Math.round(+v)||30));x.value=t.http.poll;}else t.http[k]=v.trim();setDirty(true);};if(x.dataset.hsk==='poll')x.onchange=update;else x.oninput=update;});
+  el.querySelectorAll('[data-hs]').forEach(x=>{const update=()=>{const t=p.tiles[+x.dataset.hs],k=x.dataset.hsk,v=x.value;if(k==='unit'||k==='detail'){if(v)t[k]=v;else delete t[k];}else if(k==='poll'){t.http.poll=Math.max(5,Math.min(3600,Math.round(+v)||30));x.value=t.http.poll;}else t.http[k]=v.trim();setDirty(true);};if(x.dataset.hsk==='poll')x.onchange=update;else x.oninput=update;});
   el.querySelectorAll('[data-hsh]').forEach(x=>x.oninput=()=>{const h=p.tiles[+x.dataset.hsh].http,v=parseHdrs(x.value);if(Object.keys(v).length)h.headers=v;else delete h.headers;setDirty(true);});
   el.querySelectorAll('[data-hst]').forEach(x=>x.onclick=()=>testHttpSensor(p.tiles[+x.dataset.hst],+x.dataset.hst));
   $('dkAddClock').onclick=()=>{const t={id:'k'+Date.now().toString(36),type:'clock'};setSize(t,'2x1');p.tiles.push(t);setDirty(true);renderPage();};
@@ -359,7 +365,7 @@ $('dkLedClear').onclick=()=>{if(!deck)return;delete deck.led;setDirty(true);rend
 function pick(id){if(pickFor===-2){if(!LEDDOM.includes(domainOf(id))){alert('Pick an input_boolean, input_number or light.');return;}deck.led={entity:id};setDirty(true);closePicker();renderLed();return;}
   const p=pages()[cur];const type=autoType(domainOf(id));
   if(pickFor<0)p.tiles.push({id:'t'+Date.now().toString(36),type:type,entity:id});
-  else{const t=p.tiles[pickFor];t.entity=id;t.type=type;delete t.http;delete t.unit;delete t.label;delete t.sub;delete t.icon;delete t.tap;}
+  else{const t=p.tiles[pickFor];t.entity=id;t.type=type;delete t.http;delete t.unit;delete t.detail;delete t.label;delete t.sub;delete t.icon;delete t.tap;}
   setDirty(true);closePicker();renderPage();}
 $('dkQ').oninput=renderEnts;$('dkPickClose').onclick=closePicker;$('dkPicker').onclick=e=>{if(e.target===$('dkPicker'))closePicker();};
 

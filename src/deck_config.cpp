@@ -286,9 +286,11 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
           t.http.path = (const char*)(tv["http"]["path"] | "");
           t.http.poll = (uint16_t)constrain((int)(tv["http"]["poll"] | 30), 5, 3600);
           t.unit = (const char*)(tv["unit"] | "");
+          t.detail = (const char*)(tv["detail"] | "");
           t.entity = "";
         }
         t.style = !strcmp(tv["style"] | "number", "chart") ? METRIC_CHART : METRIC_NUMBER;
+        t.duration = !strcmp(tv["format"] | "", "duration");
         t.hours = (uint8_t)constrain((int)(tv["hours"] | 24), 1, 168);
         t.warn = tv["warn"] | 0.0f;
         t.crit = tv["crit"] | 0.0f;
