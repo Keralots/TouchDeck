@@ -67,9 +67,9 @@ sec.innerHTML=`<div class="page-header"><h1 class="page-h1">Deck</h1><p class="p
 <p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; "Install" downloads it in this browser and sends it to the device. Without it the deck shows a few built-in symbols.</p>
 <div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
 <div class="dk-status"><span class="dk-dot" id="dkIcDot"></span><span id="dkIcState">checking...</span></div></div>
-<div class="card"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag">Bambu Lab, LAN</span></div>
-<p class="field-hint">The printer must be in LAN mode or have LAN access on. Serial and access code are stored only on the device. With a plug (an HA switch), the printer connects and its pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
-<div id="dkPrn"></div><div class="dk-row"><button type="button" class="btn" id="dkPrnAdd">+ Add printer</button></div></div>
+<div class="card"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag" id="dkPrnTag">Bambu Lab, LAN</span><button type="button" class="btn" id="dkPrnTog" style="margin-left:auto;padding:5px 10px" aria-expanded="false">Show</button></div>
+<div id="dkPrnBody" hidden><p class="field-hint">The printer must be in LAN mode or have LAN access on. Serial and access code are stored only on the device. With a plug (an HA switch), the printer connects and its pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
+<div id="dkPrn"></div><div class="dk-row"><button type="button" class="btn" id="dkPrnAdd">+ Add printer</button></div></div></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
 <label class="check-row standalone" style="margin-bottom:14px"><input type="checkbox" id="dkHeader"><span class="check-box"></span><span class="check-text"><strong>Show the top bar</strong><span class="ct-hint">Page name, WiFi and clock above the tiles. Also switchable in the quick panel on the device.</span></span></label>
 <div class="dk-tabs" id="dkTabs"></div><div id="dkPage"></div>
@@ -127,17 +127,20 @@ function colorField(t,i){const tx=TXT.concat(SW),theme='Auto uses the theme text
 /* The clock tile: no entity or actions, just its size and colours. */
 /* Bambu printers: deck.printers is saved with the deck; serial and code go
    straight to the device and are never read back. */
-const PSHOW=[['hero','Progress'],['nozzle','Nozzle'],['bed','Bed'],['chamber','Chamber'],['filament','Filament'],['layer','Layer'],['light','Light']];
+const PSHOW=[['hero','Progress'],['nozzle','Nozzle'],['bed','Bed'],['chamber','Chamber'],['filament','Filament'],['layer','Layer'],['light','Light'],['ams','AMS unit'],['slots','All slots'],['summary','Summary']];
 let prnStat={};
 const prnName=id=>{const d=(deck.printers||[]).find(x=>x.id===id);return d?(d.name||d.id):id;};
 function prnTileName(t){const s=PSHOW.find(x=>x[0]===(t.show||'hero'));return prnName(t.printer)+' '+(s?s[1]:'')+(t.show==='nozzle'&&t.nozzle==='left'?' L':'');}
 function printerRow(t,i){const ps=deck.printers||[];
-  return '<div class="dk-tile'+(i===sel?' sel':'')+'"><div class="dk-ic" style="background:#F5B83D">3D</div><div class="dk-tmain"><b>Printer</b><div class="dk-row" style="margin-top:4px"><select data-pt="'+i+'">'+ps.map(d=>opt(d.id,d.name||d.id,d.id===t.printer)).join('')+'</select><select data-psh="'+i+'">'+PSHOW.map(([v,l])=>opt(v,l,(t.show||'hero')===v)).join('')+'</select>'+(t.show==='nozzle'?'<select data-pnz="'+i+'">'+opt('right','Right / only',t.nozzle!=='left')+opt('left','Left',t.nozzle==='left')+'</select>':'')+'</div></div>'+
+  return '<div class="dk-tile'+(i===sel?' sel':'')+'"><div class="dk-ic" style="background:#F5B83D">3D</div><div class="dk-tmain"><b>Printer</b><div class="dk-row" style="margin-top:4px"><select data-pt="'+i+'">'+ps.map(d=>opt(d.id,d.name||d.id,d.id===t.printer)).join('')+'</select><select data-psh="'+i+'">'+PSHOW.map(([v,l])=>opt(v,l,(t.show||'hero')===v)).join('')+'</select>'+(t.show==='nozzle'?'<select data-pnz="'+i+'">'+opt('right','Right / only',t.nozzle!=='left')+opt('left','Left',t.nozzle==='left')+'</select>':'')+(t.show==='ams'?'<select data-pau="'+i+'">'+[1,2,3,4,5,6].map(n=>opt(n,'Unit '+n,(t.unit||1)===n)).join('')+'</select>':'')+'</div></div>'+
   '<div class="dk-tact">'+sizeSel(t,i)+'<button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div></div>';}
 function prnLine(d,s){if(!s.secret)return 'Serial and access code not saved';if(!s.powered)return d.plug?'Off (plug off)':'Off';
   return (s.link||'')+(s.err?' - '+s.err:'')+(s.state?' - '+s.state.toLowerCase():'')+(s.state==='RUNNING'?' '+s.progress+'%':'');}
 async function printersStatus(){try{const r=await api('/api/printers');prnStat={};(r.printers||[]).forEach(s=>prnStat[s.id]=s);renderPrinters();}catch(e){}}
-function renderPrinters(){const el=$('dkPrn');if(!el)return;const ps=deck.printers||[];
+/* The card folds to one line: printer count and how many are online. */
+function prnFold(open){$('dkPrnBody').hidden=!open;$('dkPrnTog').textContent=open?'Hide':'Show';$('dkPrnTog').setAttribute('aria-expanded',open);try{localStorage.setItem('dkPrnOpen',open?'1':'');}catch(e){}}
+function prnTag(){const ps=deck.printers||[];const on=ps.filter(d=>(prnStat[d.id]||{}).link==='online').length;$('dkPrnTag').textContent=ps.length?ps.length+' printer'+(ps.length>1?'s':'')+', '+on+' online':'Bambu Lab, LAN';}
+function renderPrinters(){const el=$('dkPrn');if(!el)return;const ps=deck.printers||[];prnTag();
   if(ps.some((d,i)=>document.activeElement&&document.activeElement.closest&&document.activeElement.closest('[data-prb="'+i+'"]')))return;
   el.innerHTML=ps.map((d,i)=>{const s=prnStat[d.id]||{};
     return '<div class="dk-more" data-prb="'+i+'" style="margin-bottom:10px">'+[['id','Id (letters, digits, _)','h2c'],['name','Name','H2C'],['ip','IP address','192.168.0.54'],['plug','Plug (HA switch, optional)','switch.printer_plug']].map(([k,l,ph])=>'<div class="field"><label class="field-label">'+l+'</label><input type="text" data-pr="'+i+'" data-prk="'+k+'" value="'+esc(d[k]||'')+'" placeholder="'+ph+'" spellcheck="false"></div>').join('')+
@@ -150,18 +153,21 @@ function renderPrinters(){const el=$('dkPrn');if(!el)return;const ps=deck.printe
   el.querySelectorAll('[data-prs]').forEach(b=>b.onclick=async()=>{const i=+b.dataset.prs,d=ps[i],q=new URLSearchParams();q.set('id',d.id);q.set('serial',$('dkPrS'+i).value.trim());q.set('code',$('dkPrC'+i).value.trim());
     if(dirty&&!confirm('Save the deck first, or the device will not know this printer yet. Store the serial and code anyway?'))return;
     try{await api('/api/printers/secret',{method:'POST',body:q});$('dkPrS'+i).value='';$('dkPrC'+i).value='';printersStatus();}catch(e){alert(e.message);}});
-  el.querySelectorAll('[data-prp]').forEach(b=>b.onclick=()=>{const d=ps[+b.dataset.prp];deck.pages.push(printerPage(d,prnStat[d.id]||{}));cur=pages().length-1;setDirty(true);render();});
+  el.querySelectorAll('[data-prp]').forEach(b=>b.onclick=()=>{const d=ps[+b.dataset.prp];deck.pages.push(...printerPage(d,prnStat[d.id]||{}));cur=pages().length-2;setDirty(true);render();});
   el.querySelectorAll('[data-prx]').forEach(b=>b.onclick=()=>{const d=ps[+b.dataset.prx];if(!confirm('Remove '+(d.name||d.id)+' and its printer tiles?'))return;
     deck.printers=ps.filter(x=>x!==d);if(!deck.printers.length)delete deck.printers;deck.pages.forEach(p=>{if(p.printer===d.id)delete p.printer;p.tiles=p.tiles.filter(t=>!(t.type==='printer'&&t.printer===d.id));});setDirty(true);render();});}
-/* The progress page: progress on top, temperatures, then filament, layer and light. */
+/* Progress and temperatures, with an AMS page stacked below. */
 function printerPage(d,s){const id=d.id,u=Date.now().toString(36).slice(-4);
-  const t=(show,x,y,w,ex)=>Object.assign({id:show+(ex&&ex.nozzle?ex.nozzle:'')+u,type:'printer',printer:id,show:show,pos:{landscape:{x:x,y:y,w:w,h:1}}},ex||{});
+  const t=(show,x,y,w,ex)=>Object.assign({id:show+(ex&&(ex.nozzle||ex.unit)||'')+u,type:'printer',printer:id,show:show,pos:{landscape:{x:x,y:y,w:w,h:1}}},ex||{});
   const tiles=[t('hero',0,0,4)];
   if(s.dual)tiles.push(t('nozzle',0,1,1,{nozzle:'left'}),t('nozzle',1,1,1),t('bed',2,1,1),t('chamber',3,1,1),t('filament',0,2,2),t('layer',2,2,1),t('light',3,2,1));
   else if(s.chamber)tiles.push(t('nozzle',0,1,1),t('bed',1,1,1),t('chamber',2,1,1),t('layer',3,1,1),t('filament',0,2,3),t('light',3,2,1));
   else tiles.push(t('nozzle',0,1,1),t('bed',1,1,1),t('layer',2,1,1),t('light',3,1,1),t('filament',0,2,4));
-  let pid='prn_'+id,n=2;while(deck.pages.some(p=>p.id===pid))pid='prn_'+id+'_'+(n++);
-  return {id:pid,name:d.name||id,printer:id,tiles:tiles};}
+  let pid='prn_'+id,n=2;while(deck.pages.some(p=>p.id===pid||p.id===pid+'_ams'))pid='prn_'+id+'_'+(n++);
+  const ams=[],count=Math.max(1,Math.min(6,Math.floor(+s.ams)||2));
+  for(let i=0;i<count;i++)ams.push(t('ams',(i%2)*2,Math.floor(i/2),2,{unit:i+1}));
+  if(count<=4)ams.push(t('slots',0,2,4));
+  return [{id:pid,name:d.name||id,group:pid,printer:id,tiles:tiles},{id:pid+'_ams',name:(d.name||id)+' AMS',group:pid,printer:id,tiles:ams}];}
 function clockRow(t,i){return '<div class="dk-tile'+(i===sel?' sel':'')+'"><div class="dk-ic" style="background:'+(t.color||'#E6E8EC')+'">12</div><div class="dk-tmain"><b>Clock</b><div class="dk-tsub">Time and date (24h and time zone from Time settings)</div></div>'+
   '<div class="dk-tact">'+sizeSel(t,i)+'<button type="button" class="btn'+(i===more?' on':'')+'" data-mo="'+i+'" title="More options">&#8943;</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div>'+(i===more?'<div class="dk-more">'+colorField(t,i)+'</div>':'')+'</div>';}
 /* A tile's "more options" panel: confirm, colour, and for buttons the tap action. */
@@ -337,8 +343,9 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   if($('dkPPrn'))$('dkPPrn').onchange=e=>{if(e.target.value)p.printer=e.target.value;else delete p.printer;setDirty(true);};
   if($('dkAddPrinter'))$('dkAddPrinter').onclick=()=>{const t={id:'pr'+Date.now().toString(36),type:'printer',printer:deck.printers[0].id,show:'hero'};setSize(t,'2x1');p.tiles.push(t);setDirty(true);renderPage();};
   el.querySelectorAll('[data-pt]').forEach(x=>x.onchange=()=>{p.tiles[+x.dataset.pt].printer=x.value;setDirty(true);renderPage();});
-  el.querySelectorAll('[data-psh]').forEach(x=>x.onchange=()=>{const t=p.tiles[+x.dataset.psh];t.show=x.value;if(x.value!=='nozzle')delete t.nozzle;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-psh]').forEach(x=>x.onchange=()=>{const t=p.tiles[+x.dataset.psh];t.show=x.value;if(x.value!=='nozzle')delete t.nozzle;if(x.value==='ams')t.unit=t.unit||1;else delete t.unit;setDirty(true);renderPage();});
   el.querySelectorAll('[data-pnz]').forEach(x=>x.onchange=()=>{const t=p.tiles[+x.dataset.pnz];if(x.value==='left')t.nozzle='left';else delete t.nozzle;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-pau]').forEach(x=>x.onchange=()=>{p.tiles[+x.dataset.pau].unit=+x.value;setDirty(true);renderPage();});
   const setGrid=(gc,gr)=>{p.layouts=p.layouts||{};p.layouts[ori]={cols:gc,rows:gr};setDirty(true);renderPage();};
   $('dkPCols').onchange=e=>setGrid(+e.target.value,r);
   $('dkPRows').onchange=e=>setGrid(c,+e.target.value);
@@ -454,7 +461,9 @@ $('dkHeader').onchange=async e=>{const b=new URLSearchParams();b.set('header',e.
 $('dkSave').onclick=async()=>{try{await api('/api/deck',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(deck)});setDirty(false);}catch(e){alert('Not saved: '+e.message);}};
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
 
-(async function init(){haStatus();icRefresh();printersStatus();setInterval(()=>{if(visible()){haStatus();printersStatus();}},3000);
+$('dkPrnTog').onclick=()=>prnFold($('dkPrnBody').hidden);
+$('dkPrnAdd').onclick=()=>{deck.printers=deck.printers||[];let n=deck.printers.length+1;while(deck.printers.some(d=>d.id==='printer'+n))n++;deck.printers.push({id:'printer'+n,name:'Printer '+n,ip:''});setDirty(true);renderPrinters();};
+(async function init(){let open=false;try{open=localStorage.getItem('dkPrnOpen')==='1';}catch(e){}prnFold(open);haStatus();icRefresh();printersStatus();setInterval(()=>{if(visible()){haStatus();printersStatus();}},3000);
   await loadPc();ori=ori||'landscape';
   try{const r=await api('/api/deck');deck=r.deck;deck.pages=deck.pages.filter(p=>p.type!=='metrics');$('dkHeader').checked=r.header!==false;render();}catch(e){$('dkPage').innerHTML='<p class="dk-empty">'+esc(e.message)+'</p>';}
   try{await loadEnts();}catch(e){}})();

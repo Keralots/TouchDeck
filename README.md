@@ -155,7 +155,8 @@ tiles**, "Printers": add the printer's IP address, then store its serial number
 and LAN access code (both stay on the device and are never shown again).
 "Create printer page" adds a page with progress and time left on top, the
 nozzle, bed and chamber temperatures, the filament in use, the layer and the
-chamber light.
+chamber light. An AMS page is stacked below it, with one tile per unit and an
+all-slots strip when a row is free.
 
 A printer can have a plug: a Home Assistant switch that powers it. The printer
 then connects only while the plug is on, and pages set to "Only while ... is
@@ -171,7 +172,15 @@ A page with `"printer": "h2c"` follows that printer. A printer tile is
 `{ "type": "printer", "printer": "h2c", "show": "hero" }`; `show` is `hero`,
 `nozzle` (with `"nozzle": "left"` on dual nozzle printers), `bed`, `chamber`,
 `filament`, `layer` or `light` (a tap switches the chamber light). The tiles
-sit on the page grid like any other tile.
+sit on the page grid like any other tile. Three more views are available:
+
+- `ams` with `"unit": 1` shows one AMS unit, its humidity, temperature and spools.
+  The unit is its 1-based position in the printer's reported list (1..6), default
+  1. Use 2x1 for a four-slot AMS or 1x1 for an AMS HT.
+- `slots` shows every unit's slots in one colour strip, best at 4x1 or 2x1.
+- `summary` shows compact status, progress and time left on a normal page,
+  best at 2x1. A tap opens the printer's first page when it is available;
+  the tile shows Off while its printer is not powered.
 
 ## PC stats and control: TouchDeck Companion
 

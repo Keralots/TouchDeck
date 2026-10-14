@@ -2523,10 +2523,151 @@ void prnColumn(lv_obj_t* t) {
   lv_obj_set_style_pad_row(t, 4, 0);
 }
 
+lv_obj_t* prnSwatch(lv_obj_t* parent, int radius) {
+  lv_obj_t* o = lv_obj_create(parent);
+  lv_obj_remove_style_all(o);
+  lv_obj_remove_flag(o, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+  lv_obj_set_style_radius(o, radius, 0);
+  lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(o, 1, 0);
+  lv_obj_set_style_border_color(o, lv_color_white(), 0);
+  lv_obj_set_style_border_opa(o, LV_OPA_30, 0);
+  return o;
+}
+
 void makePrinterContent(TileRt& r, lv_obj_t* t) {
   const TileDef& d = *r.def;
   prnColumn(t);
   switch (d.show) {
+    case PS_AMS: {
+      lv_obj_set_style_pad_row(t, 2, 0);
+      r.px[0] = prnBox(t, LV_FLEX_FLOW_ROW);
+      lv_obj_set_size(r.px[0], lv_pct(100), LV_SIZE_CONTENT);
+      lv_obj_set_flex_align(r.px[0], LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+      lv_obj_set_style_pad_column(r.px[0], 4, 0);
+      r.name = prnLabel(r.px[0], &deck_font_12, LV_OPA_COVER);
+      lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
+      lv_obj_set_flex_grow(r.name, 1);
+      r.px[1] = prnBox(r.px[0], LV_FLEX_FLOW_ROW);
+      lv_obj_set_size(r.px[1], LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+      lv_obj_set_flex_align(r.px[1], LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+      lv_obj_set_style_pad_column(r.px[1], 3, 0);
+      r.icon = prnLabel(r.px[1], &deck_font_12, LV_OPA_70);
+      const uint32_t cp = iconCodepoint("mdi:water-percent");
+      const lv_font_t* f = cp ? iconFont(14) : nullptr;
+      if (f) {
+        char u[5];
+        iconUtf8(cp, u);
+        setFont(r.icon, f);
+        lv_label_set_text(r.icon, u);
+      } else lv_label_set_text(r.icon, "RH");
+      r.sub = prnLabel(r.px[1], &deck_font_12, LV_OPA_70);
+      r.unit = prnLabel(r.px[1], &deck_font_12, LV_OPA_60);
+      lv_obj_set_style_margin_left(r.unit, 3, 0);
+      r.detail = prnBox(t, LV_FLEX_FLOW_ROW);
+      lv_obj_set_width(r.detail, lv_pct(100));
+      lv_obj_set_flex_grow(r.detail, 1);
+      lv_obj_set_style_pad_column(r.detail, 3, 0);
+      // Each column owns its ring (and colour disc), type and remaining label.
+      for (int i = 0; i < PRN_AMS_SLOTS; i++) {
+        lv_obj_t* col = prnBox(r.detail, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_size(col, 0, lv_pct(100));
+        lv_obj_set_flex_grow(col, 1);
+        lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_t* arc = lv_arc_create(col);
+        lv_obj_remove_style_all(arc);
+        lv_obj_remove_flag(arc, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+        lv_obj_set_size(arc, 36, 36);
+        lv_arc_set_range(arc, 0, 100);
+        lv_arc_set_bg_angles(arc, 0, 360);
+        lv_arc_set_rotation(arc, 270);
+        lv_obj_set_style_arc_width(arc, 4, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(arc, 4, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(arc, lv_color_white(), LV_PART_MAIN);
+        lv_obj_set_style_arc_opa(arc, LV_OPA_10, LV_PART_MAIN);
+        lv_obj_t* disc = prnSwatch(arc, LV_RADIUS_CIRCLE);
+        lv_obj_set_size(disc, 27, 27);
+        lv_obj_set_style_border_opa(disc, (lv_opa_t)(255 * 35 / 100), 0);
+        lv_obj_center(disc);
+        lv_obj_t* type = prnLabel(col, &deck_font_12, LV_OPA_COVER);
+        lv_obj_set_width(type, lv_pct(100));
+        lv_label_set_long_mode(type, LV_LABEL_LONG_MODE_DOTS);
+        lv_obj_set_style_text_align(type, LV_TEXT_ALIGN_CENTER, 0);
+        // Tighten the font's spare leading so two lines fit below the spool.
+        lv_obj_set_style_margin_top(type, -4, 0);
+        lv_obj_t* remain = prnLabel(col, &deck_font_12, LV_OPA_60);
+        lv_obj_set_style_margin_top(remain, -4, 0);
+      }
+      break;
+    }
+    case PS_SLOTS: {
+      lv_obj_t* top = prnBox(t, LV_FLEX_FLOW_ROW);
+      lv_obj_set_size(top, lv_pct(100), LV_SIZE_CONTENT);
+      lv_obj_set_flex_align(top, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+      lv_obj_set_style_pad_column(top, 5, 0);
+      r.name = prnLabel(top, &deck_font_12, LV_OPA_70);
+      lv_label_set_text(r.name, "Filament");
+      r.chip = prnSwatch(top, LV_RADIUS_CIRCLE);
+      lv_obj_set_size(r.chip, 8, 8);
+      r.sub = prnLabel(top, &deck_font_12, LV_OPA_COVER);
+      lv_obj_set_flex_grow(r.sub, 1);
+      lv_label_set_long_mode(r.sub, LV_LABEL_LONG_MODE_DOTS);
+      r.unit = prnLabel(top, &deck_font_12, LV_OPA_60);
+      r.detail = prnBox(t, LV_FLEX_FLOW_ROW);
+      lv_obj_set_width(r.detail, lv_pct(100));
+      lv_obj_set_flex_grow(r.detail, 1);
+      lv_obj_set_style_pad_column(r.detail, 8, 0);
+      // Keep every group's bars allocated, including slots not reported yet.
+      for (int u = 0; u < PRN_AMS_UNITS; u++) {
+        lv_obj_t* group = prnBox(r.detail, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_size(group, 0, lv_pct(100));
+        lv_obj_set_flex_grow(group, 40);
+        lv_obj_set_style_pad_row(group, 2, 0);
+        lv_obj_t* row = prnBox(group, LV_FLEX_FLOW_ROW);
+        lv_obj_set_width(row, lv_pct(100));
+        lv_obj_set_flex_grow(row, 1);
+        lv_obj_set_style_pad_column(row, 3, 0);
+        for (int i = 0; i < PRN_AMS_SLOTS; i++) {
+          lv_obj_t* bar = prnSwatch(row, 5);
+          lv_obj_set_size(bar, 0, lv_pct(100));
+          lv_obj_set_flex_grow(bar, 1);
+          lv_obj_set_style_border_opa(bar, (lv_opa_t)(255 * 28 / 100), 0);
+        }
+        lv_obj_t* name = prnLabel(group, &deck_font_12, LV_OPA_60);
+        lv_obj_set_width(name, lv_pct(100));
+        lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
+        lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, 0);
+      }
+      break;
+    }
+    case PS_SUMMARY: {
+      lv_obj_t* top = prnBox(t, LV_FLEX_FLOW_ROW);
+      lv_obj_set_size(top, lv_pct(100), LV_SIZE_CONTENT);
+      lv_obj_set_flex_align(top, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+      lv_obj_set_style_pad_column(top, 5, 0);
+      lv_obj_set_flex_grow(top, 1);
+      r.px[0] = prnSwatch(top, LV_RADIUS_CIRCLE);
+      lv_obj_set_size(r.px[0], 7, 7);
+      r.name = prnLabel(top, &deck_font_14, LV_OPA_COVER);
+      lv_label_set_text(r.name, printerDef(d.printer) ? printerDef(d.printer)->name.c_str() : d.printer.c_str());
+      lv_obj_set_flex_grow(r.name, 1);
+      lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
+      r.px[1] = prnLabel(top, &deck_font_12, LV_OPA_70);
+      r.px[2] = prnSwatch(top, LV_RADIUS_CIRCLE);
+      lv_obj_set_size(r.px[2], 8, 8);
+      lv_obj_t* mid = prnBox(t, LV_FLEX_FLOW_ROW);
+      lv_obj_set_size(mid, lv_pct(100), LV_SIZE_CONTENT);
+      lv_obj_set_flex_align(mid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+      lv_obj_set_style_pad_column(mid, 6, 0);
+      r.sub = prnLabel(mid, &deck_font_28, LV_OPA_COVER);
+      lv_obj_set_flex_grow(r.sub, 1);
+      lv_label_set_long_mode(r.sub, LV_LABEL_LONG_MODE_DOTS);
+      r.unit = prnLabel(mid, &deck_font_14, LV_OPA_COVER);
+      lv_obj_set_style_text_color(r.unit, lv_color_hex(C_PRN_HEAT), 0);
+      lv_obj_set_style_pad_bottom(r.unit, 3, 0);
+      r.viz = prnBar(t, 5);
+      break;
+    }
     case PS_HERO: {
       lv_obj_t* top = prnBox(t, LV_FLEX_FLOW_ROW);
       lv_obj_set_size(top, lv_pct(100), LV_SIZE_CONTENT);
@@ -2679,6 +2820,55 @@ void prnOneLine(lv_obj_t* l) {
 void fitPrinter(TileRt& r, int cw, int ch) {
   const TileDef& d = *r.def;
   switch (d.show) {
+    case PS_AMS: {
+      const bool narrow = cw < 150;
+      lv_obj_set_flex_flow(r.px[0], narrow ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
+      lv_obj_set_flex_grow(r.name, narrow ? 0 : 1);
+      lv_obj_set_width(r.name, narrow ? lv_pct(100) : 0);
+      lv_obj_set_width(r.px[1], narrow ? lv_pct(100) : LV_SIZE_CONTENT);
+      prnOneLine(r.name);
+      const PrinterState* s = printerFor(d);
+      const int slots = s && d.amsUnit <= s->amsCount ? constrain(s->ams[d.amsUnit - 1].slots, 1, PRN_AMS_SLOTS) : 4;
+      const int colw = LV_MAX(1, (cw - 3 * (slots - 1)) / slots);
+      const int header = LV_MAX(lineH(&deck_font_12), lineH(lv_obj_get_style_text_font(r.icon, LV_PART_MAIN))) + (narrow ? lineH(&deck_font_12) : 0);
+      const int room = LV_MAX(1, ch - header - 2), lines = 2 * (lineH(&deck_font_12) - 4);
+      const bool labels = room >= 28 + lines && colw >= 32;
+      const int size = LV_MAX(8, LV_MIN(36, LV_MIN(colw, room - (labels ? lines : 0))));
+      for (int i = 0; i < PRN_AMS_SLOTS; i++) {
+        lv_obj_t* col = lv_obj_get_child(r.detail, i);
+        lv_obj_t* arc = lv_obj_get_child(col, 0);
+        lv_obj_set_size(arc, size, size);
+        lv_obj_set_size(lv_obj_get_child(arc, 0), LV_MAX(2, size - 9), LV_MAX(2, size - 9));
+        showObj(lv_obj_get_child(col, 1), labels);
+        showObj(lv_obj_get_child(col, 2), labels);
+        prnOneLine(lv_obj_get_child(col, 1));
+      }
+      break;
+    }
+    case PS_SLOTS: {
+      const PrinterState* s = printerFor(d);
+      const int count = s ? LV_MIN(s->amsCount, PRN_AMS_UNITS) : 0;
+      lv_obj_set_style_pad_column(r.detail, cw < 300 && count > 3 ? 4 : 8, 0);
+      prnOneLine(r.sub);
+      for (int u = 0; u < PRN_AMS_UNITS; u++) {
+        lv_obj_t* group = lv_obj_get_child(r.detail, u);
+        lv_obj_set_flex_grow(group, u < count && s->ams[u].slots == 1 ? 13 : 40);
+        lv_obj_set_style_pad_column(lv_obj_get_child(group, 0), cw < 300 ? 2 : 3, 0);
+        showObj(lv_obj_get_child(group, 1), ch >= 48);
+        prnOneLine(lv_obj_get_child(group, 1));
+      }
+      break;
+    }
+    case PS_SUMMARY: {
+      const lv_font_t* f = ch >= 70 ? &deck_font_28 : &deck_font_20;
+      const int room = cw - (lv_obj_has_flag(r.unit, LV_OBJ_FLAG_HIDDEN) ? 0 : textW(lv_label_get_text(r.unit), &deck_font_14) + 6);
+      if (textW(lv_label_get_text(r.sub), f) > room) f = &deck_font_14;
+      setFont(r.sub, f);
+      showObj(r.px[1], cw >= 150);
+      prnOneLine(r.name);
+      prnOneLine(r.sub);
+      break;
+    }
     case PS_HERO: {
       const bool wide = cw >= 300;
       showObj(r.sub, cw >= 200);
@@ -2726,12 +2916,20 @@ String prnDuration(uint16_t min) {
   return b;
 }
 
+String prnUnitName(uint8_t id, bool shortName = false) {
+  if (id >= 128) {
+    String n = shortName ? "HT" : "AMS HT";
+    if (id > 128) n += (shortName ? "" : " ") + String(id - 127);
+    return n;
+  }
+  return (shortName ? String("") : String("AMS ")) + String((char)('A' + id));
+}
+
 // "AMS C, slot 4" for an ams[] index.
 String prnSlotName(const PrinterState& s, uint8_t unit, uint8_t slot) {
   if (unit == 254) return "External spool";
   if (unit >= s.amsCount) return "";
-  const uint8_t id = s.ams[unit].id;
-  String n = id >= 128 ? (id == 128 ? String("AMS HT") : "AMS HT " + String(id - 127)) : "AMS " + String((char)('A' + id));
+  String n = prnUnitName(s.ams[unit].id);
   if (s.ams[unit].slots > 1) n += ", slot " + String(slot + 1);
   return n;
 }
@@ -2752,8 +2950,130 @@ void applyPrinterToTile(TileRt& r) {
   if (d.type != TILE_PRINTER) return;
   const PrinterState* s = printerFor(d);
   const bool online = s && s->link == PRN_ONLINE && s->lastReportMs;
+  lv_opa_t opa = online || d.show == PS_HERO ? LV_OPA_COVER : LV_OPA_50;
   char b[48];
   switch (d.show) {
+    case PS_AMS: {
+      const int u = d.amsUnit - 1;
+      const PrinterAmsUnit* ams = online && u < s->amsCount && s->ams[u].present ? &s->ams[u] : nullptr;
+      lv_label_set_text(r.name, ams ? prnUnitName(ams->id).c_str() : "AMS");
+      showObj(r.detail, ams);
+      showObj(r.icon, ams);
+      showObj(r.unit, ams);
+      if (!ams) {
+        lv_label_set_text(r.sub, "--");
+        lv_obj_set_style_text_color(r.sub, lv_color_hex(C_TEXT), 0);
+        opa = LV_OPA_50;
+        break;
+      }
+      if (ams->humidity <= 100) snprintf(b, sizeof(b), "%u%%", ams->humidity);
+      else strcpy(b, "--");
+      lv_label_set_text(r.sub, b);
+      const uint32_t humidityColor = ams->humidity <= 100 && ams->humidity >= 40 ? C_PRN_HEAT : C_TEXT;
+      lv_obj_set_style_text_color(r.sub, lv_color_hex(humidityColor), 0);
+      lv_obj_set_style_text_color(r.icon, lv_color_hex(humidityColor), 0);
+      if (isfinite(ams->temp)) snprintf(b, sizeof(b), "%.0f\xC2\xB0", ams->temp);
+      else strcpy(b, "--");
+      lv_label_set_text(r.unit, b);
+      for (int i = 0; i < PRN_AMS_SLOTS; i++) {
+        lv_obj_t* col = lv_obj_get_child(r.detail, i);
+        showObj(col, i < ams->slots);
+        lv_obj_t* arc = lv_obj_get_child(col, 0);
+        lv_obj_t* disc = lv_obj_get_child(arc, 0);
+        lv_obj_t* remain = lv_obj_get_child(col, 2);
+        const PrinterTray& tray = ams->tray[i];
+        const bool low = tray.present && tray.remain >= 0 && tray.remain <= 10;
+        const bool active = tray.present && s->activeUnit == u && s->activeSlot == i;
+        lv_arc_set_value(arc, tray.present && tray.remain >= 0 ? tray.remain : 100);
+        lv_obj_set_style_arc_color(arc, lv_color_hex(low ? C_CRIT : C_TEXT), LV_PART_INDICATOR);
+        lv_obj_set_style_arc_opa(arc, !tray.present ? LV_OPA_10 : tray.remain < 0 ? LV_OPA_30 : LV_OPA_COVER, LV_PART_INDICATOR);
+        showObj(disc, tray.present);
+        lv_obj_set_style_bg_color(disc, lv_color_hex(tray.rgb), 0);
+        lv_obj_set_style_bg_opa(disc, tray.alpha < 128 ? LV_OPA_50 : LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(disc, active ? 2 : 1, 0);
+        lv_obj_set_style_border_opa(disc, active ? LV_OPA_COVER : (lv_opa_t)(255 * 35 / 100), 0);
+        lv_label_set_text(lv_obj_get_child(col, 1), tray.present ? tray.type : "Empty");
+        if (!tray.present) b[0] = 0;
+        else if (tray.remain < 0) strcpy(b, "?");
+        else snprintf(b, sizeof(b), "%d%%", tray.remain);
+        lv_label_set_text(remain, b);
+        lv_obj_set_style_text_color(remain, lv_color_hex(low ? C_CRIT : C_TEXT), 0);
+        lv_obj_set_style_text_opa(remain, low ? LV_OPA_COVER : LV_OPA_60, 0);
+      }
+      break;
+    }
+    case PS_SLOTS: {
+      const PrinterTray* active = online ? prnTray(*s, s->activeUnit, s->activeSlot) : nullptr;
+      showObj(r.chip, active);
+      String feeding = online ? "Not feeding" : "--";
+      if (active) {
+        lv_obj_set_style_bg_color(r.chip, lv_color_hex(active->rgb), 0);
+        lv_obj_set_style_bg_opa(r.chip, active->alpha < 128 ? LV_OPA_50 : LV_OPA_COVER, 0);
+        feeding = s->activeUnit == 254 ? String("External") : prnUnitName(s->ams[s->activeUnit].id, true);
+        if (s->activeUnit < s->amsCount && s->ams[s->activeUnit].slots > 1) feeding += String(s->activeSlot + 1);
+        feeding += " " + String(active->type);
+      }
+      lv_label_set_text(r.sub, feeding.c_str());
+      int count = 0;
+      for (int u = 0; u < PRN_AMS_UNITS; u++) {
+        lv_obj_t* group = lv_obj_get_child(r.detail, u);
+        const PrinterAmsUnit* ams = online && u < s->amsCount && s->ams[u].present ? &s->ams[u] : nullptr;
+        showObj(group, ams && ams->slots);
+        if (!ams) continue;
+        lv_label_set_text(lv_obj_get_child(group, 1), prnUnitName(ams->id, true).c_str());
+        lv_obj_t* row = lv_obj_get_child(group, 0);
+        for (int i = 0; i < PRN_AMS_SLOTS; i++) {
+          lv_obj_t* bar = lv_obj_get_child(row, i);
+          showObj(bar, i < ams->slots);
+          if (i >= ams->slots) continue;
+          count++;
+          const PrinterTray& tray = ams->tray[i];
+          const bool low = tray.present && tray.remain >= 0 && tray.remain <= 10;
+          const bool feeding = tray.present && s->activeUnit == u && s->activeSlot == i;
+          lv_obj_set_style_bg_color(bar, lv_color_hex(tray.rgb), 0);
+          lv_obj_set_style_bg_opa(bar, !tray.present ? LV_OPA_TRANSP : tray.alpha < 128 ? LV_OPA_50 : LV_OPA_COVER, 0);
+          lv_obj_set_style_border_width(bar, low || feeding ? 2 : 1, 0);
+          lv_obj_set_style_border_color(bar, low ? lv_color_hex(C_CRIT) : lv_color_white(), 0);
+          lv_obj_set_style_border_opa(bar, low || feeding ? LV_OPA_COVER : (lv_opa_t)(255 * 28 / 100), 0);
+        }
+      }
+      snprintf(b, sizeof(b), "%d slots", count);
+      lv_label_set_text(r.unit, online ? b : "--");
+      break;
+    }
+    case PS_SUMMARY: {
+      const bool powered = printerPowered(d.printer);
+      const String st = powered && online ? String(s->gcodeState) : "";
+      const bool running = st == "RUNNING" || st == "PREPARE" || st == "SLICING";
+      const bool paused = st == "PAUSE";
+      const bool starting = running && !s->layer && !s->progress;
+      const char* stage = running ? printerStageName(s->stage) : nullptr;
+      const char* state = !powered ? "Off" : !online ? "Connecting" : paused ? "Paused" :
+                          running ? (starting || st != "RUNNING" ? "Preparing" : "Printing") :
+                          st == "FINISH" ? "Done" : st == "FAILED" ? "Failed" : st == "IDLE" ? "Ready" : "Connecting";
+      const uint32_t color = !powered || !online ? 0x9AA3B2 : paused ? C_PRN_HEAT : running ? C_PRN_OK :
+                             st == "FAILED" ? C_CRIT : st == "IDLE" || st == "FINISH" ? C_PRN_BLUE : 0x9AA3B2;
+      lv_label_set_text(r.px[1], state);
+      lv_obj_set_style_bg_color(r.px[0], lv_color_hex(color), 0);
+      const PrinterTray* tray = running ? prnTray(*s, s->activeUnit, s->activeSlot) : nullptr;
+      showObj(r.px[2], tray);
+      if (tray) {
+        lv_obj_set_style_bg_color(r.px[2], lv_color_hex(tray->rgb), 0);
+        lv_obj_set_style_bg_opa(r.px[2], tray->alpha < 128 ? LV_OPA_50 : LV_OPA_COVER, 0);
+      }
+      const bool progress = running || paused;
+      if (running && (stage || starting)) lv_label_set_text(r.sub, stage ? stage : "Starting");
+      else if (progress) {
+        snprintf(b, sizeof(b), "%u%%", s->progress);
+        lv_label_set_text(r.sub, b);
+      } else lv_label_set_text(r.sub, state);
+      showObj(r.unit, progress && !stage && !starting);
+      lv_label_set_text(r.unit, progress ? prnDuration(s->remainingMin).c_str() : "");
+      showObj(r.viz, progress);
+      lv_bar_set_value(r.viz, progress ? s->progress : 0, LV_ANIM_OFF);
+      opa = powered ? LV_OPA_COVER : LV_OPA_60;
+      break;
+    }
     case PS_HERO: {
       const String st = online ? String(s->gcodeState) : "";
       const bool running = st == "RUNNING" || st == "PREPARE" || st == "SLICING";
@@ -2846,7 +3166,8 @@ void applyPrinterToTile(TileRt& r) {
       if (t) {
         lv_obj_set_style_bg_color(r.chip, lv_color_hex(t->rgb), 0);
         lv_obj_set_style_bg_opa(r.chip, t->alpha < 128 ? LV_OPA_50 : LV_OPA_COVER, 0);
-        lv_label_set_text(r.name, ("Feeding from " + prnSlotName(*s, s->activeUnit, s->activeSlot)).c_str());
+        const bool wide = lv_obj_get_content_width(r.obj) >= 300;
+        lv_label_set_text(r.name, ((wide ? String("Feeding from ") : String("")) + prnSlotName(*s, s->activeUnit, s->activeSlot)).c_str());
         lv_label_set_text(r.sub, t->type);
         showObj(r.viz, t->remain >= 0);
         lv_bar_set_value(r.viz, t->remain >= 0 ? t->remain : 0, LV_ANIM_OFF);
@@ -2854,7 +3175,7 @@ void applyPrinterToTile(TileRt& r) {
       } else {
         lv_obj_set_style_bg_color(r.chip, lv_color_white(), 0);
         lv_obj_set_style_bg_opa(r.chip, LV_OPA_10, 0);
-        snprintf(b, sizeof(b), "%u AMS units", online ? s->amsCount : 0);
+        snprintf(b, sizeof(b), "%u AMS unit%s", online ? s->amsCount : 0, online && s->amsCount == 1 ? "" : "s");
         lv_label_set_text(r.name, online ? b : "");
         lv_label_set_text(r.sub, online ? "Not feeding" : "--");
         showObj(r.viz, false);
@@ -2896,12 +3217,22 @@ void applyPrinterToTile(TileRt& r) {
       break;
     }
   }
-  lv_obj_set_style_opa(r.obj, online || d.show == PS_HERO ? LV_OPA_COVER : LV_OPA_50, 0);
+  if (d.show == PS_AMS || d.show == PS_SLOTS || d.show == PS_SUMMARY)
+    fitPrinter(r, lv_obj_get_content_width(r.obj), lv_obj_get_content_height(r.obj));
+  lv_obj_set_style_opa(r.obj, opa, 0);
   markPageStale(r.page);
 }
 
 void printerTap(TileRt& r) {
   const TileDef& d = *r.def;
+  if (d.show == PS_SUMMARY) {
+    for (int i = 0; i < s_count; i++) {
+      if (!s_pages[i].def || s_pages[i].def->printer != d.printer) continue;
+      goToPage(s_pages[i].def->id);
+      return;
+    }
+    return;
+  }
   if (d.show != PS_LIGHT) return;
   const PrinterState* s = printerFor(d);
   if (!s || s->link != PRN_ONLINE || !printerLight(d.printer, s->light != 1)) {
@@ -3227,7 +3558,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     const size_t idx = s_tiles.size();
     s_tiles.push_back(r);
     applyPrinterToTile(s_tiles.back());
-    if (def.show == PS_LIGHT) lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
+    if (def.show == PS_LIGHT || def.show == PS_SUMMARY) lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
     else lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
     return;

@@ -41,7 +41,8 @@
 //   code live in NVS, never in deck.json). A page with "printer": "h2c" exists
 //   only while that printer is powered. A printer tile:
 // { "type": "printer", "printer": "h2c", "show": "hero" | "nozzle" | "bed" |
-//   "chamber" | "filament" | "layer" | "light", "nozzle": "left" | "right" }.
+//   "chamber" | "filament" | "layer" | "light" | "ams" | "slots" | "summary",
+//   "nozzle": "left" | "right", "unit": 1 } (unit is the 1-based AMS position).
 //
 // "type": "clock": the time, and the date when the tile has room
 // (24h and time zone from the device settings). Read-only.
@@ -87,7 +88,7 @@ constexpr int MAX_DECK_PAGES = 8;
 constexpr int MAX_PAGE_TILES = 24;
 
 enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER, TILE_CLOCK, TILE_PRINTER };
-enum PrinterShow : uint8_t { PS_HERO = 0, PS_NOZZLE, PS_BED, PS_CHAMBER, PS_FILAMENT, PS_LAYER, PS_LIGHT };
+enum PrinterShow : uint8_t { PS_HERO = 0, PS_NOZZLE, PS_BED, PS_CHAMBER, PS_FILAMENT, PS_LAYER, PS_LIGHT, PS_AMS, PS_SLOTS, PS_SUMMARY };
 constexpr int MAX_PRINTERS = 2;
 enum MetricStyle : uint8_t { METRIC_NUMBER = 0, METRIC_CHART, METRIC_BAR };
 enum ActionKind : uint8_t {
@@ -149,6 +150,7 @@ struct TileDef {
   String printer;         // TILE_PRINTER: printer id
   PrinterShow show = PS_HERO;
   uint8_t nozzle = 0;     // PS_NOZZLE: 0 = right / only, 1 = left
+  uint8_t amsUnit = 1;    // PS_AMS: 1-based position in the reported units
 };
 
 struct PrinterDef {

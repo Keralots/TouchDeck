@@ -1,5 +1,6 @@
 // Guition deck configuration loader. See deck_config.h for the schema.
 #include "deck_config.h"
+#include "deck_bambu.h"
 #include "config.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
@@ -347,18 +348,19 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
           if (err) *err = where + ": unknown printer '" + t.printer + "'";
           return false;
         }
-        static const char* const kShow[] = {"hero", "nozzle", "bed", "chamber", "filament", "layer", "light"};
+        static const char* const kShow[] = {"hero", "nozzle", "bed", "chamber", "filament", "layer", "light", "ams", "slots", "summary"};
         const char* sh = tv["show"] | "hero";
         int k = 0;
-        while (k < 7 && strcmp(sh, kShow[k])) k++;
-        if (k == 7) {
+        while (k < 10 && strcmp(sh, kShow[k])) k++;
+        if (k == 10) {
           if (err) *err = where + ": unknown show '" + sh + "'";
           return false;
         }
         t.show = (PrinterShow)k;
         t.nozzle = !strcmp(tv["nozzle"] | "right", "left") ? 1 : 0;
+        t.amsUnit = constrain(tv["unit"] | 1, 1, PRN_AMS_UNITS);
         p.tiles.push_back(t);
-        continue;  // built-in behaviour: the light tile toggles, the rest are read-only
+        continue;  // built-in taps: light toggles, summary opens the printer page
       }
       if (!parseAction(tv["tap"], t.tap, err, where + " tap")) return false;
       if (!parseAction(tv["hold"], t.hold, err, where + " hold")) return false;
