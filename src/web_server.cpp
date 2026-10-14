@@ -179,6 +179,7 @@ static void handleApiConfig() {
   led["nightBrightness"] = ledSettings.nightBrightness;
   led["followDisplay"] = ledSettings.followDisplay != 0;
   led["offlineOff"] = ledSettings.offlineOff != 0;
+  doc["advanced"]["printers"] = advSettings.printers;
   JsonArray ledPins = led["allowedPins"].to<JsonArray>();
   for (uint8_t pin = 0; pin <= 48; pin++) {
     if (ledPinAllowed(pin)) ledPins.add(pin);
@@ -277,6 +278,7 @@ static void handleConfigExport() {
   led["nightBrightness"] = ledSettings.nightBrightness;
   led["followDisplay"] = ledSettings.followDisplay != 0;
   led["offlineOff"] = ledSettings.offlineOff != 0;
+  doc["advanced"]["printers"] = advSettings.printers;
 
   JsonObject clock = doc["clock"].to<JsonObject>();
   clock["use24h"] = netSettings.use24h;
@@ -506,6 +508,9 @@ static void handleConfigImport() {
   }
 
   READ_BOOL(deckIn, "header", nextHeader);
+  bool nextPrinters = false;  // backups from before the Advanced page: the default
+  JsonObjectConst advanced = root["advanced"].as<JsonObjectConst>();
+  if (!advanced.isNull() && !advanced["printers"].isNull()) READ_BOOL(advanced, "printers", nextPrinters);
 #undef READ_INT
 #undef READ_BOOL
 
@@ -528,6 +533,7 @@ static void handleConfigImport() {
   backlightSettings = nextBacklight;
   ledSettings = nextLed;
   brightness = nextBrightness;
+  advSettings.printers = nextPrinters;
   saveSettings();
   deckSetHeader(nextHeader);
 
@@ -559,6 +565,12 @@ static void handleSaveHardware() {
   saveSettings();
   initLed();
   sendJsonMessage(200, true, "Hardware settings applied.");
+}
+
+static void handleSaveAdvanced() {
+  deckSetPrinters(server.hasArg("printers"));
+  saveSettings();
+  sendJsonMessage(200, true, "Advanced settings applied.");
 }
 
 static void handleLedPreview() {
@@ -1411,6 +1423,7 @@ void initWebServer() {
   server.on("/save/wifi", HTTP_POST, handleSaveWifiLegacy);
   server.on("/save/display", HTTP_POST, handleSaveDisplay);
   server.on("/save/hardware", HTTP_POST, handleSaveHardware);
+  server.on("/save/advanced", HTTP_POST, handleSaveAdvanced);
   server.on("/led/preview", HTTP_POST, handleLedPreview);
   server.on("/save/clock", HTTP_POST, handleSaveClock);
   server.on("/save/network", HTTP_POST, handleSaveNetwork);

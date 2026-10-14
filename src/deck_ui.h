@@ -42,6 +42,9 @@ void deckReleaseIcons();
 String deckPrintersJson();
 // Re-read the printers' secrets after the portal stored new ones.
 void deckPrintersReapply();
+// Advanced page switch: printers off drops their connections and hides their
+// pages and tiles (deck.json and secrets stay); rebuilds the pages.
+void deckSetPrinters(bool on);
 // Top bar (page name, WiFi, clock) on the tiles pages; persisted.
 void deckSetHeader(bool on);
 bool deckHeaderVisible();

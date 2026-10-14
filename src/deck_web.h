@@ -67,7 +67,7 @@ sec.innerHTML=`<div class="page-header"><h1 class="page-h1">Deck</h1><p class="p
 <p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; "Install" downloads it in this browser and sends it to the device. Without it the deck shows a few built-in symbols.</p>
 <div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
 <div class="dk-status"><span class="dk-dot" id="dkIcDot"></span><span id="dkIcState">checking...</span></div></div>
-<div class="card"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag" id="dkPrnTag">Bambu Lab, LAN</span><button type="button" class="btn" id="dkPrnTog" style="margin-left:auto;padding:5px 10px" aria-expanded="false">Show</button></div>
+<div class="card" id="dkPrnCard"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag" id="dkPrnTag">Bambu Lab, LAN</span><button type="button" class="btn" id="dkPrnTog" style="margin-left:auto;padding:5px 10px" aria-expanded="false">Show</button></div>
 <div id="dkPrnBody" hidden><p class="field-hint">The printer must be in LAN mode or have LAN access on. Serial and access code are stored only on the device. With a plug (an HA switch), the printer connects and its pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
 <div id="dkPrn"></div><div class="dk-row"><button type="button" class="btn" id="dkPrnAdd">+ Add printer</button></div></div></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
@@ -136,11 +136,11 @@ function printerRow(t,i){const ps=deck.printers||[];
   '<div class="dk-tact">'+sizeSel(t,i)+'<button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div></div>';}
 function prnLine(d,s){if(!s.secret)return 'Serial and access code not saved';if(!s.powered)return d.plug?'Off (plug off)':'Off';
   return (s.link||'')+(s.err?' - '+s.err:'')+(s.state?' - '+s.state.toLowerCase():'')+(s.state==='RUNNING'?' '+s.progress+'%':'');}
-async function printersStatus(){try{const r=await api('/api/printers');prnStat={};(r.printers||[]).forEach(s=>prnStat[s.id]=s);renderPrinters();}catch(e){}}
+async function printersStatus(){if(!prnOn())return;try{const r=await api('/api/printers');prnStat={};(r.printers||[]).forEach(s=>prnStat[s.id]=s);renderPrinters();}catch(e){}}
 /* The card folds to one line: printer count and how many are online. */
 function prnFold(open){$('dkPrnBody').hidden=!open;$('dkPrnTog').textContent=open?'Hide':'Show';$('dkPrnTog').setAttribute('aria-expanded',open);try{localStorage.setItem('dkPrnOpen',open?'1':'');}catch(e){}}
 function prnTag(){const ps=deck.printers||[];const on=ps.filter(d=>(prnStat[d.id]||{}).link==='online').length;$('dkPrnTag').textContent=ps.length?ps.length+' printer'+(ps.length>1?'s':'')+', '+on+' online':'Bambu Lab, LAN';}
-function renderPrinters(){const el=$('dkPrn');if(!el)return;const ps=deck.printers||[];prnTag();
+function renderPrinters(){const el=$('dkPrn');if(!el)return;$('dkPrnCard').classList.toggle('hidden',!prnOn());const ps=deck.printers||[];prnTag();
   if(ps.some((d,i)=>document.activeElement&&document.activeElement.closest&&document.activeElement.closest('[data-prb="'+i+'"]')))return;
   el.innerHTML=ps.map((d,i)=>{const s=prnStat[d.id]||{};
     return '<div class="dk-more" data-prb="'+i+'" style="margin-bottom:10px">'+[['id','Id (letters, digits, _)','h2c'],['name','Name','H2C'],['ip','IP address','192.168.0.54'],['plug','Plug (HA switch, optional)','switch.printer_plug']].map(([k,l,ph])=>'<div class="field"><label class="field-label">'+l+'</label><input type="text" data-pr="'+i+'" data-prk="'+k+'" value="'+esc(d[k]||'')+'" placeholder="'+ph+'" spellcheck="false"></div>').join('')+
@@ -248,7 +248,11 @@ async function api(p,o){const r=await fetch(p,o);const t=await r.text();let j=nu
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const domainOf=e=>{const i=(e||'').indexOf('.');return i>0?e.slice(0,i):'';};
 function setDirty(v){dirty=v;$('dkMsg').textContent=v?'Unsaved changes':'Saved';}
-const pages=()=>deck.pages.filter(p=>p.type!=='metrics');
+/* Printers off (Advanced page, window.snPrn from portal.js): printer pages and
+   tiles stay in deck.json but are left out here, as the firmware does. */
+const prnOn=()=>!!window.snPrn,offT=t=>t.type==='printer'&&!prnOn();
+const pages=()=>deck.pages.filter(p=>p.type!=='metrics'&&(prnOn()||!p.printer));
+window.dkPrnSync=()=>{if(deck)render();};
 const visible=()=>document.querySelector('.page.active')?.dataset.page==='deck';
 
 /* Home Assistant */
@@ -278,12 +282,12 @@ const sizeSel=(t,i)=>{const s=tileSize(t),o=['1x1','1.5x1','2x1','3x1','1x1.5','
 function layout(p){const [gc,gr]=grid(p),c=gc*2,r=gr*2;const used=[...Array(r)].map(()=>Array(c).fill(false));const at=p.tiles.map(()=>null);
   const fits=(x,y,w,h)=>{if(x+w>c||y+h>r)return false;for(let j=y;j<y+h;j++)for(let i=x;i<x+w;i++)if(used[j][i])return false;return true;};
   const put=(k,x,y,w,h)=>{for(let j=y;j<y+h;j++)for(let i=x;i<x+w;i++)used[j][i]=true;at[k]={x:x,y:y,w:w,h:h};};
-  p.tiles.forEach((t,k)=>{const q=tpos(t),[w,h]=tdim(t);if(typeof q.x==='number'&&typeof q.y==='number'){const x=hv(q.x,0,0,30),y=hv(q.y,0,0,30);if(fits(x,y,w,h))put(k,x,y,w,h);}});
-  p.tiles.forEach((t,k)=>{if(at[k])return;const [w,h]=tdim(t);for(let y=0;y<r&&!at[k];y++)for(let x=0;x<c&&!at[k];x++)if(fits(x,y,w,h))put(k,x,y,w,h);});
+  p.tiles.forEach((t,k)=>{if(offT(t))return;const q=tpos(t),[w,h]=tdim(t);if(typeof q.x==='number'&&typeof q.y==='number'){const x=hv(q.x,0,0,30),y=hv(q.y,0,0,30);if(fits(x,y,w,h))put(k,x,y,w,h);}});
+  p.tiles.forEach((t,k)=>{if(at[k]||offT(t))return;const [w,h]=tdim(t);for(let y=0;y<r&&!at[k];y++)for(let x=0;x<c&&!at[k];x++)if(fits(x,y,w,h))put(k,x,y,w,h);});
   return at;}
 /* Pin every placed tile where it shows, so a drag changes only what moved.
    A hidden tile loses its old cell, or it could claim space before a pinned one. */
-function pinAll(p,at){p.tiles.forEach((t,k)=>{const a=at[k];if(a){setPos(t,cell(a.x,a.y,a.w,a.h));return;}const q=Object.assign({},tpos(t));delete q.x;delete q.y;setPos(t,q);});}
+function pinAll(p,at){p.tiles.forEach((t,k)=>{if(offT(t))return;const a=at[k];if(a){setPos(t,cell(a.x,a.y,a.w,a.h));return;}const q=Object.assign({},tpos(t));delete q.x;delete q.y;setPos(t,q);});}
 const free=(at,k,q,c,r)=>q.x>=0&&q.y>=0&&q.x+q.w<=c&&q.y+q.h<=r&&at.every((o,j)=>j===k||!o||o.x>=q.x+q.w||o.x+o.w<=q.x||o.y>=q.y+q.h||o.y+o.h<=q.y);
 function gtile(t,k,a){const m=t.type==='metric',mm=m&&mlist(t).find(x=>x.id===t.metric),en=entMap[t.entity],d=domainOf(t.entity);
   const ck=t.type==='clock',pr=t.type==='printer',col=t.color||(m?PAL[((t.metric||1)-1)%8]:ck?'#E6E8EC':pr?'#F5B83D':(COL[d]||'#7DB5FF')),cp=m||ck||pr?0:tileCp(t);
@@ -323,10 +327,10 @@ function movePage(dir){const ps=pages(),p=ps[cur];if(!p||!canMovePage(ps,cur,dir
     ordered=runs.flat();}
   const slots=ps.map(x=>deck.pages.indexOf(x));ordered.forEach((x,i)=>deck.pages[slots[i]]=x);cur=ordered.indexOf(p);setDirty(true);renderTabs();renderPage();}
 function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.innerHTML='<p class="dk-empty">No deck pages. Add one with "+ Page".</p>';return;}
-  const p=ps[cur];const [c,r]=grid(p),land=ori==='landscape',at=layout(p),lost=p.tiles.map((t,k)=>k).filter(k=>!at[k]);let cells=0;at.forEach(a=>{if(a)cells+=a.w*a.h/4;});
+  const p=ps[cur];const [c,r]=grid(p),land=ori==='landscape',at=layout(p),lost=p.tiles.map((t,k)=>k).filter(k=>!at[k]&&!offT(p.tiles[k]));let cells=0;at.forEach(a=>{if(a)cells+=a.w*a.h/4;});
   let h='<div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Layout</span>'+[['landscape','Landscape'],['portrait','Portrait']].map(o=>'<button type="button" class="chip page-tab'+(o[0]===ori?' on':'')+'" data-o="'+o[0]+'">'+o[1]+'</button>').join('')+'</div>';
   h+='<div class="grid-2"><div class="field"><label class="field-label">Page name</label><input type="text" id="dkPName" value="'+esc(p.name||'')+'"></div><div class="field"><label class="field-label">Grid (columns x rows)</label><div class="dk-row"><select id="dkPCols" style="width:auto">'+(land?[2,3,4,5,6]:[2,3,4]).map(n=>'<option'+(n===c?' selected':'')+'>'+n+'</option>').join('')+'</select><span>x</span><select id="dkPRows" style="width:auto">'+(land?[2,3,4]:[2,3,4,5,6]).map(n=>'<option'+(n===r?' selected':'')+'>'+n+'</option>').join('')+'</select><button type="button" class="btn" id="dkPLeft" style="margin-left:auto;padding:6px 9px">Move left</button><button type="button" class="btn" id="dkPRight" style="padding:6px 9px">Move right</button><button type="button" class="btn btn-danger" id="dkPDel">Delete page</button></div></div></div>';
-  if((deck.printers||[]).length&&(p.printer||p.tiles.some(t=>t.type==='printer')))h+='<div class="field"><label class="field-label">Printer page</label><select id="dkPPrn" style="width:auto">'+opt('','Always shown',!p.printer)+(deck.printers||[]).map(d=>opt(d.id,'Only while '+(d.name||d.id)+' is on',p.printer===d.id)).join('')+'</select></div>';
+  if(prnOn()&&(deck.printers||[]).length&&(p.printer||p.tiles.some(t=>t.type==='printer')))h+='<div class="field"><label class="field-label">Printer page</label><select id="dkPPrn" style="width:auto">'+opt('','Always shown',!p.printer)+(deck.printers||[]).map(d=>opt(d.id,'Only while '+(d.name||d.id)+' is on',p.printer===d.id)).join('')+'</select></div>';
   h+='<label class="check-row standalone"><input type="checkbox" id="dkPStack"'+(stackedAt(ps,cur)?' checked':'')+(cur===0?' disabled':'')+'><span class="check-box"></span><span class="check-text"><strong>Below the previous page</strong><span class="ct-hint">Stacked pages form one column: swipe up and down between them, left and right to the next column. Move left/right moves a column head with its column, or swaps a stacked page within its column.</span></span></label>';
   let g='';for(let y=0;y<r;y++)for(let x=0;x<c;x++)g+='<div class="dk-cell" style="grid-area:'+(2*y+1)+'/'+(2*x+1)+'/span 2/span 2"></div>';
   const hd=$('dkHeader').checked?30:0;
@@ -334,11 +338,11 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   if(lost.length)h+='<p class="dk-cap over">No room on the page for these: drag one to a free place, make it smaller or remove it.</p><div class="dk-tray">'+lost.map(k=>gtile(p.tiles[k],k,null)).join('')+'</div>';
   h+='<p class="field-hint">Drag a tile to move it, or onto a tile of the same size to swap them; the corner handle resizes. Both go in half-cell steps. Tap a tile to find it in the list.</p>';
   if(sel>=0&&p.tiles[sel]&&ps.length>1)h+='<div class="dk-row"><span class="dk-tsub" style="margin:0">Move the selected tile to</span><select id="dkMvPg" style="width:auto">'+ps.map((q,i)=>i===cur?'':opt(String(i),q.name||q.id,false)).join('')+'</select><button type="button" class="btn" id="dkMv">Move</button></div>';
-  h+='<div class="dk-tiles">'+p.tiles.map((t,i)=>{if(t.type==='metric')return metricRow(t,i);if(t.type==='clock')return clockRow(t,i);if(t.type==='printer')return printerRow(t,i);const d=domainOf(t.entity);const en=entMap[t.entity];const nm=en&&en.name?en.name:(t.entity||(isHttpSensor(t)?'HTTP sensor':'No entity'));
+  h+='<div class="dk-tiles">'+p.tiles.map((t,i)=>{if(t.type==='metric')return metricRow(t,i);if(t.type==='clock')return clockRow(t,i);if(t.type==='printer')return offT(t)?'':printerRow(t,i);const d=domainOf(t.entity);const en=entMap[t.entity];const nm=en&&en.name?en.name:(t.entity||(isHttpSensor(t)?'HTTP sensor':'No entity'));
     const cp=tileCp(t);
     return '<div class="dk-tile'+(i===sel?' sel':'')+'"><button type="button" class="dk-ic'+(cp?' mdi':'')+'" data-ic="'+i+'" title="'+esc(cp?(t.icon||(en&&en.icon)||'automatic'):'Choose an icon')+'" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+(cp?String.fromCodePoint(cp):esc((d||'?').slice(0,2).toUpperCase()))+'</button><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="dk-tsub">'+esc(t.entity||(isHttpSensor(t)?'HTTP sensor':isHttp(t)?'HTTP '+(t.tap.method||'GET')+' '+(t.tap.url||''):isPcCmd(t)?'PC command: '+((PCCMD.find(c=>c[0]===t.tap.cmd)||[0,t.tap.cmd])[1]):'no entity'))+(en&&en.state?' - '+esc(en.state)+(en.unit?' '+esc(en.unit):''):'')+'</div></div>'+
     '<div class="dk-tact">'+(isHttpSensor(t)?'<span>HTTP sensor</span>':'<select data-t="'+i+'"><option value="toggle"'+(t.type==='toggle'?' selected':'')+'>Switch</option><option value="action"'+(t.type==='action'?' selected':'')+'>Button</option><option value="sensor"'+(t.type==='sensor'?' selected':'')+'>Sensor</option>'+(SLIDER.includes(d)||t.type==='slider'?'<option value="slider"'+(t.type==='slider'?' selected':'')+'>Slider</option>':'')+'</select>')+sizeSel(t,i)+(isHttpSensor(t)?'':'<button type="button" class="btn" data-e="'+i+'">Entity</button>')+'<button type="button" class="btn'+(i===more?' on':'')+'" data-mo="'+i+'" title="More options">&#8943;</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div>'+(isHttpSensor(t)?httpSensorFields(t,i):'')+(i===more?moreRow(t,i):'')+'</div>';}).join('')+'</div>';
-  h+='<p class="dk-cap">'+(+cells.toFixed(2))+' of '+(c*r)+' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddPcCmd">+ Add PC control</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button>'+((deck.printers||[]).length?'<button type="button" class="btn" id="dkAddPrinter">+ Add printer tile</button>':'')+'</div>'+pcList()+'<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a smaller one shows the number), so picking one makes a 1x1 tile 2x1.</p>';
+  h+='<p class="dk-cap">'+(+cells.toFixed(2))+' of '+(c*r)+' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddPcCmd">+ Add PC control</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button>'+(prnOn()&&(deck.printers||[]).length?'<button type="button" class="btn" id="dkAddPrinter">+ Add printer tile</button>':'')+'</div>'+pcList()+'<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a smaller one shows the number), so picking one makes a 1x1 tile 2x1.</p>';
   el.innerHTML=h;
   $('dkPName').oninput=e=>{p.name=e.target.value;setDirty(true);renderTabs();};
   /* Another page: same size, first free place there (its cells are dropped). */

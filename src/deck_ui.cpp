@@ -1103,7 +1103,7 @@ void collectEntities() {
   for (const TileRt& r : s_tiles)
     if (r.def->entity.length()) ids.push_back(r.def->entity);
   for (const PrinterDef& d : s_cfg.printers)
-    if (d.plug.length()) ids.push_back(d.plug);
+    if (advSettings.printers && d.plug.length()) ids.push_back(d.plug);
   if (s_cfg.ledEntity.length()) ids.push_back(s_cfg.ledEntity);
   else ledSetHaLevel(LED_HA_NONE);
   s_ledSeen = 0;
@@ -3849,6 +3849,7 @@ void layoutHeader(Page& p) {
 struct Cell {
   bool placed;
   int x, y, w, h;
+  bool off = false;  // switched off (printer tiles with printers disabled): no cell, stored pos untouched
 };
 
 void placeTiles(const PageDef& def, int orient, std::vector<Cell>& out) {
@@ -3873,12 +3874,15 @@ void placeTiles(const PageDef& def, int orient, std::vector<Cell>& out) {
     const TilePos& ps = def.tiles[i].pos[orient];
     out[i].w = ps.w;
     out[i].h = ps.h;
-    if (ps.set && fits(ps.x, ps.y, ps.w, ps.h)) take(out[i], ps.x, ps.y);
+    out[i].off = def.tiles[i].type == TILE_PRINTER && !advSettings.printers;
+    if (!out[i].off && ps.set && fits(ps.x, ps.y, ps.w, ps.h)) take(out[i], ps.x, ps.y);
   }
-  for (Cell& c : out)
+  for (Cell& c : out) {
+    if (c.off) continue;
     for (int y = 0; y < rows && !c.placed; y++)
       for (int x = 0; x < cols && !c.placed; x++)
         if (fits(x, y, c.w, c.h)) take(c, x, y);
+  }
 }
 
 void onGridHold(lv_event_t* e) {
@@ -3940,7 +3944,7 @@ void addTilesPage(const PageDef& def) {
   for (size_t i = 0; i < cells.size(); i++) {
     const Cell& c = cells[i];
     if (c.placed) makeTile(grid, def.tiles[i], page, c.x, c.y, c.w, c.h);
-    else Serial.printf("Deck: page '%s' has no room for tile '%s'\n",
+    else if (!c.off) Serial.printf("Deck: page '%s' has no room for tile '%s'\n",
                        def.id.c_str(), def.tiles[i].id.c_str());
   }
 
@@ -4647,7 +4651,7 @@ void edOpen(int page) {
   int hidden = 0;
   for (const Cell& c : cells) {
     s_ed.tiles.push_back({c, false, nullptr});
-    if (!c.placed) hidden++;
+    if (!c.placed && !c.off) hidden++;
   }
   for (size_t i = 0; i < cells.size(); i++)
     if (cells[i].placed) edMakeBox((int)i, def.tiles[i]);
@@ -4721,7 +4725,7 @@ bool edBuild(String& out, String& err) {
   const char* key = s_ed.orient == ORIENT_LANDSCAPE ? "landscape" : "portrait";
   for (size_t i = 0; i < own; i++) {
     const EdTile& t = s_ed.tiles[i];
-    if (t.removed) continue;
+    if (t.removed || t.c.off) continue;
     JsonObject tv = tiles[i];
     if (!t.c.placed) {
       // A hidden tile loses its old cell, or it could claim space before a pinned one.
@@ -5452,6 +5456,18 @@ String deckPrintersJson() {
 }
 
 void deckPrintersReapply() { printersApply(s_cfg); }
+
+void deckSetPrinters(bool on) {
+  if (on == advSettings.printers) return;
+  advSettings.printers = on;
+  printersApply(s_cfg);  // before the rebuild: a printer page shows only while powered
+  if (!s_disp) return;
+  stopGestures();
+  destroyPages(true);
+  buildPages();
+  s_gen++;
+  lv_obj_invalidate(lv_screen_active());
+}
 
 bool deckTestCard(const String& tileId) {
   if (s_ed.root) return false;  // the editor blocks gestures until it closes

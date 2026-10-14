@@ -150,8 +150,10 @@ small for it.
 ## Bambu Lab printers
 
 Up to two Bambu Lab printers report to the deck over the LAN (MQTT over TLS,
-port 8883), so the printer needs LAN mode or LAN access turned on. In **Pages &
-tiles**, "Printers": add the printer's IP address, then store its serial number
+port 8883), so the printer needs LAN mode or LAN access turned on. Printers are
+off by default: turn them on under **Advanced**. Turned off again, the deck drops
+the printer connections and hides printer pages and tiles, but keeps their setup.
+In **Pages & tiles**, "Printers": add the printer's IP address, then store its serial number
 and LAN access code (both stay on the device and are never shown again).
 "Create printer page" adds a page with progress and time left on top, the
 nozzle, bed and chamber temperatures, the filament in use, the layer and the

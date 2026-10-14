@@ -3,6 +3,7 @@
 #include <Preferences.h>
 #include "deck_bambu.h"
 #include "deck_ha.h"
+#include "settings.h"
 
 namespace deck {
 namespace {
@@ -30,12 +31,14 @@ void readSecret(const String& id, String& serial, String& code) {
 
 void printersApply(const DeckConfig& cfg) {
   std::vector<PrinterConn> list;
-  for (const PrinterDef& d : cfg.printers) {
-    PrinterConn c;
-    c.id = d.id;
-    c.ip = d.ip;
-    readSecret(d.id, c.serial, c.code);
-    if (c.serial.length() && c.code.length()) list.push_back(c);
+  if (advSettings.printers) {  // else switched off on the Advanced page
+    for (const PrinterDef& d : cfg.printers) {
+      PrinterConn c;
+      c.id = d.id;
+      c.ip = d.ip;
+      readSecret(d.id, c.serial, c.code);
+      if (c.serial.length() && c.code.length()) list.push_back(c);
+    }
   }
   printersSet(list);
   std::vector<Power> next;

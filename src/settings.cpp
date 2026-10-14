@@ -10,6 +10,7 @@ DisplaySettings dispSettings;
 NetworkSettings netSettings;
 BacklightSettings backlightSettings;
 LedSettings ledSettings;
+AdvancedSettings advSettings = {};
 
 static Preferences prefs;
 static const uint8_t BACKLIGHT_SETTINGS_VERSION = 1;
@@ -135,6 +136,7 @@ void loadSettings() {
   dispSettings.glassBlur = min<uint8_t>(prefs.getUChar("gblur", dispSettings.glassBlur), 24);
   dispSettings.glassDim = min<uint8_t>(prefs.getUChar("gdim", dispSettings.glassDim), 60);
   dispSettings.glassOn = constrain(prefs.getUChar("gon", dispSettings.glassOn), 20, 100);
+  advSettings.printers = prefs.getBool("prn", false);
   if (prefs.getBytesLength("net") == sizeof(NetworkSettings))
     prefs.getBytes("net", &netSettings, sizeof(NetworkSettings));
   if (prefs.getBytesLength("backlight") == sizeof(BacklightSettings)) {
@@ -175,6 +177,7 @@ void saveSettings() {
   prefs.putUChar("gblur", dispSettings.glassBlur);
   prefs.putUChar("gdim", dispSettings.glassDim);
   prefs.putUChar("gon", dispSettings.glassOn);
+  prefs.putBool("prn", advSettings.printers);
   prefs.putBytes("net", &netSettings, sizeof(NetworkSettings));
   prefs.putBytes("backlight", &backlightSettings, sizeof(BacklightSettings));
   prefs.putBytes("led", &ledSettings, sizeof(LedSettings));
