@@ -405,6 +405,18 @@ bool deckActionParse(const char* json, size_t len, TileAction& out, String* err)
 
 bool deckFsReady() { return mountFs(); }
 
+bool deckFsWipe(const char* keep) {
+  if (!mountFs()) return false;
+  std::vector<String> paths;
+  File root = LittleFS.open("/");
+  for (File f = root.openNextFile(); f; f = root.openNextFile()) paths.push_back(f.path());
+  root.close();
+  bool ok = true;
+  for (const String& p : paths)
+    if (p != keep) ok &= LittleFS.remove(p);
+  return ok;
+}
+
 void deckConfigText(String& out) {
   if (mountFs() && LittleFS.exists(CONFIG_PATH)) {
     File f = LittleFS.open(CONFIG_PATH, "r");

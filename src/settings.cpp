@@ -188,13 +188,18 @@ void saveSettings() {
 }
 
 bool factoryResetSettings() {
-  prefs.begin(NVS_NAMESPACE, false);
-  const bool cleared = prefs.clear();
-  prefs.end();
-  if (!prefs.begin("deckpc", false)) return false;
-  const bool pcsCleared = prefs.clear();
-  prefs.end();
-  return cleared && pcsCleared;
+  // Every NVS namespace the firmware writes: settings, PCs, HA link, deck UI, printer secrets.
+  static const char* const kSpaces[] = {NVS_NAMESPACE, "deckpc", "deckha", "deckui", "printers"};
+  bool ok = true;
+  for (const char* ns : kSpaces) {
+    if (!prefs.begin(ns, false)) {
+      ok = false;
+      continue;
+    }
+    ok &= prefs.clear();
+    prefs.end();
+  }
+  return ok;
 }
 
 // ---------------------------------------------------------------------------

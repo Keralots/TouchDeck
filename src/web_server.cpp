@@ -641,7 +641,8 @@ static void handleFactoryReset() {
     sendJsonMessage(400, false, "Type RESET to confirm the factory reset.");
     return;
   }
-  if (!factoryResetSettings()) {
+  // The icon font stays: a public download, not a setting.
+  if (!factoryResetSettings() || !deck::deckFsWipe(deck::iconsPath())) {
     sendJsonMessage(500, false, "Could not erase the stored configuration.");
     return;
   }
@@ -1430,8 +1431,7 @@ void initWebServer() {
   server.on("/api/config", HTTP_GET, handleApiConfig);
   server.on("/api/config/export", HTTP_GET, handleConfigExport);
   server.on("/api/config/import", HTTP_POST, handleConfigImport);
-  server.on("/api/factory-reset", HTTP_POST, handleFactoryReset);
-  server.on("/api/status", HTTP_GET, handleApiStatus);
+  server.on("/api/factory-reset", HTTP_POST, handleFactoryReset);  server.on("/api/status", HTTP_GET, handleApiStatus);
   // /screen.bmp is what the StatNode Companion's preview fetches.
   server.on("/screen.bmp", HTTP_GET, handleLiveScreenshot);
   server.on("/screen_live.bmp", HTTP_GET, handleLiveScreenshot);

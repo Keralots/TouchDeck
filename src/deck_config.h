@@ -192,6 +192,8 @@ void deckConfigText(String& out);
 bool deckConfigStore(const String& text, DeckConfig& out, String& err);
 // LittleFS mounted (mounts on first call).
 bool deckFsReady();
+// Factory reset: delete every stored file but keep (a path such as "/mdi.ttf").
+bool deckFsWipe(const char* keep);
 
 }  // namespace deck
 
