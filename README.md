@@ -147,6 +147,32 @@ duration (also `s`, `h`, `d`), anything else is literal text, for example
 Test shows "+ Detail" next to each value. The line gives way on tiles too
 small for it.
 
+## Bambu Lab printers
+
+Up to two Bambu Lab printers report to the deck over the LAN (MQTT over TLS,
+port 8883), so the printer needs LAN mode or LAN access turned on. In **Pages &
+tiles**, "Printers": add the printer's IP address, then store its serial number
+and LAN access code (both stay on the device and are never shown again).
+"Create printer page" adds a page with progress and time left on top, the
+nozzle, bed and chamber temperatures, the filament in use, the layer and the
+chamber light.
+
+A printer can have a plug: a Home Assistant switch that powers it. The printer
+then connects only while the plug is on, and pages set to "Only while ... is
+on" appear with it; with the plug off the deck holds no connection, buffers or
+pages for it. Without a plug the printer is always tried.
+
+```json
+"printers": [{ "id": "h2c", "name": "H2C", "ip": "192.168.0.54",
+               "plug": "switch.printer_plug" }]
+```
+
+A page with `"printer": "h2c"` follows that printer. A printer tile is
+`{ "type": "printer", "printer": "h2c", "show": "hero" }`; `show` is `hero`,
+`nozzle` (with `"nozzle": "left"` on dual nozzle printers), `bed`, `chamber`,
+`filament`, `layer` or `light` (a tap switches the chamber light). The tiles
+sit on the page grid like any other tile.
+
 ## PC stats and control: TouchDeck Companion
 
 The companion runs on the PC, reads the sensors and pushes a JSON packet to

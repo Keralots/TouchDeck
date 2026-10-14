@@ -10,6 +10,7 @@
 #include "config.h"
 #include "web_pages.h"
 #include "deck_ui.h"
+#include "deck_printers.h"
 #include "deck_config.h"
 #include "deck_ha.h"
 #include "deck_http.h"
@@ -867,6 +868,20 @@ static void handleDeckPost() {
   sendJsonMessage(200, true, "Deck saved");
 }
 
+// GET /api/printers - printer config and live status, never the secrets.
+static void handlePrintersGet() { server.send(200, "application/json", deckPrintersJson()); }
+
+// POST /api/printers/secret (id, serial, code) - an empty field keeps the stored one.
+static void handlePrinterSecret() {
+  const String id = server.arg("id");
+  if (!id.length() || !deck::printerSecretSet(id, server.arg("serial"), server.arg("code"))) {
+    sendJsonMessage(400, false, "Could not store the printer credentials");
+    return;
+  }
+  deckPrintersReapply();
+  sendJsonMessage(200, true, "Stored");
+}
+
 // GET /api/ha/status - never includes the token.
 static void handleHaStatus() {
   JsonDocument doc;
@@ -1434,6 +1449,8 @@ void initWebServer() {
   server.on("/api/deck", HTTP_GET, handleDeckGet);
   server.on("/api/deck", HTTP_POST, handleDeckPost);
   server.on("/api/ha/status", HTTP_GET, handleHaStatus);
+  server.on("/api/printers", HTTP_GET, handlePrintersGet);
+  server.on("/api/printers/secret", HTTP_POST, handlePrinterSecret);
   server.on("/api/ha/config", HTTP_POST, handleHaConfig);
   server.on("/api/ha/forget", HTTP_POST, handleHaForget);
   server.on("/api/ha/entities", HTTP_GET, handleHaEntities);

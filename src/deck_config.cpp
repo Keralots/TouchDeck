@@ -211,6 +211,40 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
     if (err) *err = "led entity must be an input_boolean, input_number or light";
     return false;
   }
+  auto printerKnown = [&](const String& id) {
+    for (const PrinterDef& d : cfg.printers)
+      if (d.id == id) return true;
+    return false;
+  };
+  for (JsonVariantConst pv : doc["printers"].as<JsonArrayConst>()) {
+    PrinterDef d;
+    d.id = (const char*)(pv["id"] | "");
+    d.name = (const char*)(pv["name"] | "");
+    d.ip = (const char*)(pv["ip"] | "");
+    d.plug = (const char*)(pv["plug"] | "");
+    // The id names NVS keys ("s_<id>"): short and plain.
+    bool plain = d.id.length() >= 1 && d.id.length() <= 12;
+    for (size_t i = 0; plain && i < d.id.length(); i++)
+      plain = isalnum((unsigned char)d.id[i]) || d.id[i] == '_';
+    if (!plain || printerKnown(d.id)) {
+      if (err) *err = "printer id '" + d.id + "' must be unique, 1-12 letters, digits or _";
+      return false;
+    }
+    if (!d.ip.length()) {
+      if (err) *err = "printer '" + d.id + "' needs an ip";
+      return false;
+    }
+    if (d.plug.length() && !d.plug.startsWith("switch.") && !d.plug.startsWith("input_boolean.")) {
+      if (err) *err = "printer '" + d.id + "' plug must be a switch or input_boolean";
+      return false;
+    }
+    if (cfg.printers.size() >= MAX_PRINTERS) {
+      if (err) *err = "too many printers (max " + String(MAX_PRINTERS) + ")";
+      return false;
+    }
+    if (!d.name.length()) d.name = d.id;
+    cfg.printers.push_back(d);
+  }
   JsonArrayConst pages = doc["pages"].as<JsonArrayConst>();
   if (pages.isNull() || pages.size() == 0) {
     if (err) *err = "no pages";
@@ -225,6 +259,11 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
     p.id = (const char*)(pv["id"] | "");
     p.name = (const char*)(pv["name"] | "");
     p.group = (const char*)(pv["group"] | "");
+    p.printer = (const char*)(pv["printer"] | "");
+    if (p.printer.length() && !printerKnown(p.printer)) {
+      if (err) *err = "page '" + p.id + "': unknown printer '" + p.printer + "'";
+      return false;
+    }
     const char* type = pv["type"] | "tiles";
     if (!strcmp(type, "metrics")) continue;
     if (!p.id.length()) p.id = "page" + String(cfg.pages.size() + 1);
@@ -246,6 +285,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       else if (!strcmp(tt, "slider")) t.type = TILE_SLIDER;
       else if (!strcmp(tt, "metric")) t.type = TILE_METRIC;
       else if (!strcmp(tt, "clock")) t.type = TILE_CLOCK;
+      else if (!strcmp(tt, "printer")) t.type = TILE_PRINTER;
       else {
         if (err) *err = where + ": unknown type '" + tt + "'";
         return false;
@@ -300,6 +340,25 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       if (t.type == TILE_CLOCK) {
         p.tiles.push_back(t);
         continue;
+      }
+      if (t.type == TILE_PRINTER) {
+        t.printer = (const char*)(tv["printer"] | "");
+        if (!printerKnown(t.printer)) {
+          if (err) *err = where + ": unknown printer '" + t.printer + "'";
+          return false;
+        }
+        static const char* const kShow[] = {"hero", "nozzle", "bed", "chamber", "filament", "layer", "light"};
+        const char* sh = tv["show"] | "hero";
+        int k = 0;
+        while (k < 7 && strcmp(sh, kShow[k])) k++;
+        if (k == 7) {
+          if (err) *err = where + ": unknown show '" + sh + "'";
+          return false;
+        }
+        t.show = (PrinterShow)k;
+        t.nozzle = !strcmp(tv["nozzle"] | "right", "left") ? 1 : 0;
+        p.tiles.push_back(t);
+        continue;  // built-in behaviour: the light tile toggles, the rest are read-only
       }
       if (!parseAction(tv["tap"], t.tap, err, where + " tap")) return false;
       if (!parseAction(tv["hold"], t.hold, err, where + " hold")) return false;

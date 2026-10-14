@@ -67,6 +67,9 @@ sec.innerHTML=`<div class="page-header"><h1 class="page-h1">Deck</h1><p class="p
 <p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; "Install" downloads it in this browser and sends it to the device. Without it the deck shows a few built-in symbols.</p>
 <div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
 <div class="dk-status"><span class="dk-dot" id="dkIcDot"></span><span id="dkIcState">checking...</span></div></div>
+<div class="card"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag">Bambu Lab, LAN</span></div>
+<p class="field-hint">The printer must be in LAN mode or have LAN access on. Serial and access code are stored only on the device. With a plug (an HA switch), the printer connects and its pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
+<div id="dkPrn"></div><div class="dk-row"><button type="button" class="btn" id="dkPrnAdd">+ Add printer</button></div></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
 <label class="check-row standalone" style="margin-bottom:14px"><input type="checkbox" id="dkHeader"><span class="check-box"></span><span class="check-text"><strong>Show the top bar</strong><span class="ct-hint">Page name, WiFi and clock above the tiles. Also switchable in the quick panel on the device.</span></span></label>
 <div class="dk-tabs" id="dkTabs"></div><div id="dkPage"></div>
@@ -122,6 +125,43 @@ function colorField(t,i){const tx=TXT.concat(SW),theme='Auto uses the theme text
   if(m)h+=colRow(t,i,'chartColor','Chart colour',t.color||autoCol(t),'The chart or bar line. Auto follows Colour.');
   return h+colRow(t,i,'textColor','Text colour','#E6E8EC',(m?'The value. ':'')+theme+readHint(t.textColor),tx);}
 /* The clock tile: no entity or actions, just its size and colours. */
+/* Bambu printers: deck.printers is saved with the deck; serial and code go
+   straight to the device and are never read back. */
+const PSHOW=[['hero','Progress'],['nozzle','Nozzle'],['bed','Bed'],['chamber','Chamber'],['filament','Filament'],['layer','Layer'],['light','Light']];
+let prnStat={};
+const prnName=id=>{const d=(deck.printers||[]).find(x=>x.id===id);return d?(d.name||d.id):id;};
+function prnTileName(t){const s=PSHOW.find(x=>x[0]===(t.show||'hero'));return prnName(t.printer)+' '+(s?s[1]:'')+(t.show==='nozzle'&&t.nozzle==='left'?' L':'');}
+function printerRow(t,i){const ps=deck.printers||[];
+  return '<div class="dk-tile'+(i===sel?' sel':'')+'"><div class="dk-ic" style="background:#F5B83D">3D</div><div class="dk-tmain"><b>Printer</b><div class="dk-row" style="margin-top:4px"><select data-pt="'+i+'">'+ps.map(d=>opt(d.id,d.name||d.id,d.id===t.printer)).join('')+'</select><select data-psh="'+i+'">'+PSHOW.map(([v,l])=>opt(v,l,(t.show||'hero')===v)).join('')+'</select>'+(t.show==='nozzle'?'<select data-pnz="'+i+'">'+opt('right','Right / only',t.nozzle!=='left')+opt('left','Left',t.nozzle==='left')+'</select>':'')+'</div></div>'+
+  '<div class="dk-tact">'+sizeSel(t,i)+'<button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div></div>';}
+function prnLine(d,s){if(!s.secret)return 'Serial and access code not saved';if(!s.powered)return d.plug?'Off (plug off)':'Off';
+  return (s.link||'')+(s.err?' - '+s.err:'')+(s.state?' - '+s.state.toLowerCase():'')+(s.state==='RUNNING'?' '+s.progress+'%':'');}
+async function printersStatus(){try{const r=await api('/api/printers');prnStat={};(r.printers||[]).forEach(s=>prnStat[s.id]=s);renderPrinters();}catch(e){}}
+function renderPrinters(){const el=$('dkPrn');if(!el)return;const ps=deck.printers||[];
+  if(ps.some((d,i)=>document.activeElement&&document.activeElement.closest&&document.activeElement.closest('[data-prb="'+i+'"]')))return;
+  el.innerHTML=ps.map((d,i)=>{const s=prnStat[d.id]||{};
+    return '<div class="dk-more" data-prb="'+i+'" style="margin-bottom:10px">'+[['id','Id (letters, digits, _)','h2c'],['name','Name','H2C'],['ip','IP address','192.168.0.54'],['plug','Plug (HA switch, optional)','switch.printer_plug']].map(([k,l,ph])=>'<div class="field"><label class="field-label">'+l+'</label><input type="text" data-pr="'+i+'" data-prk="'+k+'" value="'+esc(d[k]||'')+'" placeholder="'+ph+'" spellcheck="false"></div>').join('')+
+    '<div class="field"><label class="field-label">Serial</label><input type="text" id="dkPrS'+i+'" placeholder="'+(s.secret?'saved - leave empty to keep':'printer serial number')+'" autocomplete="off" spellcheck="false"></div>'+
+    '<div class="field"><label class="field-label">Access code</label><input type="password" id="dkPrC'+i+'" placeholder="'+(s.secret?'saved - leave empty to keep':'LAN access code')+'" autocomplete="off"></div>'+
+    '<div class="field wide"><div class="dk-row"><button type="button" class="btn" data-prs="'+i+'">Save serial and code</button><button type="button" class="btn" data-prp="'+i+'">Create printer page</button><button type="button" class="btn btn-danger" data-prx="'+i+'">Remove</button></div><div class="dk-status"><span class="dk-dot '+(s.link==='online'?'ok':s.link==='failed'?'err':s.powered?'busy':'')+'"></span><span>'+esc(prnLine(d,s))+'</span></div></div></div>';}).join('')||'<p class="dk-empty">No printers yet.</p>';
+  el.querySelectorAll('[data-pr]').forEach(x=>x.onchange=()=>{const d=ps[+x.dataset.pr],k=x.dataset.prk,v=x.value.trim();
+    if(k==='id'&&v!==d.id){deck.pages.forEach(p=>{if(p.printer===d.id)p.printer=v;p.tiles.forEach(t=>{if(t.type==='printer'&&t.printer===d.id)t.printer=v;});});}
+    if(v||k==='id')d[k]=v;else delete d[k];setDirty(true);renderPage();});
+  el.querySelectorAll('[data-prs]').forEach(b=>b.onclick=async()=>{const i=+b.dataset.prs,d=ps[i],q=new URLSearchParams();q.set('id',d.id);q.set('serial',$('dkPrS'+i).value.trim());q.set('code',$('dkPrC'+i).value.trim());
+    if(dirty&&!confirm('Save the deck first, or the device will not know this printer yet. Store the serial and code anyway?'))return;
+    try{await api('/api/printers/secret',{method:'POST',body:q});$('dkPrS'+i).value='';$('dkPrC'+i).value='';printersStatus();}catch(e){alert(e.message);}});
+  el.querySelectorAll('[data-prp]').forEach(b=>b.onclick=()=>{const d=ps[+b.dataset.prp];deck.pages.push(printerPage(d,prnStat[d.id]||{}));cur=pages().length-1;setDirty(true);render();});
+  el.querySelectorAll('[data-prx]').forEach(b=>b.onclick=()=>{const d=ps[+b.dataset.prx];if(!confirm('Remove '+(d.name||d.id)+' and its printer tiles?'))return;
+    deck.printers=ps.filter(x=>x!==d);if(!deck.printers.length)delete deck.printers;deck.pages.forEach(p=>{if(p.printer===d.id)delete p.printer;p.tiles=p.tiles.filter(t=>!(t.type==='printer'&&t.printer===d.id));});setDirty(true);render();});}
+/* The progress page: progress on top, temperatures, then filament, layer and light. */
+function printerPage(d,s){const id=d.id,u=Date.now().toString(36).slice(-4);
+  const t=(show,x,y,w,ex)=>Object.assign({id:show+(ex&&ex.nozzle?ex.nozzle:'')+u,type:'printer',printer:id,show:show,pos:{landscape:{x:x,y:y,w:w,h:1}}},ex||{});
+  const tiles=[t('hero',0,0,4)];
+  if(s.dual)tiles.push(t('nozzle',0,1,1,{nozzle:'left'}),t('nozzle',1,1,1),t('bed',2,1,1),t('chamber',3,1,1),t('filament',0,2,2),t('layer',2,2,1),t('light',3,2,1));
+  else if(s.chamber)tiles.push(t('nozzle',0,1,1),t('bed',1,1,1),t('chamber',2,1,1),t('layer',3,1,1),t('filament',0,2,3),t('light',3,2,1));
+  else tiles.push(t('nozzle',0,1,1),t('bed',1,1,1),t('layer',2,1,1),t('light',3,1,1),t('filament',0,2,4));
+  let pid='prn_'+id,n=2;while(deck.pages.some(p=>p.id===pid))pid='prn_'+id+'_'+(n++);
+  return {id:pid,name:d.name||id,printer:id,tiles:tiles};}
 function clockRow(t,i){return '<div class="dk-tile'+(i===sel?' sel':'')+'"><div class="dk-ic" style="background:'+(t.color||'#E6E8EC')+'">12</div><div class="dk-tmain"><b>Clock</b><div class="dk-tsub">Time and date (24h and time zone from Time settings)</div></div>'+
   '<div class="dk-tact">'+sizeSel(t,i)+'<button type="button" class="btn'+(i===more?' on':'')+'" data-mo="'+i+'" title="More options">&#8943;</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div>'+(i===more?'<div class="dk-more">'+colorField(t,i)+'</div>':'')+'</div>';}
 /* A tile's "more options" panel: confirm, colour, and for buttons the tap action. */
@@ -240,9 +280,9 @@ function layout(p){const [gc,gr]=grid(p),c=gc*2,r=gr*2;const used=[...Array(r)].
 function pinAll(p,at){p.tiles.forEach((t,k)=>{const a=at[k];if(a){setPos(t,cell(a.x,a.y,a.w,a.h));return;}const q=Object.assign({},tpos(t));delete q.x;delete q.y;setPos(t,q);});}
 const free=(at,k,q,c,r)=>q.x>=0&&q.y>=0&&q.x+q.w<=c&&q.y+q.h<=r&&at.every((o,j)=>j===k||!o||o.x>=q.x+q.w||o.x+o.w<=q.x||o.y>=q.y+q.h||o.y+o.h<=q.y);
 function gtile(t,k,a){const m=t.type==='metric',mm=m&&mlist(t).find(x=>x.id===t.metric),en=entMap[t.entity],d=domainOf(t.entity);
-  const ck=t.type==='clock',col=t.color||(m?PAL[((t.metric||1)-1)%8]:ck?'#E6E8EC':(COL[d]||'#7DB5FF')),cp=m||ck?0:tileCp(t);
-  const nm=ck?'Clock':t.label||(m?(mm?mm.name:'Metric #'+t.metric):(en&&en.name)||t.entity||'Tile');
-  return '<div class="dk-gt'+(k===sel?' sel':'')+(a&&a.h<2?' row':'')+(a&&a.h<2&&a.w<2?' ic':'')+'" data-g="'+k+'"'+(a?' style="grid-area:'+(a.y+1)+'/'+(a.x+1)+'/span '+a.h+'/span '+a.w+'"':'')+'><i style="color:'+col+'"'+(cp?'':' class="tx"')+'>'+(cp?String.fromCodePoint(cp):(m?'PC':ck?'12':esc((d||'?').slice(0,2).toUpperCase())))+'</i><b>'+esc(nm)+'</b>'+(a?'<span class="dk-rs" data-rs="'+k+'"></span>':'')+'</div>';}
+  const ck=t.type==='clock',pr=t.type==='printer',col=t.color||(m?PAL[((t.metric||1)-1)%8]:ck?'#E6E8EC':pr?'#F5B83D':(COL[d]||'#7DB5FF')),cp=m||ck||pr?0:tileCp(t);
+  const nm=ck?'Clock':pr?prnTileName(t):t.label||(m?(mm?mm.name:'Metric #'+t.metric):(en&&en.name)||t.entity||'Tile');
+  return '<div class="dk-gt'+(k===sel?' sel':'')+(a&&a.h<2?' row':'')+(a&&a.h<2&&a.w<2?' ic':'')+'" data-g="'+k+'"'+(a?' style="grid-area:'+(a.y+1)+'/'+(a.x+1)+'/span '+a.h+'/span '+a.w+'"':'')+'><i style="color:'+col+'"'+(cp?'':' class="tx"')+'>'+(cp?String.fromCodePoint(cp):(m?'PC':ck?'12':pr?'3D':esc((d||'?').slice(0,2).toUpperCase())))+'</i><b>'+esc(nm)+'</b>'+(a?'<span class="dk-rs" data-rs="'+k+'"></span>':'')+'</div>';}
 /* Drag a tile to a free place or onto a tile of its size (swap); the corner
    handle resizes. A press without movement selects the tile. */
 function gdrag(e,p,at,k,size){if(e.button>0)return;e.preventDefault();e.stopPropagation();
@@ -280,19 +320,25 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   const p=ps[cur];const [c,r]=grid(p),land=ori==='landscape',at=layout(p),lost=p.tiles.map((t,k)=>k).filter(k=>!at[k]);let cells=0;at.forEach(a=>{if(a)cells+=a.w*a.h/4;});
   let h='<div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Layout</span>'+[['landscape','Landscape'],['portrait','Portrait']].map(o=>'<button type="button" class="chip page-tab'+(o[0]===ori?' on':'')+'" data-o="'+o[0]+'">'+o[1]+'</button>').join('')+'</div>';
   h+='<div class="grid-2"><div class="field"><label class="field-label">Page name</label><input type="text" id="dkPName" value="'+esc(p.name||'')+'"></div><div class="field"><label class="field-label">Grid (columns x rows)</label><div class="dk-row"><select id="dkPCols" style="width:auto">'+(land?[2,3,4,5,6]:[2,3,4]).map(n=>'<option'+(n===c?' selected':'')+'>'+n+'</option>').join('')+'</select><span>x</span><select id="dkPRows" style="width:auto">'+(land?[2,3,4]:[2,3,4,5,6]).map(n=>'<option'+(n===r?' selected':'')+'>'+n+'</option>').join('')+'</select><button type="button" class="btn" id="dkPLeft" style="margin-left:auto;padding:6px 9px">Move left</button><button type="button" class="btn" id="dkPRight" style="padding:6px 9px">Move right</button><button type="button" class="btn btn-danger" id="dkPDel">Delete page</button></div></div></div>';
+  if((deck.printers||[]).length)h+='<div class="field"><label class="field-label">Printer page</label><select id="dkPPrn" style="width:auto">'+opt('','Always shown',!p.printer)+(deck.printers||[]).map(d=>opt(d.id,'Only while '+(d.name||d.id)+' is on',p.printer===d.id)).join('')+'</select></div>';
   h+='<label class="check-row standalone"><input type="checkbox" id="dkPStack"'+(stackedAt(ps,cur)?' checked':'')+(cur===0?' disabled':'')+'><span class="check-box"></span><span class="check-text"><strong>Below the previous page</strong><span class="ct-hint">Stacked pages form one column: swipe up and down between them, left and right to the next column. Move left/right moves a column head with its column, or swaps a stacked page within its column.</span></span></label>';
   let g='';for(let y=0;y<r;y++)for(let x=0;x<c;x++)g+='<div class="dk-cell" style="grid-area:'+(2*y+1)+'/'+(2*x+1)+'/span 2/span 2"></div>';
   const hd=$('dkHeader').checked?30:0;
   h+='<div class="dk-grid'+(land?'':' pt')+'" id="dkGrid" style="grid-template-columns:repeat('+2*c+',minmax(0,1fr));grid-template-rows:repeat('+2*r+',minmax(0,1fr));aspect-ratio:'+(land?480:320)+'/'+((land?320:480)-hd)+'">'+g+p.tiles.map((t,k)=>at[k]?gtile(t,k,at[k]):'').join('')+'<div class="dk-ghost" id="dkGhost" hidden></div></div>';
   if(lost.length)h+='<p class="dk-cap over">No room on the page for these: drag one to a free place, make it smaller or remove it.</p><div class="dk-tray">'+lost.map(k=>gtile(p.tiles[k],k,null)).join('')+'</div>';
   h+='<p class="field-hint">Drag a tile to move it, or onto a tile of the same size to swap them; the corner handle resizes. Both go in half-cell steps. Tap a tile to find it in the list.</p>';
-  h+='<div class="dk-tiles">'+p.tiles.map((t,i)=>{if(t.type==='metric')return metricRow(t,i);if(t.type==='clock')return clockRow(t,i);const d=domainOf(t.entity);const en=entMap[t.entity];const nm=en&&en.name?en.name:(t.entity||(isHttpSensor(t)?'HTTP sensor':'No entity'));
+  h+='<div class="dk-tiles">'+p.tiles.map((t,i)=>{if(t.type==='metric')return metricRow(t,i);if(t.type==='clock')return clockRow(t,i);if(t.type==='printer')return printerRow(t,i);const d=domainOf(t.entity);const en=entMap[t.entity];const nm=en&&en.name?en.name:(t.entity||(isHttpSensor(t)?'HTTP sensor':'No entity'));
     const cp=tileCp(t);
     return '<div class="dk-tile'+(i===sel?' sel':'')+'"><button type="button" class="dk-ic'+(cp?' mdi':'')+'" data-ic="'+i+'" title="'+esc(cp?(t.icon||(en&&en.icon)||'automatic'):'Choose an icon')+'" style="background:'+(t.color||COL[d]||'#7DB5FF')+'">'+(cp?String.fromCodePoint(cp):esc((d||'?').slice(0,2).toUpperCase()))+'</button><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(nm)+'"><div class="dk-tsub">'+esc(t.entity||(isHttpSensor(t)?'HTTP sensor':isHttp(t)?'HTTP '+(t.tap.method||'GET')+' '+(t.tap.url||''):isPcCmd(t)?'PC command: '+((PCCMD.find(c=>c[0]===t.tap.cmd)||[0,t.tap.cmd])[1]):'no entity'))+(en&&en.state?' - '+esc(en.state)+(en.unit?' '+esc(en.unit):''):'')+'</div></div>'+
     '<div class="dk-tact">'+(isHttpSensor(t)?'<span>HTTP sensor</span>':'<select data-t="'+i+'"><option value="toggle"'+(t.type==='toggle'?' selected':'')+'>Switch</option><option value="action"'+(t.type==='action'?' selected':'')+'>Button</option><option value="sensor"'+(t.type==='sensor'?' selected':'')+'>Sensor</option>'+(SLIDER.includes(d)||t.type==='slider'?'<option value="slider"'+(t.type==='slider'?' selected':'')+'>Slider</option>':'')+'</select>')+sizeSel(t,i)+(isHttpSensor(t)?'':'<button type="button" class="btn" data-e="'+i+'">Entity</button>')+'<button type="button" class="btn'+(i===more?' on':'')+'" data-mo="'+i+'" title="More options">&#8943;</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div>'+(isHttpSensor(t)?httpSensorFields(t,i):'')+(i===more?moreRow(t,i):'')+'</div>';}).join('')+'</div>';
-  h+='<p class="dk-cap">'+(+cells.toFixed(2))+' of '+(c*r)+' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddPcCmd">+ Add PC control</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button></div>'+pcList()+'<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a smaller one shows the number), so picking one makes a 1x1 tile 2x1.</p>';
+  h+='<p class="dk-cap">'+(+cells.toFixed(2))+' of '+(c*r)+' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddPcCmd">+ Add PC control</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button>'+((deck.printers||[]).length?'<button type="button" class="btn" id="dkAddPrinter">+ Add printer tile</button>':'')+'</div>'+pcList()+'<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a smaller one shows the number), so picking one makes a 1x1 tile 2x1.</p>';
   el.innerHTML=h;
   $('dkPName').oninput=e=>{p.name=e.target.value;setDirty(true);renderTabs();};
+  if($('dkPPrn'))$('dkPPrn').onchange=e=>{if(e.target.value)p.printer=e.target.value;else delete p.printer;setDirty(true);};
+  if($('dkAddPrinter'))$('dkAddPrinter').onclick=()=>{const t={id:'pr'+Date.now().toString(36),type:'printer',printer:deck.printers[0].id,show:'hero'};setSize(t,'2x1');p.tiles.push(t);setDirty(true);renderPage();};
+  el.querySelectorAll('[data-pt]').forEach(x=>x.onchange=()=>{p.tiles[+x.dataset.pt].printer=x.value;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-psh]').forEach(x=>x.onchange=()=>{const t=p.tiles[+x.dataset.psh];t.show=x.value;if(x.value!=='nozzle')delete t.nozzle;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-pnz]').forEach(x=>x.onchange=()=>{const t=p.tiles[+x.dataset.pnz];if(x.value==='left')t.nozzle='left';else delete t.nozzle;setDirty(true);renderPage();});
   const setGrid=(gc,gr)=>{p.layouts=p.layouts||{};p.layouts[ori]={cols:gc,rows:gr};setDirty(true);renderPage();};
   $('dkPCols').onchange=e=>setGrid(+e.target.value,r);
   $('dkPRows').onchange=e=>setGrid(c,+e.target.value);
@@ -343,7 +389,7 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   el.querySelectorAll('[data-fpc]').forEach(x=>x.onclick=async e=>{e.preventDefault();const pc=pcs.find(y=>y.id===x.dataset.fpc);if(!pc||!confirm('Forget the PC "'+pc.name+'"? Its tiles show it as unknown until it sends again.'))return;try{await api('/api/pc/forget?id='+encodeURIComponent(pc.id),{method:'POST'});await loadPc();renderPage();}catch(err){alert(err.message);}});
   el.querySelectorAll('[data-m]').forEach(x=>x.onchange=e=>{p.tiles[+x.dataset.m].metric=+e.target.value;setDirty(true);renderPage();});
   el.querySelectorAll('[data-st]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.st];if(e.target.value==='number')delete t.style;else{t.style=e.target.value;if(tileSize(t)==='1x1')setSize(t,'2x1');}setDirty(true);renderPage();});}
-function render(){renderTabs();renderPage();renderLed();}
+function render(){renderTabs();renderPage();renderLed();renderPrinters();}
 
 /* entity picker */
 function setList(r){ents=(r.entities||[]).slice().sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);entMap={};ents.forEach(e=>entMap[e.id]=e);
@@ -408,7 +454,7 @@ $('dkHeader').onchange=async e=>{const b=new URLSearchParams();b.set('header',e.
 $('dkSave').onclick=async()=>{try{await api('/api/deck',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(deck)});setDirty(false);}catch(e){alert('Not saved: '+e.message);}};
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
 
-(async function init(){haStatus();icRefresh();setInterval(()=>{if(visible())haStatus();},3000);
+(async function init(){haStatus();icRefresh();printersStatus();setInterval(()=>{if(visible()){haStatus();printersStatus();}},3000);
   await loadPc();ori=ori||'landscape';
   try{const r=await api('/api/deck');deck=r.deck;deck.pages=deck.pages.filter(p=>p.type!=='metrics');$('dkHeader').checked=r.header!==false;render();}catch(e){$('dkPage').innerHTML='<p class="dk-empty">'+esc(e.message)+'</p>';}
   try{await loadEnts();}catch(e){}})();

@@ -1,9 +1,11 @@
 // Guition JC3248W535 deck UI. See deck_ui.h for the threading contract.
 #include "deck_ui.h"
 #include "deck_config.h"
+#include "deck_bambu.h"
 #include "deck_ha.h"
 #include "deck_http.h"
 #include "deck_icons.h"
+#include "deck_printers.h"
 #include "deck_sys.h"
 #include "deck_touch.h"
 #include "deck_wall.h"
@@ -19,6 +21,7 @@
 #include <lvgl.h>
 #include <time.h>
 #include <algorithm>
+#include <new>
 #include <vector>
 
 using namespace deck;
@@ -117,6 +120,7 @@ struct TileRt {
   int16_t slX0;
   float slFrac0, slValue;
   lv_obj_t* detail;       // HTTP sensor: the "detail" line
+  lv_obj_t* px[4];        // printer tiles: extra labels, swatches
   // Clock tiles: hours in sub, then these two; the colon blinks.
   lv_obj_t* colon;
   lv_obj_t* mins;
@@ -379,6 +383,7 @@ void refreshModal();
 void deckToastShow(const char* text, uint32_t holdMs);
 void qpSyncValues();
 void fitValue(TileRt& r);
+void printerTap(TileRt& r);
 void fitNameText(TileRt& r);
 uint32_t tileText(const TileDef& d);
 void showObj(lv_obj_t* o, bool on);
@@ -1005,6 +1010,8 @@ void pcCmdSync() {
 }
 
 uint32_t s_httpSeen = 0;
+uint32_t s_prnSeen = 0;  // printersVersion() last applied
+bool s_prnRebuild = false;
 
 // The detail line: literal text and fields from the same reply ("--" while missing).
 String httpDetail(const TileDef& d) {
@@ -1068,12 +1075,16 @@ void httpSync() {
 }
 
 void collectEntities() {
+  printersApply(s_cfg);
+  s_prnSeen = 0;
   httpSetSensors(s_cfg);
   s_httpSeen = 0;
   for (TileRt& r : s_tiles) applyHttpToTile(r);
   std::vector<String> ids;
   for (const TileRt& r : s_tiles)
     if (r.def->entity.length()) ids.push_back(r.def->entity);
+  for (const PrinterDef& d : s_cfg.printers)
+    if (d.plug.length()) ids.push_back(d.plug);
   if (s_cfg.ledEntity.length()) ids.push_back(s_cfg.ledEntity);
   else ledSetHaLevel(LED_HA_NONE);
   s_ledSeen = 0;
@@ -1198,6 +1209,10 @@ const char* actionVerb(const TileRt& r, const TileAction& a) {
 }
 
 void requestAction(TileRt& r, bool hold) {
+  if (r.def->type == TILE_PRINTER) {
+    if (!hold) printerTap(r);
+    return;
+  }
   const TileAction& a = hold ? r.def->hold : r.def->tap;
   if (r.def->http.enabled && a.kind == ACT_NONE) return;
   if (needsConfirm(r, a)) openConfirm((int)(&r - &s_tiles[0]), hold);
@@ -2438,6 +2453,444 @@ void fitClock(TileRt& r, int cw, int ch) {
   showObj(r.name, date);
 }
 
+// --- Printer tiles --------------------------------------------------------------------
+// Bambu printers (deck_bambu): flex layouts inside the tile, so any grid size
+// works; fitPrinter only picks fonts and drops what does not fit.
+constexpr uint32_t C_PRN_OK = 0x4ADE80;    // printing
+constexpr uint32_t C_PRN_BLUE = 0x7DB5FF;  // progress, idle
+constexpr uint32_t C_PRN_HEAT = 0xF5B83D;  // heating, light on
+constexpr uint32_t C_PRN_BADGE_TEXT = 0x0B0F1C;
+
+PrinterState* s_prn[MAX_PRINTERS] = {};  // last copy per s_cfg.printers index (PSRAM)
+bool s_prnHave[MAX_PRINTERS] = {};
+
+const PrinterState* printerFor(const TileDef& d) {
+  for (size_t i = 0; i < s_cfg.printers.size() && i < MAX_PRINTERS; i++)
+    if (s_cfg.printers[i].id == d.printer) return s_prnHave[i] ? s_prn[i] : nullptr;
+  return nullptr;
+}
+
+const PrinterDef* printerDef(const String& id) {
+  for (const PrinterDef& p : s_cfg.printers)
+    if (p.id == id) return &p;
+  return nullptr;
+}
+
+void readPrinters() {
+  for (size_t i = 0; i < s_cfg.printers.size() && i < MAX_PRINTERS; i++) {
+    if (!s_prn[i]) {
+      void* mem = heap_caps_malloc(sizeof(PrinterState), MALLOC_CAP_SPIRAM);
+      if (!mem) continue;
+      s_prn[i] = new (mem) PrinterState();
+    }
+    s_prnHave[i] = printerRead(s_cfg.printers[i].id, *s_prn[i]);
+  }
+}
+
+lv_obj_t* prnBox(lv_obj_t* parent, lv_flex_flow_t flow) {
+  lv_obj_t* o = lv_obj_create(parent);
+  lv_obj_remove_style_all(o);
+  lv_obj_remove_flag(o, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+  lv_obj_set_flex_flow(o, flow);
+  return o;
+}
+
+lv_obj_t* prnLabel(lv_obj_t* parent, const lv_font_t* f, lv_opa_t opa) {
+  lv_obj_t* l = lv_label_create(parent);
+  lv_label_set_text(l, "");
+  setFont(l, f);
+  if (opa != LV_OPA_COVER) lv_obj_set_style_text_opa(l, opa, 0);
+  return l;
+}
+
+lv_obj_t* prnBar(lv_obj_t* parent, int h) {
+  lv_obj_t* b = lv_bar_create(parent);
+  lv_obj_set_size(b, lv_pct(100), h);
+  lv_bar_set_range(b, 0, 100);
+  lv_obj_set_style_radius(b, h / 2, LV_PART_MAIN);
+  lv_obj_set_style_radius(b, h / 2, LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(b, lv_color_white(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(b, LV_OPA_20, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(b, lv_color_hex(C_PRN_BLUE), LV_PART_INDICATOR);
+  lv_obj_remove_flag(b, LV_OBJ_FLAG_CLICKABLE);
+  return b;
+}
+
+// Column layout: the first child grows, so the rest sits at the bottom.
+void prnColumn(lv_obj_t* t) {
+  lv_obj_set_flex_flow(t, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(t, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_row(t, 4, 0);
+}
+
+void makePrinterContent(TileRt& r, lv_obj_t* t) {
+  const TileDef& d = *r.def;
+  prnColumn(t);
+  switch (d.show) {
+    case PS_HERO: {
+      lv_obj_t* top = prnBox(t, LV_FLEX_FLOW_ROW);
+      lv_obj_set_size(top, lv_pct(100), LV_SIZE_CONTENT);
+      lv_obj_set_flex_align(top, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+      lv_obj_set_style_pad_column(top, 8, 0);
+      lv_obj_set_flex_grow(top, 1);
+      lv_obj_set_flex_align(t, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+      r.name = prnLabel(top, &deck_font_12, LV_OPA_COVER);  // state badge
+      lv_obj_set_style_bg_opa(r.name, LV_OPA_COVER, 0);
+      lv_obj_set_style_radius(r.name, 7, 0);
+      lv_obj_set_style_pad_hor(r.name, 6, 0);
+      lv_obj_set_style_pad_ver(r.name, 1, 0);
+      lv_obj_set_style_text_color(r.name, lv_color_hex(C_PRN_BADGE_TEXT), 0);
+      r.sub = prnLabel(top, &deck_font_14, LV_OPA_COVER);  // job
+      lv_label_set_long_mode(r.sub, LV_LABEL_LONG_MODE_DOTS);
+      lv_obj_set_flex_grow(r.sub, 1);
+      r.unit = prnLabel(top, &deck_font_12, LV_OPA_70);  // printer name
+      lv_label_set_text(r.unit, printerDef(d.printer) ? printerDef(d.printer)->name.c_str() : "");
+      lv_obj_t* mid = prnBox(t, LV_FLEX_FLOW_ROW);
+      lv_obj_set_size(mid, lv_pct(100), LV_SIZE_CONTENT);
+      lv_obj_set_flex_align(mid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+      lv_obj_set_style_pad_column(mid, 10, 0);
+      r.px[0] = prnLabel(mid, &deck_font_28, LV_OPA_COVER);  // time left
+      r.px[1] = prnLabel(mid, &deck_font_12, LV_OPA_70);     // "left - done 17:28"
+      lv_obj_set_style_pad_bottom(r.px[1], 4, 0);
+      lv_label_set_long_mode(r.px[1], LV_LABEL_LONG_MODE_DOTS);
+      lv_obj_set_flex_grow(r.px[1], 1);
+      r.px[2] = prnLabel(mid, &deck_font_20, LV_OPA_COVER);  // percent
+      lv_obj_set_style_text_color(r.px[2], lv_color_hex(C_PRN_BLUE), 0);
+      r.viz = prnBar(t, 8);
+      break;
+    }
+    case PS_NOZZLE:
+    case PS_BED:
+    case PS_CHAMBER: {
+      lv_obj_t* top = prnBox(t, LV_FLEX_FLOW_ROW);
+      lv_obj_set_size(top, lv_pct(100), LV_SIZE_CONTENT);
+      lv_obj_set_flex_align(top, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+      lv_obj_set_flex_grow(top, 1);
+      lv_obj_set_flex_align(t, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+      r.name = prnLabel(top, &deck_font_12, LV_OPA_70);
+      lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
+      lv_obj_set_flex_grow(r.name, 1);
+      // The nozzle that is printing (dual nozzle printers).
+      r.px[0] = lv_obj_create(top);
+      lv_obj_remove_style_all(r.px[0]);
+      lv_obj_set_size(r.px[0], 8, 8);
+      lv_obj_set_style_radius(r.px[0], LV_RADIUS_CIRCLE, 0);
+      lv_obj_set_style_bg_opa(r.px[0], LV_OPA_COVER, 0);
+      lv_obj_set_style_bg_color(r.px[0], lv_color_hex(C_PRN_HEAT), 0);
+      lv_obj_add_flag(r.px[0], LV_OBJ_FLAG_HIDDEN);
+      lv_obj_t* row = prnBox(t, LV_FLEX_FLOW_ROW);
+      lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+      lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+      lv_obj_set_style_pad_column(row, 3, 0);
+      r.sub = prnLabel(row, &deck_font_28, LV_OPA_COVER);
+      r.unit = prnLabel(row, &deck_font_14, LV_OPA_60);
+      lv_obj_set_style_pad_bottom(r.unit, 4, 0);
+      r.viz = prnBar(t, 3);
+      break;
+    }
+    case PS_FILAMENT: {
+      lv_obj_set_flex_flow(t, LV_FLEX_FLOW_ROW);
+      lv_obj_set_flex_align(t, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+      lv_obj_set_style_pad_column(t, 12, 0);
+      r.chip = lv_obj_create(t);  // the spool's colour
+      lv_obj_remove_style_all(r.chip);
+      lv_obj_set_size(r.chip, 44, 44);
+      lv_obj_set_style_radius(r.chip, LV_RADIUS_CIRCLE, 0);
+      lv_obj_set_style_bg_opa(r.chip, LV_OPA_COVER, 0);
+      lv_obj_set_style_border_width(r.chip, 2, 0);
+      lv_obj_set_style_border_color(r.chip, lv_color_white(), 0);
+      lv_obj_set_style_border_opa(r.chip, LV_OPA_80, 0);
+      lv_obj_t* col = prnBox(t, LV_FLEX_FLOW_COLUMN);
+      lv_obj_set_height(col, LV_SIZE_CONTENT);
+      lv_obj_set_flex_grow(col, 1);
+      lv_obj_set_style_pad_row(col, 2, 0);
+      r.name = prnLabel(col, &deck_font_12, LV_OPA_70);
+      lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
+      lv_obj_set_width(r.name, lv_pct(100));
+      r.sub = prnLabel(col, &deck_font_20, LV_OPA_COVER);
+      lv_label_set_long_mode(r.sub, LV_LABEL_LONG_MODE_DOTS);
+      lv_obj_set_width(r.sub, lv_pct(100));
+      r.viz = prnBar(col, 4);
+      lv_obj_set_style_margin_top(r.viz, 4, 0);
+      // The next filaments of the job.
+      lv_obj_t* next = prnBox(t, LV_FLEX_FLOW_ROW);
+      lv_obj_set_size(next, LV_SIZE_CONTENT, lv_pct(80));
+      lv_obj_set_style_pad_column(next, 3, 0);
+      r.px[3] = next;
+      for (int i = 0; i < 3; i++) {
+        r.px[i] = lv_obj_create(next);
+        lv_obj_remove_style_all(r.px[i]);
+        lv_obj_set_size(r.px[i], 12, lv_pct(100));
+        lv_obj_set_style_radius(r.px[i], 4, 0);
+        lv_obj_set_style_bg_opa(r.px[i], LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(r.px[i], 1, 0);
+        lv_obj_set_style_border_color(r.px[i], lv_color_white(), 0);
+        lv_obj_set_style_border_opa(r.px[i], LV_OPA_30, 0);
+        lv_obj_add_flag(r.px[i], LV_OBJ_FLAG_HIDDEN);
+      }
+      break;
+    }
+    case PS_LAYER: {
+      r.name = prnLabel(t, &deck_font_12, LV_OPA_70);
+      lv_label_set_text(r.name, "Layer");
+      lv_obj_set_flex_grow(r.name, 1);
+      r.sub = prnLabel(t, &deck_font_20, LV_OPA_COVER);
+      r.unit = prnLabel(t, &deck_font_12, LV_OPA_60);
+      lv_label_set_long_mode(r.unit, LV_LABEL_LONG_MODE_DOTS);
+      lv_obj_set_width(r.unit, lv_pct(100));
+      break;
+    }
+    case PS_LIGHT: {
+      r.chip = lv_obj_create(t);
+      lv_obj_remove_flag(r.chip, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+      lv_obj_set_size(r.chip, 30, 30);
+      lv_obj_set_style_radius(r.chip, LV_RADIUS_CIRCLE, 0);
+      lv_obj_set_style_border_width(r.chip, 0, 0);
+      lv_obj_set_style_pad_all(r.chip, 0, 0);
+      styleIconChip(r.chip, C_PRN_HEAT);
+      r.icon = lv_label_create(r.chip);
+      lv_obj_center(r.icon);
+      const uint32_t cp = iconCodepoint("mdi:lightbulb");
+      const lv_font_t* f = cp ? iconFont(18) : nullptr;
+      if (f) {
+        char u[5];
+        iconUtf8(cp, u);
+        lv_obj_set_style_text_font(r.icon, f, 0);
+        lv_label_set_text(r.icon, u);
+      } else lv_label_set_text(r.icon, LV_SYMBOL_CHARGE);
+      lv_obj_set_flex_grow(r.chip, 0);
+      lv_obj_t* fill = prnBox(t, LV_FLEX_FLOW_ROW);
+      lv_obj_set_size(fill, 1, 1);
+      lv_obj_set_flex_grow(fill, 1);
+      r.name = prnLabel(t, &deck_font_14, LV_OPA_COVER);
+      lv_label_set_text(r.name, "Light");
+      r.sub = prnLabel(t, &deck_font_12, LV_OPA_70);
+      break;
+    }
+  }
+}
+
+// Fonts by room; parts that cannot fit are hidden.
+void fitPrinter(TileRt& r, int cw, int ch) {
+  const TileDef& d = *r.def;
+  switch (d.show) {
+    case PS_HERO: {
+      const bool wide = cw >= 300;
+      showObj(r.sub, cw >= 200);
+      showObj(r.unit, cw >= 200);
+      showObj(r.px[1], wide);
+      setFont(r.px[0], ch >= 70 && cw >= 200 ? &deck_font_28 : &deck_font_20);
+      setFont(r.px[2], ch >= 70 ? &deck_font_20 : &deck_font_14);
+      lv_obj_set_height(r.viz, ch >= 70 ? 8 : 5);
+      break;
+    }
+    case PS_NOZZLE:
+    case PS_BED:
+    case PS_CHAMBER:
+      setFont(r.sub, ch >= 70 && cw >= 86 ? &deck_font_28 : &deck_font_20);
+      showObj(r.unit, cw >= 86);
+      break;
+    case PS_FILAMENT: {
+      const int c = LV_MIN(44, ch - 8);
+      lv_obj_set_size(r.chip, c, c);
+      showObj(r.px[3], cw >= 250);
+      setFont(r.sub, ch >= 64 ? &deck_font_20 : &deck_font_14);
+      showObj(r.name, ch >= 56);
+      break;
+    }
+    case PS_LAYER:
+      setFont(r.sub, ch >= 64 ? &deck_font_20 : &deck_font_14);
+      break;
+    case PS_LIGHT:
+      showObj(r.sub, ch >= 64);
+      break;
+  }
+}
+
+String prnDuration(uint16_t min) {
+  char b[16];
+  if (min < 60) snprintf(b, sizeof(b), "%um", min);
+  else if (min < 1440) snprintf(b, sizeof(b), min % 60 ? "%uh %um" : "%uh", min / 60, min % 60);
+  else snprintf(b, sizeof(b), "%ud %uh", min / 1440, min % 1440 / 60);
+  return b;
+}
+
+// "AMS C, slot 4" for an ams[] index.
+String prnSlotName(const PrinterState& s, uint8_t unit, uint8_t slot) {
+  if (unit == 254) return "External spool";
+  if (unit >= s.amsCount) return "";
+  const uint8_t id = s.ams[unit].id;
+  String n = id >= 128 ? (id == 128 ? String("AMS HT") : "AMS HT " + String(id - 127)) : "AMS " + String((char)('A' + id));
+  if (s.ams[unit].slots > 1) n += ", slot " + String(slot + 1);
+  return n;
+}
+
+const PrinterTray* prnTray(const PrinterState& s, uint8_t unit, uint8_t slot) {
+  if (unit == 254) return s.extPresent ? &s.ext : nullptr;
+  if (unit >= s.amsCount || slot >= PRN_AMS_SLOTS || !s.ams[unit].tray[slot].present) return nullptr;
+  return &s.ams[unit].tray[slot];
+}
+
+void prnBadge(TileRt& r, const char* text, uint32_t bg) {
+  lv_label_set_text(r.name, text);
+  lv_obj_set_style_bg_color(r.name, lv_color_hex(bg), 0);
+}
+
+void applyPrinterToTile(TileRt& r) {
+  const TileDef& d = *r.def;
+  if (d.type != TILE_PRINTER) return;
+  const PrinterState* s = printerFor(d);
+  const bool online = s && s->link == PRN_ONLINE && s->lastReportMs;
+  char b[48];
+  switch (d.show) {
+    case PS_HERO: {
+      const String st = online ? String(s->gcodeState) : "";
+      const bool running = st == "RUNNING" || st == "PREPARE" || st == "SLICING";
+      const bool paused = st == "PAUSE";
+      if (!online) {
+        prnBadge(r, s && s->link == PRN_FAILED ? "OFFLINE" : "CONNECTING", 0x9AA3B2);
+        lv_label_set_text(r.sub, s && s->link == PRN_FAILED ? s->err : "");
+        lv_label_set_text(r.px[0], "--");
+        lv_label_set_text(r.px[1], "");
+        lv_label_set_text(r.px[2], "");
+        lv_bar_set_value(r.viz, 0, LV_ANIM_OFF);
+        break;
+      }
+      if (running || paused) {
+        prnBadge(r, paused ? "PAUSED" : st == "RUNNING" ? "PRINTING" : "PREPARING", paused ? C_PRN_HEAT : C_PRN_OK);
+        lv_label_set_text(r.sub, s->job);
+        lv_label_set_text(r.px[0], prnDuration(s->remainingMin).c_str());
+        String sub = "left";
+        const time_t now = time(nullptr);
+        if (now > 1609459200) {
+          const time_t eta = now + (time_t)s->remainingMin * 60;
+          struct tm lt;
+          localtime_r(&eta, &lt);
+          if (netSettings.use24h) snprintf(b, sizeof(b), " - done %02d:%02d", lt.tm_hour, lt.tm_min);
+          else snprintf(b, sizeof(b), " - done %d:%02d %s", (lt.tm_hour + 11) % 12 + 1, lt.tm_min, lt.tm_hour < 12 ? "AM" : "PM");
+          sub += b;
+        }
+        lv_label_set_text(r.px[1], sub.c_str());
+        snprintf(b, sizeof(b), "%u%%", s->progress);
+        lv_label_set_text(r.px[2], b);
+        lv_bar_set_value(r.viz, s->progress, LV_ANIM_OFF);
+      } else {
+        const bool done = st == "FINISH", failed = st == "FAILED";
+        prnBadge(r, done ? "DONE" : failed ? "FAILED" : "READY", done ? C_PRN_BLUE : failed ? C_CRIT : 0x9AA3B2);
+        lv_label_set_text(r.sub, done || failed ? s->job : "");
+        lv_label_set_text(r.px[0], done ? "Finished" : failed ? "Stopped" : "Ready");
+        lv_label_set_text(r.px[1], "");
+        lv_label_set_text(r.px[2], done ? "100%" : "");
+        lv_bar_set_value(r.viz, done ? 100 : 0, LV_ANIM_OFF);
+      }
+      break;
+    }
+    case PS_NOZZLE:
+    case PS_BED:
+    case PS_CHAMBER: {
+      float now = NAN, target = NAN;
+      const char* label = d.show == PS_BED ? "Bed" : d.show == PS_CHAMBER ? "Chamber" : "Nozzle";
+      bool active = false;
+      if (s && d.show == PS_NOZZLE) {
+        const uint8_t n = s->dualNozzle ? d.nozzle : 0;
+        now = s->nozzle[n];
+        target = s->nozzleTarget[n];
+        if (s->dualNozzle) {
+          label = n ? "Left nozzle" : "Right nozzle";
+          active = online && s->activeNozzle == n;
+        }
+      } else if (s && d.show == PS_BED) {
+        now = s->bed;
+        target = s->bedTarget;
+      } else if (s) now = s->chamber;
+      lv_label_set_text(r.name, label);
+      showObj(r.px[0], active);
+      const bool heating = online && isfinite(target) && target > 0;
+      if (online && isfinite(now)) snprintf(b, sizeof(b), "%.0f\xC2\xB0", now);
+      else strcpy(b, "--");
+      lv_label_set_text(r.sub, b);
+      if (heating) snprintf(b, sizeof(b), "/%.0f", target);
+      else b[0] = 0;
+      lv_label_set_text(r.unit, b);
+      const uint32_t c = heating ? C_PRN_HEAT : C_TEXT;
+      lv_obj_set_style_text_color(r.sub, lv_color_hex(c), 0);
+      lv_obj_set_style_bg_color(r.viz, lv_color_hex(c), LV_PART_INDICATOR);
+      const float scale = heating ? target : d.show == PS_NOZZLE ? 300 : d.show == PS_BED ? 110 : 65;
+      lv_bar_set_value(r.viz, online && isfinite(now) ? (int32_t)constrain(now * 100 / scale, 0.0f, 100.0f) : 0, LV_ANIM_OFF);
+      break;
+    }
+    case PS_FILAMENT: {
+      const PrinterTray* t = online ? prnTray(*s, s->activeUnit, s->activeSlot) : nullptr;
+      if (t) {
+        lv_obj_set_style_bg_color(r.chip, lv_color_hex(t->rgb), 0);
+        lv_obj_set_style_bg_opa(r.chip, t->alpha < 128 ? LV_OPA_50 : LV_OPA_COVER, 0);
+        lv_label_set_text(r.name, ("Feeding from " + prnSlotName(*s, s->activeUnit, s->activeSlot)).c_str());
+        lv_label_set_text(r.sub, t->type);
+        showObj(r.viz, t->remain >= 0);
+        lv_bar_set_value(r.viz, t->remain >= 0 ? t->remain : 0, LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(r.viz, lv_color_hex(t->rgb), LV_PART_INDICATOR);
+      } else {
+        lv_obj_set_style_bg_color(r.chip, lv_color_white(), 0);
+        lv_obj_set_style_bg_opa(r.chip, LV_OPA_10, 0);
+        snprintf(b, sizeof(b), "%u AMS units", online ? s->amsCount : 0);
+        lv_label_set_text(r.name, online ? b : "");
+        lv_label_set_text(r.sub, online ? "Not feeding" : "--");
+        showObj(r.viz, false);
+      }
+      // Up to three other filaments the job uses, in slicer order.
+      int shown = 0;
+      for (int i = 0; online && i < s->mapCount && shown < 3; i++) {
+        const uint8_t raw = s->map[i] >> 8, slot = s->map[i] & 0xFF;
+        uint8_t unit = 255;
+        for (uint8_t u = 0; u < s->amsCount; u++)
+          if (s->ams[u].id == raw) unit = u;
+        if (unit == s->activeUnit && slot == s->activeSlot) continue;
+        const PrinterTray* n = prnTray(*s, unit, slot);
+        if (!n) continue;
+        lv_obj_set_style_bg_color(r.px[shown], lv_color_hex(n->rgb), 0);
+        showObj(r.px[shown++], true);
+      }
+      for (int i = shown; i < 3; i++) showObj(r.px[i], false);
+      break;
+    }
+    case PS_LAYER: {
+      if (online && s->totalLayers) {
+        snprintf(b, sizeof(b), "%u", s->layer);
+        lv_label_set_text(r.sub, b);
+        static const char* const kSpeed[] = {"", "Silent", "Std", "Sport", "Ludicrous"};
+        snprintf(b, sizeof(b), "of %u%s%s", s->totalLayers, s->speedLevel ? " - " : "",
+                 kSpeed[s->speedLevel < 5 ? s->speedLevel : 0]);
+        lv_label_set_text(r.unit, b);
+      } else {
+        lv_label_set_text(r.sub, "--");
+        lv_label_set_text(r.unit, "");
+      }
+      break;
+    }
+    case PS_LIGHT: {
+      const bool on = online && s->light == 1;
+      setTileOn(r, on);
+      lv_label_set_text(r.sub, !online ? "--" : s->light < 0 ? "Unknown" : on ? "On" : "Off");
+      break;
+    }
+  }
+  lv_obj_set_style_opa(r.obj, online || d.show == PS_HERO ? LV_OPA_COVER : LV_OPA_50, 0);
+  markPageStale(r.page);
+}
+
+void printerTap(TileRt& r) {
+  const TileDef& d = *r.def;
+  if (d.show != PS_LIGHT) return;
+  const PrinterState* s = printerFor(d);
+  if (!s || s->link != PRN_ONLINE || !printerLight(d.printer, s->light != 1)) {
+    deckToastShow("Printer not connected", 1800);
+    return;
+  }
+  setTileOn(r, s->light != 1);  // optimistic; the next report confirms it
+  lv_label_set_text(r.sub, s->light != 1 ? "On" : "Off");
+  markPageStale(r.page);
+}
+
 void fitTile(TileRt& r) {
   const int w = lv_obj_get_width(r.obj), h = lv_obj_get_height(r.obj);
   if (w <= 0 || h <= 0 || (w == r.fitW && h == r.fitH)) return;
@@ -2449,6 +2902,7 @@ void fitTile(TileRt& r) {
   const int cw = w - 2 * pad, ch = h - 2 * pad;
   if (r.def->type == TILE_METRIC || (r.def->type == TILE_SENSOR && r.def->style == METRIC_CHART)) fitMetric(r, cw, ch);
   else if (r.def->type == TILE_CLOCK) fitClock(r, cw, ch);
+  else if (r.def->type == TILE_PRINTER) fitPrinter(r, cw, ch);
   else if (r.def->type == TILE_SENSOR) fitSensor(r, cw, ch);
   else fitButton(r, cw, ch);
   markPageStale(r.page);
@@ -2717,7 +3171,7 @@ uint32_t onTextColor(uint32_t accent, bool glass) {
 
 void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, int w, int h) {
   const String domain = entityDomain(def.entity);
-  const uint32_t accent = def.hasColor ? def.color : domainColor(domain);
+  const uint32_t accent = def.hasColor ? def.color : def.type == TILE_PRINTER ? C_PRN_HEAT : domainColor(domain);
   const bool glass = s_theme == THEME_GLASS && wallBlur();
 
   lv_obj_t* t = lv_obj_create(grid);
@@ -2741,6 +3195,21 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_transition(t, &s_pressTrans, 0);
   lv_obj_set_style_transition(t, &s_pressTrans, LV_STATE_PRESSED);
   if (glass) glassStyle(t, accent);
+
+  if (def.type == TILE_PRINTER) {
+    TileRt r = {};
+    r.def = &def;
+    r.page = page;
+    r.obj = t;
+    makePrinterContent(r, t);
+    const size_t idx = s_tiles.size();
+    s_tiles.push_back(r);
+    applyPrinterToTile(s_tiles.back());
+    if (def.show == PS_LIGHT) lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
+    else lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
+    return;
+  }
 
   if (def.type == TILE_METRIC || (def.type == TILE_SENSOR && def.style == METRIC_CHART)) {
     TileRt r = {};
@@ -3893,6 +4362,7 @@ void buildPages() {
   s_tiles.reserve(64);
   for (const PageDef& pd : s_cfg.pages) {
     if (s_count >= MAX_PAGES) break;
+    if (pd.printer.length() && !printerPowered(pd.printer)) continue;
     addTilesPage(pd);
   }
 
@@ -4192,6 +4662,30 @@ void updateHeaders() {
     if (r.def->type == TILE_CLOCK) applyClock(r);
 }
 
+// Plugs power the printers; a printer page comes and goes with its printer,
+// so a change rebuilds the pages once nothing is in the user's hands.
+void printerSync() {
+  if (printersPowerSync(s_cfg)) s_prnRebuild = true;
+  if (s_prnRebuild && !touchIsDown() && !s_ed.root && !s_modalCard && !s_qp.open) {
+    bool pages = false;
+    for (const PageDef& pd : s_cfg.pages) pages |= pd.printer.length() > 0;
+    s_prnRebuild = false;
+    if (pages) {
+      stopGestures();
+      destroyPages();
+      buildPages();
+      s_gen++;
+      lv_obj_invalidate(lv_screen_active());
+      return;
+    }
+  }
+  const uint32_t v = printersVersion();
+  if (v == s_prnSeen) return;
+  s_prnSeen = v;
+  readPrinters();
+  for (TileRt& r : s_tiles) applyPrinterToTile(r);
+}
+
 void logStats() {
   const uint32_t now = millis();
   if (now - s_lastStats < STATS_MS) return;
@@ -4307,6 +4801,7 @@ void deckTick() {
   qpUpdateStatus(false);
   haSync();
   httpSync();
+  printerSync();
   pcCmdSync();
   pairSync();
   pcSync(false);
@@ -4469,6 +4964,34 @@ void deckReleaseIcons() {
   s_gen++;
   lv_obj_invalidate(lv_screen_active());
 }
+
+String deckPrintersJson() {
+  JsonDocument doc;
+  JsonArray arr = doc["printers"].to<JsonArray>();
+  PrinterState* s = (PrinterState*)heap_caps_malloc(sizeof(PrinterState), MALLOC_CAP_SPIRAM);
+  if (s) new (s) PrinterState();
+  for (const PrinterDef& d : s_cfg.printers) {
+    JsonObject o = arr.add<JsonObject>();
+    o["id"] = d.id;
+    o["secret"] = printerHasSecret(d.id);
+    o["powered"] = printerPowered(d.id);
+    if (!s || !printerRead(d.id, *s)) continue;
+    static const char* const kLink[] = {"off", "connecting", "online", "failed"};
+    o["link"] = kLink[s->link < 4 ? s->link : 0];
+    o["err"] = s->err;
+    o["state"] = s->gcodeState;
+    o["progress"] = s->progress;
+    o["dual"] = s->dualNozzle;
+    o["chamber"] = isfinite(s->chamber);
+    o["ams"] = s->amsCount;
+  }
+  heap_caps_free(s);
+  String out;
+  serializeJson(doc, out);
+  return out;
+}
+
+void deckPrintersReapply() { printersApply(s_cfg); }
 
 bool deckTestCard(const String& tileId) {
   if (s_ed.root) return false;  // the editor blocks gestures until it closes

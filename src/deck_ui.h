@@ -38,6 +38,10 @@ bool deckApplyConfig(const String& text, String& err);
 bool deckInstallIcons(const char* uploaded, String& err);
 // Rebuild the pages without icons, so the font file can be deleted.
 void deckReleaseIcons();
+// Printers for the portal: config, whether secrets are stored, live status.
+String deckPrintersJson();
+// Re-read the printers' secrets after the portal stored new ones.
+void deckPrintersReapply();
 // Top bar (page name, WiFi, clock) on the tiles pages; persisted.
 void deckSetHeader(bool on);
 bool deckHeaderVisible();
