@@ -160,6 +160,7 @@ static void handleApiConfig() {
   display["glassBlur"] = dispSettings.glassBlur;
   display["glassDim"] = dispSettings.glassDim;
   display["glassOn"] = dispSettings.glassOn;
+  display["smoothCharts"] = dispSettings.smoothCharts;
 
   JsonObject backlight = doc["backlight"].to<JsonObject>();
   backlight["nightEnabled"] = backlightSettings.nightEnabled != 0;
@@ -263,6 +264,7 @@ static void handleConfigExport() {
   display["glassBlur"] = dispSettings.glassBlur;
   display["glassDim"] = dispSettings.glassDim;
   display["glassOn"] = dispSettings.glassOn;
+  display["smoothCharts"] = dispSettings.smoothCharts;
 
   JsonObject backlight = doc["backlight"].to<JsonObject>();
   backlight["nightEnabled"] = backlightSettings.nightEnabled != 0;
@@ -444,10 +446,12 @@ static void handleConfigImport() {
   nextDisplay.glassBlur = displayDefaults.glassBlur;
   nextDisplay.glassDim = displayDefaults.glassDim;
   nextDisplay.glassOn = displayDefaults.glassOn;
+  nextDisplay.smoothCharts = displayDefaults.smoothCharts;
   if (!display["glassTint"].isNull()) READ_INT(display, "glassTint", 0, 90, nextDisplay.glassTint, uint8_t);
   if (!display["glassBlur"].isNull()) READ_INT(display, "glassBlur", 0, 24, nextDisplay.glassBlur, uint8_t);
   if (!display["glassDim"].isNull()) READ_INT(display, "glassDim", 0, 60, nextDisplay.glassDim, uint8_t);
   if (!display["glassOn"].isNull()) READ_INT(display, "glassOn", 20, 100, nextDisplay.glassOn, uint8_t);
+  if (!display["smoothCharts"].isNull()) READ_BOOL(display, "smoothCharts", nextDisplay.smoothCharts);
 
   READ_BOOL(backlight, "nightEnabled", nextBacklight.nightEnabled);
   READ_INT(backlight, "nightBrightness", 0, 255, nextBacklight.nightBrightness, uint8_t);
@@ -610,6 +614,7 @@ static void handleSaveDisplay() {
   dispSettings.powerScaleW = (uint16_t)clampedArg("powerScale", dispSettings.powerScaleW, 1, 65535);
   dispSettings.warnThresholdPct =
     (uint8_t)clampedArg("warnThreshold", dispSettings.warnThresholdPct, 0, 100);
+  dispSettings.smoothCharts = server.hasArg("smoothCharts");
   backlightSettings.nightEnabled = server.hasArg("nightEnabled") ? 1 : 0;
   backlightSettings.nightBrightness =
     (uint8_t)clampedArg("nightBrightness", backlightSettings.nightBrightness, 0, 255);

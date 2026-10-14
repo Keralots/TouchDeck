@@ -102,6 +102,7 @@ struct Page {
   std::vector<uint32_t> glassKey;  // empty until a bake finishes
   const PageDef* def;
   bool stale;
+  uint32_t snapMs;  // when snap was last taken
 };
 
 // One tile on screen. LVGL user data holds the index into s_tiles.
@@ -140,6 +141,7 @@ struct TileRt {
   bool sliding;           // this press became a drag: no tap or hold action
   int16_t slX0;
   float slFrac0, slValue;
+  struct Spark* spark;    // PC metric chart, drawn by the deck (see sparkPaint)
   lv_obj_t* detail;       // HTTP sensor: the "detail" line
   lv_obj_t* px[4];        // printer tiles: extra labels, swatches
   // Clock tiles: hours in sub, then these two; the colon blinks.
@@ -3373,6 +3375,253 @@ void fitEvent(lv_event_t* e) {
   if (idx < s_tiles.size()) fitTile(s_tiles[idx]);
 }
 
+// --- PC metric charts -----------------------------------------------------------------
+// The companion sends about once a second. The chart lags one sample and
+// glides at the packet rate, so the newest reading walks in instead of the
+// line jumping a column per packet. It eases toward the packet clock rather
+// than snapping to it, so an early or late packet causes no jump; a few extra
+// older samples keep the left edge on real data while it catches up.
+constexpr int SPARK_FRAME_MS = 33;
+constexpr float SPARK_LINE = 2.0f;  // line thickness, px
+constexpr float SPARK_EASE_MS = 250.0f;
+constexpr int SPARK_MAX_W = 480;
+constexpr uint32_t SPARK_SNAP_MS = 5000;
+constexpr float SPARK_SYNC_MS = 400.0f;
+constexpr int SPARK_SPAN = PC_HISTORY_LEN - 2;  // sample intervals across the chart
+constexpr int SPARK_KEEP = PC_HISTORY_LEN + 4;
+uint32_t s_sparkPaintMs = 0;  // last glide frame of the shown page
+bool sparkGliding();
+
+struct Spark {
+  float v[SPARK_KEEP];      // oldest first
+  uint8_t n;
+  uint8_t head, cnt;        // the metric's history ring when last copied
+  float off;                // right edge minus the newest sample, in samples (<= 0)
+  float lo, hi;             // axis range the samples ask for
+  float viewLo, viewHi;     // range on screen, eased toward lo / hi
+  bool haveView;
+  uint32_t rxMs;            // arrival of the newest sample
+  uint32_t gapMs;           // average interval between samples
+  uint32_t color;
+  lv_draw_buf_t* buf;       // A8 coverage, the chart object's size; drawn in color
+  int32_t key;              // glide step last painted, -1 = repaint
+  bool painted;             // buf holds a chart (a repaint keeps the old one until then)
+  float paintLo, paintHi;
+};
+
+void sparkFree(Spark* s) {
+  if (!s) return;
+  if (s->buf) lv_draw_buf_destroy(s->buf);
+  lv_free(s);
+}
+
+// Catmull-Rom between samples, clamped to the four neighbours so it never
+// overshoots the data (a percentage below zero).
+float sparkAt(const Spark& s, float fi) {
+  const int n = s.n;
+  int i1 = (int)fi;
+  i1 = i1 < 0 ? 0 : i1 > n - 1 ? n - 1 : i1;
+  const float t = fi - (float)i1;
+  const float p0 = s.v[i1 > 0 ? i1 - 1 : 0], p1 = s.v[i1];
+  const float p2 = s.v[i1 + 1 < n ? i1 + 1 : n - 1], p3 = s.v[i1 + 2 < n ? i1 + 2 : n - 1];
+  const float v = 0.5f * (2.0f * p1 + (p2 - p0) * t + (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t * t +
+                          (3.0f * p1 - p0 - 3.0f * p2 + p3) * t * t * t);
+  const float lo = std::min(std::min(p0, p1), std::min(p2, p3));
+  const float hi = std::max(std::max(p0, p1), std::max(p2, p3));
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+// Each pixel near the line gets alpha from its distance to the line, so steep
+// spikes get smooth sides too. The line has a vertex per column.
+void sparkPaint(Spark& s, float right) {
+  lv_draw_buf_t* b = s.buf;
+  const int w = b->header.w, h = b->header.h;
+  for (int y = 0; y < h; y++) memset(b->data + y * b->header.stride, 0, w);
+  if (s.n < 2 || !(s.viewHi > s.viewLo)) return;
+  const float step = (float)SPARK_SPAN / (float)(w - 1);
+  const float m = SPARK_LINE / 2 + 0.5f;
+  const float k = ((float)h - 2 * m) / (s.viewHi - s.viewLo);
+  static float ys[SPARK_MAX_W];
+  for (int x = 0; x < w; x++) {
+    const float fi = right - (float)(w - 1 - x) * step;
+    ys[x] = fi < 0 ? NAN : m + (s.viewHi - sparkAt(s, fi)) * k;
+  }
+  // Segment i runs from vertex i to i + 1; pixels of column x can only be
+  // reached by segments x - 2 .. x + 1, and only by the part of the line
+  // within rad of the column. Rows are written in order: PSRAM hates column strides.
+  struct Seg {
+    float ay, dy, inv, lo, hi;  // lo / hi: the y band the segment can reach
+    bool ok;
+  };
+  static Seg seg[SPARK_MAX_W];
+  static int16_t cy0[SPARK_MAX_W], cy1[SPARK_MAX_W];
+  const float rad = SPARK_LINE / 2 + 0.5f;  // full alpha within half a pixel of the stroke
+  for (int i = 0; i + 1 < w; i++) {
+    Seg& g = seg[i];
+    g.ok = !isnan(ys[i]) && !isnan(ys[i + 1]);
+    g.ay = ys[i];
+    g.dy = ys[i + 1] - ys[i];
+    g.inv = 1.0f / (1.0f + g.dy * g.dy);
+    g.lo = std::min(ys[i], ys[i + 1]) - rad;
+    g.hi = std::max(ys[i], ys[i + 1]) + rad;
+  }
+  int yMin = h, yMax = -1;
+  for (int x = 0; x < w; x++) {
+    float top = INFINITY, bot = -INFINITY;
+    auto take = [&](float v) {
+      if (isnan(v)) return;
+      top = std::min(top, v);
+      bot = std::max(bot, v);
+    };
+    for (int i = x - 1; i <= x + 1; i++)
+      if (i >= 0 && i < w) take(ys[i]);
+    if (x >= 2) take((ys[x - 2] + ys[x - 1]) / 2);
+    if (x + 2 < w) take((ys[x + 1] + ys[x + 2]) / 2);
+    cy0[x] = top > bot ? h : (int16_t)std::max(0, (int)floorf(top - rad));
+    cy1[x] = top > bot ? -1 : (int16_t)std::min(h - 1, (int)ceilf(bot + rad));
+    yMin = std::min(yMin, (int)cy0[x]);
+    yMax = std::max(yMax, (int)cy1[x]);
+  }
+  const float rad2 = rad * rad, full2 = (rad - 1) * (rad - 1);
+  for (int y = yMin; y <= yMax; y++) {
+    uint8_t* row = b->data + y * b->header.stride;
+    const float py = (float)y + 0.5f;
+    for (int x = 0; x < w; x++) {
+      if (y < cy0[x] || y > cy1[x]) continue;
+      float d2 = rad2;
+      for (int i = std::max(0, x - 2); i <= std::min(w - 2, x + 1); i++) {
+        const Seg& g = seg[i];
+        if (!g.ok || py < g.lo || py > g.hi) continue;
+        const float ex0 = (float)(x - i), ey0 = py - g.ay;  // pixel centre minus vertex i
+        float t = (ex0 + ey0 * g.dy) * g.inv;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const float ex = ex0 - t, ey = ey0 - t * g.dy;
+        d2 = std::min(d2, ex * ex + ey * ey);
+      }
+      if (d2 >= rad2) continue;
+      row[x] = d2 <= full2 ? 255 : (uint8_t)((rad - sqrtf(d2)) * 255);
+    }
+  }
+}
+
+// Repaint when the glide moved a quarter of a pixel or the axis moved; true
+// when it painted. ease moves the glide and the axis on by dtMs; without it
+// both jump to where they should be.
+bool sparkRender(TileRt& r, uint32_t now, bool ease, uint32_t dtMs) {
+  Spark& s = *r.spark;
+  if (lv_obj_has_flag(r.viz, LV_OBJ_FLAG_HIDDEN)) return false;
+  const int w = lv_obj_get_width(r.viz), h = lv_obj_get_height(r.viz);
+  if (w < 8 || h < 8 || w > SPARK_MAX_W) return false;
+  if (!s.buf || s.buf->header.w != w || s.buf->header.h != h) {
+    if (s.buf) lv_draw_buf_destroy(s.buf);
+    s.buf = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_A8, 0);
+    s.key = -1;
+    s.painted = false;
+    if (!s.buf) return false;
+  }
+  if (!s.haveView || !ease || !isfinite(s.viewLo) || !isfinite(s.viewHi)) {
+    s.viewLo = s.lo;
+    s.viewHi = s.hi;
+    s.haveView = true;
+  } else {
+    const float a = std::min(1.0f, (float)dtMs / SPARK_EASE_MS);
+    s.viewLo += (s.lo - s.viewLo) * a;
+    s.viewHi += (s.hi - s.viewHi) * a;
+  }
+  // The packet clock says one sample behind the newest at arrival, the newest
+  // one interval later; the glide runs at that rate and eases onto it.
+  const float target = std::min(0.0f, -1.0f + (float)(now - s.rxMs) / (float)s.gapMs);
+  if (!dispSettings.smoothCharts || s.n < 3) s.off = 0;
+  else if (!ease) s.off = target;
+  else s.off += (float)dtMs / (float)s.gapMs + (target - s.off) * std::min(1.0f, (float)dtMs / SPARK_SYNC_MS);
+  s.off = std::min(s.off, 0.0f);
+  if (s.n > SPARK_SPAN) s.off = std::max(s.off, (float)(SPARK_SPAN + 1 - s.n));  // left edge on data
+  const int32_t key = (int32_t)floorf(s.off * (float)(w - 1) / SPARK_SPAN * 4);
+  const float tol = (s.hi - s.lo) / 400;
+  if (key == s.key && fabsf(s.viewLo - s.paintLo) <= tol && fabsf(s.viewHi - s.paintHi) <= tol) return false;
+  sparkPaint(s, (float)(s.n - 1) + s.off);
+  s.painted = true;
+  s.key = key;
+  s.paintLo = s.viewLo;
+  s.paintHi = s.viewHi;
+  lv_obj_invalidate(r.viz);
+  return true;
+}
+
+void sparkDrawEvent(lv_event_t* e) {
+  const Spark* s = (const Spark*)lv_event_get_user_data(e);
+  lv_obj_t* o = lv_event_get_target_obj(e);
+  lv_area_t a;
+  lv_obj_get_coords(o, &a);
+  if (!s->buf || !s->painted || lv_area_get_width(&a) != (int32_t)s->buf->header.w ||
+      lv_area_get_height(&a) != (int32_t)s->buf->header.h)
+    return;
+  lv_draw_image_dsc_t d;
+  lv_draw_image_dsc_init(&d);
+  d.src = s->buf;
+  d.recolor = lv_color_hex(s->color);
+  d.recolor_opa = LV_OPA_COVER;
+  lv_draw_image(lv_event_get_layer(e), &d, &a);
+}
+
+void sparkSizeEvent(lv_event_t* e) {
+  const size_t idx = (size_t)(uintptr_t)lv_event_get_user_data(e);
+  if (idx < s_tiles.size() && s_tiles[idx].spark) sparkRender(s_tiles[idx], millis(), false, 0);
+}
+
+// A sample for the chart: a non-finite one repeats its predecessor.
+float sparkSample(const SlotHistory& hs, int i, float prev) {
+  const float v = pcHistoryAt(hs, (uint8_t)i);
+  return isfinite(v) ? v : prev;
+}
+
+// Take a packet's new sample (or the whole history after a gap) into the
+// tile's chart and aim its axis.
+void sparkFeed(TileRt& r, const PcSource& pc, const SlotHistory& hs, int n, float scale, bool autoRate,
+               uint32_t accent) {
+  Spark& s = *r.spark;
+  if (!n) {
+    s.n = 0;
+  } else if (hs.head != s.head || hs.count != s.cnt || !s.n) {
+    const uint32_t dt = pc.data.sampleMs - s.rxMs;
+    if (s.rxMs && dt >= 150 && dt <= 10000) s.gapMs = (s.gapMs * 3 + dt) / 4;
+    s.rxMs = pc.data.sampleMs;
+    const bool next = s.n && hs.count >= s.cnt && (hs.head + PC_HISTORY_LEN - s.head) % PC_HISTORY_LEN == 1;
+    if (next) {
+      if (s.n == SPARK_KEEP) memmove(s.v, s.v + 1, sizeof(float) * --s.n);
+      s.v[s.n] = sparkSample(hs, n - 1, s.v[s.n - 1]);
+      s.n++;
+      s.off -= 1;  // the same place on screen, one sample further from the newest
+    } else {
+      for (int i = 0; i < n; i++) s.v[i] = sparkSample(hs, i, i ? s.v[i - 1] : 0.0f);
+      s.n = (uint8_t)n;
+      s.off = -1;
+    }
+    s.head = hs.head;
+    s.cnt = hs.count;
+  }
+  float lo = 1e9f, hi = -1e9f;
+  for (int i = std::max(0, s.n - PC_HISTORY_LEN); i < s.n; i++) {
+    lo = std::min(lo, s.v[i]);
+    hi = std::max(hi, s.v[i]);
+  }
+  if (s.n) {
+    // Noise on a quiet metric must not fill the chart: span at least a tenth of the scale.
+    const float minSpan = autoRate ? 0 : scale * 0.1f;
+    if (hi - lo < minSpan) {
+      lo = std::max(lo >= 0 ? 0.0f : lo - minSpan, (lo + hi - minSpan) / 2);
+      hi = lo + minSpan;
+    }
+    const float pad = (hi - lo) * 0.15f + 0.5f;
+    s.lo = lo - pad;
+    s.hi = hi + pad;
+  }
+  s.color = accent;
+  s.key = -1;
+  // The shown page glides in deckTick; anything else is painted once per packet.
+  if (r.page != sh.active || !sparkGliding()) sparkRender(r, millis(), false, 0);
+}
+
 // Pull the latest companion packet into one metric tile.
 void applyPcToTile(TileRt& r) {
   const TileDef& d = *r.def;
@@ -3395,12 +3644,8 @@ void applyPcToTile(TileRt& r) {
 
   const SlotHistory& hs = pc->hist[d.metric <= MAX_METRICS ? d.metric : 0];
   const int n = hs.metricId == d.metric ? hs.count : 0;
-  float lo = 1e9f, hi = -1e9f;
-  for (int i = 0; i < n; i++) {
-    const float v = pcHistoryAt(hs, (uint8_t)i);
-    lo = v < lo ? v : lo;
-    hi = v > hi ? v : hi;
-  }
+  float hi = -1e9f;
+  for (int i = 0; i < n; i++) hi = max(hi, pcHistoryAt(hs, (uint8_t)i));
   // A rate without a set scale never warns; its bar is relative to the recent peak.
   const bool autoRate = metricIsRate(*m) && !d.scaleMax;
   const float scale = autoRate ? max(hi, m->value) : metricScaleMax(*m, d.scaleMax);
@@ -3416,25 +3661,8 @@ void applyPcToTile(TileRt& r) {
   if (r.viz && d.style == METRIC_BAR) {
     lv_bar_set_value(r.viz, (int32_t)constrain(pct, 0.0f, 100.0f), LV_ANIM_OFF);
     lv_obj_set_style_bg_color(r.viz, lv_color_hex(accent), LV_PART_INDICATOR);
-  } else if (r.viz && r.pts) {
-    // History as tenths, oldest first, padded on the left while it fills.
-    for (int i = 0; i < PC_HISTORY_LEN; i++) {
-      const int k = i - (PC_HISTORY_LEN - n);
-      r.pts[i] = k < 0 ? LV_CHART_POINT_NONE : (int32_t)lroundf(pcHistoryAt(hs, (uint8_t)k) * 10);
-    }
-    if (n) {
-      // Noise on a quiet metric must not fill the chart: span at least a tenth of the scale.
-      const float minSpan = autoRate ? 0 : scale * 0.1f;
-      if (hi - lo < minSpan) {
-        lo = max(lo >= 0 ? 0.0f : lo - minSpan, (lo + hi - minSpan) / 2);
-        hi = lo + minSpan;
-      }
-      const float pad = (hi - lo) * 0.15f + 0.5f;
-      lv_chart_set_axis_range(r.viz, LV_CHART_AXIS_PRIMARY_Y, (int32_t)floorf((lo - pad) * 10),
-                              (int32_t)ceilf((hi + pad) * 10));
-    }
-    lv_chart_set_series_color(r.viz, r.ser, lv_color_hex(accent));
-    lv_chart_refresh(r.viz);
+  } else if (r.spark) {
+    sparkFeed(r, *pc, hs, n, scale, autoRate, accent);
   }
 }
 
@@ -3490,20 +3718,33 @@ void makeMetricContent(TileRt& r, lv_obj_t* t) {
     lv_obj_set_style_bg_color(r.viz, lv_color_hex(metricChart(d)), LV_PART_INDICATOR);
     return;
   }
-  // Chart: the number top right, the line under it.
+  // Chart: the number top right, the line under it. PC metrics draw their own
+  // (sparkPaint) to glide between packets; makeTile hooks up its events.
+  if (!sensor) {
+    r.spark = (Spark*)lv_malloc_zeroed(sizeof(Spark));
+    if (!r.spark) return;
+    r.spark->gapMs = 1000;
+    r.spark->key = -1;
+    r.viz = lv_obj_create(t);
+    lv_obj_remove_style_all(r.viz);
+    lv_obj_set_size(r.viz, lv_pct(100), lv_pct(62));
+    lv_obj_align(r.viz, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_remove_flag(r.viz, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    return;
+  }
   r.viz = lv_chart_create(t);
   lv_obj_remove_style_all(r.viz);
   lv_obj_set_size(r.viz, lv_pct(100), lv_pct(62));
   lv_obj_align(r.viz, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_chart_set_type(r.viz, LV_CHART_TYPE_LINE);
   lv_chart_set_div_line_count(r.viz, 0, 0);
-  const int count = sensor ? (d.http.enabled ? HTTP_HISTORY_POINTS : HA_HISTORY_POINTS) : PC_HISTORY_LEN;
+  const int count = d.http.enabled ? HTTP_HISTORY_POINTS : HA_HISTORY_POINTS;
   lv_chart_set_point_count(r.viz, count);
   lv_obj_set_style_line_width(r.viz, 2, LV_PART_ITEMS);
   lv_obj_set_style_width(r.viz, 0, LV_PART_INDICATOR);
   lv_obj_set_style_height(r.viz, 0, LV_PART_INDICATOR);
   lv_obj_remove_flag(r.viz, LV_OBJ_FLAG_CLICKABLE);
-  r.ser = lv_chart_add_series(r.viz, lv_color_hex(sensor ? sensorLine(r) : metricChart(d)), LV_CHART_AXIS_PRIMARY_Y);
+  r.ser = lv_chart_add_series(r.viz, lv_color_hex(sensorLine(r)), LV_CHART_AXIS_PRIMARY_Y);
   r.pts = (int32_t*)lv_malloc(sizeof(int32_t) * count);
   if (!r.pts) { lv_obj_delete(r.viz); r.viz = nullptr; r.ser = nullptr; return; }
   for (int i = 0; i < count; i++) r.pts[i] = LV_CHART_POINT_NONE;
@@ -3684,6 +3925,10 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     makeMetricContent(r, t);
     const size_t idx = s_tiles.size();
     s_tiles.push_back(r);
+    if (r.spark) {
+      lv_obj_add_event_cb(r.viz, sparkDrawEvent, LV_EVENT_DRAW_MAIN, r.spark);
+      lv_obj_add_event_cb(r.viz, sparkSizeEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
+    }
     if (def.type == TILE_METRIC) applyPcToTile(s_tiles.back());
     else {
       applyHaToTile(s_tiles.back(), true);
@@ -4995,8 +5240,10 @@ void destroyPages(bool keepGlass = false) {
     s_pages[i] = {};
   }
   s_count = 0;
-  for (TileRt& r : s_tiles)
+  for (TileRt& r : s_tiles) {
     if (r.pts) lv_free(r.pts);
+    sparkFree(r.spark);
+  }
   s_tiles.clear();
   portENTER_CRITICAL(&s_mux);
   sh.count = 0;
@@ -5156,12 +5403,27 @@ void refreshOneSnapshot() {
   const int order[4] = {c + 1 < sh.nCols ? sh.colCur[c + 1] : -1, c > 0 ? sh.colCur[c - 1] : -1,
                         a + 1 < s_count && sh.col[a + 1] == c ? a + 1 : -1,
                         a > 0 && sh.col[a - 1] == c ? a - 1 : -1};
-  for (int k = 0; k < 4 && pick < 0; k++) {
-    const int p = order[k];
-    if (p >= 0 && s_pages[p].stale) pick = p;
-  }
+  // The shown page swipes from the live frame; only closing the panel slides
+  // off its image (showPanel marks it), so then it goes first.
+  auto due = [&](int p) { return p >= 0 && s_pages[p].stale && (p != a || s_qp.open); };
+  if (s_qp.open && due(a)) pick = a;
+  // A page without an image cannot be swiped to at all.
+  for (int k = 0; k < 4 && pick < 0; k++)
+    if (due(order[k]) && !sh.valid[order[k]]) pick = order[k];
   for (int p = 0; p < s_count && pick < 0; p++)
-    if (s_pages[p].stale) pick = p;
+    if (due(p) && !sh.valid[p]) pick = p;
+  // A whole page snapshot stalls gliding charts for about 45 ms: while they
+  // glide, one image every few seconds, the oldest first so none is starved.
+  const bool gliding = now - s_sparkPaintMs < 1000;
+  if (pick < 0 && gliding) {
+    if (now - s_lastSnapMs < SPARK_SNAP_MS) return;
+    for (int p = 0; p < s_count; p++)
+      if (due(p) && (pick < 0 || (int32_t)(s_pages[p].snapMs - s_pages[pick].snapMs) < 0)) pick = p;
+  }
+  for (int k = 0; k < 4 && pick < 0; k++)
+    if (due(order[k])) pick = order[k];
+  for (int p = 0; p < s_count && pick < 0; p++)
+    if (due(p)) pick = p;
   if (pick < 0) {
     refreshPanelSnapshot();
     return;
@@ -5187,7 +5449,7 @@ void refreshOneSnapshot() {
   if (ok) sh.src[pick] = {(const uint16_t*)pg.snap->data, (uint16_t)(pg.snap->header.stride / 2), true};
   portEXIT_CRITICAL(&s_mux);
   pg.stale = !ok;
-  s_lastSnapMs = millis();
+  pg.snapMs = s_lastSnapMs = millis();
 }
 
 // The colon of the shown page's clocks blinks with the second; other pages
@@ -5333,6 +5595,30 @@ bool deckBegin(uint8_t rotation) {
   return true;
 }
 
+namespace {
+
+// The shown page's PC charts glide at about 30 fps while the screen is lit
+// and nothing covers the page.
+uint32_t s_sparkMs = 0;
+
+bool sparkGliding() {
+  return dispSettings.smoothCharts && !manualDisplayOff() && currentBacklightLevel() && !s_qp.open &&
+         !s_modalCard && !s_ed.root;
+}
+
+void sparkTick() {
+  const uint32_t now = millis();
+  const uint32_t dt = now - s_sparkMs;
+  if (dt < SPARK_FRAME_MS) return;
+  s_sparkMs = now;
+  if (!sparkGliding()) return;
+  for (TileRt& r : s_tiles)
+    if (r.spark && r.page == sh.active && sparkRender(r, now, true, std::min<uint32_t>(dt, 200)))
+      s_sparkPaintMs = now;
+}
+
+}  // namespace
+
 void deckTick() {
   if (!s_disp) return;
 
@@ -5384,6 +5670,7 @@ void deckTick() {
   pcCmdSync();
   pairSync();
   pcSync(false);
+  if (!systemScreen) sparkTick();
   syncSwipeZones();
   lv_timer_handler();
   if (!systemScreen) refreshOneSnapshot();

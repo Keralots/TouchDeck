@@ -80,6 +80,7 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.glassBlur        = 12;
   ds.glassDim         = 15;
   ds.glassOn          = 80;
+  ds.smoothCharts     = true;
 }
 
 void defaultBacklightSettings(BacklightSettings& bs) {
@@ -136,6 +137,7 @@ void loadSettings() {
   dispSettings.glassBlur = min<uint8_t>(prefs.getUChar("gblur", dispSettings.glassBlur), 24);
   dispSettings.glassDim = min<uint8_t>(prefs.getUChar("gdim", dispSettings.glassDim), 60);
   dispSettings.glassOn = constrain(prefs.getUChar("gon", dispSettings.glassOn), 20, 100);
+  dispSettings.smoothCharts = prefs.getBool("smooth", true);
   advSettings.printers = prefs.getBool("prn", false);
   if (prefs.getBytesLength("net") == sizeof(NetworkSettings))
     prefs.getBytes("net", &netSettings, sizeof(NetworkSettings));
@@ -177,6 +179,7 @@ void saveSettings() {
   prefs.putUChar("gblur", dispSettings.glassBlur);
   prefs.putUChar("gdim", dispSettings.glassDim);
   prefs.putUChar("gon", dispSettings.glassOn);
+  prefs.putBool("smooth", dispSettings.smoothCharts);
   prefs.putBool("prn", advSettings.printers);
   prefs.putBytes("net", &netSettings, sizeof(NetworkSettings));
   prefs.putBytes("backlight", &backlightSettings, sizeof(BacklightSettings));

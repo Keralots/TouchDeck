@@ -284,6 +284,7 @@ static void parsePacket(const char* json, IPAddress from, bool serial) {
   }
 
   d.lastReceived = millis();
+  d.sampleMs = d.lastReceived;
   d.online = true;
   s_version++;
 
