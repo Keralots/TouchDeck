@@ -129,7 +129,7 @@ bool parseAction(JsonVariantConst v, TileAction& a, String* err, const String& w
   } else if (!strcmp(kind, "pc")) {
     static const char* const kCmds[] = {"media_play_pause", "media_next", "media_prev", "media_stop",
                                         "volume_up", "volume_down", "volume_mute", "lock", "sleep",
-                                        "restart", "shutdown"};
+                                        "restart", "shutdown", "hotkey"};
     a.kind = ACT_PC;
     a.pc = (const char*)(v["pc"] | "");
     a.cmd = (const char*)(v["cmd"] | "");
@@ -138,6 +138,18 @@ bool parseAction(JsonVariantConst v, TileAction& a, String* err, const String& w
     if (!known) {
       if (err) *err = where + ": unknown PC command '" + a.cmd + "'";
       return false;
+    }
+    if (a.cmd == "hotkey") {
+      // Sent as "hotkey:ctrl+shift+m"; the companion checks the key names.
+      String keys = (const char*)(v["keys"] | "");
+      keys.toLowerCase();
+      bool ok = keys.length() > 0 && keys.length() <= 64;
+      for (const char* k = keys.c_str(); *k; k++) ok = ok && (isalnum((unsigned char)*k) || *k == '+');
+      if (!ok) {
+        if (err) *err = where + ": hotkey keys must look like \"ctrl+shift+m\"";
+        return false;
+      }
+      a.cmd += ":" + keys;
     }
   } else if (!strcmp(kind, "call-service")) {
     a.kind = ACT_CALL_SERVICE;

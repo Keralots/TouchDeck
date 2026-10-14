@@ -34,6 +34,27 @@ COMMANDS = ("media_play_pause", "media_next", "media_prev", "media_stop",
 # These would cut the acknowledgement off, so they start a moment after it.
 DEFERRED = ("lock", "sleep", "restart", "shutdown")
 
+# "hotkey:ctrl+shift+m": keys pressed in order, released in reverse.
+HOTKEY_PREFIX = "hotkey:"
+HOTKEY_MAX_KEYS = 5
+_KEY_NAMES = (["ctrl", "shift", "alt", "win", "space", "enter", "tab", "esc", "backspace",
+               "delete", "insert", "home", "end", "pageup", "pagedown", "up", "down", "left",
+               "right", "printscreen"]
+              + [chr(c) for c in range(ord("a"), ord("z") + 1)]
+              + [str(d) for d in range(10)]
+              + ["f%d" % n for n in range(1, 25)])
+
+
+def parse_hotkey(cmd):
+    """Key names of a "hotkey:..." command, or None when it is not a valid one."""
+    if not isinstance(cmd, str) or not cmd.startswith(HOTKEY_PREFIX):
+        return None
+    keys = cmd[len(HOTKEY_PREFIX):].split("+")
+    if (not 0 < len(keys) <= HOTKEY_MAX_KEYS or len(set(keys)) != len(keys)
+            or any(k not in _KEY_NAMES for k in keys)):
+        return None
+    return keys
+
 
 class NonceBook:
     """One-time nonces handed to the device in metrics packets."""
@@ -81,8 +102,8 @@ def verify(config, packet):
         return False, "this PC is not paired"
     if pc != config.get("pc_id"):
         return False, "command for another PC"
-    if cmd not in COMMANDS:
-        return False, "unknown command"
+    if cmd not in COMMANDS and parse_hotkey(cmd) is None:
+        return False, "unknown keys" if cmd.startswith(HOTKEY_PREFIX) else "unknown command"
     # Check the signature before spending the nonce, so a forged packet cannot
     # use up the one the device is about to send.
     try:
@@ -105,6 +126,34 @@ _WIN_VK = {
 }
 _NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW: no console flash from the windowed exe
 
+_WIN_KEY_VK = {
+    "ctrl": 0x11, "shift": 0x10, "alt": 0x12, "win": 0x5B, "space": 0x20, "enter": 0x0D,
+    "tab": 0x09, "esc": 0x1B, "backspace": 0x08, "delete": 0x2E, "insert": 0x2D,
+    "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22, "up": 0x26, "down": 0x28,
+    "left": 0x25, "right": 0x27, "printscreen": 0x2C,
+}
+# Without KEYEVENTF_EXTENDEDKEY these arrive as their numpad twins.
+_WIN_EXTENDED = {"win", "delete", "insert", "home", "end", "pageup", "pagedown",
+                 "up", "down", "left", "right"}
+
+
+def _win_vk(key):
+    if key in _WIN_KEY_VK:
+        return _WIN_KEY_VK[key]
+    if len(key) == 1:
+        return ord(key.upper())  # A-Z and 0-9 share their ASCII codes
+    return 0x70 + int(key[1:]) - 1  # f1..f24
+
+
+def _win_hotkey(keys):
+    # Goes to the foreground window; Windows drops it for elevated windows
+    # unless the companion runs elevated too.
+    user32 = ctypes.windll.user32
+    for key in keys:
+        user32.keybd_event(_win_vk(key), 0, 1 if key in _WIN_EXTENDED else 0, 0)
+    for key in reversed(keys):
+        user32.keybd_event(_win_vk(key), 0, (1 if key in _WIN_EXTENDED else 0) | 2, 0)
+
 
 def _win_suspend():
     # SetSuspendState needs SE_SHUTDOWN_NAME enabled in our token.
@@ -120,7 +169,10 @@ def _win_suspend():
 
 
 def _run_windows(cmd):
-    if cmd in _WIN_VK:
+    keys = parse_hotkey(cmd)
+    if keys:
+        _win_hotkey(keys)
+    elif cmd in _WIN_VK:
         user32 = ctypes.windll.user32
         user32.keybd_event(_WIN_VK[cmd], 0, 0, 0)
         user32.keybd_event(_WIN_VK[cmd], 0, 2, 0)  # KEYEVENTF_KEYUP
@@ -149,8 +201,24 @@ _LINUX = {
 }
 
 
+# xdotool key names (X11 keysyms) where ours differ; X11 only, not Wayland.
+_XDOTOOL_KEYS = {
+    "win": "super", "enter": "Return", "tab": "Tab", "esc": "Escape", "backspace": "BackSpace",
+    "delete": "Delete", "insert": "Insert", "home": "Home", "end": "End", "pageup": "Prior",
+    "pagedown": "Next", "up": "Up", "down": "Down", "left": "Left", "right": "Right",
+    "printscreen": "Print",
+}
+
+
 def _run_linux(cmd):
-    subprocess.run(_LINUX[cmd], check=True, timeout=10,
+    keys = parse_hotkey(cmd)
+    if keys:
+        names = [_XDOTOOL_KEYS.get(k, k.upper() if k.startswith("f") and k[1:].isdigit() else k)
+                 for k in keys]
+        argv = ["xdotool", "key", "+".join(names)]
+    else:
+        argv = _LINUX[cmd]
+    subprocess.run(argv, check=True, timeout=10,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 

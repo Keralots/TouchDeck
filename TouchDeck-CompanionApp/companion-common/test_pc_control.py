@@ -43,6 +43,34 @@ class PcControlTest(unittest.TestCase):
         self.assertFalse(pc_control.verify({"pc_id": "0123456789ab"}, packet(n))[0])
         self.assertFalse(pc_control.verify(CFG, packet(n, cmd="format_disk"))[0])
 
+    def test_hotkey_parsing(self):
+        self.assertEqual(["ctrl", "shift", "m"], pc_control.parse_hotkey("hotkey:ctrl+shift+m"))
+        self.assertEqual(["win", "f24"], pc_control.parse_hotkey("hotkey:win+f24"))
+        for bad in ("hotkey:", "hotkey:ctrl+", "hotkey:ctrl+ctrl", "hotkey:f25", "hotkey:CTRL+m",
+                    "hotkey:a+b+c+d+e+f", "hotkey:ctrl shift", "ctrl+m", None):
+            with self.subTest(bad=bad):
+                self.assertIsNone(pc_control.parse_hotkey(bad))
+
+    def test_signed_hotkey_passes_and_bad_keys_are_refused(self):
+        n = pc_control.NONCES.issue()
+        self.assertEqual((True, ""), pc_control.verify(CFG, packet(n, cmd="hotkey:ctrl+alt+t")))
+        n = pc_control.NONCES.issue()
+        self.assertEqual((False, "unknown keys"), pc_control.verify(CFG, packet(n, cmd="hotkey:ctrl+nope")))
+
+    def test_hotkey_presses_in_order_and_releases_in_reverse(self):
+        user32 = mock.Mock()
+        with mock.patch.object(pc_control, "ctypes", create=True) as ct:
+            ct.windll.user32 = user32
+            pc_control._win_hotkey(["ctrl", "up", "a"])
+        self.assertEqual([mock.call(0x11, 0, 0, 0), mock.call(0x26, 0, 1, 0), mock.call(0x41, 0, 0, 0),
+                          mock.call(0x41, 0, 2, 0), mock.call(0x26, 0, 3, 0), mock.call(0x11, 0, 2, 0)],
+                         user32.keybd_event.call_args_list)
+
+    def test_hotkey_on_linux_uses_xdotool_names(self):
+        with mock.patch.object(pc_control.subprocess, "run") as run:
+            pc_control._run_linux("hotkey:ctrl+pageup+f5")
+        self.assertEqual(["xdotool", "key", "ctrl+Prior+F5"], run.call_args[0][0])
+
     def test_firmware_message_layout(self):
         # Same input as the device's mbedtls HMAC: "pc_id|nonce|cmd".
         import hashlib

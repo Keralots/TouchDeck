@@ -176,10 +176,10 @@ const isHttpSensor=t=>t.type==='sensor'&&!!t.http;
 const isHttp=t=>!!(t.tap&&t.tap.action==='http');
 const isPcCmd=t=>!!(t.tap&&t.tap.action==='pc');
 /* PC commands: [cmd, label, icon]; the last three ask on the device by default. */
-const PCCMD=[['media_play_pause','Play / pause','play-pause'],['media_next','Next track','skip-next'],['media_prev','Previous track','skip-previous'],['media_stop','Stop','stop'],['volume_up','Volume up','volume-plus'],['volume_down','Volume down','volume-minus'],['volume_mute','Mute','volume-mute'],['lock','Lock','lock'],['sleep','Sleep','power-sleep'],['restart','Restart','restart'],['shutdown','Shut down','power']];
+const PCCMD=[['media_play_pause','Play / pause','play-pause'],['media_next','Next track','skip-next'],['media_prev','Previous track','skip-previous'],['media_stop','Stop','stop'],['volume_up','Volume up','volume-plus'],['volume_down','Volume down','volume-minus'],['volume_mute','Mute','volume-mute'],['lock','Lock','lock'],['sleep','Sleep','power-sleep'],['restart','Restart','restart'],['shutdown','Shut down','power'],['hotkey','Hotkey','keyboard']];
 const RISKY=['sleep','restart','shutdown'];
 function pcCmdSet(t,cmd){const c=PCCMD.find(x=>x[0]===cmd)||PCCMD[0];const old=PCCMD.find(x=>x[0]===(t.tap&&t.tap.cmd));
-  t.tap=Object.assign({action:'pc',cmd:c[0]},t.tap&&t.tap.pc?{pc:t.tap.pc}:{});
+  t.tap=Object.assign({action:'pc',cmd:c[0]},t.tap&&t.tap.pc?{pc:t.tap.pc}:{},c[0]==='hotkey'?{keys:(t.tap&&t.tap.keys)||'ctrl+shift+m'}:{});
   if(!t.label||(old&&t.label===old[1]))t.label=c[1];if(!t.icon||(old&&t.icon==='mdi:'+old[2]))t.icon='mdi:'+c[2];
   if(RISKY.includes(c[0]))t.confirm='always';else if(old&&RISKY.includes(old[0])&&t.confirm==='always')delete t.confirm;}
 const tapName=a=>a.action==='page'?'Open page '+a.page:a.action==='call-service'?'Service '+a.domain+'.'+a.service:a.action;
@@ -197,6 +197,7 @@ function moreRow(t,i){const cf=t.confirm||'';
     const kk=isPcCmd(t)?'pc':k;
     h+='<div class="field"><label class="field-label">On tap</label><select data-ak="'+i+'">'+opt('',isHttpSensor(t)?'None':'Home Assistant entity',kk==='')+opt('http','HTTP request',kk==='http')+opt('pc','PC command',kk==='pc')+(kk==='keep'?opt('keep',tapName(tp),true):'')+'</select></div>';
     if(kk==='pc'){h+='<div class="field"><label class="field-label">Command</label><select data-pcc="'+i+'">'+PCCMD.map(c=>opt(c[0],c[1],tp.cmd===c[0])).join('')+'</select></div>';
+      if(tp.cmd==='hotkey')h+='<div class="field"><label class="field-label">Keys</label><input type="text" data-pck="'+i+'" value="'+esc(tp.keys||'')+'" placeholder="ctrl+shift+m" spellcheck="false"></div><p class="field-hint wide" style="margin:0">Joined with +, up to 5: ctrl, shift, alt, win, a-z, 0-9, f1-f24, space, enter, tab, esc, backspace, delete, insert, home, end, pageup, pagedown, up, down, left, right, printscreen. The PC gets them in its focused window.</p>';
       h+='<div class="field"><label class="field-label">PC</label><select data-pcp="'+i+'">'+opt('','Default PC'+(pcs[0]?' ('+pcs[0].name+')':''),!tp.pc)+pcs.map(x=>opt(x.id,x.name+(x.paired?'':' - not paired'),tp.pc===x.id)).join('')+'</select></div>';
       const tg=pcs.find(x=>x.id===(tp.pc||''))||(!tp.pc&&pcs[0]);
       h+='<p class="field-hint wide" style="margin:0">'+(tg&&tg.paired?'Paired with '+esc(tg.name)+'.':'Pair the PC first: TouchDeck Companion, Device page, "Pair for control".')+' Sleep, Restart and Shut down ask on the device before they run.</p>';}
@@ -406,6 +407,7 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   const tapOf=x=>p.tiles[+(x.dataset.ak||x.dataset.hm||x.dataset.hu||x.dataset.hb||x.dataset.hh||x.dataset.hc||x.dataset.ht)];
   el.querySelectorAll('[data-ak]').forEach(x=>x.onchange=e=>{const t=tapOf(x),v=e.target.value;if(v==='keep')return;if(v==='http')t.tap={action:'http',method:'GET',url:'http://'};else if(v==='pc'){delete t.tap;pcCmdSet(t,'media_play_pause');}else delete t.tap;setDirty(true);renderPage();});
   el.querySelectorAll('[data-pcc]').forEach(x=>x.onchange=e=>{pcCmdSet(p.tiles[+x.dataset.pcc],e.target.value);setDirty(true);renderPage();});
+  el.querySelectorAll('[data-pck]').forEach(x=>x.oninput=e=>{p.tiles[+x.dataset.pck].tap.keys=e.target.value.trim().toLowerCase().replace(/\s*\+\s*/g,'+');setDirty(true);});
   el.querySelectorAll('[data-pcp]').forEach(x=>x.onchange=e=>{const a=p.tiles[+x.dataset.pcp].tap;if(e.target.value)a.pc=e.target.value;else delete a.pc;setDirty(true);renderPage();});
   el.querySelectorAll('[data-hm]').forEach(x=>x.onchange=e=>{tapOf(x).tap.method=e.target.value;setDirty(true);renderPage();});
   el.querySelectorAll('[data-hu]').forEach(x=>x.oninput=e=>{tapOf(x).tap.url=e.target.value.trim();setDirty(true);});

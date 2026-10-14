@@ -65,7 +65,8 @@
 // A command to a PC running the companion (paired from the companion):
 // { "action": "pc", "pc": "<pc_id>" (optional), "cmd": "media_play_pause" |
 //   "media_next" | "media_prev" | "media_stop" | "volume_up" | "volume_down" |
-//   "volume_mute" | "lock" | "sleep" | "restart" | "shutdown" }.
+//   "volume_mute" | "lock" | "sleep" | "restart" | "shutdown" | "hotkey" }.
+// "hotkey" takes "keys": "ctrl+shift+m" (cmd then holds "hotkey:ctrl+shift+m").
 //
 // label / icon null = take them from Home Assistant later (Phase 3); until
 // then the entity id stands in. `sub` is an optional fixed second line.

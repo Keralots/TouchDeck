@@ -1192,6 +1192,7 @@ const char* pcCmdLabel(const String& cmd) {
       {"restart", "Restart"},               {"shutdown", "Shut down"}};
   for (const auto& l : kLabels)
     if (cmd == l[0]) return l[1];
+  if (cmd.startsWith("hotkey:")) return "Hotkey";
   return "Run";
 }
 
