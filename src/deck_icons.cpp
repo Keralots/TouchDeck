@@ -20,10 +20,12 @@ struct Entry {
   uint32_t cp;
 };
 
-uint8_t* s_data = nullptr;
+uint8_t* s_names = nullptr;  // the indexed names as Pascal strings
 size_t s_size = 0;
 Entry* s_index = nullptr;
 size_t s_count = 0;
+lv_fs_drv_t s_fsDrv;
+bool s_fsReg = false;
 struct Sized {
   int px;
   lv_font_t* font;
@@ -147,6 +149,65 @@ void freeFonts() {
   }
 }
 
+// LVGL drive "I:" = LittleFS, read only, for TinyTTF's file mode.
+void* fsOpen(lv_fs_drv_t*, const char* path, lv_fs_mode_t mode) {
+  if (mode != LV_FS_MODE_RD) return nullptr;
+  File f = LittleFS.open(path, "r");
+  if (!f) return nullptr;
+  // stdio would buffer a whole 4 KB block in internal RAM per open font;
+  // LVGL's read cache (s_fsDrv.cache_size, PSRAM) sits in front anyway.
+  f.setBufferSize(128);
+  return new File(f);
+}
+lv_fs_res_t fsClose(lv_fs_drv_t*, void* f) {
+  static_cast<File*>(f)->close();
+  delete static_cast<File*>(f);
+  return LV_FS_RES_OK;
+}
+lv_fs_res_t fsRead(lv_fs_drv_t*, void* f, void* buf, uint32_t n, uint32_t* got) {
+  const int r = static_cast<File*>(f)->read((uint8_t*)buf, n);
+  *got = r > 0 ? r : 0;
+  return r < 0 ? LV_FS_RES_UNKNOWN : LV_FS_RES_OK;
+}
+lv_fs_res_t fsSeek(lv_fs_drv_t*, void* f, uint32_t pos, lv_fs_whence_t w) {
+  const SeekMode m = w == LV_FS_SEEK_CUR ? SeekCur : w == LV_FS_SEEK_END ? SeekEnd : SeekSet;
+  return static_cast<File*>(f)->seek(pos, m) ? LV_FS_RES_OK : LV_FS_RES_UNKNOWN;
+}
+lv_fs_res_t fsTell(lv_fs_drv_t*, void* f, uint32_t* pos) {
+  *pos = static_cast<File*>(f)->position();
+  return LV_FS_RES_OK;
+}
+
+void registerFs() {
+  if (s_fsReg) return;
+  lv_fs_drv_init(&s_fsDrv);
+  s_fsDrv.letter = 'I';
+  s_fsDrv.cache_size = 256;
+  s_fsDrv.open_cb = fsOpen;
+  s_fsDrv.close_cb = fsClose;
+  s_fsDrv.read_cb = fsRead;
+  s_fsDrv.seek_cb = fsSeek;
+  s_fsDrv.tell_cb = fsTell;
+  lv_fs_drv_register(&s_fsDrv);
+  s_fsReg = true;
+}
+
+// Copies the indexed names out of the font data, so the data can go.
+uint8_t* packNames(const uint8_t* d, Entry* index, size_t count) {
+  size_t total = 0;
+  for (size_t i = 0; i < count; i++) total += 1 + d[index[i].name];
+  uint8_t* pool = (uint8_t*)heap_caps_malloc(total, MALLOC_CAP_SPIRAM);
+  if (!pool) return nullptr;
+  size_t at = 0;
+  for (size_t i = 0; i < count; i++) {
+    const size_t n = 1 + d[index[i].name];
+    memcpy(pool + at, d + index[i].name, n);
+    index[i].name = at;
+    at += n;
+  }
+  return pool;
+}
+
 }  // namespace
 
 const char* iconsPath() { return "/mdi.ttf"; }
@@ -180,25 +241,38 @@ bool iconsLoad(const char* path, String& err) {
   size_t count = 0;
   Entry* index = got == size ? buildIndex(data, size, count, err) : nullptr;
   if (got != size) err = "short read";
-  if (!index) {
-    heap_caps_free(data);
+  uint8_t* names = index ? packNames(data, index, count) : nullptr;
+  heap_caps_free(data);
+  if (!names) {
+    if (index && !err.length()) err = "out of memory";
+    heap_caps_free(index);
     return false;
   }
   freeFonts();
   heap_caps_free(s_index);
-  heap_caps_free(s_data);
-  s_data = data;
+  heap_caps_free(s_names);
+  s_names = names;
   s_size = size;
   s_index = index;
   s_count = count;
+  registerFs();
   Serial.printf("Deck: icon font %u bytes, %u icons\n", (unsigned)size, (unsigned)count);
   return true;
 }
 
-bool iconsReady() { return s_data != nullptr; }
+void iconsUnload() {
+  freeFonts();
+  heap_caps_free(s_index);
+  heap_caps_free(s_names);
+  s_index = nullptr;
+  s_names = nullptr;
+  s_count = 0;
+  s_size = 0;
+}
+
+bool iconsReady() { return s_index != nullptr; }
 size_t iconsCount() { return s_count; }
 size_t iconsFileSize() { return s_size; }
-const uint8_t* iconsData() { return s_data; }
 
 uint32_t iconCodepoint(const String& name) {
   if (!s_index) return 0;
@@ -213,7 +287,7 @@ uint32_t iconCodepoint(const String& name) {
   size_t lo = 0, hi = s_count;
   while (lo < hi) {
     const size_t mid = (lo + hi) / 2;
-    const int c = cmpName(s_data, s_index[mid].name, s, n);
+    const int c = cmpName(s_names, s_index[mid].name, s, n);
     if (c == 0) return s_index[mid].cp;
     if (c < 0) lo = mid + 1;
     else hi = mid;
@@ -222,12 +296,12 @@ uint32_t iconCodepoint(const String& name) {
 }
 
 const lv_font_t* iconFont(int px) {
-  if (!s_data) return nullptr;
+  if (!s_index) return nullptr;
   for (const Sized& s : s_fonts)
     if (s.font && s.px == px) return s.font;
   for (Sized& s : s_fonts) {
     if (s.font) continue;
-    s.font = lv_tiny_ttf_create_data_ex(s_data, s_size, px, LV_FONT_KERNING_NONE, 64);
+    s.font = lv_tiny_ttf_create_file_ex((String("I:") + iconsPath()).c_str(), px, LV_FONT_KERNING_NONE, 64);
     s.px = px;
     return s.font;
   }

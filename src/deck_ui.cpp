@@ -4457,6 +4457,19 @@ bool deckInstallIcons(const char* uploaded, String& err) {
   return ok && !err.length();
 }
 
+void deckReleaseIcons() {
+  if (!s_disp) {
+    iconsUnload();
+    return;
+  }
+  stopGestures();
+  destroyPages();
+  iconsUnload();
+  buildPages();
+  s_gen++;
+  lv_obj_invalidate(lv_screen_active());
+}
+
 bool deckTestCard(const String& tileId) {
   if (s_ed.root) return false;  // the editor blocks gestures until it closes
   for (size_t i = 0; i < s_tiles.size(); i++) {

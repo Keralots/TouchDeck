@@ -183,7 +183,7 @@ bool mountFs() {
     s_fsTried = true;
     // The 16 MB table's "spiffs" partition has never been used on this
     // board, so formatting it on the first mount loses nothing.
-    s_fsOk = LittleFS.begin(true, "/littlefs", 5, "spiffs");
+    s_fsOk = LittleFS.begin(true, "/littlefs", 10, "spiffs");  // 4 held by icon fonts
     if (!s_fsOk) Serial.println("Deck: LittleFS mount FAILED");
   }
   return s_fsOk;

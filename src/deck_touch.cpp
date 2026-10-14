@@ -263,7 +263,8 @@ void touchTask(void*) {
 }  // namespace
 
 void touchBegin() {
-  xTaskCreatePinnedToCore(touchTask, "deck_touch", 4096, nullptr, 10, &s_task, 0);
+  // Stack in PSRAM: this task never touches flash (NVS, LittleFS).
+  xTaskCreatePinnedToCoreWithCaps(touchTask, "deck_touch", 4096, nullptr, 10, &s_task, 0, MALLOC_CAP_SPIRAM);
 }
 
 TouchPoint touchForLvgl() {

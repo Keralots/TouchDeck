@@ -324,7 +324,8 @@ bool ensureTask() {
   if (!s_done) s_done = xQueueCreate(8, sizeof(HttpOutcome*));
   if (!s_lock) s_lock = xSemaphoreCreateMutex();
   if (!s_jobs || !s_done || !s_lock) return false;
-  return xTaskCreatePinnedToCore(task, "deck_http", 6144, nullptr, 3, &s_task, 0) == pdPASS;
+  // Stack in PSRAM: this task never touches flash (NVS, LittleFS).
+  return xTaskCreatePinnedToCoreWithCaps(task, "deck_http", 6144, nullptr, 3, &s_task, 0, MALLOC_CAP_SPIRAM) == pdPASS;
 }
 
 bool enqueue(const TileAction& a, const String& label, uint32_t ticket, bool sensor = false) {

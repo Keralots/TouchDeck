@@ -210,7 +210,8 @@ void pruneHistory() {
 
 void startHistoryTask() {
   if (!s_histTask && !s_history.empty())
-    xTaskCreatePinnedToCore(historyTask, "deck_hist", 6144, nullptr, 2, &s_histTask, 0);
+    // Stack in PSRAM: this task never touches flash (NVS, LittleFS).
+    xTaskCreatePinnedToCoreWithCaps(historyTask, "deck_hist", 6144, nullptr, 2, &s_histTask, 0, MALLOC_CAP_SPIRAM);
 }
 
 void setLink(HaLink l, const String& err = String()) {
