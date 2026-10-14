@@ -2916,6 +2916,24 @@ String prnDuration(uint16_t min) {
   return b;
 }
 
+// "PLA Matte" -> "PLA M", "PLA Basic" -> "PLA": the material stays readable
+// under a spool where the full name would be cut.
+String prnShortType(const char* type) {
+  const char* sp = strchr(type, ' ');
+  if (!sp) return type;
+  String base(type, sp - type), rest(sp + 1);
+  const int cut = rest.indexOf(' ');
+  if (cut > 0) rest = rest.substring(0, cut);
+  if (rest == "Basic") return base;
+  if (rest.length() <= 2) return base + " " + rest;  // "PC FR", "PLA CF"
+  static const char* const kAbbr[][2] = {{"Matte", "M"}, {"Metal", "Mt"}, {"Silk", "S"}, {"Wood", "W"},
+                                         {"Translucent", "T"}, {"Marble", "Mb"}, {"Galaxy", "G"},
+                                         {"Sparkle", "Sp"}, {"Glow", "Gl"}, {"Tough", "T+"}, {"Aero", "A"}};
+  for (const auto& a : kAbbr)
+    if (rest == a[0]) return base + " " + a[1];
+  return base + " " + rest.substring(0, 2);
+}
+
 String prnUnitName(uint8_t id, bool shortName = false) {
   if (id >= 128) {
     String n = shortName ? "HT" : "AMS HT";
@@ -2992,7 +3010,10 @@ void applyPrinterToTile(TileRt& r) {
         lv_obj_set_style_bg_opa(disc, tray.alpha < 128 ? LV_OPA_50 : LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(disc, active ? 2 : 1, 0);
         lv_obj_set_style_border_opa(disc, active ? LV_OPA_COVER : (lv_opa_t)(255 * 35 / 100), 0);
-        lv_label_set_text(lv_obj_get_child(col, 1), tray.present ? tray.type : "Empty");
+        lv_obj_t* type = lv_obj_get_child(col, 1);
+        const int colw = lv_obj_get_width(col);
+        const bool fits = colw > 0 && textW(tray.type, lv_obj_get_style_text_font(type, LV_PART_MAIN)) <= colw;
+        lv_label_set_text(type, !tray.present ? "Empty" : fits ? tray.type : prnShortType(tray.type).c_str());
         if (!tray.present) b[0] = 0;
         else if (tray.remain < 0) strcpy(b, "?");
         else snprintf(b, sizeof(b), "%d%%", tray.remain);
