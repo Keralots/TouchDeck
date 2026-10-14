@@ -3431,6 +3431,20 @@ float sparkAt(const Spark& s, float fi) {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
+// Segment i runs from vertex i to i + 1; lo / hi: the y band it can reach.
+struct SparkSeg {
+  float ay, dy, inv, lo, hi;
+  bool ok;
+};
+
+// sparkPaint scratch, once, in PSRAM: internal RAM is what WiFi buffers need.
+struct SparkScratch {
+  float ys[SPARK_MAX_W];
+  SparkSeg seg[SPARK_MAX_W];
+  int16_t cy0[SPARK_MAX_W], cy1[SPARK_MAX_W];
+};
+SparkScratch* s_sparkScratch = nullptr;
+
 // Each pixel near the line gets alpha from its distance to the line, so steep
 // spikes get smooth sides too. The line has a vertex per column.
 void sparkPaint(Spark& s, float right) {
@@ -3438,26 +3452,25 @@ void sparkPaint(Spark& s, float right) {
   const int w = b->header.w, h = b->header.h;
   for (int y = 0; y < h; y++) memset(b->data + y * b->header.stride, 0, w);
   if (s.n < 2 || !(s.viewHi > s.viewLo)) return;
+  if (!s_sparkScratch) s_sparkScratch = (SparkScratch*)lv_malloc(sizeof(SparkScratch));
+  if (!s_sparkScratch) return;
+  float* ys = s_sparkScratch->ys;
+  SparkSeg* seg = s_sparkScratch->seg;
+  int16_t* cy0 = s_sparkScratch->cy0;
+  int16_t* cy1 = s_sparkScratch->cy1;
   const float step = (float)SPARK_SPAN / (float)(w - 1);
   const float m = SPARK_LINE / 2 + 0.5f;
   const float k = ((float)h - 2 * m) / (s.viewHi - s.viewLo);
-  static float ys[SPARK_MAX_W];
   for (int x = 0; x < w; x++) {
     const float fi = right - (float)(w - 1 - x) * step;
     ys[x] = fi < 0 ? NAN : m + (s.viewHi - sparkAt(s, fi)) * k;
   }
-  // Segment i runs from vertex i to i + 1; pixels of column x can only be
-  // reached by segments x - 2 .. x + 1, and only by the part of the line
-  // within rad of the column. Rows are written in order: PSRAM hates column strides.
-  struct Seg {
-    float ay, dy, inv, lo, hi;  // lo / hi: the y band the segment can reach
-    bool ok;
-  };
-  static Seg seg[SPARK_MAX_W];
-  static int16_t cy0[SPARK_MAX_W], cy1[SPARK_MAX_W];
+  // Pixels of column x can only be reached by segments x - 2 .. x + 1, and
+  // only by the part of the line within rad of the column. Rows are written
+  // in order: PSRAM hates column strides.
   const float rad = SPARK_LINE / 2 + 0.5f;  // full alpha within half a pixel of the stroke
   for (int i = 0; i + 1 < w; i++) {
-    Seg& g = seg[i];
+    SparkSeg& g = seg[i];
     g.ok = !isnan(ys[i]) && !isnan(ys[i + 1]);
     g.ay = ys[i];
     g.dy = ys[i + 1] - ys[i];
@@ -3490,7 +3503,7 @@ void sparkPaint(Spark& s, float right) {
       if (y < cy0[x] || y > cy1[x]) continue;
       float d2 = rad2;
       for (int i = std::max(0, x - 2); i <= std::min(w - 2, x + 1); i++) {
-        const Seg& g = seg[i];
+        const SparkSeg& g = seg[i];
         if (!g.ok || py < g.lo || py > g.hi) continue;
         const float ex0 = (float)(x - i), ey0 = py - g.ay;  // pixel centre minus vertex i
         float t = (ex0 + ey0 * g.dy) * g.inv;
