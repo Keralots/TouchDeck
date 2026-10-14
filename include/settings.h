@@ -39,6 +39,7 @@ struct DisplaySettings {
   uint8_t  glassBlur;         // Glass: blur radius px, 0..24 (0 = clear glass)
   uint8_t  glassDim;          // Glass: wallpaper darkened by %, 0..60
   uint8_t  glassOn;           // Glass: accent fill of an "on" tile, opacity %, 20..100
+  bool     smoothCharts;      // PC metric charts glide between packets
 };
 
 // Portal Advanced page; NVS scalars.

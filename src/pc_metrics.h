@@ -22,6 +22,7 @@ struct PcMetricData {
   uint8_t  status;         // PC_STATUS_* (LHM health reported by the companion)
   bool     online;         // a fresh packet arrived within PC_STALE_TIMEOUT_MS
   uint32_t lastReceived;   // millis() of the last valid packet
+  uint32_t sampleMs;       // millis() of the last packet with metrics (one history sample)
 };
 
 // Value history for the chart tiles, one sample per received packet, keyed by
