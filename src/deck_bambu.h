@@ -61,6 +61,7 @@ struct PrinterState {
   uint16_t remainingMin = 0;
   uint16_t layer = 0, totalLayers = 0;
   uint8_t speedLevel = 0;     // 1 silent, 2 standard, 3 sport, 4 ludicrous
+  int16_t stage = -1;         // print.stg_cur: 0 printing, > 0 preparing / changing filament, -1 idle
 
   // Temperatures (C); NAN = not reported by this model
   bool dualNozzle = false;    // H2C / H2D
@@ -95,6 +96,8 @@ bool printerRead(const String& id, PrinterState& out);
 uint32_t printersVersion();
 // Chamber light (both bars on H2C/H2D). Queued; false when not online.
 bool printerLight(const String& id, bool on);
+// Name of a stg_cur stage ("Bed Leveling"), nullptr for printing / idle / unknown.
+const char* printerStageName(int stage);
 
 }  // namespace deck
 

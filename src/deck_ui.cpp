@@ -2670,6 +2670,11 @@ void makePrinterContent(TileRt& r, lv_obj_t* t) {
   }
 }
 
+// A label cut with dots must have a fixed height, or it wraps instead.
+void prnOneLine(lv_obj_t* l) {
+  if (l) lv_obj_set_height(l, lineH(lv_obj_get_style_text_font(l, LV_PART_MAIN)));
+}
+
 // Fonts by room; parts that cannot fit are hidden.
 void fitPrinter(TileRt& r, int cw, int ch) {
   const TileDef& d = *r.def;
@@ -2682,6 +2687,8 @@ void fitPrinter(TileRt& r, int cw, int ch) {
       setFont(r.px[0], ch >= 70 && cw >= 200 ? &deck_font_28 : &deck_font_20);
       setFont(r.px[2], ch >= 70 ? &deck_font_20 : &deck_font_14);
       lv_obj_set_height(r.viz, ch >= 70 ? 8 : 5);
+      prnOneLine(r.sub);
+      prnOneLine(r.px[1]);
       break;
     }
     case PS_NOZZLE:
@@ -2689,17 +2696,21 @@ void fitPrinter(TileRt& r, int cw, int ch) {
     case PS_CHAMBER:
       setFont(r.sub, ch >= 70 && cw >= 86 ? &deck_font_28 : &deck_font_20);
       showObj(r.unit, cw >= 86);
+      prnOneLine(r.name);
       break;
     case PS_FILAMENT: {
       const int c = LV_MIN(44, ch - 8);
       lv_obj_set_size(r.chip, c, c);
-      showObj(r.px[3], cw >= 250);
+      showObj(r.px[3], cw >= 180);
       setFont(r.sub, ch >= 64 ? &deck_font_20 : &deck_font_14);
       showObj(r.name, ch >= 56);
+      prnOneLine(r.name);
+      prnOneLine(r.sub);
       break;
     }
     case PS_LAYER:
       setFont(r.sub, ch >= 64 ? &deck_font_20 : &deck_font_14);
+      prnOneLine(r.unit);
       break;
     case PS_LIGHT:
       showObj(r.sub, ch >= 64);
@@ -2756,7 +2767,18 @@ void applyPrinterToTile(TileRt& r) {
         lv_bar_set_value(r.viz, 0, LV_ANIM_OFF);
         break;
       }
-      if (running || paused) {
+      // RUNNING also covers the start-up stages (leveling, heating) and filament swaps.
+      const char* stage = running ? printerStageName(s->stage) : nullptr;
+      const bool starting = running && !s->layer && !s->progress;
+      if (running && (stage || starting)) {
+        prnBadge(r, starting ? "PREPARING" : "PRINTING", C_PRN_OK);
+        lv_label_set_text(r.sub, s->job);
+        lv_label_set_text(r.px[0], stage ? stage : "Starting");
+        lv_label_set_text(r.px[1], "");
+        snprintf(b, sizeof(b), "%u%%", s->progress);
+        lv_label_set_text(r.px[2], starting ? "" : b);
+        lv_bar_set_value(r.viz, s->progress, LV_ANIM_OFF);
+      } else if (running || paused) {
         prnBadge(r, paused ? "PAUSED" : st == "RUNNING" ? "PRINTING" : "PREPARING", paused ? C_PRN_HEAT : C_PRN_OK);
         lv_label_set_text(r.sub, s->job);
         lv_label_set_text(r.px[0], prnDuration(s->remainingMin).c_str());

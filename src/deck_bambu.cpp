@@ -340,7 +340,7 @@ void report(void* context, const char* topic, const uint8_t* payload, size_t len
   for (const char* key : {"gcode_state", "subtask_name", "task_id", "mapping", "mc_percent",
                          "mc_remaining_time", "layer_num", "total_layer_num", "spd_lvl",
                          "nozzle_temper", "nozzle_target_temper", "bed_temper",
-                         "bed_target_temper", "chamber_temper", "lights_report"}) pf[key] = true;
+                         "bed_target_temper", "chamber_temper", "lights_report", "stg_cur"}) pf[key] = true;
   if (filter.overflowed()) { link(c, PRN_FAILED, "No PSRAM for JSON filter"); return; }
   const auto error = deserializeJson(doc, (const char*)payload, length,
                                     DeserializationOption::Filter(filter), DeserializationOption::NestingLimit(32));
@@ -460,6 +460,11 @@ void report(void* context, const char* topic, const uint8_t* payload, size_t len
   mergeInt("layer_num", s.layer, 65535);
   mergeInt("total_layer_num", s.totalLayers, 65535);
   mergeInt("spd_lvl", s.speedLevel, 4);
+  if (number(p["stg_cur"])) {
+    const long stage = integer(p["stg_cur"]);
+    s.stage = stage < 0 || stage >= 255 ? -1 : stage;
+    core = true;
+  }
   if (!s.dualNozzle) {
     mergeTemp("nozzle_temper", s.nozzle[0]);
     mergeTemp("nozzle_target_temper", s.nozzleTarget[0]);
@@ -760,6 +765,73 @@ bool printerLight(const String& id, bool on) {
     return true;
   }
   return false;
+}
+
+// Stage ids from BambuStudio's CURRENT_STAGE_IDS; the paused ones flip
+// gcode_state to PAUSE and are left out.
+const char* printerStageName(int stage) {
+  switch (stage) {
+    case 1: return "Bed Leveling";
+    case 2: return "Preheating Bed";
+    case 3: return "Sweeping XY";
+    case 4: return "Changing Filament";
+    case 7: return "Heating Nozzle";
+    case 8: case 19: return "Calibrating Flow";
+    case 9: return "Scanning Bed";
+    case 10: return "Inspecting Layer 1";
+    case 11: return "Detecting Plate";
+    case 12: case 18: return "Calibrating Lidar";
+    case 13: return "Homing";
+    case 14: return "Cleaning Nozzle";
+    case 15: return "Checking Temp";
+    case 22: return "Unloading Filament";
+    case 24: return "Loading Filament";
+    case 25: case 31: return "Motor Noise Cali";
+    case 29: return "Cooling Chamber";
+    case 36: return "Accuracy Check";
+    case 37: return "Accuracy Cali";
+    case 38: return "Accuracy Verify";
+    case 39: return "Nozzle Offset Cali";
+    case 40: return "Hot Bed Leveling";
+    case 41: return "Quick Release Check";
+    case 42: return "Door Check";
+    case 43: return "Laser Cali";
+    case 44: return "Platform Check";
+    case 45: return "Camera Position Check";
+    case 46: return "Camera Cali";
+    case 47: return "Bed Leveling 1";
+    case 48: return "Bed Leveling 2";
+    case 49: return "Heating Chamber";
+    case 50: return "Cooling Bed";
+    case 51: return "Cali Lines";
+    case 52: return "Checking Material";
+    case 53: return "Live Camera Cali";
+    case 54: return "Waiting for Bed";
+    case 55: return "Material Position Check";
+    case 56: return "Cutter Offset Cali";
+    case 57: return "Measuring Surface";
+    case 58: return "Thermal Precondition";
+    case 59: return "Homing Blade";
+    case 60: return "Camera Offset Cali";
+    case 61: return "Blade Position Cali";
+    case 62: return "Hotend Test";
+    case 63: return "Chamber Temp Wait";
+    case 64: return "Preparing Hotend";
+    case 65: return "Nozzle Clump Cali";
+    case 66: return "Purifying Air";
+    case 67: return "Rotary Measure";
+    case 68: return "Moving to Purge";
+    case 69: return "Cooling Nozzle";
+    case 70: return "Centering Head";
+    case 71: return "Arc Fitting";
+    case 72: return "Hotend Detect";
+    case 73: return "Plate Align Check";
+    case 74: return "Foreign Object Check";
+    case 75: return "Bed Underside Check";
+    case 76: return "Pre-Extruding";
+    case 77: return "Preparing AMS";
+    default: return nullptr;
+  }
 }
 
 }  // namespace deck
