@@ -32,7 +32,7 @@
 // GET only; poll = 5..3600 seconds (default 30). Dot paths accept array
 // indexes; empty path reads a scalar body. Charts keep 48 numeric readings.
 // HTTP sensors have no default tap/hold action or HA detail card.
-// "detail": "reset {claude.five_hour.reset_min|min}" adds a small line with
+// "detail": "runtime {ups.runtime_min|min}" adds a small line with
 // values from the same reply; "|unit" formats a number as a duration.
 //
 // Bambu printers: "printers": [{ "id": "h2c", "name": "H2C",
