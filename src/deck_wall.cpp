@@ -106,6 +106,8 @@ void blurPlane(uint8_t* p, uint8_t* tmp, int w, int h, int r) {
 
 }  // namespace
 
+void wallBlurPlane(uint8_t* p, uint8_t* tmp, int w, int h, int r) { blurPlane(p, tmp, w, h, r); }
+
 // 8x8 ordered dither: a smooth 8-bit gradient becomes a fine pattern of
 // neighbouring RGB565 levels instead of coloured steps.
 uint16_t wallDither565(int r, int g, int b, int x, int y) {

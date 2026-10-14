@@ -24,6 +24,8 @@ uint32_t wallGeneration();
 // nullptr when not loaded.
 const lv_image_dsc_t* wallSharp();
 const lv_image_dsc_t* wallBlur();
+// Near-gaussian blur of one 8-bit plane in place (tmp: scratch of the same size).
+void wallBlurPlane(uint8_t* p, uint8_t* tmp, int w, int h, int r);
 // An 8-bit colour as RGB565, ordered-dithered by its screen position.
 uint16_t wallDither565(int r, int g, int b, int x, int y);
 

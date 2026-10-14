@@ -1323,6 +1323,7 @@ struct QuickPanel {
   lv_obj_t* nightBtn;
   lv_obj_t* headerBtn;
   lv_draw_buf_t* snap;
+  lv_draw_buf_t* glass;  // Glass theme: frosted page under the open panel
   bool open;
   bool stale;
   uint32_t lastStatus;
@@ -1492,6 +1493,109 @@ lv_obj_t* qpButton(lv_obj_t* parent, int x, int y, int w, const char* text, bool
   return b;
 }
 
+// --- Frosted glass: the card and the quick panel -------------------------------------
+// Glass theme: they show the screen under them, blurred much harder than the
+// tiles and lightly tinted, so they stand out from the page.
+constexpr int FROST_BLUR = 7;   // px at half resolution
+constexpr int FROST_TINT = 40;  // % of C_PANEL over the blur
+
+// LVGL renders straight into one of two frame buffers and swaps on flush, so
+// the one it is not drawing into holds the last complete frame.
+const uint16_t* lastFrame() {
+  const lv_draw_buf_t* act = lv_display_get_buf_active(s_disp);
+  const uint16_t* b0 = panelLvBuffer(0);
+  return act && act->data == (const uint8_t*)b0 ? panelLvBuffer(1) : b0;
+}
+
+// The last frame under (x, y, w, h), blurred and tinted, with corners of
+// radius rad cut by alpha (a background image ignores the radius). Pixels off
+// the screen repeat its edge. RGB565A8; nullptr when PSRAM is short.
+lv_draw_buf_t* frostedCopy(int x, int y, int w, int h, int rad) {
+  const int sw = logicalW(), shgt = logicalH();
+  const int hw = (w + 1) / 2, hh = (h + 1) / 2;
+  const size_t hn = (size_t)hw * hh;
+  uint8_t* pl = (uint8_t*)heap_caps_malloc(hn * 4, MALLOC_CAP_SPIRAM);
+  lv_draw_buf_t* out = pl ? lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565A8, 0) : nullptr;
+  if (!out) {
+    heap_caps_free(pl);
+    return nullptr;
+  }
+  uint8_t* plane[3] = {pl, pl + hn, pl + 2 * hn};
+  uint8_t* tmp = pl + 3 * hn;
+  const uint16_t* fb = lastFrame();
+  // Half resolution: cheaper, and the same blur radius reaches twice as far.
+  for (int j = 0; j < hh; j++)
+    for (int i = 0; i < hw; i++) {
+      int sum[3] = {0, 0, 0};
+      for (int k = 0; k < 4; k++) {
+        const int px = constrain(x + 2 * i + (k & 1), 0, sw - 1);
+        const int py = constrain(y + 2 * j + (k >> 1), 0, shgt - 1);
+        const uint16_t c = fb[py * sw + px];
+        sum[0] += c >> 11;
+        sum[1] += c >> 5 & 63;
+        sum[2] += c & 31;
+      }
+      const size_t o = (size_t)j * hw + i;
+      plane[0][o] = (uint8_t)(sum[0] * 255 / 124);
+      plane[1][o] = (uint8_t)(sum[1] * 255 / 252);
+      plane[2][o] = (uint8_t)(sum[2] * 255 / 124);
+    }
+  for (uint8_t* p : plane) wallBlurPlane(p, tmp, hw, hh, FROST_BLUR);
+  const int tint[3] = {(int)(C_PANEL >> 16 & 0xFF), (int)(C_PANEL >> 8 & 0xFF), (int)(C_PANEL & 0xFF)};
+  const uint32_t stride = out->header.stride;
+  uint8_t* alpha = out->data + stride * h;  // RGB565A8: the A8 plane follows, half the stride
+  for (int yy = 0; yy < h; yy++) {
+    uint16_t* row = (uint16_t*)(out->data + yy * stride);
+    uint8_t* arow = alpha + yy * (stride / 2);
+    // Bilinear between the half-resolution samples (centres at 2i + 0.5).
+    const float fy = std::min((float)(hh - 1), std::max(0.0f, ((float)yy - 0.5f) / 2));
+    const int j0 = (int)fy, j1 = std::min(j0 + 1, hh - 1);
+    const float ty = fy - (float)j0;
+    const float cy = std::max(0.0f, std::max((float)rad - ((float)yy + 0.5f), (float)yy + 0.5f - (float)(h - rad)));
+    for (int xx = 0; xx < w; xx++) {
+      const float fx = std::min((float)(hw - 1), std::max(0.0f, ((float)xx - 0.5f) / 2));
+      const int i0 = (int)fx, i1 = std::min(i0 + 1, hw - 1);
+      const float tx = fx - (float)i0;
+      int c[3];
+      for (int k = 0; k < 3; k++) {
+        const uint8_t* q = plane[k];
+        const float v = ((float)q[j0 * hw + i0] * (1 - tx) + (float)q[j0 * hw + i1] * tx) * (1 - ty) +
+                        ((float)q[j1 * hw + i0] * (1 - tx) + (float)q[j1 * hw + i1] * tx) * ty;
+        c[k] = (int)(v * (100 - FROST_TINT) / 100) + tint[k] * FROST_TINT / 100;
+      }
+      row[xx] = wallDither565(c[0], c[1], c[2], x + xx, y + yy);
+      const float cx = std::max(0.0f, std::max((float)rad - ((float)xx + 0.5f), (float)xx + 0.5f - (float)(w - rad)));
+      if (cx <= 0 || cy <= 0) {
+        arow[xx] = 255;
+        continue;
+      }
+      const float cov = (float)rad + 0.5f - sqrtf(cx * cx + cy * cy);
+      arow[xx] = cov >= 1 ? 255 : cov <= 0 ? 0 : (uint8_t)(cov * 255);
+    }
+  }
+  heap_caps_free(pl);
+  return out;
+}
+
+void frostStyle(lv_obj_t* o, lv_draw_buf_t* glass) {
+  lv_obj_set_style_bg_opa(o, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_bg_image_src(o, glass, 0);
+  lv_obj_set_style_border_width(o, 1, 0);
+  lv_obj_set_style_border_color(o, lv_color_white(), 0);
+  lv_obj_set_style_border_opa(o, LV_OPA_30, 0);
+}
+
+// Frost the panel from the page under its open place. Only while the page
+// alone is on screen; it is re-frosted when the panel goes stale.
+void qpFrost() {
+  if (s_theme != THEME_GLASS || !s_qp.box || s_qp.open || modalShown()) return;
+  lv_draw_buf_t* g = frostedCopy(0, -QP_LIP, logicalW(), QP_H + QP_LIP, 20);
+  if (!g) return;
+  frostStyle(s_qp.box, g);
+  if (s_qp.glass) lv_draw_buf_destroy(s_qp.glass);
+  s_qp.glass = g;
+}
+
 void buildQuickPanel() {
   const int w = logicalW(), h = logicalH();
   lv_obj_t* top = lv_layer_top();
@@ -1582,6 +1686,7 @@ void destroyQuickPanel() {
   if (s_qp.scrim) lv_obj_delete(s_qp.scrim);
   if (s_qp.box) lv_obj_delete(s_qp.box);
   if (s_qp.snap) lv_draw_buf_destroy(s_qp.snap);
+  if (s_qp.glass) lv_draw_buf_destroy(s_qp.glass);
   s_qp = {};
   portENTER_CRITICAL(&s_mux);
   sh.panelOpen = false;
@@ -1616,6 +1721,7 @@ void hidePanelNow() {
 
 void refreshPanelSnapshot() {
   if (!s_qp.box || !s_qp.snap || !s_qp.stale) return;
+  qpFrost();
   portENTER_CRITICAL(&s_mux);
   const bool owned = sh.owned;
   if (!owned) sh.panelBusy = true;
@@ -1656,6 +1762,7 @@ void closePanelAnimated() {
 lv_obj_t* s_toast = nullptr;
 lv_obj_t* s_modalScrim = nullptr;
 lv_obj_t* s_modalCard = nullptr;
+lv_draw_buf_t* s_modalGlass = nullptr;  // Glass theme: the card's frosted background
 int s_modalTile = -1;
 lv_obj_t* s_modalState = nullptr;
 lv_obj_t* s_modalBtnLbl = nullptr;
@@ -1740,6 +1847,8 @@ void closeModal() {
   if (s_modalCard) lv_obj_delete(s_modalCard);
   if (s_modalScrim) lv_obj_delete(s_modalScrim);
   s_modalCard = s_modalScrim = nullptr;
+  if (s_modalGlass) lv_draw_buf_destroy(s_modalGlass);
+  s_modalGlass = nullptr;
   s_modalSlider = nullptr;
   s_modalIcon = nullptr;
   s_modalChart = s_modalRange = nullptr;
@@ -1877,6 +1986,9 @@ void openModal(int tileIdx) {
   lv_obj_set_style_bg_color(c, lv_color_hex(C_PANEL), 0);
   lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
   lv_obj_set_style_radius(c, 22, 0);
+  if (s_theme == THEME_GLASS &&
+      (s_modalGlass = frostedCopy((w - cw) / 2, (h - ch) / 2, cw, ch, 22)))
+    frostStyle(c, s_modalGlass);
   lv_obj_set_style_text_color(c, lv_color_hex(C_TEXT), 0);
   lv_obj_add_flag(c, LV_OBJ_FLAG_CLICKABLE);  // taps on the card stay on the card
   lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
@@ -2029,6 +2141,9 @@ void openConfirm(int tileIdx, bool hold) {
   lv_obj_set_style_bg_color(c, lv_color_hex(C_PANEL), 0);
   lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
   lv_obj_set_style_radius(c, 22, 0);
+  if (s_theme == THEME_GLASS &&
+      (s_modalGlass = frostedCopy((w - cw) / 2, (h - ch) / 2, cw, ch, 22)))
+    frostStyle(c, s_modalGlass);
   lv_obj_set_style_text_color(c, lv_color_hex(C_TEXT), 0);
   lv_obj_add_flag(c, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
@@ -5378,6 +5493,7 @@ void switchTo(int page) {
   s_gen++;
   // New neighbours; cheap to re-take, and the page we left changed state.
   for (int i = 0; i < s_count; i++) s_pages[i].stale = true;
+  qpMarkStale();  // Glass: the panel frosts the new page
 }
 
 void releaseSwipe() {
