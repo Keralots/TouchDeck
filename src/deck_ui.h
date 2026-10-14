@@ -36,6 +36,8 @@ bool deckApplyConfig(const String& text, String& err);
 // Portal upload: load the MDI font stored at uploaded, keep it as the icon
 // font and rebuild the pages with it. A bad file is deleted, the old font stays.
 bool deckInstallIcons(const char* uploaded, String& err);
+// Rebuild the pages without icons, so the font file can be deleted.
+void deckReleaseIcons();
 // Top bar (page name, WiFi, clock) on the tiles pages; persisted.
 void deckSetHeader(bool on);
 bool deckHeaderVisible();

@@ -1,7 +1,7 @@
 // Guition deck: Material Design Icons (the set Home Assistant uses) from a
-// TTF the owner uploads to LittleFS. The font is held in PSRAM, LVGL TinyTTF
-// renders it at any size, and the name -> codepoint index is built from the
-// font's own glyph names (post table), so it always matches the uploaded file.
+// TTF the owner uploads to LittleFS. LVGL TinyTTF reads glyphs from the file
+// on demand, and the name -> codepoint index (PSRAM) is built from the font's
+// own glyph names (post table), so it always matches the uploaded file.
 #ifndef DECK_ICONS_H
 #define DECK_ICONS_H
 
@@ -12,14 +12,15 @@ namespace deck {
 
 // Where the font lives on LittleFS.
 const char* iconsPath();
-// Load (or replace) the font from path. The current font stays when the new
-// one fails. Fonts from iconFont() die here: free their labels first.
+// Index the font at path; iconFont() then reads iconsPath(). The current
+// index stays when the new font fails. Fonts from iconFont() die here: free
+// their labels first.
 bool iconsLoad(const char* path, String& err);
+// Close the fonts (they hold iconsPath() open) and drop the index.
+void iconsUnload();
 bool iconsReady();
 size_t iconsCount();
 size_t iconsFileSize();
-// The loaded font file (PSRAM), for serving it to the portal.
-const uint8_t* iconsData();
 
 // "mdi:name" or "name" -> codepoint; 0 when unknown or no font is loaded.
 uint32_t iconCodepoint(const String& name);

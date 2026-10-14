@@ -18,6 +18,9 @@
 // below this bound.
 static const uint32_t WDT_TIMEOUT_S = 30;
 
+// LVGL rendering and the Glass bake left under 1 KB of the default 8 KB.
+SET_LOOP_TASK_STACK_SIZE(12 * 1024);
+
 void setup() {
   // Companion metrics arrive over the cable as ~1 KB lines; HWCDC's default is 256.
   Serial.setRxBufferSize(4096);

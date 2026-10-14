@@ -936,15 +936,17 @@ static void handleIconsStatus() {
   server.send(200, "application/json", out);
 }
 
-// GET /mdi.ttf - the loaded font for the portal's icon picker, from PSRAM.
+// GET /mdi.ttf - the loaded font for the portal's icon picker.
 // The portal adds ?v=<size> so a new font gets a new URL.
 static void handleIconsFont() {
-  if (!deck::iconsReady()) {
+  File f = deck::iconsReady() ? LittleFS.open(deck::iconsPath(), "r") : File();
+  if (!f) {
     server.send(404, "text/plain", "No icon font");
     return;
   }
-  streamAsset((const char*)deck::iconsData(), deck::iconsFileSize(), "font/ttf",
-              "public, max-age=31536000, immutable");
+  server.sendHeader("Cache-Control", "public, max-age=31536000, immutable");
+  server.streamFile(f, "font/ttf");
+  f.close();
 }
 
 // POST /api/deck/icons (multipart "font") - store, then load on finish.
@@ -958,9 +960,12 @@ static void handleIconsUpload() {
       return;
     }
     LittleFS.remove(ICONS_UPLOAD);
-    // Old font plus new one may not both fit; the running copy is in PSRAM.
-    if (LittleFS.totalBytes() - LittleFS.usedBytes() < 2 * 1024 * 1024)
+    // Old font plus new one may not both fit; the pages read the old one, so
+    // they lose their icons until the new font is in.
+    if (LittleFS.totalBytes() - LittleFS.usedBytes() < 2 * 1024 * 1024) {
+      deckReleaseIcons();
       LittleFS.remove(deck::iconsPath());
+    }
     iconUpload = LittleFS.open(ICONS_UPLOAD, "w");
     if (!iconUpload) iconError = "cannot create the file";
   } else if (up.status == UPLOAD_FILE_WRITE) {
