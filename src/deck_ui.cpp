@@ -127,7 +127,9 @@ struct TileRt {
   uint32_t historyVersion;
   const lv_font_t* valFont;  // metric value font picked by fitTile, shrinks per value
   int16_t valW;              // room for value + unit
-  bool besideName;           // chart: the value shares the top line with the name
+  const lv_font_t* unitFont;  // unit font picked by fitTile
+  bool besideName;           // chart or row: the value shares the line with the name
+  uint8_t row;               // metric row: 1 = name and value, 2 = chart or bar between them
   int16_t chipRoom;          // sensor: icon width the reading may take over
   const lv_font_t* nameFont;  // largest name font, null = fixed one-line name
   int16_t nameArea, nameW;    // room for the name
@@ -2331,23 +2333,62 @@ void fitSensor(TileRt& r, int cw, int ch) {
   showObj(r.name, name);
 }
 
-// Sensor reading or metric value: the largest font, from the fitted one down,
-// that fits the room left next to the unit.
-void fitValue(TileRt& r) {
-  if (!r.valFont) return;
+// The largest font from `from` down that fits text in room, null if none.
+const lv_font_t* valueFont(const lv_font_t* from, const char* text, int room) {
   static const lv_font_t* const kSteps[] = {&lv_font_montserrat_40, &deck_font_28, &deck_font_20,
                                             &deck_font_14, &deck_font_12};
-  int room = r.valW;
-  if (r.unit) {
-    lv_point_t u;
-    lv_text_get_size(&u, lv_label_get_text(r.unit), lv_obj_get_style_text_font(r.unit, LV_PART_MAIN), 0, 0,
-                     LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    room -= 4 + u.x;
+  bool on = false;
+  for (const lv_font_t* s : kSteps) {
+    on = on || s == from;
+    if (on && textW(text, s) <= room) return s;
   }
+  return nullptr;
+}
+
+void setWidth(lv_obj_t* o, int w) {
+  if (lv_obj_get_style_width(o, LV_PART_MAIN) != w) lv_obj_set_width(o, w);
+}
+
+constexpr int ROW_VIZ_MIN = 40;
+
+int rowNameW(const TileRt& r) {
+  const int t = textW(lv_label_get_text(r.name), lv_obj_get_style_text_font(r.name, LV_PART_MAIN));
+  return LV_MIN(t, r.valW * 2 / 5);
+}
+
+// Chart or bar width between the name and a value sized for three digits, so
+// it does not jump as the value changes.
+int rowVizW(const TileRt& r, const lv_font_t* f, int unitW) {
+  const int valueW = LV_MAX(textW(lv_label_get_text(r.sub), f), textW("000", f)) + unitW;
+  return r.valW - rowNameW(r) - valueW - 20;
+}
+
+// Row: the name gets what the value leaves, or on a wide row shares it with
+// the chart or bar.
+void layoutRow(TileRt& r, const lv_font_t* f, int unitW) {
+  const int w = r.row == 2 ? rowVizW(r, f, unitW) : 0;
+  const bool viz = w >= ROW_VIZ_MIN;
+  if (r.row == 2) showObj(r.viz, viz);
+  if (!viz) {
+    setWidth(r.name, LV_MAX(0, r.valW - textW(lv_label_get_text(r.sub), f) - unitW - 8));
+    return;
+  }
+  const int x = rowNameW(r) + 10;
+  setWidth(r.name, x - 10);
+  setWidth(r.viz, w);
+  if (lv_obj_get_style_x(r.viz, LV_PART_MAIN) != x) lv_obj_align(r.viz, LV_ALIGN_LEFT_MID, x, 0);
+}
+
+// Sensor reading or metric value: the largest font, from the fitted one down,
+// that fits the room left next to the unit. The unit sits on the value's
+// baseline, never larger than the value, and goes when nothing fits beside it.
+void fitValue(TileRt& r) {
+  if (!r.valFont) return;
+  const char* text = lv_label_get_text(r.sub);
+  int room = r.valW;
   if (r.besideName)
     room -= LV_MIN(textW(lv_label_get_text(r.name), lv_obj_get_style_text_font(r.name, LV_PART_MAIN)),
-                   r.valW * 55 / 100) + 8;
-  const char* text = lv_label_get_text(r.sub);
+                   r.valW * (r.row ? 35 : 55) / 100) + 8;
   // A sensor's icon gives way when the reading does not fit beside it.
   if (r.chipRoom) {
     const bool chip = textW(text, r.valFont) <= room;
@@ -2355,35 +2396,52 @@ void fitValue(TileRt& r) {
     lv_obj_set_style_pad_right(r.sub, chip ? r.chipRoom : 0, 0);
     if (!chip) room += r.chipRoom;
   }
-  const lv_font_t* f = r.valFont;
-  bool from = false;
-  for (const lv_font_t* s : kSteps) {
-    from = from || s == r.valFont;
-    if (!from) continue;
-    f = s;
-    if (textW(text, s) <= room) break;
+  const lv_font_t* uf = r.unitFont;
+  const int unitW = r.unit && uf ? 4 + textW(lv_label_get_text(r.unit), uf) : 0;
+  const lv_font_t* f = valueFont(r.valFont, text, room - unitW);
+  bool unit = unitW > 0;
+  if (!f && unit) {
+    unit = false;
+    f = valueFont(r.valFont, text, room);
   }
+  if (!f) f = &deck_font_12;
+  // A wide row gives up the largest value font for its chart or bar.
+  if (r.row == 2 && f == &deck_font_28 && rowVizW(r, f, unit ? unitW : 0) < ROW_VIZ_MIN) f = &deck_font_20;
   setFont(r.sub, f);
+  if (r.unit && uf) {
+    showObj(r.unit, unit);
+    if (lineH(uf) >= lineH(f)) uf = &deck_font_12;
+    setFont(r.unit, uf);
+    const int pad = LV_MAX(0, f->base_line - uf->base_line);
+    if (lv_obj_get_style_pad_bottom(r.unit, LV_PART_MAIN) != pad) lv_obj_set_style_pad_bottom(r.unit, pad, 0);
+  }
+  if (r.row) layoutRow(r, f, unit ? unitW : 0);
 }
 
 // PC metric: a chart or bar under a smaller number on wide tiles with the
-// room, else the name on top and the number big at the bottom, else a row.
+// room, else the name on top and the number big at the bottom, else a row
+// (a wide one keeps the chart or bar, between the name and the number).
 void fitMetric(TileRt& r, int cw, int ch) {
   const TileDef& d = *r.def;
   lv_obj_t* row = lv_obj_get_parent(r.sub);
   // Bar: name, number and the 8 px bar stacked; chart: the line under the number.
   const lv_font_t* nf = ch >= 64 ? &deck_font_20 : &deck_font_14;
-  const bool viz = r.viz && cw >= WIDE_W &&
+  const bool wideViz = r.viz && cw >= WIDE_W;
+  const bool viz = wideViz &&
                    (d.style == METRIC_BAR ? ch >= lineH(nf) + lineH(&deck_font_28) * 3 / 4 + 10 : ch >= 44);
   showObj(r.viz, viz);
   r.besideName = viz && d.style != METRIC_BAR;
+  r.row = 0;
   if (viz) {
     setFont(r.name, nf);
     lv_obj_set_size(r.name, d.style == METRIC_BAR ? lv_pct(100) : lv_pct(55), lineH(nf));
     lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, 0, -2);
-    setFont(r.unit, &deck_font_14);
+    r.unitFont = &deck_font_14;
     r.valFont = &deck_font_28;
+    lv_obj_set_width(r.viz, lv_pct(100));
+    lv_obj_align(r.viz, LV_ALIGN_BOTTOM_MID, 0, 0);
     if (d.style == METRIC_BAR) {
+      lv_obj_set_height(r.viz, 8);
       r.valW = cw;
       lv_obj_align(row, LV_ALIGN_BOTTOM_LEFT, 0, -10);
     } else {
@@ -2410,14 +2468,14 @@ void fitMetric(TileRt& r, int cw, int ch) {
       {&deck_font_14, &deck_font_28, &deck_font_14, false},
       {&deck_font_12, &deck_font_20, &deck_font_12, false},
   };
-  for (int pass = r.detail ? 0 : 1; pass < 2; pass++)
+  for (int pass = r.detail ? 0 : 1; pass < 2 && !wideViz; pass++)
   for (const Opt& o : kOpts) {
     const int dh = pass ? 0 : lineH(&deck_font_12);
     if ((o.wideOnly && cw < WIDE_W) || lineH(o.name) + dh + lineH(o.val) * 3 / 4 > ch) continue;
     setFont(r.name, o.name);
     lv_obj_set_size(r.name, lv_pct(100), lineH(o.name));
     lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, 0, -2);
-    setFont(r.unit, o.unit);
+    r.unitFont = o.unit;
     r.valFont = o.val;
     r.valW = cw;
     lv_obj_align(row, LV_ALIGN_BOTTOM_LEFT, 0, 2);
@@ -2428,13 +2486,21 @@ void fitMetric(TileRt& r, int cw, int ch) {
   }
   showObj(r.detail, false);
   const bool name = cw >= 80;
-  setFont(r.name, &deck_font_12);
-  lv_obj_set_size(r.name, cw / 2 - 4, lineH(&deck_font_12));
+  const lv_font_t* rf = cw >= WIDE_W && ch >= lineH(&deck_font_14) ? &deck_font_14 : &deck_font_12;
+  setFont(r.name, rf);
+  lv_obj_set_height(r.name, lineH(rf));
   lv_obj_align(r.name, LV_ALIGN_LEFT_MID, 0, 0);
   showObj(r.name, name);
-  setFont(r.unit, &deck_font_12);
-  r.valFont = ch >= lineH(&deck_font_20) ? &deck_font_20 : &deck_font_14;
-  r.valW = name ? cw / 2 : cw;
+  r.unitFont = name ? &deck_font_14 : &deck_font_12;
+  r.valFont = lineH(&deck_font_28) * 3 / 4 <= ch ? &deck_font_28
+              : lineH(&deck_font_20) * 3 / 4 <= ch ? &deck_font_20 : &deck_font_14;
+  r.valW = cw;
+  r.besideName = name;
+  r.row = !name ? 0 : wideViz ? 2 : 1;
+  if (r.row == 2) {
+    lv_obj_set_height(r.viz, d.style == METRIC_BAR ? 6 : ch);
+    lv_obj_align(r.viz, LV_ALIGN_LEFT_MID, 0, 0);  // layoutRow places it
+  }
   lv_obj_align(row, name ? LV_ALIGN_RIGHT_MID : LV_ALIGN_CENTER, 0, 0);
   fitValue(r);
 }
@@ -3357,6 +3423,12 @@ void applyPcToTile(TileRt& r) {
       r.pts[i] = k < 0 ? LV_CHART_POINT_NONE : (int32_t)lroundf(pcHistoryAt(hs, (uint8_t)k) * 10);
     }
     if (n) {
+      // Noise on a quiet metric must not fill the chart: span at least a tenth of the scale.
+      const float minSpan = autoRate ? 0 : scale * 0.1f;
+      if (hi - lo < minSpan) {
+        lo = max(lo >= 0 ? 0.0f : lo - minSpan, (lo + hi - minSpan) / 2);
+        hi = lo + minSpan;
+      }
       const float pad = (hi - lo) * 0.15f + 0.5f;
       lv_chart_set_axis_range(r.viz, LV_CHART_AXIS_PRIMARY_Y, (int32_t)floorf((lo - pad) * 10),
                               (int32_t)ceilf((hi + pad) * 10));
@@ -3404,7 +3476,6 @@ void makeMetricContent(TileRt& r, lv_obj_t* t) {
   r.unit = lv_label_create(row);
   lv_label_set_text(r.unit, "");
   lv_obj_set_style_text_opa(r.unit, LV_OPA_70, 0);
-  lv_obj_set_style_pad_bottom(r.unit, 4, 0);
   if (sensor) r.detail = makeDetail(t, d);
 
   // Fonts and places come from fitMetric once the tile has its size.

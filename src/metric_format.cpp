@@ -60,6 +60,9 @@ void formatMetricText(const PcMetric& metric, float raw, MetricText& out) {
     strlcpy(out.unit, "kW", sizeof(out.unit));
   } else if (strcmp(metric.unit, "GHz") == 0 || strcmp(metric.unit, "GB") == 0) {
     printScaled(out.value, sizeof(out.value), raw);
+  } else if (strcmp(metric.unit, "C") == 0) {
+    snprintf(out.value, sizeof(out.value), "%.0f", raw);
+    strlcpy(out.unit, "\xC2\xB0" "C", sizeof(out.unit));
   } else if (strcmp(metric.unit, "V") == 0 || strcmp(metric.unit, "A") == 0) {
     // Rails keep their decimal: 12.2 V and 12 V are different readings.
     snprintf(out.value, sizeof(out.value), "%.1f", raw);
