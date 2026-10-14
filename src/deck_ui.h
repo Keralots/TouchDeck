@@ -72,6 +72,9 @@ namespace deck {
 bool uiTryBeginSwipe(int dir, bool vertical, Src& a, Src& b, int& startOff, int& idxA);
 // The compositor refused the drag after a uiTryBegin*() call succeeded.
 void uiSwipeAborted();
+// Touch task: true when a swipe on the pages is never a tap, even with no
+// page that way (pages shown, no panel, card or editor over them).
+bool uiSwipeOwnsTouch();
 // Touch task: true when (x, y) is on a slider tile of the shown page, where a
 // drag moves the slider instead of the page.
 bool uiNoSwipeAt(int x, int y);

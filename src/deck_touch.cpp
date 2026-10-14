@@ -39,7 +39,8 @@ volatile bool s_activity = false;
 volatile bool s_swipeStarted = false;
 volatile bool s_suppress = false;
 
-enum GestureState : uint8_t { G_IDLE, G_PENDING, G_PASS, G_DRAG };
+// G_EAT: a swipe with no page that way; LVGL must not see it as a tap.
+enum GestureState : uint8_t { G_IDLE, G_PENDING, G_PASS, G_DRAG, G_EAT };
 
 struct Sample {
   uint32_t ms;
@@ -167,7 +168,7 @@ void touchTask(void*) {
               state = G_PASS;
             }
           } else {
-            state = G_PASS;
+            state = uiSwipeOwnsTouch() ? G_EAT : G_PASS;
           }
         } else if (abs(dy) >= SLOP_PX && abs(dy) > abs(dx)) {
           // Pull the quick panel down from the top edge, or push an open
@@ -201,9 +202,12 @@ void touchTask(void*) {
               } else {
                 uiSwipeAborted();
               }
+            } else if (uiSwipeOwnsTouch()) {
+              state = G_EAT;
             }
           }
         }
+        if (state == G_EAT) s_swipeStarted = true;  // deckTick resets LVGL's press
       }
       if (state == G_DRAG) {
         int off = drag.panel      ? drag.startOff + (y - y0)
@@ -214,7 +218,7 @@ void touchTask(void*) {
         drag.off = off;
         compDrag(off);
       }
-      publish(x, y, state != G_DRAG && !s_suppress);
+      publish(x, y, state != G_DRAG && state != G_EAT && !s_suppress);
       continue;
     }
 

@@ -5601,6 +5601,13 @@ bool uiTryBeginSwipe(int dir, bool vertical, Src& a, Src& b, int& startOff, int&
 
 void uiSwipeAborted() { releaseSwipe(); }
 
+bool uiSwipeOwnsTouch() {
+  portENTER_CRITICAL(&s_mux);
+  const bool own = sh.swipeEnabled && !sh.panelOpen && !sh.modalOpen;
+  portEXIT_CRITICAL(&s_mux);
+  return own;
+}
+
 bool uiNoSwipeAt(int x, int y) {
   bool hit = false;
   portENTER_CRITICAL(&s_mux);
