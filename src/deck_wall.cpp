@@ -13,6 +13,7 @@ uint16_t* s_sharp = nullptr;  // RGB565, dimmed and dithered
 uint8_t* s_blur = nullptr;    // RGB888 (LVGL order B, G, R), undimmed
 int s_w = 0, s_h = 0, s_blurR = -1, s_dim = -1;
 lv_image_dsc_t s_sharpDsc, s_blurDsc;
+uint32_t s_generation = 0;
 
 void fillDsc(lv_image_dsc_t& d, const void* px, int w, int h, lv_color_format_t cf, int bpp) {
   memset(&d, 0, sizeof(d));
@@ -163,6 +164,7 @@ bool wallLoad(int w, int h, int blurR, int dimPct) {
 }
 
 void wallFree() {
+  s_generation++;  // also covers reloads that reuse the same allocation addresses
   free(s_sharp);
   free(s_blur);
   s_sharp = nullptr;
@@ -173,5 +175,6 @@ void wallFree() {
 
 const lv_image_dsc_t* wallSharp() { return s_sharp ? &s_sharpDsc : nullptr; }
 const lv_image_dsc_t* wallBlur() { return s_blur ? &s_blurDsc : nullptr; }
+uint32_t wallGeneration() { return s_generation; }
 
 }  // namespace deck

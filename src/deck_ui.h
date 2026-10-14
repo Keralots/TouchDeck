@@ -38,6 +38,13 @@ bool deckApplyConfig(const String& text, String& err);
 bool deckInstallIcons(const char* uploaded, String& err);
 // Rebuild the pages without icons, so the font file can be deleted.
 void deckReleaseIcons();
+// Printers for the portal: config, whether secrets are stored, live status.
+String deckPrintersJson();
+// Re-read the printers' secrets after the portal stored new ones.
+void deckPrintersReapply();
+// Advanced page switch: printers off drops their connections and hides their
+// pages and tiles (deck.json and secrets stay); rebuilds the pages.
+void deckSetPrinters(bool on);
 // Top bar (page name, WiFi, clock) on the tiles pages; persisted.
 void deckSetHeader(bool on);
 bool deckHeaderVisible();
@@ -68,6 +75,9 @@ namespace deck {
 bool uiTryBeginSwipe(int dir, bool vertical, Src& a, Src& b, int& startOff, int& idxA);
 // The compositor refused the drag after a uiTryBegin*() call succeeded.
 void uiSwipeAborted();
+// Touch task: true when a swipe on the pages is never a tap, even with no
+// page that way (pages shown, no panel, card or editor over them).
+bool uiSwipeOwnsTouch();
 // Touch task: true when (x, y) is on a slider tile of the shown page, where a
 // drag moves the slider instead of the page.
 bool uiNoSwipeAt(int x, int y);

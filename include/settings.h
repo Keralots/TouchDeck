@@ -41,6 +41,11 @@ struct DisplaySettings {
   uint8_t  glassOn;           // Glass: accent fill of an "on" tile, opacity %, 20..100
 };
 
+// Portal Advanced page; NVS scalars.
+struct AdvancedSettings {
+  bool printers;  // Bambu printers over LAN; off hides their pages and tiles, config kept
+};
+
 constexpr uint8_t THEME_MIDNIGHT = 0;
 constexpr uint8_t THEME_DAYLIGHT = 1;
 constexpr uint8_t THEME_GLASS = 2;  // Midnight colours, glass tiles over a wallpaper
@@ -68,6 +73,7 @@ extern DisplaySettings dispSettings;
 extern NetworkSettings netSettings;
 extern BacklightSettings backlightSettings;
 extern LedSettings ledSettings;
+extern AdvancedSettings advSettings;
 
 void loadSettings();
 void saveSettings();

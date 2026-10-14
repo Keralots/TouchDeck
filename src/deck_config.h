@@ -35,6 +35,15 @@
 // "detail": "reset {claude.five_hour.reset_min|min}" adds a small line with
 // values from the same reply; "|unit" formats a number as a duration.
 //
+// Bambu printers: "printers": [{ "id": "h2c", "name": "H2C",
+//   "ip": "192.168.0.54", "plug": "switch.printer_plug" }] (plug optional:
+//   its HA state powers the printer's connection and pages; serial and access
+//   code live in NVS, never in deck.json). A page with "printer": "h2c" exists
+//   only while that printer is powered. A printer tile:
+// { "type": "printer", "printer": "h2c", "show": "hero" | "nozzle" | "bed" |
+//   "chamber" | "filament" | "layer" | "light" | "ams" | "slots" | "summary",
+//   "nozzle": "left" | "right", "unit": 1 } (unit is the 1-based AMS position).
+//
 // "type": "clock": the time, and the date when the tile has room
 // (24h and time zone from the device settings). Read-only.
 //
@@ -78,7 +87,9 @@ constexpr int ORIENT_PORTRAIT = 1;
 constexpr int MAX_DECK_PAGES = 8;
 constexpr int MAX_PAGE_TILES = 24;
 
-enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER, TILE_CLOCK };
+enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER, TILE_CLOCK, TILE_PRINTER };
+enum PrinterShow : uint8_t { PS_HERO = 0, PS_NOZZLE, PS_BED, PS_CHAMBER, PS_FILAMENT, PS_LAYER, PS_LIGHT, PS_AMS, PS_SLOTS, PS_SUMMARY };
+constexpr int MAX_PRINTERS = 2;
 enum MetricStyle : uint8_t { METRIC_NUMBER = 0, METRIC_CHART, METRIC_BAR };
 enum ActionKind : uint8_t {
   ACT_NONE = 0,
@@ -136,11 +147,21 @@ struct TileDef {
   bool hasWarn = false, hasCrit = false;
   float warn = 0, crit = 0;
   uint16_t scaleMax = 0;  // 0 = full scale by unit
+  String printer;         // TILE_PRINTER: printer id
+  PrinterShow show = PS_HERO;
+  uint8_t nozzle = 0;     // PS_NOZZLE: 0 = right / only, 1 = left
+  uint8_t amsUnit = 1;    // PS_AMS: 1-based position in the reported units
+};
+
+struct PrinterDef {
+  String id, name, ip;
+  String plug;  // HA switch that powers the printer, "" = always powered
 };
 
 struct PageDef {
   String id, name;
   String group;  // adjacent pages with the same group form one column
+  String printer;  // built only while this printer is powered
   uint8_t cols[2] = {4, 3};
   uint8_t rows[2] = {3, 4};
   std::vector<TileDef> tiles;
@@ -150,6 +171,7 @@ struct DeckConfig {
   uint8_t schema = 1;
   String theme;
   String ledEntity;  // HA entity the LED's day level follows, empty = none
+  std::vector<PrinterDef> printers;
   std::vector<PageDef> pages;
 };
 
