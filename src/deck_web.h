@@ -289,29 +289,42 @@ function layout(p){const [gc,gr]=grid(p),c=gc*2,r=gr*2;const used=[...Array(r)].
    A hidden tile loses its old cell, or it could claim space before a pinned one. */
 function pinAll(p,at){p.tiles.forEach((t,k)=>{if(offT(t))return;const a=at[k];if(a){setPos(t,cell(a.x,a.y,a.w,a.h));return;}const q=Object.assign({},tpos(t));delete q.x;delete q.y;setPos(t,q);});}
 const free=(at,k,q,c,r)=>q.x>=0&&q.y>=0&&q.x+q.w<=c&&q.y+q.h<=r&&at.every((o,j)=>j===k||!o||o.x>=q.x+q.w||o.x+o.w<=q.x||o.y>=q.y+q.h||o.y+o.h<=q.y);
+const ovl=(a,b)=>{const w=Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x),h=Math.min(a.y+a.h,b.y+b.h)-Math.max(a.y,b.y);return w>0&&h>0?w*h:0;};
+const garea=a=>(a.y+1)+'/'+(a.x+1)+'/span '+a.h+'/span '+a.w;
+/* Tile k dropped at q onto other tiles: the one it covers takes k's old place
+   (anchored at a corner of it, so a bigger tile can grow into free cells). A
+   same-size tile covered at least half snaps q onto it. Mirrors edCheck() in deck_ui.cpp. */
+function swapPlan(at,k,q,c,r){const me=at[k];let j=-1,best=0,hits=0;
+  at.forEach((o,i)=>{if(i===k||!o)return;const v=ovl(o,q);if(!v)return;hits++;if(v>best){best=v;j=i;}});
+  if(j<0)return null;const o=at[j];
+  if(o.w===me.w&&o.h===me.h&&best*2>=me.w*me.h)return {x:o.x,y:o.y,j:j,to:{x:me.x,y:me.y,w:o.w,h:o.h}};
+  if(hits>1)return null;const rest=at.map((v,i)=>i===j?null:v);
+  for(const y of [me.y,me.y+me.h-o.h])for(const x of [me.x,me.x+me.w-o.w]){const to={x:x,y:y,w:o.w,h:o.h};if(!ovl(to,q)&&free(rest,k,to,c,r))return {x:q.x,y:q.y,j:j,to:to};}
+  return null;}
 function gtile(t,k,a){const m=t.type==='metric',mm=m&&mlist(t).find(x=>x.id===t.metric),en=entMap[t.entity],d=domainOf(t.entity);
   const ck=t.type==='clock',pr=t.type==='printer',col=t.color||(m?PAL[((t.metric||1)-1)%8]:ck?'#E6E8EC':pr?'#F5B83D':(COL[d]||'#7DB5FF')),cp=m||ck||pr?0:tileCp(t);
   const nm=ck?'Clock':pr?prnTileName(t):t.label||(m?(mm?mm.name:'Metric #'+t.metric):(en&&en.name)||t.entity||'Tile');
   return '<div class="dk-gt'+(k===sel?' sel':'')+(a&&a.h<2?' row':'')+(a&&a.h<2&&a.w<2?' ic':'')+'" data-g="'+k+'"'+(a?' style="grid-area:'+(a.y+1)+'/'+(a.x+1)+'/span '+a.h+'/span '+a.w+'"':'')+'><i style="color:'+col+'"'+(cp?'':' class="tx"')+'>'+(cp?String.fromCodePoint(cp):(m?'PC':ck?'12':pr?'3D':esc((d||'?').slice(0,2).toUpperCase())))+'</i><b>'+esc(nm)+'</b>'+(a?'<span class="dk-rs" data-rs="'+k+'"></span>':'')+'</div>';}
-/* Drag a tile to a free place or onto a tile of its size (swap); the corner
-   handle resizes. A press without movement selects the tile. */
+/* Drag a tile to a free place or onto another tile, which moves to the dragged
+   tile's old place (swapPlan, shown live); the corner handle resizes. A press without movement selects the tile. */
 function gdrag(e,p,at,k,size){if(e.button>0)return;e.preventDefault();e.stopPropagation();
   const n=e.currentTarget,tile=size?n.parentElement:n,g=$('dkGrid'),gh=$('dkGhost'),[gc,gr]=grid(p),c=gc*2,r=gr*2;
   const b=g.getBoundingClientRect(),cs=getComputedStyle(g),pad=parseFloat(cs.paddingLeft)||0,gap=parseFloat(cs.columnGap)||0;
   const sx=(b.width-2*pad+gap)/c,sy=(b.height-2*pad+gap)/r;
   const a=at[k],[tw,th]=tdim(p.tiles[k]),tb=tile.getBoundingClientRect();
   const ox=a?e.clientX-tb.left:sx/2,oy=a?e.clientY-tb.top:sy/2;
-  let moved=false,tgt=null;n.setPointerCapture(e.pointerId);
+  let moved=false,tgt=null,shown=-1;n.setPointerCapture(e.pointerId);
   n.onpointermove=ev=>{const dx=ev.clientX-e.clientX,dy=ev.clientY-e.clientY;if(!moved&&Math.abs(dx)+Math.abs(dy)<6)return;moved=true;tile.classList.add('drag');
     if(size)tgt={x:a.x,y:a.y,w:cl(Math.round((ev.clientX-b.left-pad)/sx)-a.x,1,c-a.x),h:cl(Math.round((ev.clientY-b.top-pad)/sy)-a.y,1,r-a.y)};
     else{tile.style.transform='translate('+dx+'px,'+dy+'px)';if(tw>c||th>r){tgt=null;gh.hidden=true;return;}
       tgt={x:cl((ev.clientX-ox-b.left-pad)/sx,0,c-tw),y:cl((ev.clientY-oy-b.top-pad)/sy,0,r-th),w:tw,h:th};}
     tgt.j=-1;tgt.ok=free(at,k,tgt,c,r);
-    if(!tgt.ok&&!size&&a){tgt.j=at.findIndex((o,j)=>j!==k&&o&&o.x===tgt.x&&o.y===tgt.y&&o.w===tw&&o.h===th);tgt.ok=tgt.j>=0;}
+    if(!tgt.ok&&!size&&a){const s=swapPlan(at,k,tgt,c,r);if(s){tgt.x=s.x;tgt.y=s.y;tgt.j=s.j;tgt.to=s.to;tgt.ok=true;}}
+    if(shown!==tgt.j){const q=shown>=0&&g.querySelector('[data-g="'+shown+'"]');if(q)q.style.gridArea=garea(at[shown]);shown=tgt.j;const s=shown>=0&&g.querySelector('[data-g="'+shown+'"]');if(s)s.style.gridArea=garea(tgt.to);}
     gh.hidden=false;gh.className='dk-ghost'+(tgt.ok?'':' bad');gh.style.gridArea=(tgt.y+1)+'/'+(tgt.x+1)+'/span '+tgt.h+'/span '+tgt.w;};
   n.onpointerup=n.onpointercancel=ev=>{n.onpointermove=n.onpointerup=n.onpointercancel=null;
     if(!moved){sel=k;renderPage();const row=document.querySelector('.dk-tile.sel');if(row)row.scrollIntoView({block:'nearest',behavior:'smooth'});return;}
-    if(ev.type==='pointerup'&&tgt&&tgt.ok){pinAll(p,at);if(tgt.j>=0)setPos(p.tiles[tgt.j],cell(a.x,a.y,tw,th));setPos(p.tiles[k],cell(tgt.x,tgt.y,tgt.w,tgt.h));sel=k;setDirty(true);}
+    if(ev.type==='pointerup'&&tgt&&tgt.ok){pinAll(p,at);if(tgt.j>=0)setPos(p.tiles[tgt.j],cell(tgt.to.x,tgt.to.y,tgt.to.w,tgt.to.h));setPos(p.tiles[k],cell(tgt.x,tgt.y,tgt.w,tgt.h));sel=k;setDirty(true);}
     renderPage();};}
 function renderTabs(){const ps=pages();if(cur>=ps.length)cur=Math.max(0,ps.length-1);$('dkTabs').innerHTML=ps.map((p,i)=>'<button type="button" class="chip page-tab'+(i===cur?' on':'')+'" data-i="'+i+'">'+(stackedAt(ps,i)?'&#8595; ':'')+esc(p.name||p.id)+'</button>').join('')+'<button type="button" class="chip page-tab" id="dkAddPage">+ Page</button>';
   $('dkTabs').querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>{cur=+b.dataset.i;sel=-1;more=-1;render();});$('dkAddPage').onclick=()=>{deck.pages.push({id:'p'+Date.now().toString(36),name:'New page',layouts:{landscape:{cols:4,rows:3}},tiles:[]});cur=pages().length-1;setDirty(true);render();};}
@@ -336,7 +349,7 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   const hd=$('dkHeader').checked?30:0;
   h+='<div class="dk-grid'+(land?'':' pt')+'" id="dkGrid" style="grid-template-columns:repeat('+2*c+',minmax(0,1fr));grid-template-rows:repeat('+2*r+',minmax(0,1fr));aspect-ratio:'+(land?480:320)+'/'+((land?320:480)-hd)+'">'+g+p.tiles.map((t,k)=>at[k]?gtile(t,k,at[k]):'').join('')+'<div class="dk-ghost" id="dkGhost" hidden></div></div>';
   if(lost.length)h+='<p class="dk-cap over">No room on the page for these: drag one to a free place, make it smaller or remove it.</p><div class="dk-tray">'+lost.map(k=>gtile(p.tiles[k],k,null)).join('')+'</div>';
-  h+='<p class="field-hint">Drag a tile to move it, or onto a tile of the same size to swap them; the corner handle resizes. Both go in half-cell steps. Tap a tile to find it in the list.</p>';
+  h+='<p class="field-hint">Drag a tile to move it, or onto another tile, which then moves to where the dragged one was; the corner handle resizes. Both go in half-cell steps. Tap a tile to find it in the list.</p>';
   if(sel>=0&&p.tiles[sel]&&ps.length>1)h+='<div class="dk-row"><span class="dk-tsub" style="margin:0">Move the selected tile to</span><select id="dkMvPg" style="width:auto">'+ps.map((q,i)=>i===cur?'':opt(String(i),q.name||q.id,false)).join('')+'</select><button type="button" class="btn" id="dkMv">Move</button></div>';
   h+='<div class="dk-tiles">'+p.tiles.map((t,i)=>{if(t.type==='metric')return metricRow(t,i);if(t.type==='clock')return clockRow(t,i);if(t.type==='printer')return offT(t)?'':printerRow(t,i);const d=domainOf(t.entity);const en=entMap[t.entity];const nm=en&&en.name?en.name:(t.entity||(isHttpSensor(t)?'HTTP sensor':'No entity'));
     const cp=tileCp(t);

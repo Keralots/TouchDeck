@@ -42,7 +42,8 @@ WebSocket API and receives PC metrics over UDP on the LAN.
 - **Quick panel:** pull down from the top edge for screen and LED brightness,
   link status, screen off, night mode, the top bar switch and the page editor.
 - **Edit on the device:** long press an empty spot of a page (or Edit in the
-  quick panel) to move, resize or remove its tiles, or add one with + (a
+  quick panel) to move (swap works as in the portal), resize or remove its
+  tiles, or add one with + (a
   list of Home Assistant entities by group, from the list cached with
   "Update from HA" in the portal); Done saves the page.
 - **Night schedule** for the backlight and an optional status / filament LED
@@ -60,8 +61,9 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
   diagnostics.
 - **Pages & tiles:** Home Assistant address and token, the icon font, pages,
   tiles, entity and icon pickers, columns, and a grid editor: drag tiles to
-  move or swap them, resize from the corner (half-cell steps), separately for landscape and
-  portrait.
+  move them (dropped onto another tile, that tile jumps to the dragged one's
+  old place if it fits there), resize from the corner (half-cell steps),
+  separately for landscape and portrait.
 - **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass
   tiles over a wallpaper you upload), brightness, night
   schedule, PC metric tile scales.

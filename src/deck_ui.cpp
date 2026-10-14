@@ -3956,8 +3956,9 @@ void addTilesPage(const PageDef& def) {
 // --- Edit mode ------------------------------------------------------------------------
 // Long press on an empty part of a page, or Edit in the quick panel: a sketch
 // of the active page on the top layer. Drag a tile to a free place or onto a
-// tile of its size (swap), resize it from the corner, remove it with x. Done
-// writes the page's positions into the stored deck.json; Cancel drops them.
+// tile (that one moves to its old place, edCheck), resize it from the corner,
+// remove it with x. Done writes the page's positions into the stored
+// deck.json; Cancel drops them.
 constexpr int ED_BAR_H = 48;
 constexpr int ED_PAD = 8;
 constexpr int ED_GAP = 7;
@@ -3985,6 +3986,7 @@ struct EditState {
   int k = -1;
   bool sizing = false, moved = false, ok = false;
   int swap = -1;
+  Cell swapTo = {};  // where tile swap goes when the drag lands
   lv_point_t p0 = {};
   int bx0 = 0, by0 = 0;
   Cell to = {};
@@ -3998,37 +4000,75 @@ void edPlace(lv_obj_t* o, const Cell& c) {
   lv_obj_set_size(o, c.w * s_ed.cw + (c.w - 1) * ED_GAP, c.h * s_ed.ch + (c.h - 1) * ED_GAP);
 }
 
-// Can tile k go to c? Free cells, or (a move, not a resize) exactly onto a
-// tile of the same size, which then takes k's place (*swap).
-bool edCheck(int k, const Cell& c, bool sizing, int* swap) {
-  *swap = -1;
+int overlapArea(const Cell& a, const Cell& b) {
+  const int w = min(a.x + a.w, b.x + b.w) - max(a.x, b.x);
+  const int h = min(a.y + a.h, b.y + b.h) - max(a.y, b.y);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+
+// c is on the grid and no placed tile but a and b is on it.
+bool edFree(const Cell& c, int a, int b) {
   if (c.x < 0 || c.y < 0 || c.x + c.w > s_ed.cols || c.y + c.h > s_ed.rows) return false;
-  const Cell& me = s_ed.tiles[k].c;
-  int hit = -1, hits = 0;
   for (int j = 0; j < (int)s_ed.tiles.size(); j++) {
     const EdTile& o = s_ed.tiles[j];
-    if (j == k || !o.c.placed || o.removed) continue;
-    if (o.c.x < c.x + c.w && c.x < o.c.x + o.c.w && o.c.y < c.y + c.h && c.y < o.c.y + o.c.h) {
-      hit = j;
-      hits++;
-    }
+    if (j != a && j != b && o.c.placed && !o.removed && overlapArea(o.c, c)) return false;
   }
-  if (!hits) return true;
-  if (sizing || hits > 1 || !me.placed || c.w != me.w || c.h != me.h) return false;
-  const Cell& o = s_ed.tiles[hit].c;
-  if (o.x != c.x || o.y != c.y || o.w != me.w || o.h != me.h) return false;
-  *swap = hit;
   return true;
 }
 
-bool edApply(int k, const Cell& c, bool sizing) {
-  int swap;
-  if (!edCheck(k, c, sizing, &swap)) return false;
-  EdTile& t = s_ed.tiles[k];
-  if (swap >= 0) {
-    s_ed.tiles[swap].c.x = t.c.x;
-    s_ed.tiles[swap].c.y = t.c.y;
+// Can tile k go to c? Free cells, or (a move of a placed tile) onto a tile that
+// then takes k's old place (*swap, *swapTo). A same-size tile covered at least
+// half snaps c onto it. The portal mirrors this (swapPlan() in deck_web.h).
+bool edCheck(int k, Cell& c, bool sizing, int* swap, Cell* swapTo) {
+  *swap = -1;
+  if (c.x < 0 || c.y < 0 || c.x + c.w > s_ed.cols || c.y + c.h > s_ed.rows) return false;
+  const Cell& me = s_ed.tiles[k].c;
+  int hit = -1, best = 0, hits = 0;
+  for (int j = 0; j < (int)s_ed.tiles.size(); j++) {
+    const EdTile& o = s_ed.tiles[j];
+    if (j == k || !o.c.placed || o.removed) continue;
+    const int a = overlapArea(o.c, c);
+    if (!a) continue;
+    hits++;
+    if (a > best) {
+      best = a;
+      hit = j;
+    }
   }
+  if (!hits) return true;
+  if (sizing || !me.placed) return false;
+  const Cell& o = s_ed.tiles[hit].c;
+  if (o.w == me.w && o.h == me.h && best * 2 >= me.w * me.h) {
+    c.x = o.x;
+    c.y = o.y;
+    *swap = hit;
+    *swapTo = o;
+    swapTo->x = me.x;
+    swapTo->y = me.y;
+    return true;
+  }
+  if (hits > 1) return false;
+  // Anchored at a corner of k's old place, so a bigger tile can grow into free cells.
+  const int xs[2] = {me.x, me.x + me.w - o.w}, ys[2] = {me.y, me.y + me.h - o.h};
+  for (int yi = 0; yi < 2; yi++)
+    for (int xi = 0; xi < 2; xi++) {
+      Cell to = o;
+      to.x = xs[xi];
+      to.y = ys[yi];
+      if (overlapArea(to, c) || !edFree(to, k, hit)) continue;
+      *swap = hit;
+      *swapTo = to;
+      return true;
+    }
+  return false;
+}
+
+bool edApply(int k, Cell c, bool sizing) {
+  int swap;
+  Cell swapTo;
+  if (!edCheck(k, c, sizing, &swap, &swapTo)) return false;
+  EdTile& t = s_ed.tiles[k];
+  if (swap >= 0) s_ed.tiles[swap].c = swapTo;
   t.c = c;
   t.c.placed = true;
   s_ed.dirty = true;
@@ -4079,8 +4119,12 @@ void edDragEvent(lv_event_t* e) {
       c.x = constrain((int)lroundf((s_ed.bx0 + dx - ED_PAD) / sx), 0, s_ed.cols - c.w);
       c.y = constrain((int)lroundf((s_ed.by0 + dy - ED_BAR_H) / sy), 0, s_ed.rows - c.h);
     }
+    s_ed.ok = edCheck(k, c, sizing, &s_ed.swap, &s_ed.swapTo);
     s_ed.to = c;
-    s_ed.ok = edCheck(k, c, sizing, &s_ed.swap);
+    for (int j = 0; j < (int)s_ed.tiles.size(); j++) {
+      const EdTile& o = s_ed.tiles[j];
+      if (j != k && o.box) edPlace(o.box, s_ed.ok && j == s_ed.swap ? s_ed.swapTo : o.c);
+    }
     const lv_color_t col = lv_color_hex(s_ed.ok ? C_ED_OK : C_ED_BAD);
     lv_obj_set_style_border_color(s_ed.ghost, col, 0);
     lv_obj_set_style_bg_color(s_ed.ghost, col, 0);
