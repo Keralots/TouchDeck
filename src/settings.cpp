@@ -87,6 +87,7 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.glassOn          = 80;
   ds.wallEvery        = 5;
   ds.wallOrder        = 0;
+  ds.glassAutoText    = false;
   ds.smoothCharts     = true;
 }
 
@@ -147,6 +148,7 @@ void loadSettings() {
   dispSettings.wallEvery = prefs.getUChar("wevery", 5);
   if (!validWallEvery(dispSettings.wallEvery)) dispSettings.wallEvery = 5;
   dispSettings.wallOrder = min<uint8_t>(prefs.getUChar("worder", 0), 1);
+  dispSettings.glassAutoText = prefs.getBool("gauto", false);
   dispSettings.smoothCharts = prefs.getBool("smooth", true);
   advSettings.printers = prefs.getBool("prn", false);
   if (prefs.getBytesLength("net") == sizeof(NetworkSettings))
@@ -191,6 +193,7 @@ void saveSettings() {
   prefs.putUChar("gon", dispSettings.glassOn);
   prefs.putUChar("wevery", dispSettings.wallEvery);
   prefs.putUChar("worder", dispSettings.wallOrder);
+  prefs.putBool("gauto", dispSettings.glassAutoText);
   prefs.putBool("smooth", dispSettings.smoothCharts);
   prefs.putBool("prn", advSettings.printers);
   prefs.putBytes("net", &netSettings, sizeof(NetworkSettings));

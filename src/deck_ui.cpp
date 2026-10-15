@@ -150,6 +150,9 @@ struct TileRt {
   lv_obj_t* colon;
   lv_obj_t* mins;
   bool colonLit;
+  // Glass auto text: the colour picked from the picture under the tile.
+  uint32_t autoText;
+  bool hasAuto;
 };
 
 lv_display_t* s_disp = nullptr;
@@ -413,8 +416,11 @@ void fitNameText(TileRt& r);
 uint32_t tileText(const TileDef& d);
 void showObj(lv_obj_t* o, bool on);
 
-uint32_t sensorColour(const TileRt& r) {
-  return r.threshold == 2 ? C_CRIT : r.threshold == 1 ? C_WARN : tileText(*r.def);
+uint32_t tileTextRt(const TileRt& r) { return r.hasAuto ? r.autoText : tileText(*r.def); }
+
+// onTile: the reading on the tile itself, which follows Glass auto text.
+uint32_t sensorColour(const TileRt& r, bool onTile = false) {
+  return r.threshold == 2 ? C_CRIT : r.threshold == 1 ? C_WARN : onTile ? tileTextRt(r) : tileText(*r.def);
 }
 
 uint32_t sensorLine(const TileRt& r) {
@@ -437,7 +443,7 @@ void sensorThreshold(TileRt& r, bool numeric, float value) {
     else if (d.hasWarn && active(d.warn, r.threshold >= 1)) r.threshold = 1;
     else r.threshold = 0;
   }
-  lv_obj_set_style_text_color(r.sub, lv_color_hex(sensorColour(r)), 0);
+  lv_obj_set_style_text_color(r.sub, lv_color_hex(sensorColour(r, true)), 0);
   if (r.viz && r.ser) lv_chart_set_series_color(r.viz, r.ser, lv_color_hex(sensorLine(r)));
 }
 
@@ -3785,7 +3791,7 @@ void applyPcToTile(TileRt& r) {
   const bool warn = !autoRate && enter > 0 && (r.warn ? pct >= enter - 5 : pct >= enter);
   if (warn != r.warn) {
     r.warn = warn;
-    lv_obj_set_style_text_color(r.sub, lv_color_hex(warn ? C_WARN : tileText(d)), 0);
+    lv_obj_set_style_text_color(r.sub, lv_color_hex(warn ? C_WARN : tileTextRt(r)), 0);
   }
   const uint32_t accent = warn ? C_WARN : metricChart(d);
   if (r.viz && d.style == METRIC_BAR) {
@@ -4005,9 +4011,13 @@ uint32_t onTextColor(uint32_t accent, bool glass) {
   return lum * dispSettings.glassOn / 100 >= 115 ? C_TEXT_ON : C_TEXT;
 }
 
+uint32_t tileAccent(const TileDef& def) {
+  return def.hasColor ? def.color : def.type == TILE_PRINTER ? C_PRN_HEAT : domainColor(entityDomain(def.entity));
+}
+
 void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, int w, int h) {
   const String domain = entityDomain(def.entity);
-  const uint32_t accent = def.hasColor ? def.color : def.type == TILE_PRINTER ? C_PRN_HEAT : domainColor(domain);
+  const uint32_t accent = tileAccent(def);
   const bool glass = s_theme == THEME_GLASS && wallBlur();
 
   lv_obj_t* t = lv_obj_create(grid);
@@ -4178,7 +4188,8 @@ std::vector<uint32_t> glassKey(Page& p) {
   std::vector<uint32_t> key = {
       wallGeneration(), (uint32_t)logicalW(), (uint32_t)logicalH(), (uint32_t)panelRotation(),
       s_theme, C_TILE, dispSettings.glassTint, dispSettings.glassBlur, dispSettings.glassDim,
-      dispSettings.glassOn, GLASS_BORDER_COLOR, GLASS_BORDER_OPA, GLASS_BORDER_WIDTH};
+      dispSettings.glassOn, dispSettings.glassAutoText, GLASS_BORDER_COLOR, GLASS_BORDER_OPA,
+      GLASS_BORDER_WIDTH};
   const uint32_t count = lv_obj_get_child_count(p.grid);
   key.reserve(key.size() + 1 + count * 5);
   key.push_back(count);
@@ -4193,6 +4204,123 @@ std::vector<uint32_t> glassKey(Page& p) {
       key.push_back((uint32_t)v);
   }
   return key;
+}
+
+// Glass auto text: light text needs the glass at or below AUTO_LIGHT_MAX luma,
+// dark text at or above AUTO_DARK_MIN (about 3:1 contrast either way).
+constexpr int AUTO_LIGHT_MAX = 132, AUTO_DARK_MIN = 107;
+constexpr uint32_t AUTO_DARK_TEXT = 0x1D2129, AUTO_DARK_TITLE = 0x161A20, AUTO_DARK_CLOCK = 0x3A404C;
+
+int luma(int r, int g, int b) { return (r * 299 + g * 587 + b * 114) / 1000; }
+int luma(uint32_t c) { return luma(c >> 16 & 0xFF, c >> 8 & 0xFF, c & 0xFF); }
+
+// 10th and 90th percentile luma of an image area (RGB565, or RGB888 as B, G, R),
+// from every other pixel and row.
+void lumaRange(const lv_image_dsc_t* img, lv_area_t a, int& lo, int& hi) {
+  lo = hi = 0;
+  const int w = img->header.w, h = img->header.h;
+  a.x1 = max<int32_t>(a.x1, 0);
+  a.y1 = max<int32_t>(a.y1, 0);
+  a.x2 = min<int32_t>(a.x2, w - 1);
+  a.y2 = min<int32_t>(a.y2, h - 1);
+  uint16_t hist[256] = {};
+  uint32_t n = 0;
+  const bool rgb565 = img->header.cf == LV_COLOR_FORMAT_RGB565;
+  for (int y = a.y1; y <= a.y2; y += 2) {
+    const uint8_t* row = img->data + y * img->header.stride;
+    for (int x = a.x1; x <= a.x2; x += 2, n++) {
+      if (rgb565) {
+        const uint16_t q = ((const uint16_t*)row)[x];
+        hist[luma(q >> 8 & 0xF8, q >> 3 & 0xFC, q << 3 & 0xF8)]++;
+      } else hist[luma(row[x * 3 + 2], row[x * 3 + 1], row[x * 3])]++;
+    }
+  }
+  uint32_t acc = 0;
+  bool low = false;
+  for (int v = 0; v < 256 && n; v++) {
+    acc += hist[v];
+    if (!low && acc * 10 >= n) lo = v, low = true;
+    if (acc * 10 >= n * 9) {
+      hi = v;
+      break;
+    }
+  }
+}
+
+struct AutoPick {
+  lv_opa_t opa;   // glass tint of the tile
+  uint32_t text;
+  bool set;       // auto text applies to this tile
+};
+
+// Light text if it reads, else dark text, else glass darkened until light
+// text reads. Printer tiles and tiles with their own text colour stay light.
+AutoPick autoPick(const TileRt* r, const lv_area_t& a) {
+  const int base = dispSettings.glassTint;
+  AutoPick pk = {(lv_opa_t)(base * 255 / 100), C_TEXT, false};
+  if (!dispSettings.glassAutoText || !r || r->def->hasTextColor || !wallBlur()) return pk;
+  int lo, hi;
+  lumaRange(wallBlur(), a, lo, hi);
+  const int tint = luma(C_TILE);
+  auto glassed = [&](int v) { return (v * (100 - base) + tint * base) / 100; };
+  pk.set = true;
+  if (glassed(hi) <= AUTO_LIGHT_MAX) return pk;
+  if (r->def->type != TILE_PRINTER && glassed(lo) >= AUTO_DARK_MIN) {
+    pk.text = AUTO_DARK_TEXT;
+    return pk;
+  }
+  const int pct = min(95, ((hi - AUTO_LIGHT_MAX) * 100 + (hi - tint) - 1) / (hi - tint));
+  pk.opa = (lv_opa_t)(max(pct, base) * 255 / 100);
+  return pk;
+}
+
+TileRt* tileOf(lv_obj_t* o) {
+  for (TileRt& r : s_tiles)
+    if (r.obj == o) return &r;
+  return nullptr;
+}
+
+void applyAutoPick(TileRt& r, const AutoPick& pk) {
+  if (!pk.set && !r.hasAuto) return;
+  r.hasAuto = pk.set;
+  r.autoText = pk.text;
+  const uint32_t text = tileTextRt(r), on = onTextColor(tileAccent(*r.def), true);
+  lv_obj_set_style_text_color(r.obj, lv_color_hex(text), 0);
+  lv_obj_set_style_text_color(r.obj, lv_color_hex(on == C_TEXT ? text : on), LV_STATE_CHECKED);
+  if (r.sub && r.def->type == TILE_SENSOR && !r.threshold)
+    lv_obj_set_style_text_color(r.sub, lv_color_hex(text), 0);
+  if (r.sub && r.def->type == TILE_METRIC && !r.warn) lv_obj_set_style_text_color(r.sub, lv_color_hex(text), 0);
+}
+
+// The top bar sits on the sharp picture, no glass.
+void autoHeader(Page& p) {
+  const lv_image_dsc_t* sharp = wallSharp();
+  if (!p.title || !p.clock || !sharp) return;
+  bool dark = false;
+  if (dispSettings.glassAutoText) {
+    int lo, hi;
+    lumaRange(sharp, {0, 0, (int32_t)sharp->header.w - 1, HEADER_H - 1}, lo, hi);
+    dark = hi > AUTO_LIGHT_MAX && lo >= AUTO_DARK_MIN;
+  }
+  lv_obj_set_style_text_color(p.title, lv_color_hex(dark ? AUTO_DARK_TITLE : C_TITLE), 0);
+  lv_obj_set_style_text_color(p.clock, lv_color_hex(dark ? AUTO_DARK_CLOCK : C_CLOCK), 0);
+}
+
+// Re-applies the picks of a page whose bake came from the cache.
+void autoTextPage(Page& p) {
+  if (!p.root || !p.grid) return;
+  lv_area_t rc;
+  lv_obj_get_coords(p.root, &rc);
+  for (uint32_t i = 0; i < lv_obj_get_child_count(p.grid); i++) {
+    lv_obj_t* t = lv_obj_get_child(p.grid, i);
+    TileRt* r = tileOf(t);
+    if (!r) continue;
+    lv_area_t tc;
+    lv_obj_get_coords(t, &tc);
+    lv_area_move(&tc, -rc.x1, -rc.y1);
+    applyAutoPick(*r, autoPick(r, tc));
+  }
+  autoHeader(p);
 }
 
 // Glass: the page background is baked once the tiles are laid out: the
@@ -4241,8 +4369,11 @@ bool bakeGlass(Page& p) {
     lv_draw_rect_dsc_t rd;
     lv_draw_rect_dsc_init(&rd);
     rd.radius = r;
+    TileRt* tr = tileOf(t);
+    const AutoPick pk = autoPick(tr, tc);
+    if (tr) applyAutoPick(*tr, pk);
     rd.bg_color = lv_color_hex(C_TILE);
-    rd.bg_opa = (lv_opa_t)(dispSettings.glassTint * 255 / 100);
+    rd.bg_opa = pk.opa;
     rd.border_color = lv_color_hex(GLASS_BORDER_COLOR);
     rd.border_opa = GLASS_BORDER_OPA;
     rd.border_width = GLASS_BORDER_WIDTH;
@@ -4267,6 +4398,7 @@ bool bakeGlass(Page& p) {
     }
   }
   lv_draw_buf_destroy(top);
+  autoHeader(p);
   lv_obj_set_style_bg_image_src(p.root, p.glass, 0);
   lv_obj_invalidate(p.root);
   p.stale = true;
@@ -5322,6 +5454,7 @@ void buildPages() {
         c.buffer = nullptr;
         p.glassKey.swap(key);
         lv_obj_set_style_bg_image_src(p.root, p.glass, 0);
+        autoTextPage(p);
         lv_obj_invalidate(p.root);
         p.stale = true;
         reused++;
