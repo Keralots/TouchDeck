@@ -9,6 +9,7 @@
 #include "deck_sys.h"
 #include "deck_touch.h"
 #include "deck_wall.h"
+#include <src/misc/cache/instance/lv_image_cache.h>
 #include "display_ui.h"
 #include "settings.h"
 #include "led.h"
@@ -102,6 +103,7 @@ struct Page {
   std::vector<uint32_t> glassKey;  // empty until a bake finishes
   const PageDef* def;
   bool stale;
+  bool wallBake;
   uint32_t snapMs;  // when snap was last taken
 };
 
@@ -4205,6 +4207,7 @@ bool bakeGlass(Page& p) {
   const int w = sharp->header.w, h = sharp->header.h;
   if (!p.glass) p.glass = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
   if (!p.glass) return false;
+  lv_image_cache_drop(p.glass);
   for (int y = 0; y < h; y++)
     memcpy(p.glass->data + y * p.glass->header.stride, sharp->data + y * sharp->header.stride, w * 2);
   // The glass is drawn in ARGB8888 over nothing, then laid over the picture
@@ -5534,7 +5537,7 @@ void refreshOneSnapshot() {
                         a > 0 && sh.col[a - 1] == c ? a - 1 : -1};
   // The shown page swipes from the live frame; only closing the panel slides
   // off its image (showPanel marks it), so then it goes first.
-  auto due = [&](int p) { return p >= 0 && s_pages[p].stale && (p != a || s_qp.open); };
+  auto due = [&](int p) { return p >= 0 && s_pages[p].stale && !s_pages[p].wallBake && (p != a || s_qp.open); };
   if (s_qp.open && due(a)) pick = a;
   // A page without an image cannot be swiped to at all.
   for (int k = 0; k < 4 && pick < 0; k++)
@@ -5579,6 +5582,46 @@ void refreshOneSnapshot() {
   portEXIT_CRITICAL(&s_mux);
   pg.stale = !ok;
   pg.snapMs = s_lastSnapMs = millis();
+}
+
+void bakeWallpaperPage(int index) {
+  Page& p = s_pages[index];
+  const uint32_t start = millis();
+  if (!bakeGlass(p)) {
+    lv_obj_set_style_bg_image_src(p.root, wallSharp(), 0);
+    lv_obj_invalidate(p.root);
+  }
+  p.wallBake = false;
+  p.stale = true;
+  Serial.printf("Deck: wallpaper page %d bake %lu ms\n", index, (unsigned long)(millis() - start));
+}
+
+void tickWallpaper() {
+  const bool safe = s_count && s_theme == THEME_GLASS && getScreenState() == SCREEN_DECK &&
+                    !displaySleepingForTouch() && !manualDisplayOff() && currentBacklightLevel() &&
+                    !touchIsDown() && !s_qp.open && !s_modalCard && !s_ed.root &&
+                    s_ed.pending == EditState::P_NONE && compMode() == COMP_NONE && !sh.owned;
+  const bool idle = millis() - touchLastActivity() >= WALL_IDLE_MS;
+  bool baking = false;
+  for (int i = 0; i < s_count; i++) baking |= s_pages[i].wallBake;
+  if (wallPoll(logicalW(), logicalH(), idle, safe && !baking)) {
+    stopGestures();
+    for (int i = 0; i < s_count; i++) s_pages[i].stale = true;
+    // A touch may have started while the compositor was being quiesced.
+    if (!wallPoll(logicalW(), logicalH(), millis() - touchLastActivity() >= WALL_IDLE_MS, !touchIsDown())) return;
+    wallCommit();
+    for (int i = 0; i < s_count; i++) s_pages[i].wallBake = true;
+    bakeWallpaperPage(sh.active);
+    qpMarkStale();
+    ++s_gen;
+    return;
+  }
+  if (!safe || !baking) return;
+  for (int i = 0; i < s_count; i++) {
+    if (!s_pages[i].wallBake) continue;
+    bakeWallpaperPage(i);
+    break;
+  }
 }
 
 // The colon of the shown page's clocks blinks with the second; other pages
@@ -5790,6 +5833,7 @@ void deckTick() {
   if (compOwnsScreen()) return;  // LVGL stays frozen during a drag or slide
 
   if (s_ed.pending != EditState::P_NONE) edFinish();
+  tickWallpaper();
   updateHeaders();
   blinkClocks();
   qpUpdateStatus(false);
@@ -5815,6 +5859,7 @@ void deckRefreshNow() {
 }
 
 void deckApplyRotation(uint8_t rotation) {
+  wallInvalidateJobs();
   if (!s_disp) return;
   rotation &= 3;
   if (rotation == panelRotation()) return;
@@ -5831,6 +5876,7 @@ void deckApplyRotation(uint8_t rotation) {
 }
 
 void deckApplyTheme(uint8_t theme) {
+  wallInvalidateJobs();
   if (!s_disp || theme == s_theme) return;
   stopGestures();
   destroyPages();
@@ -5842,6 +5888,7 @@ void deckApplyTheme(uint8_t theme) {
 }
 
 void deckReloadWallpaper(bool fileChanged) {
+  wallInvalidateJobs();
   if (!s_disp || s_theme != THEME_GLASS) return;
   stopGestures();
   destroyPages();

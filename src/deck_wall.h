@@ -1,20 +1,39 @@
-// Guition deck: wallpaper for the Glass theme. The portal crops the owner's
-// picture to the screen in the browser and uploads it as raw RGB888, one file
-// per orientation. On load the picture goes to PSRAM with a blurred copy that
-// the glass tiles show through.
+// Glass wallpaper galleries and PSRAM image loading.
 #ifndef DECK_WALL_H
 #define DECK_WALL_H
 
 #include <Arduino.h>
 #include <lvgl.h>
+#include <vector>
 
 namespace deck {
+
+constexpr uint32_t WALL_IDLE_MS = 30000;
+constexpr size_t WALL_RESERVE = 256 * 1024;
+constexpr size_t WALL_MAX_JPEG = 200 * 1024;
+struct WallFile { String name; size_t size; };
+bool wallValidName(const String& name);
+String wallGalleryPath(bool portrait, const String& name = "");
+std::vector<WallFile> wallFiles(bool portrait);
+String wallCurrent(bool portrait);
+String wallPinned(bool portrait);
+bool wallPin(bool portrait, const String& name);
+void wallClearPin(bool portrait);
+bool wallValidateJpeg(const char* path, bool portrait);
+// Loop task only. Requests replace older jobs without touching their buffers.
+void wallRequest(bool portrait, const String& name);
+bool wallNext(bool portrait);
+void wallGalleryChanged(bool portrait);
+void wallInvalidateJobs();
+// Poll/start work, then commit only after the UI has stopped gestures.
+bool wallPoll(int w, int h, bool idle, bool canSwitch);
+void wallCommit();
 
 // Where the wallpaper for a w x h screen lives on LittleFS.
 const char* wallPath(int w, int h);
 // Load the w x h wallpaper (a built-in gradient when there is no file),
 // darken it by dimPct and blur a copy by blurR px (0 = an unblurred copy).
-// False only when PSRAM is short.
+// False when memory is short or the selected JPEG cannot be decoded.
 bool wallLoad(int w, int h, int blurR, int dimPct);
 void wallFree();
 // Changes whenever the images are freed or reloaded, including failed loads.

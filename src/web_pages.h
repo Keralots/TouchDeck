@@ -61,7 +61,7 @@ static const char PAGE_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
       <section class="page" data-page="display">
         <div class="page-header"><h1 class="page-h1">Display</h1><p class="page-lede">Orientation, brightness, the night schedule, and PC metric tiles.</p></div>
         <form id="displayForm" class="portal-form" data-endpoint="/save/display" data-save-label="Save display">
-          <div class="card"><h2 class="card-title">Screen</h2><div class="grid-2"><div class="field"><label class="field-label" for="rotation">Rotation</label><div class="select-wrap"><select id="rotation" name="rotation"><option value="0">Portrait</option><option value="1">Landscape</option><option value="2">Portrait, flipped</option><option value="3">Landscape, flipped</option></select></div></div><div class="field"><label class="field-label" for="brightness">Day brightness</label><div class="range-row"><input type="range" id="brightness" name="brightness" min="0" max="255" step="1"><span class="range-val" id="brightnessVal">--</span></div></div><div class="field"><label class="field-label" for="theme">Theme</label><div class="select-wrap"><select id="theme" name="theme"><option value="0">Midnight (dark)</option><option value="1">Daylight (light)</option><option value="2">Glass (wallpaper)</option></select></div></div></div></div><div class="card"><h2 class="card-title">Glass wallpaper</h2><p class="field-hint" style="margin:0 0 14px">The Glass theme shows tiles as tinted glass over this picture. Pick any photo: this browser crops it to the screen, landscape and portrait, and sends both to the device. Without one, Glass uses a built-in gradient.</p><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><input type="file" id="wallFile" accept="image/*" hidden><button type="button" class="btn" id="wallPick">Choose picture</button><button type="button" class="btn" id="wallDel">Remove</button><span class="field-hint" id="wallState" style="margin:0"></span></div><div id="wallPrev" style="display:flex;gap:10px;margin-top:12px"></div><div class="grid-2" style="margin-top:16px"><div class="field"><label class="field-label" for="glassTint">Tile opacity</label><div class="range-row"><input type="range" id="glassTint" name="glassTint" min="0" max="90" step="5"><span class="range-val" id="glassTintVal">--</span></div></div><div class="field"><label class="field-label" for="glassBlur">Blur</label><div class="range-row"><input type="range" id="glassBlur" name="glassBlur" min="0" max="24" step="2"><span class="range-val" id="glassBlurVal">--</span></div></div><div class="field"><label class="field-label" for="glassDim">Wallpaper dimming</label><div class="range-row"><input type="range" id="glassDim" name="glassDim" min="0" max="60" step="5"><span class="range-val" id="glassDimVal">--</span></div></div><div class="field"><label class="field-label" for="glassOn">On opacity</label><div class="range-row"><input type="range" id="glassOn" name="glassOn" min="20" max="100" step="5"><span class="range-val" id="glassOnVal">--</span></div></div></div><p class="field-hint">Opacity is how dark the glass of each tile is (0 = clear), blur how frosted it looks (Off = plain see-through), dimming darkens the picture behind the tiles. On opacity is the colour fill of a tile that is on: lower lets the picture show through, below 50% the tile also gets a coloured outline. Saved with Save display.</p></div>
+          <div class="card"><h2 class="card-title">Screen</h2><div class="grid-2"><div class="field"><label class="field-label" for="rotation">Rotation</label><div class="select-wrap"><select id="rotation" name="rotation"><option value="0">Portrait</option><option value="1">Landscape</option><option value="2">Portrait, flipped</option><option value="3">Landscape, flipped</option></select></div></div><div class="field"><label class="field-label" for="brightness">Day brightness</label><div class="range-row"><input type="range" id="brightness" name="brightness" min="0" max="255" step="1"><span class="range-val" id="brightnessVal">--</span></div></div><div class="field"><label class="field-label" for="theme">Theme</label><div class="select-wrap"><select id="theme" name="theme"><option value="0">Midnight (dark)</option><option value="1">Daylight (light)</option><option value="2">Glass (wallpaper)</option></select></div></div></div></div><div class="card"><h2 class="card-title">Glass wallpaper</h2><p class="field-hint" style="margin:0 0 14px">Add pictures separately for each orientation. This browser crops them to fit and stores JPEGs on the device. Glass uses the old single picture or a built-in gradient when a gallery is empty. Rotation waits for 30 seconds without touch.</p><section id="wallGallery_l" style="margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:8px"><h3>Landscape</h3><p class="field-hint">Add pictures or drop them here.</p><input type="file" id="wallFile_l" multiple accept="image/*" hidden><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn" id="wallPick_l">Add pictures</button><button type="button" class="btn" id="wallShow_l" disabled>Show now</button><button type="button" class="btn" id="wallDelete_l" disabled>Delete selected</button><button type="button" class="btn" id="wallAll_l" disabled>Delete all</button></div><p id="wallSpace_l" class="field-hint"></p><p id="wallProgress_l" role="status" class="field-hint"></p><div id="wallLegacy_l" class="field-hint"></div><div id="wallGrid_l" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px;margin-top:12px"></div><div id="wallErrors_l" role="status" class="field-hint"></div></section><section id="wallGallery_p" style="margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:8px"><h3>Portrait</h3><p class="field-hint">Add pictures or drop them here.</p><input type="file" id="wallFile_p" multiple accept="image/*" hidden><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn" id="wallPick_p">Add pictures</button><button type="button" class="btn" id="wallShow_p" disabled>Show now</button><button type="button" class="btn" id="wallDelete_p" disabled>Delete selected</button><button type="button" class="btn" id="wallAll_p" disabled>Delete all</button></div><p id="wallSpace_p" class="field-hint"></p><p id="wallProgress_p" role="status" class="field-hint"></p><div id="wallLegacy_p" class="field-hint"></div><div id="wallGrid_p" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px;margin-top:12px"></div><div id="wallErrors_p" role="status" class="field-hint"></div></section><div class="grid-2" style="margin-top:16px"><div class="field"><label class="field-label" for="wallEvery">Change every</label><div class="select-wrap"><select id="wallEvery" name="wallEvery"><option value="0">Off</option><option value="1">1 min</option><option value="2">2 min</option><option value="5">5 min</option><option value="10">10 min</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select></div></div><div class="field"><label class="field-label" for="wallOrder">Order</label><div class="select-wrap"><select id="wallOrder" name="wallOrder"><option value="0">In order</option><option value="1">Shuffle</option></select></div></div><div class="field"><label class="field-label" for="glassTint">Tile opacity</label><div class="range-row"><input type="range" id="glassTint" name="glassTint" min="0" max="90" step="5"><span class="range-val" id="glassTintVal">--</span></div></div><div class="field"><label class="field-label" for="glassBlur">Blur</label><div class="range-row"><input type="range" id="glassBlur" name="glassBlur" min="0" max="24" step="2"><span class="range-val" id="glassBlurVal">--</span></div></div><div class="field"><label class="field-label" for="glassDim">Wallpaper dimming</label><div class="range-row"><input type="range" id="glassDim" name="glassDim" min="0" max="60" step="5"><span class="range-val" id="glassDimVal">--</span></div></div><div class="field"><label class="field-label" for="glassOn">On opacity</label><div class="range-row"><input type="range" id="glassOn" name="glassOn" min="20" max="100" step="5"><span class="range-val" id="glassOnVal">--</span></div></div></div><p class="field-hint">Opacity is how dark the glass of each tile is (0 = clear), blur how frosted it looks (Off = plain see-through), dimming darkens the picture behind the tiles. On opacity is the colour fill of a tile that is on: lower lets the picture show through, below 50% the tile also gets a coloured outline. Rotation and glass settings are saved with Save display. Show now pins a picture for the next boot. Config backups include settings only, not pictures.</p></div>
           <div class="card"><div class="card-head"><h2 class="card-title">Automatic brightness</h2><span class="tag" id="backlightState">day</span></div><label class="check-row standalone"><input type="checkbox" id="nightEnabled" name="nightEnabled"><span class="check-box"></span><span class="check-text"><strong>Night brightness schedule</strong><span class="ct-hint">Use a separate brightness level during the configured local-time interval.</span></span></label><div class="subcard hidden" id="nightScheduleFields"><div class="field"><label class="field-label" for="nightBrightness">Night brightness</label><div class="range-row"><input type="range" id="nightBrightness" name="nightBrightness" min="0" max="255" step="1"><span class="range-val" id="nightBrightnessVal">--</span></div><p class="field-hint">Set to 0 to switch the backlight fully off at night.</p></div><div class="grid-2"><div class="field"><label class="field-label" for="nightStart">Night starts</label><input type="time" id="nightStart" name="nightStart" step="60"></div><div class="field"><label class="field-label" for="nightEnd">Night ends</label><input type="time" id="nightEnd" name="nightEnd" step="60"></div></div><p class="field-hint">Matching start and end times disable the night interval.</p></div><div class="note"><span class="note-k">Time</span><span>The schedule uses the timezone set on the Time page. Until network time is available, day brightness remains active.</span></div></div>
           <div class="card"><h2 class="card-title">PC metric tiles</h2><div class="grid-2"><div class="field"><label class="field-label" for="tempScale">Default temperature scale</label><div class="input-unit"><input type="number" id="tempScale" name="tempScale" min="1" max="500"><span>C</span></div></div><div class="field"><label class="field-label" for="powerScale">Default power scale</label><div class="input-unit"><input type="number" id="powerScale" name="powerScale" min="1" max="65535"><span>W</span></div></div><div class="field"><label class="field-label" for="warnThreshold">Warning threshold</label><div class="range-row"><input type="range" id="warnThreshold" name="warnThreshold" min="0" max="100" step="1"><span class="range-val" id="warnThresholdVal">--</span></div><p class="field-hint">A metric tile turns amber at this share of its scale. 0 turns it off.</p></div></div><p class="field-hint">The scales apply to tiles that set no full scale of their own.</p><label class="check-row standalone"><input type="checkbox" id="smoothCharts" name="smoothCharts"><span class="check-box"></span><span class="check-text"><strong>Smooth chart motion</strong><span class="ct-hint">Charts glide between PC updates instead of stepping once a second. Uses more processor time while a page with a PC chart is on screen.</span></span></label></div>
         </form>
@@ -103,7 +103,7 @@ static const char PAGE_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
   <div class="save-bar hidden" id="saveBar"><div class="save-bar-inner"><div class="save-meta clean" id="saveMeta"><span class="dot"></span><span class="txt">All saved</span></div><button type="button" class="btn btn-lg" id="revertBtn">Revert changes</button><button type="button" class="btn btn-accent btn-lg" id="saveBtn"><span class="gl"></span><span id="saveBtnText">Save settings</span></button></div></div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 </div>
-  <script src="/portal.js?v=37"></script>
+  <script src="/portal.js?v=41"></script>
 </body>
 </html>)HTML";
 
@@ -156,7 +156,7 @@ function renderChips(target,metrics){const el=$(target);if(!metrics||!metrics.le
 function metricById(id){return (config.metrics||[]).find(m=>Number(m.id)===Number(id));}
 
 function fillConfig(c){config=c;populating=true;$('topVersion').textContent='v'+c.version;$('aboutVersion').textContent='v'+c.version;$('aboutBoard').textContent=c.board;$('maintVersion').textContent=c.version;$('maintBoard').textContent=c.board;$('maintIp').textContent=c.ip||'--';$('diagBoard').textContent=c.board;
-setVal('rotation',c.display.rotation);setVal('theme',c.display.theme||0);setVal('brightness',c.display.brightness);setVal('tempScale',c.display.tempScale);setVal('powerScale',c.display.powerScale);setVal('warnThreshold',c.display.warnThreshold);setVal('glassTint',c.display.glassTint);setVal('glassBlur',c.display.glassBlur);setVal('glassDim',c.display.glassDim);setVal('glassOn',c.display.glassOn||80);setCheck('smoothCharts',c.display.smoothCharts!==false);{const nd=$('navDeck');if(nd)nd.classList.toggle('hidden',!c.deck);if(c.deck&&!window.snDeck){window.snDeck=1;const s=document.createElement('script');s.src='/deck.js';document.head.appendChild(s);}}
+setVal('rotation',c.display.rotation);setVal('theme',c.display.theme||0);setVal('brightness',c.display.brightness);setVal('tempScale',c.display.tempScale);setVal('powerScale',c.display.powerScale);setVal('warnThreshold',c.display.warnThreshold);setVal('wallEvery',c.display.wallEvery??5);setVal('wallOrder',c.display.wallOrder??0);setVal('glassTint',c.display.glassTint);setVal('glassBlur',c.display.glassBlur);setVal('glassDim',c.display.glassDim);setVal('glassOn',c.display.glassOn||80);setCheck('smoothCharts',c.display.smoothCharts!==false);{const nd=$('navDeck');if(nd)nd.classList.toggle('hidden',!c.deck);if(c.deck&&!window.snDeck){window.snDeck=1;const s=document.createElement('script');s.src='/deck.js';document.head.appendChild(s);}}
 const b=c.backlight||{};setCheck('nightEnabled',b.nightEnabled);setVal('nightBrightness',b.nightBrightness==null?32:b.nightBrightness);setVal('nightStart',b.nightStart||'22:00');setVal('nightEnd',b.nightEnd||'07:00');updateNightFields();
 const l=c.led||{};setCheck('ledEnabled',l.enabled);setVal('ledPin',l.pin==null?0:l.pin);setVal('ledBrightness',l.brightness==null?160:l.brightness);setCheck('ledNightEnabled',l.nightEnabled);setVal('ledNightBrightness',l.nightBrightness==null?24:l.nightBrightness);setCheck('ledFollowDisplay',l.followDisplay);setCheck('ledOfflineOff',l.offlineOff);$('ledAllowedPins').textContent=(l.allowedPins||[]).join(', ')||'none';updateLedFields();
 const adv=c.advanced||{};setCheck('printersEnabled',adv.printers);window.snPrn=!!adv.printers;if(window.dkPrnSync)window.dkPrnSync();
@@ -188,21 +188,126 @@ $('backupExport').addEventListener('click',exportConfiguration);$('backupImport'
 function updateFactoryReset(){const ready=$('factoryConfirm').value.trim()==='RESET';$('factoryReset').disabled=!ready;}
 $('factoryConfirm').addEventListener('input',updateFactoryReset);$('factoryReset').addEventListener('click',async()=>{if($('factoryConfirm').value.trim()!=='RESET')return;if(!confirm('Erase all settings and WiFi credentials? The device will restart in setup mode.'))return;try{$('factoryReset').disabled=true;$('factoryConfirm').disabled=true;const body=new URLSearchParams({confirmation:'RESET'});const data=await getJson('/api/factory-reset',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});showToast(data.message||'Factory reset complete',false);$('factoryReset').textContent='Restarting...';}catch(e){showToast(e.message,true);$('factoryConfirm').disabled=false;updateFactoryReset();}});
 
-/* Glass wallpaper: crop the photo to both screen shapes, send each as raw RGB888 (r, g, b). */
-function wallCrop(img,w,h){const c=document.createElement('canvas');c.width=w;c.height=h;const s=Math.max(w/img.naturalWidth,h/img.naturalHeight),dw=img.naturalWidth*s,dh=img.naturalHeight*s,x=c.getContext('2d');x.imageSmoothingQuality='high';x.drawImage(img,(w-dw)/2,(h-dh)/2,dw,dh);return c;}
-function wallRaw(c){const p=c.getContext('2d').getImageData(0,0,c.width,c.height).data,out=new Uint8Array(c.width*c.height*3);for(let i=0,j=0;i<p.length;i+=4,j+=3){out[j]=p[i];out[j+1]=p[i+1];out[j+2]=p[i+2];}return out;}
-async function wallSend(o,body){const f=new FormData();if(body)f.append('wall',new Blob([body]),'wall.bin');const r=await fetch('/api/deck/wallpaper'+(body?'':'/remove')+'?o='+o,{method:'POST',body:body?f:undefined});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.message||('HTTP '+r.status));return j;}
-function wallShow(s){$('wallState').textContent=s.landscape||s.portrait?'Stored: '+[s.landscape?'landscape':'',s.portrait?'portrait':''].filter(Boolean).join(' and ')+'.':'None stored: Glass uses the built-in gradient.';}
-async function wallStatus(){try{wallShow(await (await fetch('/api/deck/wallpaper')).json());}catch(e){}}
-if($('wallFile')){
-  $('wallPick').onclick=()=>$('wallFile').click();
-  $('wallFile').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;const img=new Image();
-    try{await new Promise((ok,bad)=>{img.onload=ok;img.onerror=bad;img.src=URL.createObjectURL(f);});}catch(x){showToast('This browser cannot read that picture',true);return;}
-    const l=wallCrop(img,480,320),p=wallCrop(img,320,480);URL.revokeObjectURL(img.src);
-    const pv=$('wallPrev');pv.innerHTML='';[l,p].forEach(c=>{c.style.height='96px';c.style.width='auto';c.style.borderRadius='6px';pv.appendChild(c);});
-    try{$('wallState').textContent='Sending...';await wallSend('l',wallRaw(l));wallShow(await wallSend('p',wallRaw(p)));showToast('Wallpaper stored');}catch(x){showToast(x.message,true);wallStatus();}};
-  $('wallDel').onclick=async()=>{try{await wallSend('l');wallShow(await wallSend('p'));$('wallPrev').innerHTML='';showToast('Wallpaper removed');}catch(x){showToast(x.message,true);}};
-  wallStatus();}
+/* Glass galleries: crop and upload sequentially to bound device memory use. */
+const walls={l:{files:[],selected:new Set()},p:{files:[],selected:new Set()}};
+let wallBusy=false,wallRefreshing=false,wallCache=Date.now();
+async function wallApi(path,method='GET',body){
+  const r=await fetch('/api/deck/'+path,{method,body,cache:'no-store'});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.message||('HTTP '+r.status));
+  return j;
+}
+function wallButtons(){
+  for(const o of ['l','p']){
+    const s=walls[o];
+    $('wallPick_'+o).disabled=wallBusy;
+    $('wallShow_'+o).disabled=wallBusy||s.selected.size!==1;
+    $('wallDelete_'+o).disabled=wallBusy||!s.selected.size;
+    $('wallAll_'+o).disabled=wallBusy||!s.files.length;
+    qa('button',$('wallLegacy_'+o)).forEach(b=>b.disabled=wallBusy);
+  }
+}
+function wallRender(o){
+  const s=walls[o],grid=$('wallGrid_'+o);
+  s.selected=new Set([...s.selected].filter(n=>s.files.some(f=>f.n===n)));
+  // The status poll re-renders every 5 s: skip when nothing changed and reuse
+  // the <img> nodes, or the one-request-at-a-time device restarts every thumbnail.
+  const sig=[wallCache,s.current,s.pinned,s.free,s.legacy,...s.files.map(f=>f.n),'|',...s.selected].join(',');
+  if(sig===s.sig)return;
+  s.sig=sig;
+  if(s.imgsFor!==wallCache){s.imgs=new Map();s.imgsFor=wallCache;}
+  grid.replaceChildren();
+  for(const f of s.files){
+    const button=document.createElement('button');button.type='button';button.className='btn';
+    const sel=s.selected.has(f.n);
+    button.style.cssText='position:relative;display:flex;flex-direction:column;gap:5px;padding:5px;white-space:normal;border-width:2px';
+    button.setAttribute('aria-pressed',sel?'true':'false');button.title=f.n;
+    let img=s.imgs.get(f.n);
+    if(!img){
+      img=document.createElement('img');img.loading='lazy';img.alt=f.n;
+      img.src='/api/deck/walls/file?o='+o+'&n='+encodeURIComponent(f.n)+'&v='+wallCache;
+      img.style.cssText='width:100%;height:80px;object-fit:cover;border-radius:4px';
+      s.imgs.set(f.n,img);
+    }
+    const label=document.createElement('span');label.style.cssText='font-size:11px;min-height:14px;color:var(--accent)';
+    label.textContent=[s.current===f.n?'Current':'',s.pinned===f.n?'Pinned':''].filter(Boolean).join(' - ');
+    button.style.borderColor=sel?'var(--accent)':'';
+    const mark=document.createElement('span');mark.textContent=sel?'\u2713':'';
+    mark.style.cssText='position:absolute;top:9px;right:9px;width:20px;height:20px;border-radius:50%;display:'+(sel?'flex':'none')+';align-items:center;justify-content:center;font-size:13px;background:var(--accent);color:#fff';
+    button.append(img,label,mark);button.onclick=()=>{if(wallBusy)return;if(s.selected.has(f.n))s.selected.delete(f.n);else s.selected.add(f.n);wallRender(o);};
+    grid.appendChild(button);
+  }
+  $('wallSpace_'+o).textContent=s.files.length+' pictures - about '+Math.max(0,Math.floor(((s.free||0)-256*1024)/(60*1024)))+' more pictures fit';
+  const legacy=$('wallLegacy_'+o);legacy.replaceChildren();
+  if(s.legacy){
+    legacy.append(document.createTextNode('Old single picture in use - '));
+    const remove=document.createElement('button');remove.type='button';remove.className='btn';remove.textContent='Remove';
+    remove.onclick=()=>wallAction(o,'wallpaper/remove?o='+o);legacy.appendChild(remove);
+  }
+  wallButtons();
+}
+async function wallStatus(){
+  if(wallRefreshing)return;
+  wallRefreshing=true;
+  try{
+    for(const o of ['l','p']){
+      const data=await wallApi('walls?o='+o),s=walls[o];
+      const changed=JSON.stringify([data.files,data.current,data.pinned,data.legacy,data.free])!==JSON.stringify([s.files,s.current,s.pinned,s.legacy,s.free]);
+      Object.assign(s,data);if(changed)wallRender(o);
+    }
+  }catch(e){showToast(e.message,true);}finally{wallRefreshing=false;}
+}
+// bust: after deletes, as names are reused once the newest files are gone.
+async function wallAction(o,path,bust=true){
+  if(wallBusy)return;
+  wallBusy=true;wallButtons();
+  try{await wallApi(path,'POST');if(bust)wallCache=Date.now();await wallStatus();}
+  catch(e){showToast(e.message,true);}
+  finally{wallBusy=false;wallButtons();}
+}
+async function wallJpeg(file,o){
+  const img=await createImageBitmap(file);
+  try{
+    const c=document.createElement('canvas');c.width=o==='l'?480:320;c.height=o==='l'?320:480;
+    const scale=Math.max(c.width/img.width,c.height/img.height),w=img.width*scale,h=img.height*scale;
+    const ctx=c.getContext('2d');ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
+    ctx.drawImage(img,(c.width-w)/2,(c.height-h)/2,w,h);
+    return await new Promise((resolve,reject)=>c.toBlob(blob=>blob?resolve(blob):reject(new Error('JPEG conversion failed')),'image/jpeg',0.9));
+  }finally{img.close();}
+}
+async function wallBatch(o,files){
+  if(wallBusy||!files.length)return;
+  wallBusy=true;wallButtons();$('wallErrors_'+o).replaceChildren();
+  let stored=0,attempted=0;
+  try{
+    for(let i=0;i<files.length;i++){
+      attempted=i+1;$('wallProgress_'+o).textContent=(i+1)+' / '+files.length;
+      try{
+        const blob=await wallJpeg(files[i],o),form=new FormData();form.append('wall',blob,'wall.jpg');
+        await wallApi('walls?o='+o+'&i='+(i+1)+'&c='+files.length,'POST',form);stored++;
+      }catch(e){
+        const line=document.createElement('div');line.textContent=files[i].name+': '+e.message;$('wallErrors_'+o).appendChild(line);
+        if(e.message==='flash full')break;
+      }
+    }
+  }finally{
+    $('wallProgress_'+o).textContent=attempted+' / '+files.length+' - '+stored+' stored';
+    wallCache=Date.now();await wallStatus();wallBusy=false;wallButtons();
+  }
+}
+for(const o of ['l','p']){
+  $('wallPick_'+o).onclick=()=>$('wallFile_'+o).click();
+  $('wallFile_'+o).oninput=e=>e.stopPropagation();
+  $('wallFile_'+o).onchange=e=>{e.stopPropagation();const files=[...e.target.files];e.target.value='';wallBatch(o,files);};
+  const gallery=$('wallGallery_'+o);
+  gallery.ondragover=e=>{e.preventDefault();e.dataTransfer.dropEffect=wallBusy?'none':'copy';};
+  gallery.ondrop=e=>{e.preventDefault();wallBatch(o,[...e.dataTransfer.files]);};
+  $('wallShow_'+o).onclick=()=>wallAction(o,'walls/show?o='+o+'&n='+encodeURIComponent([...walls[o].selected][0]),false);
+  $('wallDelete_'+o).onclick=()=>wallAction(o,'walls/delete?o='+o+'&n='+encodeURIComponent([...walls[o].selected].join(',')));
+  $('wallAll_'+o).onclick=()=>{if(confirm('Delete all '+(o==='l'?'landscape':'portrait')+' pictures?'))wallAction(o,'walls/delete?o='+o+'&n=*');};
+}
+wallStatus();
+setInterval(()=>{if(!document.hidden&&!wallBusy&&$('wallGrid_l').offsetParent!==null)wallStatus();},5000);
 
 let initial='overview';try{initial=localStorage.getItem('sn_page')||'overview';}catch(e){}if(!document.querySelector('[data-nav="'+initial+'"]'))initial='overview';showPage(initial);loadConfig();pollStatus();refreshPreview();setInterval(pollStatus,2000);
 })();)JS";

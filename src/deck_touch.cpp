@@ -35,6 +35,7 @@ TaskHandle_t s_task = nullptr;
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 TouchPoint s_lv = {0, 0, false};
 volatile bool s_down = false;
+uint32_t s_lastTouch = 0;
 volatile bool s_activity = false;
 volatile bool s_swipeStarted = false;
 volatile bool s_suppress = false;
@@ -128,6 +129,9 @@ void touchTask(void*) {
     const uint32_t now = millis();
     int nx, ny;
     if (woke && readPoint(nx, ny)) {
+      portENTER_CRITICAL(&s_mux);
+      s_lastTouch = now;
+      portEXIT_CRITICAL(&s_mux);
       int16_t x, y;
       toLogical(nx, ny, x, y);
       if (!s_down) {
@@ -256,6 +260,9 @@ void touchTask(void*) {
         if (dur > SLIDE_MAX_MS) dur = SLIDE_MAX_MS;
         compRelease(target, dur, commit ? drag.landing : 0);
       }
+      portENTER_CRITICAL(&s_mux);
+      s_lastTouch = now;
+      portEXIT_CRITICAL(&s_mux);
       s_down = false;
       s_suppress = false;
       state = G_IDLE;
@@ -279,6 +286,13 @@ TouchPoint touchForLvgl() {
 }
 
 bool touchIsDown() { return s_down; }
+
+uint32_t touchLastActivity() {
+  portENTER_CRITICAL(&s_mux);
+  const uint32_t ms = s_lastTouch;
+  portEXIT_CRITICAL(&s_mux);
+  return ms;
+}
 
 bool touchTakeActivity() {
   if (!s_activity) return false;
