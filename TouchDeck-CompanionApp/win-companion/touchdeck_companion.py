@@ -3715,14 +3715,18 @@ def create_tray_icon():
     if not TRAY_AVAILABLE:
         return None
 
-    # Create a simple icon
+    # The deck's splash mark: four rounded tiles, drawn large and scaled down
+    # for smooth corners (same artwork as touchdeck.ico).
     def create_image():
-        width = 64
-        height = 64
-        image = Image.new('RGB', (width, height), color='black')
+        size, ss = 64, 8
+        n = size * ss
+        cell, gap = n * 4 / 9, n / 9
+        image = Image.new('RGBA', (n, n), (0, 0, 0, 0))
         dc = ImageDraw.Draw(image)
-        dc.rectangle([16, 16, 48, 48], fill='cyan')
-        return image
+        for i, color in enumerate(('#F6C56B', '#5CC9A7', '#B3A6FF', '#7DB5FF')):
+            x, y = (i % 2) * (cell + gap), (i // 2) * (cell + gap)
+            dc.rounded_rectangle([x, y, x + cell - 1, y + cell - 1], radius=cell * 0.3, fill=color)
+        return image.resize((size, size), Image.LANCZOS)
 
     return create_image()
 

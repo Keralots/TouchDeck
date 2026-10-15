@@ -50,6 +50,7 @@ if exist dist  rmdir /s /q dist
 %PYI% ^
   --onefile ^
   --windowed ^
+  --icon touchdeck.ico ^
   --name TouchDeckCompanion ^
   --paths "..\companion-common" ^
   --add-data "..\companion-common\webui;webui" ^
