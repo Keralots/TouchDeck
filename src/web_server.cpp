@@ -159,6 +159,8 @@ static void handleApiConfig() {
   display["glassTint"] = dispSettings.glassTint;
   display["glassBlur"] = dispSettings.glassBlur;
   display["glassDim"] = dispSettings.glassDim;
+  display["wallEvery"] = dispSettings.wallEvery;
+  display["wallOrder"] = dispSettings.wallOrder;
   display["glassOn"] = dispSettings.glassOn;
   display["smoothCharts"] = dispSettings.smoothCharts;
 
@@ -263,6 +265,8 @@ static void handleConfigExport() {
   display["glassTint"] = dispSettings.glassTint;
   display["glassBlur"] = dispSettings.glassBlur;
   display["glassDim"] = dispSettings.glassDim;
+  display["wallEvery"] = dispSettings.wallEvery;
+  display["wallOrder"] = dispSettings.wallOrder;
   display["glassOn"] = dispSettings.glassOn;
   display["smoothCharts"] = dispSettings.smoothCharts;
 
@@ -445,11 +449,19 @@ static void handleConfigImport() {
   nextDisplay.glassTint = displayDefaults.glassTint;
   nextDisplay.glassBlur = displayDefaults.glassBlur;
   nextDisplay.glassDim = displayDefaults.glassDim;
+  nextDisplay.wallEvery = displayDefaults.wallEvery;
+  nextDisplay.wallOrder = displayDefaults.wallOrder;
   nextDisplay.glassOn = displayDefaults.glassOn;
   nextDisplay.smoothCharts = displayDefaults.smoothCharts;
   if (!display["glassTint"].isNull()) READ_INT(display, "glassTint", 0, 90, nextDisplay.glassTint, uint8_t);
   if (!display["glassBlur"].isNull()) READ_INT(display, "glassBlur", 0, 24, nextDisplay.glassBlur, uint8_t);
   if (!display["glassDim"].isNull()) READ_INT(display, "glassDim", 0, 60, nextDisplay.glassDim, uint8_t);
+  if (!display["wallEvery"].isNull()) READ_INT(display, "wallEvery", 0, 60, nextDisplay.wallEvery, uint8_t);
+  if (!display["wallOrder"].isNull()) READ_INT(display, "wallOrder", 0, 1, nextDisplay.wallOrder, uint8_t);
+  if (!validWallEvery(nextDisplay.wallEvery)) {
+    sendJsonMessage(400, false, "invalid wallEvery");
+    return;
+  }
   if (!display["glassOn"].isNull()) READ_INT(display, "glassOn", 20, 100, nextDisplay.glassOn, uint8_t);
   if (!display["smoothCharts"].isNull()) READ_BOOL(display, "smoothCharts", nextDisplay.smoothCharts);
 
@@ -532,6 +544,7 @@ static void handleConfigImport() {
     return;
   }
 
+  deck::wallInvalidateJobs();
   dispSettings = nextDisplay;
   netSettings = nextNetwork;
   backlightSettings = nextBacklight;
@@ -597,6 +610,26 @@ static void handleLedPreview() {
 }
 
 static void handleSaveDisplay() {
+  int every = dispSettings.wallEvery, order = dispSettings.wallOrder;
+  if (server.hasArg("wallEvery")) {
+    const String value = server.arg("wallEvery");
+    every = value.toInt();
+    if (String(every) != value || !validWallEvery(every)) {
+      sendJsonMessage(400, false, "invalid wallEvery");
+      return;
+    }
+  }
+  if (server.hasArg("wallOrder")) {
+    const String value = server.arg("wallOrder");
+    if (value != "0" && value != "1") {
+      sendJsonMessage(400, false, "invalid wallOrder");
+      return;
+    }
+    order = value.toInt();
+  }
+  deck::wallInvalidateJobs();
+  dispSettings.wallEvery = every;
+  dispSettings.wallOrder = order;
   const uint8_t oldRotation = dispSettings.rotation;
   const uint8_t oldTheme = dispSettings.theme;
   dispSettings.theme = (uint8_t)clampedArg("theme", dispSettings.theme, 0, 2);
@@ -1025,15 +1058,26 @@ static void handleIconsFinish() {
   handleIconsStatus();
 }
 
-// --- Glass wallpaper (raw RGB888 per orientation, made by the portal) ---------------
+// --- Glass wallpaper galleries -----------------------------------------------
 static const char* const WALL_UPLOAD = "/wall.up";
 static File wallUpload;
 static String wallError;
 static size_t wallBytes;
+static unsigned wallParts;
+static bool wallComplete;
 
 static const char* wallFile(bool portrait) { return deck::wallPath(portrait ? 320 : 480, portrait ? 480 : 320); }
 
-// GET /api/deck/wallpaper -> {"landscape", "portrait"}: which files exist.
+static bool wallOrientation(bool& portrait) {
+  const String o = server.arg("o");
+  if (o != "l" && o != "p") {
+    sendJsonMessage(400, false, "invalid orientation");
+    return false;
+  }
+  portrait = o == "p";
+  return true;
+}
+
 static void handleWallStatus() {
   JsonDocument doc;
   const bool fs = deck::deckFsReady();
@@ -1044,70 +1088,202 @@ static void handleWallStatus() {
   server.send(200, "application/json", out);
 }
 
-// POST /api/deck/wallpaper?o=l|p (multipart "wall", 480x320 or 320x480 RGB888;
-// RGB565 from older portals still loads).
+static void handleWallsStatus() {
+  bool p;
+  if (!wallOrientation(p)) return;
+  JsonDocument doc;
+  JsonArray files = doc["files"].to<JsonArray>();
+  for (const auto& f : deck::wallFiles(p)) {
+    JsonObject item = files.add<JsonObject>();
+    item["n"] = f.name;
+    item["s"] = f.size;
+  }
+  doc["current"] = deck::wallCurrent(p);
+  doc["pinned"] = deck::wallPinned(p);
+  doc["legacy"] = LittleFS.exists(wallFile(p));
+  doc["free"] = LittleFS.totalBytes() - LittleFS.usedBytes();
+  doc["total"] = LittleFS.totalBytes();
+  String out;
+  serializeJson(doc, out);
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "application/json", out);
+}
+
+static void handleWallsFile() {
+  bool p;
+  if (!wallOrientation(p)) return;
+  const String name = server.arg("n");
+  if (!deck::wallValidName(name)) {
+    sendJsonMessage(400, false, "invalid file name");
+    return;
+  }
+  File f = deck::deckFsReady() ? LittleFS.open(deck::wallGalleryPath(p, name), "r") : File();
+  if (!f) {
+    sendJsonMessage(404, false, "picture not found");
+    return;
+  }
+  server.sendHeader("Cache-Control", "public, max-age=3600");
+  server.streamFile(f, "image/jpeg");
+}
+
+static void wallUploadCleanup() {
+  if (wallUpload) wallUpload.close();
+  LittleFS.remove(WALL_UPLOAD);
+}
+
+// Free space plus the legacy picture a stored JPEG replaces. usedBytes() walks
+// the whole file system, so uploads measure once, not per chunk.
+static size_t wallRoom(bool portrait) {
+  size_t room = LittleFS.totalBytes() - LittleFS.usedBytes();
+  File f = LittleFS.open(wallFile(portrait), "r");
+  if (f) room += f.size();
+  return room;
+}
+static size_t wallUploadRoom;
+
 static void handleWallUpload() {
   if (!multipartRequest()) return;
   HTTPUpload& up = server.upload();
   if (up.status == UPLOAD_FILE_START) {
-    wallError = "";
-    if (!deck::deckFsReady()) {
-      wallError = "file system not available";
-      return;
+    if (wallParts++ == 0) {
+      wallError = "";
+      wallComplete = false;
+      wallBytes = 0;
+      if (!deck::deckFsReady()) wallError = "file system not available";
+      else {
+        wallUploadCleanup();
+        wallUploadRoom = wallRoom(server.arg("o") == "p");
+      }
     }
-    LittleFS.remove(WALL_UPLOAD);
-    wallBytes = 0;
-    wallUpload = LittleFS.open(WALL_UPLOAD, "w");
-    if (!wallUpload) wallError = "cannot create the file";
+    if (wallParts != 1 || up.name != "wall") wallError = "expected one wall file";
+    if (!wallError.length()) {
+      wallUpload = LittleFS.open(WALL_UPLOAD, "w");
+      if (!wallUpload) wallError = "cannot create the file";
+    }
   } else if (up.status == UPLOAD_FILE_WRITE) {
     esp_task_wdt_reset();
-    if (!wallUpload) return;
+    if (wallError.length() || !wallUpload) return;
     wallBytes += up.currentSize;
-    if (wallBytes > 480 * 320 * 3) wallError = "picture too large";
+    if (wallBytes > deck::WALL_MAX_JPEG) wallError = "picture too large";
+    else if (wallUploadRoom < deck::WALL_RESERVE + wallBytes) wallError = "flash full";
     else if (wallUpload.write(up.buf, up.currentSize) != up.currentSize) wallError = "flash full";
-    if (wallError.length()) {
-      wallUpload.close();
-      LittleFS.remove(WALL_UPLOAD);
-    }
+    if (wallError.length()) wallUploadCleanup();
   } else if (up.status == UPLOAD_FILE_END || up.status == UPLOAD_FILE_ABORTED) {
     if (wallUpload) wallUpload.close();
-    // An aborted upload never reaches handleWallFinish: drop the part here.
+    wallComplete = up.status == UPLOAD_FILE_END && wallParts == 1 && !wallError.length();
     if (up.status == UPLOAD_FILE_ABORTED) {
       wallError = "upload aborted";
-      LittleFS.remove(WALL_UPLOAD);
+      wallUploadCleanup();
+      wallParts = 0;
     }
   }
 }
 
 static void handleWallFinish() {
-  const bool portrait = server.arg("o") == "p";
   String err = wallError;
+  const bool complete = wallComplete && wallParts == 1 && multipartRequest();
   wallError = "";
+  wallParts = 0;
+  wallComplete = false;
+  bool p;
+  if (!wallOrientation(p)) { wallUploadCleanup(); return; }
+  if (!complete && !err.length()) err = "expected one JPEG file";
+  if (!err.length() && !deck::wallValidateJpeg(WALL_UPLOAD, p))
+    err = p ? "expected a baseline 320x480 JPEG" : "expected a baseline 480x320 JPEG";
+  if (!err.length() && wallRoom(p) < deck::WALL_RESERVE) err = "flash full";
+  auto files = deck::wallFiles(p);
+  const uint32_t last = files.empty() ? 0 : strtoul(files.back().name.c_str(), nullptr, 16);
+  if (!err.length() && last == UINT32_MAX) err = "file counter exhausted";
+  char name[13];
+  snprintf(name, sizeof(name), "%08lx.jpg", (unsigned long)(last + 1));
   if (!err.length()) {
-    File f = LittleFS.open(WALL_UPLOAD, "r");
-    const size_t size = f ? f.size() : 0;
-    if (f) f.close();
-    if (size != 480 * 320 * 3 && size != 480 * 320 * 2) err = "expected a 480x320 RGB888 picture";
-  }
-  if (!err.length()) {
-    LittleFS.remove(wallFile(portrait));
-    if (!LittleFS.rename(WALL_UPLOAD, wallFile(portrait))) err = "could not store the picture";
+    deck::wallCurrent(p);  // Capture the empty gallery before adding its first file.
+    LittleFS.mkdir("/wall");
+    LittleFS.mkdir(p ? "/wall/p" : "/wall/l");
+    LittleFS.remove(wallFile(p));
+    const String path = deck::wallGalleryPath(p, name);
+    if (!LittleFS.rename(WALL_UPLOAD, path)) err = "could not store the picture";
+    else if (LittleFS.totalBytes() - LittleFS.usedBytes() < deck::WALL_RESERVE) {
+      LittleFS.remove(path);
+      err = "flash full";
+    }
   }
   if (err.length()) {
-    LittleFS.remove(WALL_UPLOAD);
+    wallUploadCleanup();
     sendJsonMessage(400, false, err.c_str());
     return;
   }
-  deckReloadWallpaper(true);
+  if (files.empty()) deck::wallRequest(p, name);
+  const int index = server.arg("i").toInt(), count = server.arg("c").toInt();
+  if (index > 0 && count >= index) {
+    char toast[48];
+    snprintf(toast, sizeof(toast), "Wallpaper %d/%d", index, count);
+    deckToast(toast);
+  }
+  handleWallsStatus();
+}
+
+// Keep this separate from the multipart route so POST query arguments survive.
+static void handleWallRemove() {
+  bool p;
+  if (!wallOrientation(p)) return;
+  if (deck::deckFsReady()) LittleFS.remove(wallFile(p));
+  if (deck::wallFiles(p).empty()) deck::wallRequest(p, "");
   handleWallStatus();
 }
 
-// POST /api/deck/wallpaper/remove?o=l|p. Its own route: a route with an upload
-// callback loses the query arguments of a POST that is not multipart.
-static void handleWallRemove() {
-  if (deck::deckFsReady()) LittleFS.remove(wallFile(server.arg("o") == "p"));
-  deckReloadWallpaper(true);
-  handleWallStatus();
+static void handleWallsDelete() {
+  bool p;
+  if (!wallOrientation(p)) return;
+  const String names = server.arg("n");
+  std::vector<String> selected;
+  if (names == "*") {
+    for (const auto& f : deck::wallFiles(p)) selected.push_back(f.name);
+  } else {
+    int start = 0;
+    do {
+      const int comma = names.indexOf(',', start);
+      const String name = comma < 0 ? names.substring(start) : names.substring(start, comma);
+      if (!deck::wallValidName(name)) {
+        sendJsonMessage(400, false, "invalid file name");
+        return;
+      }
+      selected.push_back(name);
+      if (comma < 0) break;
+      start = comma + 1;
+    } while (true);
+  }
+  deck::wallCurrent(p);
+  bool ok = true;
+  for (const String& name : selected) {
+    const String path = deck::wallGalleryPath(p, name);
+    if (LittleFS.exists(path)) ok &= LittleFS.remove(path);
+  }
+  deck::wallGalleryChanged(p);
+  if (!ok) { sendJsonMessage(500, false, "could not delete a picture"); return; }
+  handleWallsStatus();
+}
+
+static void handleWallsShow() {
+  bool p;
+  if (!wallOrientation(p)) return;
+  const String name = server.arg("n");
+  if (!deck::wallValidName(name)) { sendJsonMessage(400, false, "invalid file name"); return; }
+  if (!deck::deckFsReady() || !LittleFS.exists(deck::wallGalleryPath(p, name))) {
+    sendJsonMessage(404, false, "picture not found");
+    return;
+  }
+  if (!deck::wallPin(p, name)) { sendJsonMessage(500, false, "could not save pin"); return; }
+  deck::wallRequest(p, name);
+  sendJsonMessage(200, true, "Wallpaper queued.");
+}
+
+static void handleWallsNext() {
+  if (!deck::wallNext((dispSettings.rotation & 1) == 0)) {
+    sendJsonMessage(404, false, "gallery is empty");
+    return;
+  }
+  sendJsonMessage(200, true, "Wallpaper queued.");
 }
 
 // POST /api/deck/bench?n=5 - bench hook, time a render of the shown page.
@@ -1458,7 +1634,12 @@ void initWebServer() {
   server.on("/deck.js", HTTP_GET, handleDeckJs);
   server.on("/api/deck/icons", HTTP_GET, handleIconsStatus);
   server.on("/api/deck/wallpaper", HTTP_GET, handleWallStatus);
-  server.on("/api/deck/wallpaper", HTTP_POST, handleWallFinish, handleWallUpload);
+  server.on("/api/deck/walls", HTTP_GET, handleWallsStatus);
+  server.on("/api/deck/walls/file", HTTP_GET, handleWallsFile);
+  server.on("/api/deck/walls", HTTP_POST, handleWallFinish, handleWallUpload);
+  server.on("/api/deck/walls/delete", HTTP_POST, handleWallsDelete);
+  server.on("/api/deck/walls/show", HTTP_POST, handleWallsShow);
+  server.on("/api/deck/walls/next", HTTP_POST, handleWallsNext);
   server.on("/api/deck/wallpaper/remove", HTTP_POST, handleWallRemove);
   server.on("/api/deck/bench", HTTP_POST, handleDeckBench);
   server.on("/api/deck/prefs", HTTP_POST, handleDeckPrefs);
@@ -1484,6 +1665,13 @@ void initWebServer() {
 
 void handleWebServer() {
   server.handleClient();
+  // Parsing can fail after a file ends without calling the finish handler.
+  if (wallParts) {
+    wallUploadCleanup();
+    wallParts = 0;
+    wallComplete = false;
+    wallError = "";
+  }
   // A failed update shows its error for a moment, then the previous screen.
   if (otaFailedAt && millis() - otaFailedAt > 4000) {
     otaFailedAt = 0;

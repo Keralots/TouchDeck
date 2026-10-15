@@ -70,6 +70,11 @@ static void migrateFromStatNode() {
 // ---------------------------------------------------------------------------
 //  Defaults
 // ---------------------------------------------------------------------------
+bool validWallEvery(int minutes) {
+  return minutes == 0 || minutes == 1 || minutes == 2 || minutes == 5 ||
+         minutes == 10 || minutes == 15 || minutes == 30 || minutes == 60;
+}
+
 void defaultDisplaySettings(DisplaySettings& ds) {
   ds.rotation         = 1;   // landscape
   ds.tempScaleMax     = GAUGE_TEMP_SCALE_DEFAULT;
@@ -80,6 +85,8 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.glassBlur        = 12;
   ds.glassDim         = 15;
   ds.glassOn          = 80;
+  ds.wallEvery        = 5;
+  ds.wallOrder        = 0;
   ds.smoothCharts     = true;
 }
 
@@ -137,6 +144,9 @@ void loadSettings() {
   dispSettings.glassBlur = min<uint8_t>(prefs.getUChar("gblur", dispSettings.glassBlur), 24);
   dispSettings.glassDim = min<uint8_t>(prefs.getUChar("gdim", dispSettings.glassDim), 60);
   dispSettings.glassOn = constrain(prefs.getUChar("gon", dispSettings.glassOn), 20, 100);
+  dispSettings.wallEvery = prefs.getUChar("wevery", 5);
+  if (!validWallEvery(dispSettings.wallEvery)) dispSettings.wallEvery = 5;
+  dispSettings.wallOrder = min<uint8_t>(prefs.getUChar("worder", 0), 1);
   dispSettings.smoothCharts = prefs.getBool("smooth", true);
   advSettings.printers = prefs.getBool("prn", false);
   if (prefs.getBytesLength("net") == sizeof(NetworkSettings))
@@ -179,6 +189,8 @@ void saveSettings() {
   prefs.putUChar("gblur", dispSettings.glassBlur);
   prefs.putUChar("gdim", dispSettings.glassDim);
   prefs.putUChar("gon", dispSettings.glassOn);
+  prefs.putUChar("wevery", dispSettings.wallEvery);
+  prefs.putUChar("worder", dispSettings.wallOrder);
   prefs.putBool("smooth", dispSettings.smoothCharts);
   prefs.putBool("prn", advSettings.printers);
   prefs.putBytes("net", &netSettings, sizeof(NetworkSettings));

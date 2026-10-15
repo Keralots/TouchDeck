@@ -1,10 +1,17 @@
 // Guition deck: Glass theme wallpaper. See deck_wall.h.
 #include "deck_wall.h"
+#include <src/misc/cache/instance/lv_image_cache.h>
 #include "deck_config.h"
 #include <LittleFS.h>
 #include <esp_heap_caps.h>
 #include <esp_task_wdt.h>
 #include <math.h>
+#include <Preferences.h>
+#include <esp_random.h>
+#include <algorithm>
+#include "settings.h"
+#include "config.h"
+#include <src/libs/tjpgd/tjpgd.h>
 
 namespace deck {
 namespace {
@@ -14,6 +21,127 @@ uint8_t* s_blur = nullptr;    // RGB888 (LVGL order B, G, R), undimmed
 int s_w = 0, s_h = 0, s_blurR = -1, s_dim = -1;
 lv_image_dsc_t s_sharpDsc, s_blurDsc;
 uint32_t s_generation = 0;
+String s_current[2], s_pin[2], s_requested[2], s_loadedName;
+bool s_initialized[2] = {}, s_request[2] = {}, s_automatic[2] = {};
+uint32_t s_requestId[2] = {};
+uint32_t s_epoch = 0, s_changedMs = 0, s_retryMs = 0, s_scanMs = 0;
+portMUX_TYPE s_jobMux = portMUX_INITIALIZER_UNLOCKED;
+enum JobState { JOB_IDLE, JOB_RUNNING, JOB_READY };
+JobState s_jobState = JOB_IDLE;
+struct WallJob {
+  int w, h, blur, dim;
+  uint64_t settings;
+  uint32_t epoch, requestId;
+  char name[13];
+  uint16_t* sharp;
+  uint8_t* blurred;
+  bool ok, automatic;
+};
+WallJob s_job = {};
+
+uint64_t settingsKey() {
+  return (uint64_t)dispSettings.rotation | (uint64_t)dispSettings.theme << 8 |
+         (uint64_t)dispSettings.glassBlur << 16 | (uint64_t)dispSettings.glassDim << 24 |
+         (uint64_t)dispSettings.glassTint << 32 | (uint64_t)dispSettings.wallEvery << 40 |
+         (uint64_t)dispSettings.wallOrder << 48 | (uint64_t)dispSettings.glassOn << 56;
+}
+
+JobState jobState() {
+  portENTER_CRITICAL(&s_jobMux);
+  const JobState state = s_jobState;
+  portEXIT_CRITICAL(&s_jobMux);
+  return state;
+}
+
+void discardJob() {
+  free(s_job.sharp);
+  free(s_job.blurred);
+  s_job.sharp = nullptr;
+  s_job.blurred = nullptr;
+  portENTER_CRITICAL(&s_jobMux);
+  s_jobState = JOB_IDLE;
+  portEXIT_CRITICAL(&s_jobMux);
+}
+
+// The worker has an internal-RAM stack: flash reads disable the PSRAM cache.
+class WallReader {
+ public:
+  explicit WallReader(const char* path) : file_(LittleFS.open(path, "r")) {}
+  explicit operator bool() const { return (bool)file_; }
+  size_t size() { return file_.size(); }
+  size_t position() { return file_.position(); }
+  size_t read(uint8_t* data, size_t count) { return file_.read(data, count); }
+  int read() { return file_.read(); }
+  bool seek(size_t position) { return file_.seek(position); }
+  void close() { file_.close(); }
+
+ private:
+  File file_;
+};
+
+struct JpegInput {
+  WallReader file;
+  uint8_t *r, *g, *b;
+  int w, h;
+  JpegInput(const char* path, uint8_t* red, uint8_t* green, uint8_t* blue, int width, int height)
+      : file(path), r(red), g(green), b(blue), w(width), h(height) {}
+};
+
+size_t jpegRead(JDEC* jd, uint8_t* data, size_t size) {
+  JpegInput& in = *(JpegInput*)jd->device;
+  if (data) return in.file.read(data, size);
+  const size_t pos = in.file.position();
+  const size_t count = std::min(size, in.file.size() - pos);
+  return in.file.seek(pos + count) ? count : 0;
+}
+
+int jpegOutput(JDEC* jd, void* pixels, JRECT* rect) {
+  JpegInput& in = *(JpegInput*)jd->device;
+  if (rect->right >= in.w || rect->bottom >= in.h) return 0;
+  const uint8_t* src = (const uint8_t*)pixels;
+  for (int y = rect->top; y <= rect->bottom; y++) {
+    for (int x = rect->left; x <= rect->right; x++, src += 3) {
+      const int i = y * in.w + x;
+      // LVGL's bundled JD_FORMAT 0 emits B, G, R, not upstream RGB order.
+      in.b[i] = src[0];
+      in.g[i] = src[1];
+      in.r[i] = src[2];
+    }
+  }
+  return 1;
+}
+
+bool jpegLoad(const char* path, int w, int h, uint8_t* r, uint8_t* g, uint8_t* b) {
+  JpegInput in(path, r, g, b, w, h);
+  if (!in.file) return false;
+  if (in.file.read() != 0xFF || in.file.read() != 0xD8 || !in.file.seek(0)) return false;
+  // FASTDECODE 1 needs up to 4 KB for standard tables, input and MCU buffers.
+  constexpr size_t workSize = 4096;
+  void* work = heap_caps_malloc(workSize, MALLOC_CAP_SPIRAM);
+  if (!work) return false;
+  JDEC jd;
+  bool ok = jd_prepare(&jd, jpegRead, work, workSize, &in) == JDR_OK &&
+            jd.width == w && jd.height == h;
+  if (ok && r) ok = jd_decomp(&jd, jpegOutput, 0) == JDR_OK;
+  free(work);
+  return ok;
+}
+
+void initGallery(bool portrait) {
+  if (s_initialized[portrait]) return;
+  Preferences prefs;
+  if (prefs.begin(NVS_NAMESPACE, true)) {
+    s_pin[portrait] = prefs.getString(portrait ? "wpin_p" : "wpin_l", "");
+    prefs.end();
+  }
+  if (!wallValidName(s_pin[portrait])) s_pin[portrait] = "";
+  auto files = wallFiles(portrait);
+  for (const auto& f : files)
+    if (f.name == s_pin[portrait]) s_current[portrait] = f.name;
+  if (!s_current[portrait].length() && !files.empty())
+    s_current[portrait] = files[dispSettings.wallOrder ? esp_random() % files.size() : 0].name;
+  s_initialized[portrait] = true;
+}
 
 void fillDsc(lv_image_dsc_t& d, const void* px, int w, int h, lv_color_format_t cf, int bpp) {
   memset(&d, 0, sizeof(d));
@@ -47,14 +175,14 @@ void gradient(uint8_t* r, uint8_t* g, uint8_t* b, int w, int h) {
 // The file is RGB888 (r, g, b bytes) or, from older portals, RGB565.
 bool loadFile(uint8_t* r, uint8_t* g, uint8_t* b, int w, int h) {
   if (!deckFsReady()) return false;
-  File f = LittleFS.open(wallPath(w, h), "r");
+  WallReader f(wallPath(w, h));
   if (!f) return false;
   const size_t n = (size_t)w * h, size = f.size();
   bool ok = false;
   if (size == n * 3 || size == n * 2) {
     const int bpp = size == n * 3 ? 3 : 2;
-    uint8_t row[480 * 3];
-    ok = w <= 480;
+    uint8_t* row = (uint8_t*)heap_caps_malloc(w * bpp, MALLOC_CAP_SPIRAM);
+    ok = row != nullptr;
     for (int y = 0; ok && y < h; y++) {
       ok = f.read(row, w * bpp) == (size_t)(w * bpp);
       for (int x = 0; ok && x < w; x++) {
@@ -71,6 +199,7 @@ bool loadFile(uint8_t* r, uint8_t* g, uint8_t* b, int w, int h) {
         }
       }
     }
+    free(row);
   }
   f.close();
   return ok;
@@ -101,7 +230,7 @@ void blurPlane(uint8_t* p, uint8_t* tmp, int w, int h, int r) {
     boxPass(p, tmp, w, h, false, r);
     boxPass(tmp, p, w, h, true, r);
   }
-  esp_task_wdt_reset();
+  if (esp_task_wdt_status(nullptr) == ESP_OK) esp_task_wdt_reset();
 }
 
 }  // namespace
@@ -125,47 +254,119 @@ uint16_t wallDither565(int r, int g, int b, int x, int y) {
 
 const char* wallPath(int w, int h) { return w > h ? "/wall_l.bin" : "/wall_p.bin"; }
 
-bool wallLoad(int w, int h, int blurR, int dimPct) {
-  if (s_sharp && s_w == w && s_h == h && s_blurR == blurR && s_dim == dimPct) return true;
-  wallFree();
+namespace {
+
+bool prepareImage(WallJob& job) {
+  const int w = job.w, h = job.h;
   const size_t n = (size_t)w * h;
-  s_sharp = (uint16_t*)heap_caps_malloc(n * 2, MALLOC_CAP_SPIRAM);
-  s_blur = (uint8_t*)heap_caps_malloc(n * 3, MALLOC_CAP_SPIRAM);
-  uint8_t* planes = (uint8_t*)heap_caps_malloc(n * 4, MALLOC_CAP_SPIRAM);  // r, g, b, scratch
-  if (!s_sharp || !s_blur || !planes) {
+  job.sharp = (uint16_t*)heap_caps_malloc(n * 2, MALLOC_CAP_SPIRAM);
+  job.blurred = (uint8_t*)heap_caps_malloc(n * 3, MALLOC_CAP_SPIRAM);
+  uint8_t* planes = (uint8_t*)heap_caps_malloc(n * 4, MALLOC_CAP_SPIRAM);
+  if (!job.sharp || !job.blurred || !planes) {
+    Serial.println("Deck: wallpaper PSRAM allocation failed");
     free(planes);
-    wallFree();
     return false;
   }
   uint8_t *r = planes, *g = planes + n, *b = planes + 2 * n, *tmp = planes + 3 * n;
-  const bool loaded = loadFile(r, g, b, w, h);
+  uint32_t start = millis();
+  const bool jpeg = job.name[0];
+  const bool loaded = jpeg ? jpegLoad(wallGalleryPath(w < h, job.name).c_str(), w, h, r, g, b)
+                           : loadFile(r, g, b, w, h);
+  if (jpeg && !loaded) {
+    Serial.printf("Deck: wallpaper decode failed: %s\n", job.name);
+    free(planes);
+    return false;
+  }
   if (!loaded) gradient(r, g, b, w, h);
-
-  // The page shows the picture darker, for the text on it.
-  const int keep = (100 - dimPct) * 256 / 100;
+  const uint32_t decodeMs = millis() - start;
+  start = millis();
+  const int keep = (100 - job.dim) * 256 / 100;
   for (int y = 0; y < h; y++)
     for (int x = 0; x < w; x++) {
       const int i = y * w + x;
-      s_sharp[i] = wallDither565(r[i] * keep >> 8, g[i] * keep >> 8, b[i] * keep >> 8, x, y);
+      job.sharp[i] = wallDither565(r[i] * keep >> 8, g[i] * keep >> 8, b[i] * keep >> 8, x, y);
     }
-  uint8_t* ch[3] = {b, g, r};  // LVGL's RGB888 byte order
+  uint8_t* ch[3] = {b, g, r};
   for (int c = 0; c < 3; c++) {
-    blurPlane(ch[c], tmp, w, h, blurR);
-    for (size_t i = 0; i < n; i++) s_blur[i * 3 + c] = ch[c][i];
+    blurPlane(ch[c], tmp, w, h, job.blur);
+    for (size_t i = 0; i < n; i++) job.blurred[i * 3 + c] = ch[c][i];
   }
   free(planes);
+  Serial.printf("Deck: wallpaper %s decode %lu ms, dim+blur %lu ms\n",
+                jpeg ? job.name : loaded ? "legacy" : "gradient",
+                (unsigned long)decodeMs, (unsigned long)(millis() - start));
+  return true;
+}
 
-  s_w = w;
-  s_h = h;
-  s_blurR = blurR;
-  s_dim = dimPct;
-  fillDsc(s_sharpDsc, s_sharp, w, h, LV_COLOR_FORMAT_RGB565, 2);
-  fillDsc(s_blurDsc, s_blur, w, h, LV_COLOR_FORMAT_RGB888, 3);
-  Serial.printf("Deck: wallpaper %dx%d %s\n", w, h, loaded ? "from file" : "built-in gradient");
+// One task per job, so its internal stack is only held while a picture loads.
+void wallTask(void*) {
+  portENTER_CRITICAL(&s_jobMux);
+  WallJob job = s_job;
+  portEXIT_CRITICAL(&s_jobMux);
+  job.ok = prepareImage(job);
+  portENTER_CRITICAL(&s_jobMux);
+  s_job = job;
+  s_jobState = JOB_READY;
+  portEXIT_CRITICAL(&s_jobMux);
+  vTaskDelete(nullptr);
+}
+
+void installImage(WallJob& job) {
+  lv_image_cache_drop(&s_sharpDsc);
+  lv_image_cache_drop(&s_blurDsc);
+  free(s_sharp);
+  free(s_blur);
+  s_sharp = job.sharp;
+  s_blur = job.blurred;
+  job.sharp = nullptr;
+  job.blurred = nullptr;
+  s_w = job.w;
+  s_h = job.h;
+  s_blurR = job.blur;
+  s_dim = job.dim;
+  s_loadedName = job.name;
+  s_current[job.w < job.h] = job.name;
+  s_changedMs = millis();
+  ++s_generation;
+  fillDsc(s_sharpDsc, s_sharp, s_w, s_h, LV_COLOR_FORMAT_RGB565, 2);
+  fillDsc(s_blurDsc, s_blur, s_w, s_h, LV_COLOR_FORMAT_RGB888, 3);
+}
+
+}  // namespace
+
+bool wallLoad(int w, int h, int blurR, int dimPct) {
+  const bool p = w < h;
+  initGallery(p);
+  if (s_request[p]) {
+    s_current[p] = s_requested[p];
+    s_request[p] = false;
+  }
+  if (s_sharp && s_w == w && s_h == h && s_blurR == blurR && s_dim == dimPct &&
+      s_loadedName == s_current[p]) return true;
+  wallInvalidateJobs();
+  // Settings rebuilds are synchronous; avoid a second pending PSRAM allocation.
+  while (jobState() == JOB_RUNNING) delay(1);
+  if (jobState() == JOB_READY) discardJob();
+  wallFree();
+  WallJob job = {};
+  job.w = w;
+  job.h = h;
+  job.blur = blurR;
+  job.dim = dimPct;
+  strlcpy(job.name, s_current[p].c_str(), sizeof(job.name));
+  if (!prepareImage(job)) {
+    free(job.sharp);
+    free(job.blurred);
+    return false;
+  }
+  installImage(job);
   return true;
 }
 
 void wallFree() {
+  wallInvalidateJobs();
+  lv_image_cache_drop(&s_sharpDsc);
+  lv_image_cache_drop(&s_blurDsc);
   s_generation++;  // also covers reloads that reuse the same allocation addresses
   free(s_sharp);
   free(s_blur);
@@ -178,5 +379,182 @@ void wallFree() {
 const lv_image_dsc_t* wallSharp() { return s_sharp ? &s_sharpDsc : nullptr; }
 const lv_image_dsc_t* wallBlur() { return s_blur ? &s_blurDsc : nullptr; }
 uint32_t wallGeneration() { return s_generation; }
+
+bool wallValidName(const String& name) {
+  if (name.length() != 12 || !name.endsWith(".jpg")) return false;
+  for (int i = 0; i < 8; i++)
+    if (!((name[i] >= '0' && name[i] <= '9') || (name[i] >= 'a' && name[i] <= 'f'))) return false;
+  return true;
+}
+
+String wallGalleryPath(bool portrait, const String& name) {
+  return String(portrait ? "/wall/p/" : "/wall/l/") + name;
+}
+
+std::vector<WallFile> wallFiles(bool portrait) {
+  std::vector<WallFile> files;
+  if (!deckFsReady()) return files;
+  File dir = LittleFS.open(portrait ? "/wall/p" : "/wall/l");
+  if (!dir || !dir.isDirectory()) return files;
+  for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
+    String name = f.name();
+    name = name.substring(name.lastIndexOf('/') + 1);
+    if (!f.isDirectory() && wallValidName(name)) files.push_back({name, f.size()});
+  }
+  std::sort(files.begin(), files.end(), [](const WallFile& a, const WallFile& b) { return a.name < b.name; });
+  return files;
+}
+
+String wallCurrent(bool portrait) { initGallery(portrait); return s_current[portrait]; }
+String wallPinned(bool portrait) { initGallery(portrait); return s_pin[portrait]; }
+
+bool wallPin(bool portrait, const String& name) {
+  if (!wallValidName(name) || !LittleFS.exists(wallGalleryPath(portrait, name))) return false;
+  initGallery(portrait);
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, false)) return false;
+  const bool ok = prefs.putString(portrait ? "wpin_p" : "wpin_l", name) > 0;
+  prefs.end();
+  if (ok) s_pin[portrait] = name;
+  return ok;
+}
+
+void wallClearPin(bool portrait) {
+  initGallery(portrait);
+  Preferences prefs;
+  if (prefs.begin(NVS_NAMESPACE, false)) {
+    prefs.remove(portrait ? "wpin_p" : "wpin_l");
+    prefs.end();
+  }
+  s_pin[portrait] = "";
+}
+
+bool wallValidateJpeg(const char* path, bool portrait) {
+  return jpegLoad(path, portrait ? 320 : 480, portrait ? 480 : 320, nullptr, nullptr, nullptr);
+}
+
+void wallInvalidateJobs() {
+  ++s_epoch;
+  for (int p = 0; p < 2; p++)
+    if (s_automatic[p]) s_request[p] = false;
+}
+
+void wallRequest(bool portrait, const String& name) {
+  if (name.length() && !wallValidName(name)) return;
+  initGallery(portrait);
+  ++s_requestId[portrait];
+  s_automatic[portrait] = false;
+  s_requested[portrait] = name;
+  s_request[portrait] = true;
+  s_retryMs = 0;
+  if (portrait != ((dispSettings.rotation & 1) == 0) || dispSettings.theme != THEME_GLASS)
+    s_current[portrait] = name;
+}
+
+bool wallNext(bool portrait) {
+  initGallery(portrait);
+  auto files = wallFiles(portrait);
+  if (files.empty()) return false;
+  size_t index = 0;
+  if (dispSettings.wallOrder && files.size() > 1) {
+    std::vector<size_t> choices;
+    for (size_t i = 0; i < files.size(); i++)
+      if (files[i].name != s_current[portrait]) choices.push_back(i);
+    index = choices[esp_random() % choices.size()];
+  } else {
+    for (size_t i = 0; i < files.size(); i++)
+      if (files[i].name > s_current[portrait]) { index = i; break; }
+  }
+  wallRequest(portrait, files[index].name);
+  return true;
+}
+
+void wallGalleryChanged(bool portrait) {
+  initGallery(portrait);
+  portENTER_CRITICAL(&s_jobMux);
+  const WallJob job = s_job;
+  const JobState state = s_jobState;
+  portEXIT_CRITICAL(&s_jobMux);
+  if (state != JOB_IDLE && (job.w < job.h) == portrait && job.name[0] &&
+      !LittleFS.exists(wallGalleryPath(portrait, job.name))) ++s_requestId[portrait];
+  auto files = wallFiles(portrait);
+  const String current = s_current[portrait];
+  bool found = false, pinned = false;
+  for (const auto& f : files) {
+    found |= f.name == current;
+    pinned |= f.name == s_pin[portrait];
+  }
+  if (!pinned && s_pin[portrait].length()) wallClearPin(portrait);
+  if (s_request[portrait] && s_requested[portrait].length() &&
+      !LittleFS.exists(wallGalleryPath(portrait, s_requested[portrait]))) s_request[portrait] = false;
+  if (found || s_request[portrait]) return;
+  String next;
+  if (!files.empty()) {
+    next = files.front().name;
+    for (const auto& f : files)
+      if (f.name > current) { next = f.name; break; }
+  }
+  wallRequest(portrait, next);
+}
+
+bool wallPoll(int w, int h, bool idle, bool canSwitch) {
+  const bool p = w < h;
+  const uint32_t now = millis();
+  if (jobState() == JOB_READY) {
+    if (s_job.epoch != s_epoch || s_job.requestId != s_requestId[p] || s_job.settings != settingsKey() ||
+        s_job.w != w || s_job.h != h || !s_job.ok) {
+      if (!s_job.ok) s_retryMs = now;
+      discardJob();
+    } else {
+      if (!canSwitch || (s_job.automatic && !idle)) return false;
+      if (!s_job.name[0] || LittleFS.exists(wallGalleryPath(p, s_job.name))) return true;
+      discardJob();
+    }
+  }
+  if (jobState() != JOB_IDLE || dispSettings.theme != THEME_GLASS || !canSwitch) return false;
+  if (s_retryMs && now - s_retryMs < 30000) return false;
+  initGallery(p);
+  if (s_request[p] && s_automatic[p] && !idle) return false;
+  if (!s_request[p]) {
+    if (!idle || !dispSettings.wallEvery || now - s_changedMs < (uint32_t)dispSettings.wallEvery * 60000)
+      return false;
+    if (now - s_scanMs < 1000) return false;
+    s_scanMs = now;
+    if (wallFiles(p).size() < 2) return false;
+    wallNext(p);
+    s_automatic[p] = true;
+  }
+  WallJob job = {};
+  job.w = w;
+  job.h = h;
+  job.blur = dispSettings.glassBlur;
+  job.dim = dispSettings.glassDim;
+  job.settings = settingsKey();
+  job.epoch = s_epoch;
+  job.requestId = s_requestId[p];
+  job.automatic = s_automatic[p];
+  strlcpy(job.name, s_requested[p].c_str(), sizeof(job.name));
+  portENTER_CRITICAL(&s_jobMux);
+  s_job = job;
+  s_jobState = JOB_RUNNING;
+  portEXIT_CRITICAL(&s_jobMux);
+  if (xTaskCreatePinnedToCore(wallTask, "deck_wall", 6144, nullptr, 1, nullptr, 0) != pdPASS) {
+    portENTER_CRITICAL(&s_jobMux);
+    s_jobState = JOB_IDLE;
+    portEXIT_CRITICAL(&s_jobMux);
+    s_retryMs = now;
+    return false;
+  }
+  s_request[p] = false;
+  return false;
+}
+
+void wallCommit() {
+  if (jobState() != JOB_READY) return;
+  const uint32_t start = millis();
+  installImage(s_job);
+  discardJob();
+  Serial.printf("Deck: wallpaper swap %lu ms\n", (unsigned long)(millis() - start));
+}
 
 }  // namespace deck

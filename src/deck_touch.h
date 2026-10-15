@@ -21,6 +21,7 @@ struct TouchPoint {
 TouchPoint touchForLvgl();
 
 bool touchIsDown();
+uint32_t touchLastActivity();
 // True once per touch-down (wake-from-sleep detection).
 bool touchTakeActivity();
 // True once when a swipe took over a touch (the loop cancels LVGL's press).
