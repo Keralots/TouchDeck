@@ -23,6 +23,7 @@ lv_image_dsc_t s_sharpDsc, s_blurDsc;
 uint32_t s_generation = 0;
 String s_current[2], s_pin[2], s_requested[2], s_loadedName;
 bool s_initialized[2] = {}, s_request[2] = {}, s_automatic[2] = {};
+std::vector<String> s_shown[2];  // shuffle: pictures shown in this round, RAM only
 uint32_t s_requestId[2] = {};
 uint32_t s_epoch = 0, s_changedMs = 0, s_retryMs = 0, s_scanMs = 0;
 portMUX_TYPE s_jobMux = portMUX_INITIALIZER_UNLOCKED;
@@ -457,10 +458,21 @@ bool wallNext(bool portrait) {
   if (files.empty()) return false;
   size_t index = 0;
   if (dispSettings.wallOrder && files.size() > 1) {
+    // Shuffle: no picture again until every one was shown, and a new round
+    // never starts with the one on screen.
+    std::vector<String>& shown = s_shown[portrait];
+    const String& cur = s_current[portrait];
+    if (cur.length() && std::find(shown.begin(), shown.end(), cur) == shown.end()) shown.push_back(cur);
     std::vector<size_t> choices;
     for (size_t i = 0; i < files.size(); i++)
-      if (files[i].name != s_current[portrait]) choices.push_back(i);
+      if (std::find(shown.begin(), shown.end(), files[i].name) == shown.end()) choices.push_back(i);
+    if (choices.empty()) {
+      shown.assign(1, cur);
+      for (size_t i = 0; i < files.size(); i++)
+        if (files[i].name != cur) choices.push_back(i);
+    }
     index = choices[esp_random() % choices.size()];
+    shown.push_back(files[index].name);
   } else {
     for (size_t i = 0; i < files.size(); i++)
       if (files[i].name > s_current[portrait]) { index = i; break; }
