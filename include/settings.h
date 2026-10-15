@@ -41,6 +41,7 @@ struct DisplaySettings {
   uint8_t  glassOn;           // Glass: accent fill of an "on" tile, opacity %, 20..100
   uint8_t  wallEvery;         // Wallpaper interval in minutes, 0 = off
   uint8_t  wallOrder;         // 0 = in order, 1 = shuffle
+  bool     glassAutoText;     // Glass: text colour and tint follow the picture per tile
   bool     smoothCharts;      // PC metric charts glide between packets
 };
 
