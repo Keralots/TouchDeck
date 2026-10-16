@@ -14,6 +14,9 @@ from urllib.parse import parse_qs, urlparse
 from config_model import (
     CONFIG_VERSION,
     MAX_STREAM_LABEL,
+    MAX_PANELS,
+    clean_device_address,
+    clean_pair_key,
     clean_pc_name,
     clean_stream_label,
     metric_id_for,
@@ -114,11 +117,9 @@ def _device_address(value):
         raise ValueError("Enter the device address first.")
     if value.startswith("http://") or value.startswith("https://"):
         parsed = urlparse(value)
-        value = parsed.hostname or ""
+        value = parsed.netloc
     value = value.strip().rstrip("/")
-    if not value or "/" in value or ":" in value or any(ch.isspace() for ch in value):
-        raise ValueError("Enter an IP address or hostname without a port or path.")
-    return value
+    return clean_device_address(value)
 
 
 def _device_url(address, path):
@@ -139,15 +140,18 @@ def _fetch_device_json(address, path="/api/status", timeout=2.0):
     return json.loads(body.decode("utf-8"))
 
 
-def device_status(state, address=None, timeout=2.0):
+def device_status(state, address=None, timeout=2.0, update_reachable=True):
     config = state.get_config()
     address = address if address is not None else config.get("esp32_ip", "")
     try:
         address = _device_address(address)
         data = _fetch_device_json(address, timeout=timeout)
+        if not isinstance(data, dict):
+            raise ValueError("Invalid device status.")
         product = data.get("product", "")
         compatible = product == "TouchDeck"
-        state.set_reachable(True)
+        if update_reachable:
+            state.set_reachable(True)
         result = dict(data)
         result.update({
             "reachable": True,
@@ -158,7 +162,8 @@ def device_status(state, address=None, timeout=2.0):
         })
         return result
     except (OSError, ValueError, json.JSONDecodeError, urllib_error.URLError) as exc:
-        state.set_reachable(False)
+        if update_reachable:
+            state.set_reachable(False)
         return {
             "reachable": False,
             "compatible": False,
@@ -332,6 +337,66 @@ def pair_forget(core, state):
         return {"success": True, "message": "Unpaired. Forget this PC in the device portal too."}
 
 
+def list_panels(state):
+    panels = []
+    for panel in state.get_config().get("panels", []):
+        status = device_status(state, panel["address"], update_reachable=False)
+        panels.append({"address": panel["address"], "paired": bool(panel.get("key")),
+                       "reachable": status["reachable"], "compatible": status["compatible"]})
+    return {"panels": panels, "max": MAX_PANELS}
+
+
+def apply_panel(core, state, action, address, code_text=""):
+    with _CONFIG_LOCK:
+        config = normalize_config(state.get_config())
+        try:
+            address = clean_device_address(address)
+        except ValueError as exc:
+            return {"success": False, "message": str(exc)}
+        panels = config["panels"]
+        panel = next((p for p in panels if p["address"].removesuffix(":80") ==
+                      address.removesuffix(":80")), None)
+        if action == "add":
+            if panel is not None:
+                return {"success": False, "message": "This panel is already added."}
+            if len(panels) >= MAX_PANELS:
+                return {"success": False, "message": "You can add up to 4 extra panels."}
+            panels.append({"address": address, "key": ""})
+        elif panel is None:
+            return {"success": False, "message": "Panel not found."}
+        elif action == "remove":
+            panels.remove(panel)
+        elif action == "pair/forget":
+            panel["key"] = ""
+        elif action in ("pair/start", "pair/confirm", "pair/cancel"):
+            params = {"id": config["pc_id"]}
+            if action == "pair/confirm":
+                code_text = "".join(ch for ch in str(code_text or "") if ch in "0123456789")
+                if len(code_text) != 6:
+                    return {"success": False, "message": "Enter the 6 digits shown on the device."}
+                params["code"] = code_text
+            path = "/api/pc/pair" + ("" if action == "pair/start" else "/" + action.split("/")[1])
+            try:
+                status, body = _post_device(panel["address"], path, params)
+            except Exception as exc:
+                return {"success": False, "message": "Could not reach the panel: %s" % exc}
+            if status != 200 or not isinstance(body, dict) or body.get("success") is False:
+                return {"success": False, "message": "Panel pairing failed (HTTP %d)." % status}
+            if action != "pair/confirm":
+                message = "Enter the code shown on the panel." if action == "pair/start" else "Pairing cancelled."
+                return {"success": True, "message": message}
+            key = clean_pair_key(body.get("key"))
+            if body.get("success") is not True or not key:
+                return {"success": False, "message": "The panel returned an invalid pairing key."}
+            panel["key"] = key
+        else:
+            return {"success": False, "message": "Unknown panel action."}
+        if not core.save_config(config):
+            return {"success": False, "message": "Could not write the configuration file."}
+        state.set_config(config)
+        return {"success": True, "message": "Panel settings saved."}
+
+
 def apply_revert(core, state):
     with _CONFIG_LOCK:
         config = normalize_config(core.load_config() or dict(core.DEFAULT_CONFIG))
@@ -428,6 +493,8 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json(result)
             if path == "/api/device/status":
                 return self._json(device_status(state))
+            if path == "/api/panels":
+                return self._json(list_panels(state))
             if path == "/api/device/screen":
                 return self._device_screen()
             if path == "/api/live":
@@ -470,6 +537,11 @@ class _Handler(BaseHTTPRequestHandler):
         core, state = self.CORE, self.STATE
         path = urlparse(self.path).path
         try:
+            if path in ("/api/panels/add", "/api/panels/remove", "/api/panels/pair/start",
+                        "/api/panels/pair/confirm", "/api/panels/pair/cancel", "/api/panels/pair/forget"):
+                form = self._form()
+                return self._json(apply_panel(core, state, path[len("/api/panels/"):],
+                                              form.get("address", [""])[0], form.get("code", [""])[0]))
             if path == "/api/save":
                 return self._json(apply_save(core, state))
             if path == "/api/select":

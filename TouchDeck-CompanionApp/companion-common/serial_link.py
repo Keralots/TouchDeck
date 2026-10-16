@@ -163,7 +163,7 @@ class SerialLink:
         if "cmd" not in packet:
             return
         try:
-            ok, why = pc_control.verify(self._state.get_config(), packet)
+            ok, why = pc_control.verify(self._state.get_config(), packet, via_usb=True)
             if ok:
                 ok, why = pc_control.execute(packet["cmd"])
         except Exception as exc:

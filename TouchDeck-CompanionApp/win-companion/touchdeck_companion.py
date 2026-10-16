@@ -3680,12 +3680,12 @@ def send_metrics(sock, config, last_good_values=None, status_code=STATUS_OK):
     snapshot = build_snapshot(config)
     payload, _values, has_fresh_data, last_good_values, stale_count = collect_metrics(
         config, snapshot, last_good_values, status_code)
-    payload["pc_id"] = config.get("pc_id", "")
-    payload["pc_name"] = config.get("pc_name", "")
+    import udp_stream
+    payload.update(udp_stream.packet_identity(config))
 
     try:
         message = json.dumps(payload).encode('utf-8')
-        sock.sendto(message, (config["esp32_ip"], config["udp_port"]))
+        udp_stream.send_packet(sock, config, message)
 
         # Print status with stale indicator and status code
         timestamp = payload["timestamp"] if payload["timestamp"] else "STALE"

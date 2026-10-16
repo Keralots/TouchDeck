@@ -25,6 +25,7 @@ import threading
 import time
 
 import pc_state
+from config_model import device_host
 
 DEFAULT_CMD_PORT = 4211
 NONCE_TTL = 30.0
@@ -87,7 +88,7 @@ def sign(key_hex, pc_id, nonce, cmd):
     return hmac.new(bytes.fromhex(key_hex), msg, hashlib.sha256).hexdigest()
 
 
-def verify(config, packet):
+def verify(config, packet, addr=None, *, via_usb=False):
     """Return (ok, reason) for a command packet."""
     if not isinstance(config, dict) or not isinstance(packet, dict):
         return False, "invalid command packet"
@@ -97,7 +98,30 @@ def verify(config, packet):
     if (not isinstance(sig, str) or len(sig) != 64
             or any(ch not in "0123456789abcdefABCDEF" for ch in sig)):
         return False, "bad signature"
+    # Only the USB dispatcher may omit the sender IP and use the deck's key.
     key = config.get("pc_key") or ""
+    if not via_usb:
+        if not isinstance(addr, (tuple, list)) or not addr or not isinstance(addr[0], str):
+            return False, "unknown device"
+        devices = [(config.get("esp32_ip", ""), key)]
+        devices.extend((panel["address"], panel.get("key", ""))
+                       for panel in config.get("panels", []))
+        resolved = {}
+        for address, device_key in devices:
+            try:
+                host = device_host(address)
+                if host not in resolved:
+                    try:
+                        resolved[host] = socket.gethostbyname(host)
+                    except OSError:
+                        resolved[host] = None
+                if resolved[host] == addr[0]:
+                    key = device_key
+                    break
+            except ValueError:
+                continue
+        else:
+            return False, "unknown device"
     if not key:
         return False, "this PC is not paired"
     if pc != config.get("pc_id"):
@@ -282,7 +306,7 @@ def listen(state, stop):
         except Exception:
             continue
         try:
-            ok, why = verify(state.get_config(), packet)
+            ok, why = verify(state.get_config(), packet, addr)
             if ok:
                 ok, why = execute(packet["cmd"])
                 print("pc_control: %s -> %s %s" % (packet["cmd"], "ok" if ok else "failed", why))

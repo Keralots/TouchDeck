@@ -14,6 +14,10 @@ import glob as _glob
 import argparse
 from datetime import datetime
 
+_COMMON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "companion-common")
+if os.path.isdir(_COMMON_DIR) and _COMMON_DIR not in sys.path:
+    sys.path.insert(0, _COMMON_DIR)
+
 # Tkinter is imported conditionally only when GUI mode is needed
 # This allows the script to run on headless systems without tkinter
 
@@ -1976,9 +1980,11 @@ def send_metrics(sock, config):
         payload["metrics"].append(metric_data)
 
     # Send via UDP
+    import udp_stream
+    payload.update(udp_stream.packet_identity(config))
     try:
         message = json.dumps(payload).encode('utf-8')
-        sock.sendto(message, (config["esp32_ip"], config["udp_port"]))
+        udp_stream.send_packet(sock, config, message)
 
         # Print status
         timestamp = payload["timestamp"]
