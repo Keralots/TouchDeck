@@ -404,4 +404,4 @@ def test_monitor_prefers_usb_and_preserves_udp_payload(rig, monkeypatch, connect
     for nonce in payload["nonces"]:
         packet = {"pc": cfg["pc_id"], "cmd": "media_next", "nonce": nonce,
                   "sig": pc_control.sign(cfg["pc_key"], cfg["pc_id"], nonce, "media_next")}
-        assert pc_control.verify(cfg, packet) == (True, "")
+        assert pc_control.verify(cfg, packet, via_usb=True) == (True, "")

@@ -1,3 +1,4 @@
+import json
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -85,8 +86,108 @@ class CompanionServerModel(unittest.TestCase):
     def test_connection_address_strips_web_scheme(self):
         self.assertEqual("touchdeck.local",
                          server._device_address("http://touchdeck.local/"))
-        with self.assertRaises(ValueError):
-            server._device_address("touchdeck.local:8080")
+        self.assertEqual("touchdeck.local:8080", server._device_address("touchdeck.local:8080"))
+        self.assertEqual("http://tablet.local:8080/api/status",
+                         server._device_url("http://tablet.local:8080/", "/api/status"))
+
+    def panel_request(self, action, address="tablet.local:8080", code=""):
+        handler = object.__new__(server._Handler)
+        handler.CORE = self.core
+        handler.STATE = self.state
+        handler.path = "/api/panels/" + action
+        handler._form = mock.Mock(return_value={"address": [address], "code": [code]})
+        handler._json = mock.Mock()
+        handler.do_POST()
+        return handler._json.call_args.args[0]
+
+    def get_request(self, path):
+        handler = object.__new__(server._Handler)
+        handler.CORE = self.core
+        handler.STATE = self.state
+        handler.path = path
+        handler._json = mock.Mock()
+        handler.do_GET()
+        return handler._json.call_args.args[0]
+
+    def test_panel_add_remove_and_limits(self):
+        self.assertTrue(self.panel_request("add")["success"])
+        self.assertFalse(self.panel_request("add")["success"])
+        self.assertFalse(self.panel_request("add", "bad/path")["success"])
+        for address in ("second", "third", "fourth"):
+            self.assertTrue(self.panel_request("add", address)["success"])
+        self.assertFalse(self.panel_request("add", "fifth")["success"])
+        self.assertTrue(self.panel_request("remove")["success"])
+        self.assertFalse(self.panel_request("remove")["success"])
+        self.assertEqual(3, len(self.core.saved["panels"]))
+
+    def test_panel_pairing_endpoints_keep_deck_and_other_panel_keys(self):
+        self.state.set_config(dict(self.state.get_config(), pc_key="11" * 32))
+        self.panel_request("add")
+        self.panel_request("add", "second")
+        for action, path in (("pair/start", "/api/pc/pair"),
+                             ("pair/cancel", "/api/pc/pair/cancel")):
+            with mock.patch.object(server, "_post_device", return_value=(200, {"success": True})) as post:
+                self.assertTrue(self.panel_request(action)["success"])
+                post.assert_called_once_with("tablet.local:8080", path,
+                                             {"id": self.state.get_config()["pc_id"]})
+        with mock.patch.object(server, "_post_device", return_value=(200, {
+                "success": True, "key": "22" * 32})) as post:
+            result = self.panel_request("pair/confirm", code="123 456")
+            self.assertTrue(result["success"])
+            self.assertNotIn("22" * 32, json.dumps(result))
+            post.assert_called_once_with("tablet.local:8080", "/api/pc/pair/confirm",
+                                         {"id": self.state.get_config()["pc_id"], "code": "123456"})
+        self.assertEqual("22" * 32, self.core.saved["panels"][0]["key"])
+        self.assertEqual("", self.core.saved["panels"][1]["key"])
+        self.assertTrue(self.panel_request("pair/forget")["success"])
+        self.assertEqual("", self.core.saved["panels"][0]["key"])
+        self.assertEqual("11" * 32, self.core.saved["pc_key"])
+
+    def test_panel_pairing_errors_do_not_change_config(self):
+        self.panel_request("add")
+        before = self.state.get_config()
+        with mock.patch.object(server, "_post_device") as post:
+            self.assertFalse(self.panel_request("pair/confirm", code="123")["success"])
+            self.assertFalse(self.panel_request("pair/start", "missing")["success"])
+            post.assert_not_called()
+        for response in ((200, None), (403, {"success": False}), (200, {"success": True, "key": "z" * 64}),
+                         (200, {"success": False, "key": "22" * 32})):
+            with mock.patch.object(server, "_post_device", return_value=response):
+                self.assertFalse(self.panel_request("pair/confirm", code="123456")["success"])
+        with mock.patch.object(server, "_post_device", side_effect=OSError("offline")):
+            self.assertFalse(self.panel_request("pair/start")["success"])
+        with mock.patch.object(server, "_post_device", return_value=(200, {
+                "success": True, "key": "22" * 32})), \
+                mock.patch.object(self.core, "save_config", return_value=False):
+            self.assertFalse(self.panel_request("pair/confirm", code="123456")["success"])
+            self.assertFalse(self.panel_request("remove")["success"])
+            self.assertFalse(self.panel_request("add", "second")["success"])
+        self.assertEqual(before, self.state.get_config())
+
+    def test_panel_list_hides_keys_export_keeps_them_for_restore(self):
+        self.state.set_config(dict(self.state.get_config(), pc_key="11" * 32, panels=[
+            {"address": "tablet.local:8080", "key": "22" * 32},
+            {"address": "second", "key": ""}, {"address": "third", "key": ""}]))
+        self.state.set_reachable(True)
+        with mock.patch.object(server, "_fetch_device_json", side_effect=[
+                {"product": "TouchDeck", "key": "22" * 32}, {"product": "Other"}, OSError("offline")]):
+            result = self.get_request("/api/panels")
+        self.assertEqual([True, True, False], [p["reachable"] for p in result["panels"]])
+        self.assertEqual([True, False, False], [p["compatible"] for p in result["panels"]])
+        self.assertEqual([True, False, False], [p["paired"] for p in result["panels"]])
+        self.assertNotIn("key", json.dumps(result))
+        self.assertTrue(self.state.status()["deviceReachable"])
+        # A backup restores pairing: import replaces the whole config.
+        exported = self.get_request("/api/export")
+        self.assertEqual("11" * 32, exported["pc_key"])
+        self.assertEqual("22" * 32, exported["panels"][0]["key"])
+
+    def test_invalid_panel_status_does_not_stop_listing(self):
+        self.panel_request("add")
+        self.panel_request("add", "second")
+        with mock.patch.object(server, "_fetch_device_json", side_effect=[[], {"product": "TouchDeck"}]):
+            result = self.get_request("/api/panels")
+        self.assertEqual([False, True], [p["compatible"] for p in result["panels"]])
 
     def test_import_migrates_old_layout_and_duplicate_ids(self):
         old = {"version": "4.0", "metrics": [

@@ -75,6 +75,40 @@ async function refreshLive(){try{var data=await api('/api/live');app.live={};(da
 $('saveBtn').addEventListener('click',async function(){this.disabled=true;try{await syncAliases();await api('/api/save',{method:'POST'});setDirty(false);showToast('Sensor stream saved.')}catch(error){showToast(error.message,true)}finally{this.disabled=false}});
 $('revertBtn').addEventListener('click',async function(){try{await api('/api/revert',{method:'POST'});await Promise.all([loadInfo(),loadSensors(false)]);setDirty(false);showToast('Unsaved sensor changes reverted.')}catch(error){showToast(error.message,true)}});
 
+var panelPairAddress='';
+var panelsLoading=false;
+function panelCodeBox(address){panelPairAddress=address;$('panelCodeBox').classList.toggle('hidden',!address);setText('panelPairAddress',address);if(address){$('panelCode').value='';$('panelCode').focus()}}
+async function panelAction(action,address,code){return api('/api/panels/'+action,{method:'POST',body:new URLSearchParams({address:address,code:code||''})})}
+async function loadPanels(){
+  if(panelsLoading)return;
+  panelsLoading=true;
+  try{
+    var data=await api('/api/panels');
+    setText('panelCount',data.panels.length+' / '+data.max);
+    $('panelAddBtn').disabled=data.panels.length>=data.max;
+    $('panelList').innerHTML=data.panels.map(function(panel){
+      var status=panel.reachable?(panel.compatible?'online / compatible':'online / incompatible'):'offline / compatibility unknown';
+      return '<div class="field"><strong>'+esc(panel.address)+'</strong> <span class="tag">'+status+'</span> <span class="tag">'+(panel.paired?'paired':'not paired')+'</span><div class="page-actions" data-panel="'+esc(panel.address)+'"><button type="button" class="btn btn-accent" data-panel-action="pair/start">Pair</button>'+(panel.paired?'<button type="button" class="btn" data-panel-action="pair/forget">Forget pairing</button>':'')+'<button type="button" class="btn" data-panel-action="remove">Remove</button></div></div>';
+    }).join('')||'<p class="field-hint">No extra panels added.</p>';
+    if(panelPairAddress&&!data.panels.some(function(panel){return panel.address===panelPairAddress}))panelCodeBox('');
+  }finally{panelsLoading=false}
+}
+$('panelAddForm').addEventListener('submit',async function(event){event.preventDefault();try{var data=await panelAction('add',$('panelAddress').value);$('panelAddress').value='';showToast(data.message);await loadPanels()}catch(error){showToast(error.message,true)}});
+$('panelList').addEventListener('click',async function(event){
+  var button=event.target.closest('[data-panel-action]');
+  if(!button)return;
+  var address=button.parentElement.dataset.panel;var action=button.dataset.panelAction;
+  button.disabled=true;
+  try{
+    if(action==='pair/start'&&panelPairAddress)await panelAction('pair/cancel',panelPairAddress);
+    var data=await panelAction(action,address);showToast(data.message);
+    if(action==='pair/start')panelCodeBox(address);else if(panelPairAddress===address)panelCodeBox('');
+    await loadPanels();
+  }catch(error){showToast(error.message,true)}finally{button.disabled=false}
+});
+$('panelConfirmBtn').addEventListener('click',async function(){this.disabled=true;try{var data=await panelAction('pair/confirm',panelPairAddress,$('panelCode').value);panelCodeBox('');showToast(data.message);await loadPanels()}catch(error){showToast(error.message,true)}finally{this.disabled=false}});
+$('panelCancelBtn').addEventListener('click',async function(){this.disabled=true;try{var data=await panelAction('pair/cancel',panelPairAddress);panelCodeBox('');showToast(data.message)}catch(error){showToast(error.message,true)}finally{this.disabled=false}});
+
 async function loadAutostart(){try{var data=await api('/api/autostart');$('autostartChk').checked=!!data.enabled;setText('autostartState',data.enabled?'enabled':'disabled')}catch(error){setText('autostartState','unavailable')}}
 $('autostartChk').addEventListener('change',async function(){try{var body=new URLSearchParams({enable:this.checked?'1':'0'});var data=await api('/api/autostart',{method:'POST',body:body});this.checked=!!data.enabled;setText('autostartState',data.enabled?'enabled':'disabled')}catch(error){showToast(error.message,true);await loadAutostart()}});
 
@@ -84,5 +118,5 @@ async function importText(text){var parsed=JSON.parse(text);var data=await api('
 $('importBtn').addEventListener('click',async function(){try{if(window.pywebview&&window.pywebview.api&&window.pywebview.api.open_text){var result=await window.pywebview.api.open_text();if(result&&result.ok)await importText(result.text)}else{$('importFile').click()}}catch(error){showToast(error.message,true)}});
 $('importFile').addEventListener('change',async function(){if(!this.files.length)return;try{await importText(await this.files[0].text())}catch(error){showToast(error.message,true)}this.value=''});
 
-async function start(){try{await loadInfo();await Promise.all([loadSensors(false),loadAutostart(),refreshLocalStatus(),refreshDevice(false),refreshLive()]);setDirty(false)}catch(error){showToast(error.message,true)}setInterval(refreshLocalStatus,3000);setInterval(refreshSerialStatus,3000);setInterval(refreshLive,3000);setInterval(function(){refreshDevice(false);if(document.querySelector('.page[data-page="device"]').classList.contains('active'))refreshPreview()},5000)}
+async function start(){try{await loadInfo();await Promise.all([loadSensors(false),loadAutostart(),loadPanels(),refreshLocalStatus(),refreshDevice(false),refreshLive()]);setDirty(false)}catch(error){showToast(error.message,true)}setInterval(refreshLocalStatus,3000);setInterval(refreshSerialStatus,3000);setInterval(refreshLive,3000);setInterval(function(){refreshDevice(false);if(document.querySelector('.page[data-page="device"]').classList.contains('active'))refreshPreview();if(document.querySelector('.page[data-page="connection"]').classList.contains('active'))loadPanels().catch(function(error){showToast(error.message,true)})},5000)}
 start();

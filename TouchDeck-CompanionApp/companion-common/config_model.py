@@ -2,6 +2,7 @@
 
 import copy
 import os
+import re
 import shutil
 import socket
 import time
@@ -14,6 +15,33 @@ CONFIG_VERSION = "4.1"
 MAX_METRIC_ID = 255
 MAX_STREAM_LABEL = 15
 MAX_PC_NAME = 23  # the firmware keeps 24 bytes
+MAX_PANELS = 4
+
+
+def clean_device_address(value):
+    """Normalize an IPv4 address or hostname with an optional HTTP port."""
+    if not isinstance(value, str):
+        raise ValueError("Enter an IP address or hostname with an optional HTTP port.")
+    parts = value.strip().lower().split(":")
+    host = parts[0].removesuffix(".")
+    if (len(parts) > 2 or len(host) > 253 or not host
+            or any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                   for label in host.split("."))):
+        raise ValueError("Enter an IP address or hostname with an optional HTTP port.")
+    if len(parts) == 2:
+        if not re.fullmatch(r"[0-9]{1,5}", parts[1]) or not 1 <= int(parts[1]) <= 65535:
+            raise ValueError("HTTP port must be between 1 and 65535.")
+        return "%s:%d" % (host, int(parts[1]))
+    return host
+
+
+def device_host(address):
+    return clean_device_address(address).split(":", 1)[0]
+
+
+def clean_pair_key(value):
+    key = str(value or "")
+    return key if len(key) == 64 and all(c in "0123456789abcdef" for c in key) else ""
 
 
 def quarantine_unreadable_config(path, err):
@@ -98,8 +126,24 @@ def normalize_config(config):
         out["pc_id"] = uuid.uuid4().hex[:12]
     out["pc_name"] = clean_pc_name(out.get("pc_name")) or clean_pc_name(socket.gethostname()) or "PC"
     # Control from the device: the key comes from pairing, the port is ours.
-    key = str(out.get("pc_key") or "")
-    out["pc_key"] = key if len(key) == 64 and all(c in "0123456789abcdef" for c in key) else ""
+    out["pc_key"] = clean_pair_key(out.get("pc_key"))
+    panels = []
+    seen = set()
+    for panel in out.get("panels", []) if isinstance(out.get("panels"), list) else []:
+        if not isinstance(panel, dict):
+            continue
+        try:
+            address = clean_device_address(panel.get("address"))
+        except ValueError:
+            continue
+        identity = address.removesuffix(":80")
+        if identity in seen:
+            continue
+        seen.add(identity)
+        panels.append({"address": address, "key": clean_pair_key(panel.get("key"))})
+        if len(panels) == MAX_PANELS:
+            break
+    out["panels"] = panels
     try:
         port = int(out.get("cmd_port") or 4211)
     except (TypeError, ValueError):

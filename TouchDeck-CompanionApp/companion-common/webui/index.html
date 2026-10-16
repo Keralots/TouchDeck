@@ -79,6 +79,12 @@
           </form>
           <div class="page-actions"><button type="button" class="btn btn-accent" id="saveConnBtn"><span class="gl"></span>Save connection</button><button type="button" class="btn" id="testConnBtn">Test device</button></div><div class="note hidden" id="connResult"></div>
         </div>
+        <div class="card"><h2 class="card-title">Extra panels <span class="tag" id="panelCount">0 / 4</span></h2>
+          <p class="field-hint">Send the same readings to up to four TouchDeck-compatible panels. Pair each panel separately to allow PC control.</p>
+          <div id="panelList" aria-live="polite"></div>
+          <form id="panelAddForm"><div class="field"><label class="field-label" for="panelAddress">Panel address</label><input type="text" id="panelAddress" placeholder="tablet.local:8080" autocomplete="off" required><p class="field-hint">An optional port is for the panel's web interface. Readings use the UDP port above.</p></div><div class="page-actions"><button type="submit" class="btn btn-accent" id="panelAddBtn">Add</button></div></form>
+          <div class="hidden" id="panelCodeBox" style="margin-top:14px"><div class="field"><label class="field-label" for="panelCode">Code shown on <span id="panelPairAddress"></span></label><input type="text" id="panelCode" maxlength="7" inputmode="numeric" autocomplete="off" placeholder="123 456"></div><div class="page-actions"><button type="button" class="btn btn-accent" id="panelConfirmBtn">Confirm</button><button type="button" class="btn" id="panelCancelBtn">Cancel</button></div></div>
+        </div>
         <div class="card"><h2 class="card-title">Startup <span class="tag" id="autostartState">checking</span></h2><label class="check-row standalone"><input type="checkbox" id="autostartChk"><span class="check-box"></span><span class="check-text"><strong>Start with the operating system</strong><span class="ct-hint">Runs minimized in the tray after a short startup delay.</span></span></label></div>
       </section>
 

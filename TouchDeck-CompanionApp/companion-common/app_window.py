@@ -18,6 +18,7 @@ from config_model import normalize_config
 import pc_control
 import pc_state
 import serial_link
+import udp_stream
 import server as srv
 
 try:
@@ -139,19 +140,17 @@ def _detect_source():
 # UDP monitor loop (reads the live config from AppState each tick)
 # ---------------------------------------------------------------------------
 def _packet_identity(cfg):
-    payload = {"pc_id": cfg.get("pc_id", ""), "pc_name": cfg.get("pc_name", "")}
-    if cfg.get("pc_key"):
-        payload["cmd_port"] = int(cfg.get("cmd_port") or pc_control.DEFAULT_CMD_PORT)
-        payload["nonces"] = [pc_control.NONCES.issue() for _ in range(4)]
-    return payload
+    return udp_stream.packet_identity(cfg)
 
 
 def _send_packet(sock, cfg, payload):
     payload, data = pc_state.encode_packet(payload)
-    if _serial_link is not None and _serial_link.is_connected():
-        _serial_link.send(payload)
-    elif cfg.get("esp32_ip"):
-        sock.sendto(data, (cfg["esp32_ip"], cfg["udp_port"]))
+    usb_connected = _serial_link is not None and _serial_link.is_connected()
+    try:
+        if usb_connected:
+            _serial_link.send(payload)
+    finally:
+        udp_stream.send_packet(sock, cfg, data, include_deck=not usb_connected)
 
 
 def _wait_for_metrics(sock, deadline, next_state_send):
@@ -203,9 +202,9 @@ def _monitor_loop():
             last_good = {}
         metrics = cfg.get("metrics") or []
         usb_connected = _serial_link is not None and _serial_link.is_connected()
-        if not metrics or (not cfg.get("esp32_ip") and not usb_connected):
+        if not metrics or (not cfg.get("esp32_ip") and not usb_connected and not cfg.get("panels")):
             _state.set_monitoring(False)
-            if cfg.get("esp32_ip") or usb_connected:
+            if cfg.get("esp32_ip") or usb_connected or cfg.get("panels"):
                 next_state_send = _wait_for_metrics(sock, time.monotonic() + 1.0, next_state_send)
             else:
                 _stop.wait(1.0)

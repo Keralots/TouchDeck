@@ -16,6 +16,30 @@ def metric(key, metric_id, label=""):
 
 
 class ConfigMigration(unittest.TestCase):
+    def test_panels_default_and_invalid_lists(self):
+        for value in (None, "tablet", {}, 1):
+            self.assertEqual([], normalize_config({"panels": value})["panels"])
+        self.assertEqual([], normalize_config({})["panels"])
+
+    def test_panels_normalize_deduplicate_and_limit(self):
+        original = {"panels": [None, "tablet", {}, {"address": "bad/path"},
+            {"address": " Tablet.Local:08080 ", "key": "ab" * 32},
+            {"address": "tablet.local:8080", "key": "cd" * 32},
+            {"address": "second", "key": "XX" * 32}, {"address": "second:80"},
+            {"address": "third", "key": "short"}, {"address": "fourth"},
+            {"address": "fifth"}]}
+        panels = normalize_config(original)["panels"]
+        self.assertEqual(["tablet.local:8080", "second", "third", "fourth"],
+                         [p["address"] for p in panels])
+        self.assertEqual(["ab" * 32, "", "", ""], [p["key"] for p in panels])
+        self.assertEqual(" Tablet.Local:08080 ", original["panels"][4]["address"])
+
+    def test_panels_drop_invalid_addresses(self):
+        for address in ("", "a:0", "a:65536", "a:bad", "a:", "a:b:c", "a b",
+                        "http://tablet", "a@b", "-tablet", "tablet..local", "tablet..", 123):
+            with self.subTest(address=address):
+                self.assertEqual([], normalize_config({"panels": [{"address": address}]})["panels"])
+
     def test_existing_ids_survive_reordering(self):
         config = normalize_config({"metrics": [metric("cpu", 1), metric("gpu", 7)]})
         config["metrics"].reverse()
