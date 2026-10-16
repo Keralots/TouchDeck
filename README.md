@@ -6,6 +6,19 @@ A touch control deck for the Guition JC3248W535 (3.5" 320x480 IPS, capacitive to
 
 No cloud, no accounts: the device talks to Home Assistant over its local WebSocket API and receives PC metrics over UDP on the LAN.
 
+## Screenshots
+
+Captured from the device (`/screen.bmp`) with the Glass theme.
+
+| | |
+|:---:|:---:|
+| ![Main page: Home Assistant switches, clock, media and sensors](docs/images/deck-main.png) | ![PC stats: CPU and GPU charts, RAM, temperatures, power and fans](docs/images/deck-pc.png) |
+| Home Assistant tiles, clock and media | PC stats from the companion |
+| ![Bambu Lab printer page during a print](docs/images/deck-printer.png) | ![AMS units with humidity, temperature and spools](docs/images/deck-ams.png) |
+| Bambu Lab printer page | AMS units and all slots |
+| ![Detail card with 24 hour sensor history](docs/images/deck-card.png) | ![Quick panel with brightness and link status](docs/images/deck-panel.png) |
+| Detail card on long press | Quick panel |
+
 ## What it does
 
 - **Pages of tiles** in a grid (up to 6x4 per page): switches, buttons and sensors from Home Assistant, and PC metric tiles (number, chart or bar). Tiles are placed and sized in half-cell steps (1x1.5, 1.5x1, 0.5x0.5...); text and icons scale with the tile, so small tiles shrink instead of overlapping.
