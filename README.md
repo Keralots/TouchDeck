@@ -16,8 +16,8 @@ Captured from the device (`/screen.bmp`) with the Glass theme.
 | Home Assistant tiles, clock and media | PC stats from the companion |
 | ![Bambu Lab printer page during a print](docs/images/deck-printer.png) | ![AMS units with humidity, temperature and spools](docs/images/deck-ams.png) |
 | Bambu Lab printer page | AMS units and all slots |
-| ![Detail card with 24 hour sensor history](docs/images/deck-card.png) | ![Quick panel with brightness and link status](docs/images/deck-panel.png) |
-| Detail card on long press | Quick panel |
+| ![Home lab page: Proxmox and pfSense from Home Assistant](docs/images/deck-lab.png) | ![Quick panel with brightness and link status](docs/images/deck-panel.png) |
+| Home lab: Proxmox and pfSense | Quick panel |
 
 ## What it does
 
