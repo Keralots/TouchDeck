@@ -123,6 +123,23 @@ Guition JC3248W535: AXS15231B panel over QSPI, AXS15231B touch on I2C. Nothing t
 
 Optional status LED: a plain single-colour LED driven through a transistor from a free GPIO (default 17 on the extended IO header). Pins used by the display, touch, USB, flash or PSRAM are refused by the portal.
 
+## Flashing a prebuilt binary
+
+[Releases](https://github.com/Keralots/TouchDeck/releases) ship two firmware files: `TouchDeck-<version>-full.bin` (full image, for a first flash over USB) and `TouchDeck-<version>-ota.bin` (app only, for **Maintenance > Firmware update** in the portal of a device that already runs TouchDeck). The Windows companion is attached as `TouchDeckCompanion-<version>.exe`.
+
+**Web flasher (esptool-js):**
+1. Visit the [ESP Web Flasher](https://espressif.github.io/esptool-js/) in desktop **Chrome or Edge** (Web Serial is required, so Firefox, Safari and mobile won't work).
+2. Connect the board via USB. If it constantly connects/disconnects, hold the **BOOT** button, connect to USB while still holding it, then release after connecting. Alternatively, hold **BOOT**, press **RESET** while holding **BOOT**, then release both buttons.
+3. Close the TouchDeck Companion if it runs on this PC: it holds the device's serial port.
+4. Click **"Connect"** and select your port.
+5. Click **"Choose File"** and select the full image, e.g. `TouchDeck-v1.0.0-full.bin`.
+6. Set **Flash Address** to `0x0`.
+7. Click **"Program"** and wait until it finishes.
+8. Done! Continue with [First-run setup](#first-run-setup).
+
+**Manual:**
+`esptool.py --chip esp32s3 --port COM3 --baud 460800 write_flash 0x0 TouchDeck-v1.0.0-full.bin`
+
 ## Build and flash
 
 Built with [PlatformIO](https://platformio.org/), one environment:
