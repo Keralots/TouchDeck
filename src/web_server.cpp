@@ -18,6 +18,7 @@
 #include "deck_icons.h"
 #include "deck_wall.h"
 #include "deck_sys.h"
+#include "psram_json.h"
 #include <LittleFS.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
@@ -248,7 +249,7 @@ static const uint8_t CONFIG_BACKUP_SCHEMA = 1;
 static const size_t CONFIG_IMPORT_MAX_BYTES = 96 * 1024;
 
 static void handleConfigExport() {
-  JsonDocument doc;
+  JsonDocument doc(psramJson());
   doc["format"] = CONFIG_BACKUP_FORMAT;
   doc["schema"] = CONFIG_BACKUP_SCHEMA;
   doc["product"] = PRODUCT_NAME;
@@ -302,15 +303,19 @@ static void handleConfigExport() {
   network["subnet"] = netSettings.subnet;
   network["dns"] = netSettings.dns;
 
-  JsonObject deckOut = doc["deck"].to<JsonObject>();
-  deckOut["header"] = deckHeaderVisible();
-  String deckText;
-  deck::deckConfigText(deckText);
-  JsonDocument deckDoc;
-  if (!deserializeJson(deckDoc, deckText)) deckOut["config"] = deckDoc;
-
   String out;
   serializeJson(doc, out);
+  // deckConfigText() returns validated JSON, so splice it in as text: a parsed
+  // copy of a large deck emptied the internal heap and WiFi aborted.
+  String deckText;
+  deck::deckConfigText(deckText);
+  out.remove(out.length() - 1);
+  out.reserve(out.length() + deckText.length() + 48);
+  out += ",\"deck\":{\"header\":";
+  out += deckHeaderVisible() ? "true" : "false";
+  out += ",\"config\":";
+  out += deckText;
+  out += "}}";
   server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   server.sendHeader("Content-Disposition",
                     "attachment; filename=touchdeck-config.json");
@@ -377,7 +382,7 @@ static void handleConfigImport() {
     return;
   }
 
-  JsonDocument doc;
+  JsonDocument doc(psramJson());
   if (deserializeJson(doc, body)) {
     sendJsonMessage(400, false, "The selected file is not valid JSON.");
     return;
@@ -1339,15 +1344,10 @@ static void handleHttpTestPost() {
 }
 
 static void handleHttpTestGet() {
-  struct Allocator : ArduinoJson::Allocator {
-    void* allocate(size_t n) override { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM); }
-    void deallocate(void* p) override { heap_caps_free(p); }
-    void* reallocate(void* p, size_t n) override { return heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM); }
-  } allocator;
   int code = 0;
   String err;
   std::shared_ptr<char> body;
-  JsonDocument doc(&allocator);
+  JsonDocument doc(psramJson());
   doc["done"] = deck::httpTestResult((uint32_t)server.arg("ticket").toInt(), code, err, body);
   if (doc["done"]) {
     doc["code"] = code;
