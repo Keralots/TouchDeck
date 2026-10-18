@@ -158,7 +158,7 @@ class LinuxTest(unittest.TestCase):
 class WindowsTest(unittest.TestCase):
     def reader(self):
         with mock.patch.dict(sys.modules, {"comtypes": mock.Mock(),
-                             "pycaw.pycaw": mock.Mock(),
+                             "pycaw": mock.Mock(),
                              "winrt.windows.media.control": mock.Mock()}):
             return pc_state._WindowsReader()
 
@@ -169,15 +169,23 @@ class WindowsTest(unittest.TestCase):
         first.GetMute.return_value = 0
         second.GetMasterVolumeLevelScalar.return_value = 0.7
         second.GetMute.return_value = 1
-        device = SimpleNamespace(id="first", EndpointVolume=first)
-        reader._audio.GetSpeakers.return_value = device
+        device = mock.Mock()
+        device.GetId.return_value = "first"
+        device.Activate.return_value.QueryInterface.return_value = first
+        enumerator = reader._com.CoCreateInstance.return_value
+        enumerator.GetDefaultAudioEndpoint.return_value = device
         self.assertEqual(reader._volume(), {"vol": 45, "mute": False})
-        device.id, device.EndpointVolume = "second", second
+        self.assertEqual(reader._volume(), {"vol": 45, "mute": False})
+        self.assertEqual(device.Activate.call_count, 1)
+        device.GetId.return_value = "second"
+        device.Activate.return_value.QueryInterface.return_value = second
         self.assertEqual(reader._volume(), {"vol": 70, "mute": True})
         second.GetMute.side_effect = OSError("device lost")
         self.assertEqual(reader._volume(), {})
-        device.EndpointVolume = first
+        self.assertIsNone(reader._enumerator)
+        device.Activate.return_value.QueryInterface.return_value = first
         self.assertEqual(reader._volume(), {"vol": 45, "mute": False})
+        self.assertEqual(reader._com.CoCreateInstance.call_count, 2)
         reader.close()
 
     def test_media_status_and_no_session(self):

@@ -111,14 +111,16 @@ class _WindowsReader:
         self._audio = None
         self._manager_type = None
         self._manager = None
+        self._enumerator = None
         self._endpoint = None
         self._device_id = None
         try:
             import comtypes
             comtypes.CoInitialize()
             self._com = comtypes
-            from pycaw.pycaw import AudioUtilities
-            self._audio = AudioUtilities
+            from pycaw import constants, pycaw
+            self._audio = pycaw
+            self._enumerator_clsid = constants.CLSID_MMDeviceEnumerator
         except Exception as exc:
             _log.warning("pc_state: optional pycaw/comtypes unavailable: %s", exc)
         try:
@@ -130,14 +132,25 @@ class _WindowsReader:
     def _volume(self):
         if self._audio is None:
             return {}
+        audio, com = self._audio, self._com
         try:
-            device = self._audio.GetSpeakers()
-            if self._endpoint is None or device.id != self._device_id:
-                self._endpoint = device.EndpointVolume
-                self._device_id = device.id
+            # Not AudioUtilities.GetSpeakers(): it reads the whole device property
+            # store on every call, which made this poll the companion's main CPU cost.
+            if self._enumerator is None:
+                self._enumerator = com.CoCreateInstance(
+                    self._enumerator_clsid, audio.IMMDeviceEnumerator, com.CLSCTX_INPROC_SERVER)
+            device = self._enumerator.GetDefaultAudioEndpoint(
+                audio.EDataFlow.eRender.value, audio.ERole.eMultimedia.value)
+            device_id = device.GetId()
+            if self._endpoint is None or device_id != self._device_id:
+                self._endpoint = device.Activate(
+                    audio.IAudioEndpointVolume._iid_, com.CLSCTX_ALL, None
+                ).QueryInterface(audio.IAudioEndpointVolume)
+                self._device_id = device_id
             return {"vol": self._endpoint.GetMasterVolumeLevelScalar() * 100,
                     "mute": bool(self._endpoint.GetMute())}
         except Exception:
+            self._enumerator = None
             self._endpoint = None
             self._device_id = None
             return {}
@@ -171,7 +184,7 @@ class _WindowsReader:
         return state
 
     def close(self):
-        self._endpoint = self._manager = None
+        self._enumerator = self._endpoint = self._manager = None
         if self._com is not None:
             self._com.CoUninitialize()
 
