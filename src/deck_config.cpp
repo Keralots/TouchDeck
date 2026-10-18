@@ -2,6 +2,7 @@
 #include "deck_config.h"
 #include "deck_bambu.h"
 #include "config.h"
+#include "psram_json.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 
@@ -205,7 +206,7 @@ bool mountFs() {
 }  // namespace
 
 bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err) {
-  JsonDocument doc;
+  JsonDocument doc(psramJson());
   const DeserializationError de = deserializeJson(doc, json, len);
   if (de) {
     if (err) *err = String("JSON: ") + de.c_str();
