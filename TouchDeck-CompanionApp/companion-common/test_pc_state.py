@@ -98,14 +98,16 @@ class PacketTest(unittest.TestCase):
         original = copy.deepcopy(payload)
         base = copy.deepcopy(payload)
         base["pcstate"]["media"] = {"status": "playing"}
-        payload["padding"] = "x" * (1899 - len(json.dumps(base).encode("utf-8")))
+        limit = pc_state.PACKET_LIMIT
+        compact = json.dumps(base, separators=(",", ":")).encode("utf-8")
+        payload["padding"] = "x" * (limit - len(compact))
         bounded, data = pc_state.encode_packet(payload)
-        self.assertEqual(len(data), 1899)
+        self.assertEqual(len(data), limit)
         self.assertEqual(bounded["pcstate"]["media"], {"status": "playing"})
         self.assertEqual(payload["pcstate"], original["pcstate"])
         payload["padding"] += "x"
         bounded, data = pc_state.encode_packet(payload)
-        self.assertLess(len(data), 1900)
+        self.assertLessEqual(len(data), limit)
         self.assertEqual(bounded["pcstate"], {"vol": 45})
         payload["padding"] += "x" * 100
         bounded, data = pc_state.encode_packet(payload)

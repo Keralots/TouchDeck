@@ -15,7 +15,8 @@ import unicodedata
 POLL_INTERVAL = 0.5
 COMMAND_DELAY = 0.2
 TOOL_TIMEOUT = 0.2
-PACKET_LIMIT = 1900
+# arduino-esp32 NetworkUdp reads at most 1460 bytes; a longer datagram is truncated.
+PACKET_LIMIT = 1460
 _log = logging.getLogger(__name__)
 
 
@@ -48,18 +49,18 @@ def encode_packet(payload):
     payload = copy.deepcopy(payload)
 
     def encoded():
-        return json.dumps(payload).encode("utf-8")
+        return json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
     data = encoded()
     media = payload.get("pcstate", {}).get("media")
-    if len(data) >= PACKET_LIMIT and media is not None:
+    if len(data) > PACKET_LIMIT and media is not None:
         media.pop("title", None)
         media.pop("artist", None)
         data = encoded()
-        if len(data) >= PACKET_LIMIT:
+        if len(data) > PACKET_LIMIT:
             payload["pcstate"].pop("media", None)
             data = encoded()
-    if len(data) >= PACKET_LIMIT and "pcstate" in payload:
+    if len(data) > PACKET_LIMIT and "pcstate" in payload:
         payload.pop("pcstate")
         data = encoded()
     return payload, data
