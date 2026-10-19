@@ -1044,6 +1044,98 @@ uint32_t s_httpSeen = 0;
 uint32_t s_prnSeen = 0;  // printersVersion() last applied
 bool s_prnRebuild = false;
 
+// "when" tiles. A PC counts as off only after this long offline, on top of
+// PC_STALE_TIMEOUT_MS, so a companion restart does not reshuffle the page.
+constexpr uint32_t WHEN_PC_GRACE_MS = 45000;
+struct WhenPc {
+  String id;  // "" = the first known PC
+  bool on = false;
+  uint32_t offSince = 0;
+};
+std::vector<WhenPc> s_whenPcs;
+std::vector<std::pair<String, String>> s_whenStates;  // entity, last state HA reported
+
+const String& tilePcId(const TileDef& d) { return d.tap.kind == ACT_PC ? d.tap.pc : d.pc; }
+
+bool pcIsOnline(const String& id) {
+  const PcSource* src = pcSource(id);
+  return src && src->data.online;
+}
+
+bool whenWanted(const TileDef& t) {
+  if (t.when == WHEN_PC_ON || t.when == WHEN_PC_OFF) {
+    bool on = false;
+    for (const WhenPc& p : s_whenPcs)
+      if (p.id == tilePcId(t)) on = p.on;
+    return on == (t.when == WHEN_PC_ON);
+  }
+  if (t.when == WHEN_ENTITY) {
+    for (const auto& s : s_whenStates)
+      if (s.first == t.whenEntity) return s.second.length() && (s.second == t.whenState) != t.whenNot;
+    return false;
+  }
+  return true;
+}
+
+// The PCs and entities the "when" tiles watch, keeping what is already known.
+void whenCollect() {
+  std::vector<WhenPc> pcs;
+  std::vector<std::pair<String, String>> states;
+  for (const PageDef& pd : s_cfg.pages)
+    for (const TileDef& t : pd.tiles) {
+      if (t.when == WHEN_ENTITY) {
+        bool have = false;
+        for (const auto& s : states) have |= s.first == t.whenEntity;
+        if (have) continue;
+        String last;
+        for (const auto& s : s_whenStates)
+          if (s.first == t.whenEntity) last = s.second;
+        HaEntity e;
+        if (!last.length() && haGetEntity(t.whenEntity, e) && e.known) last = e.state;
+        states.push_back({t.whenEntity, last});
+      } else if (t.when != WHEN_ALWAYS) {
+        const String& id = tilePcId(t);
+        bool have = false;
+        for (const WhenPc& p : pcs) have |= p.id == id;
+        if (have) continue;
+        WhenPc n;
+        n.id = id;
+        n.on = pcIsOnline(id);
+        for (const WhenPc& p : s_whenPcs)
+          if (p.id == id) n = p;
+        pcs.push_back(n);
+      }
+    }
+  s_whenPcs.swap(pcs);
+  s_whenStates.swap(states);
+}
+
+void whenTrack() {
+  const uint32_t now = millis();
+  for (WhenPc& p : s_whenPcs) {
+    if (pcIsOnline(p.id)) {
+      p.on = true;
+      p.offSince = 0;
+    } else if (p.on) {
+      if (!p.offSince) p.offSince = now | 1;
+      else if (now - p.offSince >= WHEN_PC_GRACE_MS) p.on = false;
+    }
+  }
+  // While HA is away the last known states stand.
+  if (haLink() != HA_CONNECTED) return;
+  for (auto& s : s_whenStates) {
+    HaEntity e;
+    if (haGetEntity(s.first, e) && e.known) s.second = e.state;
+  }
+}
+
+// The layout follows the conditions as they are now.
+void whenApply() {
+  whenCollect();
+  for (PageDef& pd : s_cfg.pages)
+    for (TileDef& t : pd.tiles) t.shown = whenWanted(t);
+}
+
 // The detail line: literal text and fields from the same reply ("--" while missing).
 String httpDetail(const TileDef& d) {
   String out;
@@ -1116,6 +1208,7 @@ void collectEntities() {
     if (r.def->entity.length()) ids.push_back(r.def->entity);
   for (const PrinterDef& d : s_cfg.printers)
     if (advSettings.printers && d.plug.length()) ids.push_back(d.plug);
+  for (const auto& s : s_whenStates) ids.push_back(s.first);
   if (s_cfg.ledEntity.length()) ids.push_back(s_cfg.ledEntity);
   else ledSetHaLevel(LED_HA_NONE);
   s_ledSeen = 0;
@@ -4429,7 +4522,7 @@ void layoutHeader(Page& p) {
 struct Cell {
   bool placed;
   int x, y, w, h;
-  bool off = false;  // switched off (printer tiles with printers disabled): no cell, stored pos untouched
+  bool off = false;  // printer tiles with printers disabled, "when" not met: no cell, stored pos untouched
 };
 
 void placeTiles(const PageDef& def, int orient, std::vector<Cell>& out) {
@@ -4454,7 +4547,7 @@ void placeTiles(const PageDef& def, int orient, std::vector<Cell>& out) {
     const TilePos& ps = def.tiles[i].pos[orient];
     out[i].w = ps.w;
     out[i].h = ps.h;
-    out[i].off = def.tiles[i].type == TILE_PRINTER && !advSettings.printers;
+    out[i].off = (def.tiles[i].type == TILE_PRINTER && !advSettings.printers) || !def.tiles[i].shown;
     if (!out[i].off && ps.set && fits(ps.x, ps.y, ps.w, ps.h)) take(out[i], ps.x, ps.y);
   }
   for (Cell& c : out) {
@@ -5409,6 +5502,7 @@ void buildPages() {
   s_tiles.clear();
   s_zonesDirty = true;
   s_tiles.reserve(64);
+  whenApply();
   for (const PageDef& pd : s_cfg.pages) {
     if (s_count >= MAX_PAGES) break;
     if (pd.printer.length() && !printerPowered(pd.printer)) continue;
@@ -5808,20 +5902,26 @@ void updateHeaders() {
     if (r.def->type == TILE_CLOCK) applyClock(r);
 }
 
-// Plugs power the printers; a printer page comes and goes with its printer,
-// so a change rebuilds the pages once nothing is in the user's hands.
+// Pages are rebuilt only once nothing is in the user's hands.
+bool canRebuild() { return !touchIsDown() && !s_ed.root && !s_modalCard && !s_qp.open; }
+
+void rebuildPages() {
+  stopGestures();
+  destroyPages(true);
+  buildPages();
+  s_gen++;
+  lv_obj_invalidate(lv_screen_active());
+}
+
+// Plugs power the printers; a printer page comes and goes with its printer.
 void printerSync() {
   if (printersPowerSync(s_cfg)) s_prnRebuild = true;
-  if (s_prnRebuild && !touchIsDown() && !s_ed.root && !s_modalCard && !s_qp.open) {
+  if (s_prnRebuild && canRebuild()) {
     bool pages = false;
     for (const PageDef& pd : s_cfg.pages) pages |= pd.printer.length() > 0;
     s_prnRebuild = false;
     if (pages) {
-      stopGestures();
-      destroyPages(true);
-      buildPages();
-      s_gen++;
-      lv_obj_invalidate(lv_screen_active());
+      rebuildPages();
       return;
     }
   }
@@ -5830,6 +5930,19 @@ void printerSync() {
   s_prnSeen = v;
   readPrinters();
   for (TileRt& r : s_tiles) applyPrinterToTile(r);
+}
+
+// A "when" tile whose condition flipped rebuilds the pages.
+void whenSync() {
+  whenTrack();
+  if (!canRebuild()) return;
+  for (const PageDef& pd : s_cfg.pages)
+    for (const TileDef& t : pd.tiles)
+      if (t.when != WHEN_ALWAYS && whenWanted(t) != t.shown) {
+        Serial.printf("Deck: tile '%s' %s, rebuilding pages\n", t.id.c_str(), t.shown ? "hides" : "shows");
+        rebuildPages();
+        return;
+      }
 }
 
 void logStats() {
@@ -5973,6 +6086,7 @@ void deckTick() {
   haSync();
   httpSync();
   printerSync();
+  whenSync();
   pcCmdSync();
   pairSync();
   pcSync(false);

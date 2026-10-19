@@ -183,6 +183,31 @@ void parsePos(JsonVariantConst v, TilePos& p) {
   p.h = halves(v["h"], 2, 1, 12);
 }
 
+bool parseWhen(JsonVariantConst v, TileDef& t, String* err, const String& where) {
+  if (v.isNull()) return true;
+  if (v.is<const char*>()) {
+    const char* s = v.as<const char*>();
+    if (!strcmp(s, "pc-on")) t.when = WHEN_PC_ON;
+    else if (!strcmp(s, "pc-off")) t.when = WHEN_PC_OFF;
+    else {
+      if (err) *err = where + ": unknown when '" + s + "'";
+      return false;
+    }
+    return true;
+  }
+  const char* entity = v["entity"] | "";
+  const char* state = v["state"] | "";
+  if (!strchr(entity, '.') || state[0] == '\0' || !strcmp(state, "!")) {
+    if (err) *err = where + ": when needs an entity and a state";
+    return false;
+  }
+  t.when = WHEN_ENTITY;
+  t.whenEntity = entity;
+  t.whenNot = state[0] == '!';
+  t.whenState = state + (t.whenNot ? 1 : 0);
+  return true;
+}
+
 void parseGrid(JsonVariantConst v, uint8_t& cols, uint8_t& rows) {
   if (v.isNull()) return;
   cols = (uint8_t)constrain((int)(v["cols"] | cols), 1, 6);
@@ -313,6 +338,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       t.hasChartColor = parseColor(tv["chartColor"] | (const char*)nullptr, t.chartColor);
       parsePos(tv["pos"]["landscape"], t.pos[ORIENT_LANDSCAPE]);
       parsePos(tv["pos"]["portrait"], t.pos[ORIENT_PORTRAIT]);
+      if (!parseWhen(tv["when"], t, err, where)) return false;
       if (t.type == TILE_METRIC) {
         const int m = tv["metric"] | 0;
         if (m < 1 || m > MAX_METRICS) {
