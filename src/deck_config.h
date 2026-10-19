@@ -57,6 +57,14 @@
 // "confirm": "off" | "always" (optional, tap and hold actions): ask on the
 // device before turning the tile off, or before any action it runs.
 //
+// "when" (optional, any tile): the tile shows only while a condition holds
+// and leaves its cell free otherwise, so two tiles can share a cell.
+//   "pc-on" | "pc-off": the tile's PC (its "pc" command or metric PC, else
+//     the first known one) is online / offline. Offline counts after a grace
+//     period, so a companion restart does not reshuffle the page.
+//   { "entity": "switch.pc", "state": "on" }: the HA state equals "state";
+//     "!on" = differs. Hidden until Home Assistant reports the entity.
+//
 // An HTTP request as a tap or hold action (plain http on the LAN only):
 // { "action": "http", "method": "POST", "url": "http://host/path",
 //   "body": "text" | { json }, "contentType": "...", "headers": { "K": "v" } }.
@@ -102,6 +110,7 @@ enum ActionKind : uint8_t {
   ACT_PC,            // {pc, cmd}: a command to a paired PC's companion
 };
 enum ConfirmMode : uint8_t { CONFIRM_NONE = 0, CONFIRM_OFF, CONFIRM_ALWAYS };
+enum TileWhen : uint8_t { WHEN_ALWAYS = 0, WHEN_PC_ON, WHEN_PC_OFF, WHEN_ENTITY };
 
 struct TileAction {
   ActionKind kind = ACT_NONE;
@@ -152,6 +161,10 @@ struct TileDef {
   PrinterShow show = PS_HERO;
   uint8_t nozzle = 0;     // PS_NOZZLE: 0 = right / only, 1 = left
   uint8_t amsUnit = 1;    // PS_AMS: 1-based position in the reported units
+  TileWhen when = WHEN_ALWAYS;
+  String whenEntity, whenState;  // WHEN_ENTITY
+  bool whenNot = false;          // WHEN_ENTITY: "state": "!on"
+  bool shown = true;             // runtime: the condition as the pages were last built
 };
 
 struct PrinterDef {

@@ -27,6 +27,7 @@ Captured from the device (`/screen.bmp`) with the Glass theme.
 - **Sensor history:** `style: "chart"` and `hours` (1..168, default 24) show Home Assistant history; the detail card includes min / max / now. Optional `warn` and `crit` thresholds colour the value and line amber or red; `crit` below `warn` makes lower values worse, such as battery levels. `"format": "duration"` shows a reading in s, min, h or d as `1h 49m` or `3d 2h` (uptime, time left on a print, a battery runtime).
 - **Slider tiles:** a light, cover, fan, media player or number as a tile that fills to its level; drag sideways on it to change the level (the page does not swipe there), tap to toggle, hold for the card. Pick "Slider" as the tile type in the portal.
 - **Confirm before acting:** a tile can ask on the device before it turns something off (a printer mid-print) or before every action. Set it under the tile's "more options" button in the portal.
+- **Conditional tiles:** a tile can show only while the PC is on, only while it is off, or only while a Home Assistant entity is (or is not) in a given state. Its cell stays free otherwise, so a tile with the opposite condition can share it: volume buttons while the PC runs, a "PC power" switch in the same place while it is off. See [Conditional tiles](#conditional-tiles).
 - **HTTP buttons:** a button can send an HTTP request to a device on the LAN (Tasmota, Node-RED, your own projects) instead of calling Home Assistant.
 - **PC stats:** metric tiles fed by the TouchDeck Companion; values, units, history chart and an amber warning colour above a set share of the scale.
 - **Quick panel:** pull down from the top edge for screen and LED brightness, link status, screen off, night mode, the top bar switch and the page editor.
@@ -50,6 +51,22 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 ## Home Assistant
 
 In **Pages & tiles**, enter the Home Assistant address (for example `http://192.168.0.7:8123`) and a long-lived access token (HA profile, Security tab). The token is stored only on the device. Then add tiles from the entity picker.
+
+## Conditional tiles
+
+In **Pages & tiles**, a tile's "more options" has "Show": Always, Only while the PC is on, Only while the PC is off, or Only while an entity is (or is not) in a state. A tile whose condition does not hold takes no cell, and the page is laid out again when a condition changes (once nothing is being touched). When a page has conditional tiles, "Preview" above the grid switches each condition so you can place the tiles for both cases.
+
+```json
+{ "id": "vol", "type": "action", "when": "pc-on",
+  "tap": { "action": "pc", "cmd": "volume_up" },
+  "pos": { "landscape": { "x": 3, "y": 0 } } },
+{ "id": "pcpow", "type": "toggle", "entity": "switch.pc_power",
+  "when": { "entity": "switch.pc_power", "state": "!on" },
+  "pos": { "landscape": { "x": 3, "y": 0 } } }
+```
+
+- `"pc-on"` / `"pc-off"` follow the tile's own PC (the PC of its command or metric, otherwise the first known PC). The PC counts as off about a minute after its companion stops sending, so a companion restart does not rearrange the page; it counts as on again with the first packet.
+- `{ "entity": ..., "state": ... }` compares the state Home Assistant reports (`on`, `off`, `home`, `playing`...); a leading `!` means "is not". The tile stays hidden until Home Assistant has reported the entity; while Home Assistant is unreachable the last known state stands.
 
 ## HTTP buttons
 

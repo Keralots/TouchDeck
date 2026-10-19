@@ -104,7 +104,7 @@ function pcList(){if(!pcs.length)return '';return '<p class="field-hint">PCs: '+
 function metricRow(t,i){const ml=mlist(t),m=ml.find(x=>x.id===t.metric);const col=t.color||PAL[((t.metric||1)-1)%8];
   const opts=ml.map(x=>'<option value="'+x.id+'"'+(x.id===t.metric?' selected':'')+'>'+esc(x.name)+' ('+esc(Math.round(x.value*10)/10)+' '+esc(x.unit)+')</option>').join('')+(m?'':'<option value="'+t.metric+'" selected>#'+t.metric+' (not in the last packet)</option>');
   return '<div class="dk-tile'+(i===sel?' sel':'')+'"><div class="dk-ic" style="background:'+col+'">PC</div><div class="dk-tmain"><input type="text" data-l="'+i+'" value="'+esc(t.label||'')+'" placeholder="'+esc(m?m.name:'Metric')+'"><div class="dk-tsub">'+(pcs.length>1&&pcOf(t)?esc(pcOf(t).name)+' ':'PC ')+'metric #'+t.metric+(m?' - '+esc(Math.round(m.value*10)/10)+' '+esc(m.unit):'')+'</div></div>'+
-  '<div class="dk-tact">'+pcSel(t,i)+'<select data-m="'+i+'">'+opts+'</select><select data-st="'+i+'">'+[['number','Number'],['chart','Chart'],['bar','Bar']].map(o=>'<option value="'+o[0]+'"'+((t.style||'number')===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>'+sizeSel(t,i)+'<button type="button" class="btn'+(i===more?' on':'')+'" data-mo="'+i+'" title="More options">&#8943;</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div>'+(i===more?'<div class="dk-more">'+colorField(t,i)+'</div>':'')+'</div>';}
+  '<div class="dk-tact">'+pcSel(t,i)+'<select data-m="'+i+'">'+opts+'</select><select data-st="'+i+'">'+[['number','Number'],['chart','Chart'],['bar','Bar']].map(o=>'<option value="'+o[0]+'"'+((t.style||'number')===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>'+sizeSel(t,i)+'<button type="button" class="btn'+(i===more?' on':'')+'" data-mo="'+i+'" title="More options">&#8943;</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div>'+(i===more?'<div class="dk-more">'+whenField(t,i)+colorField(t,i)+'</div>':'')+'</div>';}
 /* Tile colours: a picker, presets, Auto = the key left out of deck.json. */
 const SW=['#F6C56B','#FFB35C','#FF8A7A','#E66767','#D55181','#B3A6FF','#9085E9','#7DB5FF','#3987E5','#5CC9A7','#00A35C','#C98500'];
 const TXT=['#FFFFFF','#E6E8EC','#1D2129'];
@@ -169,7 +169,7 @@ function printerPage(d,s){const id=d.id,u=Date.now().toString(36).slice(-4);
   if(count<=4)ams.push(t('slots',0,2,4));
   return [{id:pid,name:d.name||id,group:pid,printer:id,tiles:tiles},{id:pid+'_ams',name:(d.name||id)+' AMS',group:pid,printer:id,tiles:ams}];}
 function clockRow(t,i){return '<div class="dk-tile'+(i===sel?' sel':'')+'"><div class="dk-ic" style="background:'+(t.color||'#E6E8EC')+'">12</div><div class="dk-tmain"><b>Clock</b><div class="dk-tsub">Time and date (24h and time zone from Time settings)</div></div>'+
-  '<div class="dk-tact">'+sizeSel(t,i)+'<button type="button" class="btn'+(i===more?' on':'')+'" data-mo="'+i+'" title="More options">&#8943;</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div>'+(i===more?'<div class="dk-more">'+colorField(t,i)+'</div>':'')+'</div>';}
+  '<div class="dk-tact">'+sizeSel(t,i)+'<button type="button" class="btn'+(i===more?' on':'')+'" data-mo="'+i+'" title="More options">&#8943;</button><button type="button" class="btn" data-u="'+i+'" title="Move up">&#8593;</button><button type="button" class="btn" data-x="'+i+'" title="Remove">&#215;</button></div>'+(i===more?'<div class="dk-more">'+whenField(t,i)+colorField(t,i)+'</div>':'')+'</div>';}
 /* A tile's "more options" panel: confirm, colour, and for buttons the tap action. */
 const opt=(v,l,on)=>'<option value="'+esc(v)+'"'+(on?' selected':'')+'>'+esc(l)+'</option>';
 const isHttpSensor=t=>t.type==='sensor'&&!!t.http;
@@ -209,7 +209,7 @@ function moreRow(t,i){const cf=t.confirm||'';
       '<div class="field"><label class="field-label">Content type</label><input type="text" data-hc="'+i+'" value="'+esc(tp.contentType||'')+'" placeholder="automatic" spellcheck="false"></div>'+
       '<div class="field wide"><div class="dk-row"><button type="button" class="btn" data-ht="'+i+'">Test</button><span class="dk-tsub" id="dkHt'+i+'" style="margin:0;white-space:normal;flex:1">Sends the request from the device and shows the answer.</span></div></div>'+
       '<p class="field-hint wide" style="margin:0">Plain http on the local network. A body that starts with { or [ goes out as application/json, other text as text/plain. The request is stored in the deck configuration, which anyone on your network can read through this portal: avoid putting important passwords in it.</p>';}}
-  return h+colorField(t,i)+'</div>';}
+  return h+whenField(t,i)+colorField(t,i)+'</div>';}
 function parseHdrs(s){const o={};s.split('\n').forEach(l=>{const c=l.indexOf(':');if(c>0){const k=l.slice(0,c).trim(),v=l.slice(c+1).trim();if(k)o[k]=v;}});return o;}
 function httpSensorFields(t,i){const h=t.http;
   return '<div class="dk-more">'+[['url','URL','http://192.168.0.10:8080/status'],['path','JSON path','ups.load'],['poll','Poll (s)','30'],['unit','Unit','%'],['detail','Detail line','runtime {ups.runtime_min|min}']].map(([k,label,ph])=>'<div class="field'+(k==='url'||k==='detail'?' wide':'')+'"><label class="field-label">'+label+'</label><input '+(k==='poll'?'type="number" min="5" max="3600" step="1"':'type="text"')+' data-hs="'+i+'" data-hsk="'+k+'" value="'+esc(k==='unit'||k==='detail'?(t[k]||''):h[k]==null?'':h[k])+'" placeholder="'+ph+'" spellcheck="false"></div>').join('')+
@@ -252,6 +252,24 @@ function setDirty(v){dirty=v;$('dkMsg').textContent=v?'Unsaved changes':'Saved';
 /* Printers off (Advanced page, window.snPrn from portal.js): printer pages and
    tiles stay in deck.json but are left out here, as the firmware does. */
 const prnOn=()=>!!window.snPrn,offT=t=>t.type==='printer'&&!prnOn();
+/* "when" tiles: k names the condition (a PC, or an entity and state), neg = shown while it is not met.
+   pv holds the preview's answer per condition (default met); a tile it hides is laid out like an off one. */
+let pv={};
+const whenOf=t=>{const w=t.when;if(w==='pc-on'||w==='pc-off')return {k:'pc:'+((isPcCmd(t)?t.tap.pc:t.pc)||''),neg:w==='pc-off'};
+  if(w&&typeof w==='object'){const s=String(w.state||''),n=s[0]==='!';return {k:'e:'+(w.entity||'')+'='+(n?s.slice(1):s),neg:n};}return null;};
+const hidT=t=>{if(offT(t))return true;const c=whenOf(t);return !!c&&(pv[c.k]!==false)===c.neg;};
+function whenBar(p){const ks=[];p.tiles.forEach(t=>{const c=whenOf(t);if(c&&!offT(t)&&!ks.includes(c.k))ks.push(c.k);});if(!ks.length)return '';
+  return '<div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Preview</span>'+ks.map(k=>{let nm;
+    if(k.startsWith('pc:')){const pc=pcs.find(x=>x.id===k.slice(3))||(k==='pc:'&&pcs[0]);nm=pc?pc.name:'PC';}else nm=k.slice(2).replace('=',' is ');
+    const on=pv[k]!==false,yes=k.startsWith('pc:')?['On','Off']:['Yes','No'];
+    return '<span class="dk-tsub" style="margin:0 0 0 8px">'+esc(nm)+'</span>'+[[1,yes[0]],[0,yes[1]]].map(o=>'<button type="button" class="chip page-tab'+(on===!!o[0]?' on':'')+'" data-pv="'+esc(k)+'" data-pvv="'+o[0]+'">'+o[1]+'</button>').join('');}).join('')+'</div>';}
+function whenField(t,i){const w=t.when,k=!w?'':typeof w==='string'?w:'entity';
+  let h='<div class="field"><label class="field-label">Show</label><select data-wh="'+i+'">'+[['','Always'],['pc-on','Only while the PC is on'],['pc-off','Only while the PC is off'],['entity','Only while an entity is in a state']].map(o=>opt(o[0],o[1],k===o[0])).join('')+'</select></div>';
+  if(k==='entity'){const s=String(w.state||''),n=s[0]==='!';
+    h+='<div class="field"><label class="field-label">Entity</label><input type="text" data-we="'+i+'" value="'+esc(w.entity||'')+'" placeholder="switch.pc_power" spellcheck="false"></div>'+
+    '<div class="field"><label class="field-label">State</label><div class="dk-row"><select data-wn="'+i+'" style="width:auto">'+opt('','is',!n)+opt('!','is not',n)+'</select><input type="text" data-ws="'+i+'" value="'+esc(n?s.slice(1):s)+'" placeholder="on" spellcheck="false"></div></div>';}
+  if(k)h+='<p class="field-hint wide" style="margin:0">'+(k==='entity'?'The state as Home Assistant reports it (on, off, home, playing...). Hidden until it is known.':'The PC counts as off about a minute after its companion goes quiet.')+' Its cell is free otherwise: another tile with the opposite condition can take it. Switch the Preview above the grid to place it.</p>';
+  return h;}
 const pages=()=>deck.pages.filter(p=>p.type!=='metrics'&&(prnOn()||!p.printer));
 window.dkPrnSync=()=>{if(deck)render();};
 const visible=()=>document.querySelector('.page.active')?.dataset.page==='deck';
@@ -283,12 +301,12 @@ const sizeSel=(t,i)=>{const s=tileSize(t),o=['1x1','1.5x1','2x1','3x1','1x1.5','
 function layout(p){const [gc,gr]=grid(p),c=gc*2,r=gr*2;const used=[...Array(r)].map(()=>Array(c).fill(false));const at=p.tiles.map(()=>null);
   const fits=(x,y,w,h)=>{if(x+w>c||y+h>r)return false;for(let j=y;j<y+h;j++)for(let i=x;i<x+w;i++)if(used[j][i])return false;return true;};
   const put=(k,x,y,w,h)=>{for(let j=y;j<y+h;j++)for(let i=x;i<x+w;i++)used[j][i]=true;at[k]={x:x,y:y,w:w,h:h};};
-  p.tiles.forEach((t,k)=>{if(offT(t))return;const q=tpos(t),[w,h]=tdim(t);if(typeof q.x==='number'&&typeof q.y==='number'){const x=hv(q.x,0,0,30),y=hv(q.y,0,0,30);if(fits(x,y,w,h))put(k,x,y,w,h);}});
-  p.tiles.forEach((t,k)=>{if(at[k]||offT(t))return;const [w,h]=tdim(t);for(let y=0;y<r&&!at[k];y++)for(let x=0;x<c&&!at[k];x++)if(fits(x,y,w,h))put(k,x,y,w,h);});
+  p.tiles.forEach((t,k)=>{if(hidT(t))return;const q=tpos(t),[w,h]=tdim(t);if(typeof q.x==='number'&&typeof q.y==='number'){const x=hv(q.x,0,0,30),y=hv(q.y,0,0,30);if(fits(x,y,w,h))put(k,x,y,w,h);}});
+  p.tiles.forEach((t,k)=>{if(at[k]||hidT(t))return;const [w,h]=tdim(t);for(let y=0;y<r&&!at[k];y++)for(let x=0;x<c&&!at[k];x++)if(fits(x,y,w,h))put(k,x,y,w,h);});
   return at;}
 /* Pin every placed tile where it shows, so a drag changes only what moved.
    A hidden tile loses its old cell, or it could claim space before a pinned one. */
-function pinAll(p,at){p.tiles.forEach((t,k)=>{if(offT(t))return;const a=at[k];if(a){setPos(t,cell(a.x,a.y,a.w,a.h));return;}const q=Object.assign({},tpos(t));delete q.x;delete q.y;setPos(t,q);});}
+function pinAll(p,at){p.tiles.forEach((t,k)=>{if(hidT(t))return;const a=at[k];if(a){setPos(t,cell(a.x,a.y,a.w,a.h));return;}const q=Object.assign({},tpos(t));delete q.x;delete q.y;setPos(t,q);});}
 const free=(at,k,q,c,r)=>q.x>=0&&q.y>=0&&q.x+q.w<=c&&q.y+q.h<=r&&at.every((o,j)=>j===k||!o||o.x>=q.x+q.w||o.x+o.w<=q.x||o.y>=q.y+q.h||o.y+o.h<=q.y);
 const ovl=(a,b)=>{const w=Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x),h=Math.min(a.y+a.h,b.y+b.h)-Math.max(a.y,b.y);return w>0&&h>0?w*h:0;};
 const garea=a=>(a.y+1)+'/'+(a.x+1)+'/span '+a.h+'/span '+a.w;
@@ -341,8 +359,8 @@ function movePage(dir){const ps=pages(),p=ps[cur];if(!p||!canMovePage(ps,cur,dir
     ordered=runs.flat();}
   const slots=ps.map(x=>deck.pages.indexOf(x));ordered.forEach((x,i)=>deck.pages[slots[i]]=x);cur=ordered.indexOf(p);setDirty(true);renderTabs();renderPage();}
 function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.innerHTML='<p class="dk-empty">No deck pages. Add one with "+ Page".</p>';return;}
-  const p=ps[cur];const [c,r]=grid(p),land=ori==='landscape',at=layout(p),lost=p.tiles.map((t,k)=>k).filter(k=>!at[k]&&!offT(p.tiles[k]));let cells=0;at.forEach(a=>{if(a)cells+=a.w*a.h/4;});
-  let h='<div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Layout</span>'+[['landscape','Landscape'],['portrait','Portrait']].map(o=>'<button type="button" class="chip page-tab'+(o[0]===ori?' on':'')+'" data-o="'+o[0]+'">'+o[1]+'</button>').join('')+'</div>';
+  const p=ps[cur];const [c,r]=grid(p),land=ori==='landscape',at=layout(p),lost=p.tiles.map((t,k)=>k).filter(k=>!at[k]&&!hidT(p.tiles[k]));let cells=0;at.forEach(a=>{if(a)cells+=a.w*a.h/4;});
+  let h='<div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Layout</span>'+[['landscape','Landscape'],['portrait','Portrait']].map(o=>'<button type="button" class="chip page-tab'+(o[0]===ori?' on':'')+'" data-o="'+o[0]+'">'+o[1]+'</button>').join('')+'</div>'+whenBar(p);
   h+='<div class="grid-2"><div class="field"><label class="field-label">Page name</label><input type="text" id="dkPName" value="'+esc(p.name||'')+'"></div><div class="field"><label class="field-label">Grid (columns x rows)</label><div class="dk-row"><select id="dkPCols" style="width:auto">'+(land?[2,3,4,5,6]:[2,3,4]).map(n=>'<option'+(n===c?' selected':'')+'>'+n+'</option>').join('')+'</select><span>x</span><select id="dkPRows" style="width:auto">'+(land?[2,3,4]:[2,3,4,5,6]).map(n=>'<option'+(n===r?' selected':'')+'>'+n+'</option>').join('')+'</select><button type="button" class="btn" id="dkPLeft" style="margin-left:auto;padding:6px 9px">Move left</button><button type="button" class="btn" id="dkPRight" style="padding:6px 9px">Move right</button><button type="button" class="btn btn-danger" id="dkPDel">Delete page</button></div></div></div>';
   if(prnOn()&&(deck.printers||[]).length&&(p.printer||p.tiles.some(t=>t.type==='printer')))h+='<div class="field"><label class="field-label">Printer page</label><select id="dkPPrn" style="width:auto">'+opt('','Always shown',!p.printer)+(deck.printers||[]).map(d=>opt(d.id,'Only while '+(d.name||d.id)+' is on',p.printer===d.id)).join('')+'</select></div>';
   h+='<label class="check-row standalone"><input type="checkbox" id="dkPStack"'+(stackedAt(ps,cur)?' checked':'')+(cur===0?' disabled':'')+'><span class="check-box"></span><span class="check-text"><strong>Below the previous page</strong><span class="ct-hint">Stacked pages form one column: swipe up and down between them, left and right to the next column. Move left/right moves a column head with its column, or swaps a stacked page within its column.</span></span></label>';
@@ -389,6 +407,12 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   el.querySelectorAll('[data-u]').forEach(x=>x.onclick=()=>{const i=+x.dataset.u;if(i<1)return;const t=p.tiles.splice(i,1)[0];p.tiles.splice(i-1,0,t);sel=-1;more=-1;setDirty(true);renderPage();});
   el.querySelectorAll('[data-x]').forEach(x=>x.onclick=()=>{p.tiles.splice(+x.dataset.x,1);sel=-1;more=-1;setDirty(true);renderPage();});
   el.querySelectorAll('[data-mo]').forEach(x=>x.onclick=()=>{const i=+x.dataset.mo;more=more===i?-1:i;renderPage();});
+  el.querySelectorAll('[data-pv]').forEach(b=>b.onclick=()=>{pv[b.dataset.pv]=b.dataset.pvv==='1';sel=-1;renderPage();});
+  el.querySelectorAll('[data-wh]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.wh],v=e.target.value;if(!v)delete t.when;else if(v==='entity')t.when={entity:domainOf(t.entity)?t.entity:'',state:'on'};else t.when=v;setDirty(true);renderPage();});
+  el.querySelectorAll('[data-we]').forEach(x=>{x.oninput=e=>{p.tiles[+x.dataset.we].when.entity=e.target.value.trim();setDirty(true);};x.onchange=()=>renderPage();});
+  const wst=(t,neg,v)=>{t.when.state=(neg?'!':'')+v;setDirty(true);};
+  el.querySelectorAll('[data-wn]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.wn],s=String(t.when.state||'');wst(t,e.target.value==='!',s[0]==='!'?s.slice(1):s);renderPage();});
+  el.querySelectorAll('[data-ws]').forEach(x=>{x.oninput=e=>{const t=p.tiles[+x.dataset.ws];wst(t,String(t.when.state||'')[0]==='!',e.target.value.trim());};x.onchange=()=>renderPage();});
   el.querySelectorAll('[data-cf]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.cf];if(e.target.value)t.confirm=e.target.value;else delete t.confirm;setDirty(true);});
   el.querySelectorAll('[data-fm]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.fm];if(e.target.value)t.format=e.target.value;else delete t.format;setDirty(true);});
   el.querySelectorAll('[data-sh]').forEach(x=>x.onchange=e=>{const t=p.tiles[+x.dataset.sh],v=e.target.value.trim();if(v&&Number.isFinite(+v)){t.hours=Math.max(1,Math.min(168,Math.round(+v)));x.value=t.hours;}else delete t.hours;setDirty(true);});
