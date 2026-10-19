@@ -52,6 +52,72 @@ class FakeCore:
         return False
 
 
+class TapPairing(unittest.TestCase):
+    def setUp(self):
+        self.core = FakeCore()
+        config = dict(FakeCore.DEFAULT_CONFIG, esp32_ip="deck.local", pc_id="0123456789ab")
+        self.state = AppState(normalize_config(config))
+        server._TAP.update(state="idle", message="", auto=False, denied=False)
+
+    def test_start_answers_tap_and_waits_until_allowed(self):
+        replies = [(200, {"success": True, "token": "t" * 32})]
+        with mock.patch.object(server, "_post_device", side_effect=lambda *a: replies.pop(0)) as post, \
+                mock.patch.object(server.threading, "Thread") as thread:
+            result = server.pair_start(self.core, self.state)
+        self.assertTrue(result["tap"])
+        post.assert_called_once_with("deck.local", "/api/pc/pair", {"id": "0123456789ab", "mode": "tap"})
+        thread.assert_called_once()
+        self.assertEqual("waiting", server.pair_status()["state"])
+        # A second start while waiting does not ask the device again.
+        with mock.patch.object(server, "_post_device") as post:
+            self.assertTrue(server.pair_start(self.core, self.state)["tap"])
+        post.assert_not_called()
+
+    def test_wait_collects_the_key_after_allow(self):
+        replies = [(202, {"success": False}), (202, {"success": False}),
+                   (200, {"success": True, "key": "ab" * 32})]
+        with mock.patch.object(server, "_TAP_POLL", 0), \
+                mock.patch.object(server, "_post_device", side_effect=lambda *a: replies.pop(0)) as post:
+            server._tap_wait(self.core, self.state, "deck.local", "0123456789ab", "t" * 32)
+        self.assertEqual(3, post.call_count)
+        post.assert_called_with("deck.local", "/api/pc/pair/confirm", {"id": "0123456789ab", "token": "t" * 32})
+        self.assertEqual("paired", server.pair_status()["state"])
+        self.assertEqual("ab" * 32, self.core.saved["pc_key"])
+
+    def test_deny_is_remembered_and_keeps_the_old_key(self):
+        self.state.set_config(dict(self.state.get_config(), pc_key="11" * 32))
+        with mock.patch.object(server, "_TAP_POLL", 0), \
+                mock.patch.object(server, "_post_device", return_value=(403, {"message": "no pairing in progress"})):
+            server._tap_wait(self.core, self.state, "deck.local", "0123456789ab", "t" * 32)
+        self.assertEqual("failed", server.pair_status()["state"])
+        self.assertTrue(server._TAP["denied"])
+        self.assertEqual("11" * 32, self.state.get_config()["pc_key"])
+
+    def test_older_firmware_falls_back_to_the_code(self):
+        with mock.patch.object(server, "_post_device", return_value=(200, {"success": True, "message": "Enter the code"})):
+            result = server.pair_start(self.core, self.state)
+        self.assertFalse(result["tap"])
+        self.assertEqual("idle", server.pair_status()["state"])
+
+    def test_watch_pairs_again_only_when_the_device_lost_the_key(self):
+        self.state.set_config(dict(self.state.get_config(), pc_key="11" * 32))
+        stop = mock.Mock()
+        for paired, calls in ((True, 0), (False, 1)):
+            stop.wait.side_effect = [False, True]
+            with mock.patch.object(server, "_fetch_device_json", return_value={"known": True, "paired": paired}) as fetch, \
+                    mock.patch.object(server, "pair_start") as start:
+                server.watch_pairing(self.core, self.state, stop)
+            fetch.assert_called_once_with("deck.local", "/api/pc/status?id=0123456789ab", timeout=3.0)
+            self.assertEqual(calls, start.call_count)
+        start.assert_called_once_with(self.core, self.state, auto=True)
+        # Denied on the device: no more automatic prompts.
+        server._TAP.update(auto=True, denied=True)
+        stop.wait.side_effect = [False, True]
+        with mock.patch.object(server, "_fetch_device_json") as fetch:
+            server.watch_pairing(self.core, self.state, stop)
+        fetch.assert_not_called()
+
+
 class CompanionServerModel(unittest.TestCase):
     def setUp(self):
         self.core = FakeCore()

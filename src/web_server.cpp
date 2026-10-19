@@ -831,7 +831,7 @@ static void handleApiStatus() {
 // ---------------------------------------------------------------------------
 static void handleLiveScreenshot() {
   String name, code;
-  if (pcPairPending(name, code)) {
+  if (pcPairPending(name, code) && code.length()) {  // the code must stay on the glass
     sendJsonMessage(409, false, "Pairing in progress");
     return;
   }
@@ -1368,16 +1368,34 @@ static void handleHttpTestGet() {
 
 // Pairing, called by the companion: POST /api/pc/pair?id=<pc_id> shows a code
 // on the device; POST /api/pc/pair/confirm?id=&code= answers {"key"} once.
+// POST /api/pc/pair?id=<pc_id>[&mode=tap]. Tap mode answers a token for
+// /api/pc/pair/confirm; without it the device shows a code (older companions).
 static void handlePcPair() {
-  String err;
-  const bool ok = pcPairStart(server.arg("id"), err);
-  sendJsonMessage(ok ? 200 : 409, ok, ok ? "Enter the code shown on the device" : err.c_str());
+  String token, err;
+  const bool tap = server.arg("mode") == "tap";
+  if (!pcPairStart(server.arg("id"), tap, token, err)) {
+    sendJsonMessage(409, false, err.c_str());
+    return;
+  }
+  if (!tap) {
+    sendJsonMessage(200, true, "Enter the code shown on the device");
+    return;
+  }
+  JsonDocument doc;
+  doc["success"] = true;
+  doc["message"] = "Tap Allow on the device";
+  doc["token"] = token;
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
 }
 
+// 202 while a tap pairing waits for Allow; the companion polls.
 static void handlePcPairConfirm() {
   String key, err;
-  if (!pcPairConfirm(server.arg("id"), server.arg("code"), key, err)) {
-    sendJsonMessage(403, false, err.c_str());
+  bool waiting;
+  if (!pcPairConfirm(server.arg("id"), server.arg("code"), server.arg("token"), key, waiting, err)) {
+    sendJsonMessage(waiting ? 202 : 403, false, err.c_str());
     return;
   }
   JsonDocument doc;
@@ -1392,6 +1410,19 @@ static void handlePcPairConfirm() {
 static void handlePcPairCancel() {
   pcPairCancel();
   sendJsonMessage(200, true, "Pairing cancelled");
+}
+
+// GET /api/pc/status?id=<pc_id> -> {"known", "paired"}: the companion checks the
+// device still holds its key (it is gone after a flash erase).
+static void handlePcStatus() {
+  bool paired = false;
+  const bool known = pcPairedState(server.arg("id"), paired);
+  JsonDocument doc;
+  doc["known"] = known;
+  doc["paired"] = known && paired;
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
 }
 
 // POST /api/pc/forget?id=<pc_id> - drop a PC from the known list.
@@ -1628,6 +1659,7 @@ void initWebServer() {
   server.on("/api/deck/card", HTTP_POST, handleDeckCard);
   server.on("/api/deck/tap", HTTP_POST, handleDeckTap);
   server.on("/api/pc/forget", HTTP_POST, handlePcForget);
+  server.on("/api/pc/status", HTTP_GET, handlePcStatus);
   server.on("/api/pc/pair", HTTP_POST, handlePcPair);
   server.on("/api/pc/pair/confirm", HTTP_POST, handlePcPairConfirm);
   server.on("/api/pc/pair/cancel", HTTP_POST, handlePcPairCancel);

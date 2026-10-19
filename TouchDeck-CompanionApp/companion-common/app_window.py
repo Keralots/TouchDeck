@@ -352,6 +352,8 @@ def run(core, start_hidden=False, notify_startup=False):
     _serial_link = serial_link.SerialLink(_state, _stop)
     _serial_link.start()
     threading.Thread(target=_monitor_loop, daemon=True, name="monitor").start()
+    threading.Thread(target=srv.watch_pairing, args=(core, _state, _stop), daemon=True,
+                     name="pair-watch").start()
 
     if not WEBVIEW_AVAILABLE:
         # No native window backend: serve and open the browser instead.
