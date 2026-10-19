@@ -17,7 +17,12 @@ function formBody(form){return new URLSearchParams(new FormData(form))}
 /* Pairing with the device for control (see pc_control.py). */
 function showPaired(paired){$('pairTag').textContent=paired?'paired':'not paired';$('pairForgetBtn').classList.toggle('hidden',!paired);$('pairStartBtn').lastChild.textContent=paired?'Pair again':'Pair for control';}
 function pairCodeBox(open){$('pairCodeBox').classList.toggle('hidden',!open);$('pairIdle').classList.toggle('hidden',open);if(open){$('pairCode').value='';$('pairCode').focus();}}
-$('pairStartBtn').addEventListener('click',async function(){try{var d=await api('/api/pair/start',{method:'POST'});showToast(d.message);pairCodeBox(true)}catch(error){showToast(error.message,true)}});
+function pairWaitBox(open){$('pairWaitBox').classList.toggle('hidden',!open);$('pairIdle').classList.toggle('hidden',open);}
+/* Tap pairing: the companion collects the key once Allow is tapped; follow it here. */
+async function pairWatch(){for(;;){await new Promise(function(r){setTimeout(r,1000)});var s;try{s=await api('/api/pair/status')}catch(error){continue}
+  if(s.state==='waiting')continue;pairWaitBox(false);if(s.message)showToast(s.message,s.state!=='paired');if(s.state==='paired')showPaired(true);return;}}
+$('pairStartBtn').addEventListener('click',async function(){try{var d=await api('/api/pair/start',{method:'POST'});showToast(d.message);if(d.tap){pairWaitBox(true);pairWatch()}else pairCodeBox(true)}catch(error){showToast(error.message,true)}});
+$('pairWaitCancel').addEventListener('click',async function(){try{await api('/api/pair/cancel',{method:'POST'})}catch(error){}});
 $('pairConfirmBtn').addEventListener('click',async function(){try{var d=await api('/api/pair/confirm',{method:'POST',body:new URLSearchParams({code:$('pairCode').value})});showToast(d.message);pairCodeBox(false);showPaired(true)}catch(error){showToast(error.message,true)}});
 $('pairCancelBtn').addEventListener('click',function(){pairCodeBox(false)});
 $('pairForgetBtn').addEventListener('click',async function(){try{var d=await api('/api/pair/forget',{method:'POST'});showToast(d.message);showPaired(false)}catch(error){showToast(error.message,true)}});

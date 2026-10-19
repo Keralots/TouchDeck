@@ -6,10 +6,11 @@ import os
 import socket
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib import error as urllib_error
 from urllib import request as urllib_request
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from config_model import (
     CONFIG_VERSION,
@@ -295,14 +296,108 @@ def _post_device(address, path, params, timeout=4.0):
             return exc.code, {}
 
 
-def pair_start(state):
-    """Ask the device to show a pairing code for this PC."""
+# Tap pairing: the device asks Allow / Deny on its screen and hands the key
+# to whoever holds the token it answered pair_start with. Firmware without it
+# shows a code instead (no token in the answer). One pairing at a time.
+_TAP_LOCK = threading.Lock()
+_TAP = {"state": "idle", "message": "", "auto": False, "denied": False}
+_TAP_POLL = 1.0
+_TAP_LIMIT = 125.0  # the device gives up after 120 s
+_AUTO_CHECK = 30.0
+_AUTO_RETRY = 900.0
+
+
+def _store_key(core, state, key):
+    with _CONFIG_LOCK:
+        config = normalize_config(state.get_config())
+        config["pc_key"] = key
+        if not core.save_config(config):
+            return False
+        state.set_config(config)
+        return True
+
+
+def _tap_wait(core, state, address, pc_id, token):
+    started = time.monotonic()
+    result, message = "failed", "Not paired: no answer on the device in time."
+    while time.monotonic() - started < _TAP_LIMIT:
+        time.sleep(_TAP_POLL)
+        try:
+            status, body = _post_device(address, "/api/pc/pair/confirm", {"id": pc_id, "token": token})
+        except Exception:
+            continue  # one lost request; the device still waits
+        if status == 202:
+            continue
+        key = str(body.get("key") or "")
+        if status == 200 and len(key) == 64:
+            if _store_key(core, state, key):
+                result, message = "paired", "Paired. Control tiles on the device can now reach this PC."
+            else:
+                message = "Could not write the configuration file."
+        else:
+            message = "Not paired: %s" % body.get("message", "HTTP %d" % status)
+        break
+    with _TAP_LOCK:
+        # An early refusal is Deny on the device (or a cancel), not a timeout.
+        _TAP.update(state=result, message=message,
+                    denied=result != "paired" and time.monotonic() - started < _TAP_LIMIT - 15)
+
+
+def pair_start(core, state, auto=False):
+    """Ask the device to pair this PC: Allow on its screen, or a code on older firmware."""
     config = state.get_config()
+    address, pc_id = config.get("esp32_ip", ""), config.get("pc_id", "")
+    with _TAP_LOCK:
+        if _TAP["state"] == "waiting":
+            return {"success": True, "tap": True, "message": "Tap Allow on the TouchDeck."}
     try:
-        code, body = _post_device(config.get("esp32_ip", ""), "/api/pc/pair", {"id": config.get("pc_id", "")})
+        code, body = _post_device(address, "/api/pc/pair", {"id": pc_id, "mode": "tap"})
     except Exception as exc:
         return {"success": False, "message": "Could not reach the device: %s" % exc}
-    return {"success": code == 200, "message": body.get("message", "HTTP %d" % code)}
+    token = str(body.get("token") or "")
+    if code != 200 or not token:
+        return {"success": code == 200, "tap": False, "message": body.get("message", "HTTP %d" % code)}
+    with _TAP_LOCK:
+        _TAP.update(state="waiting", message="Tap Allow on the TouchDeck.", auto=auto, denied=False)
+    threading.Thread(target=_tap_wait, args=(core, state, address, pc_id, token),
+                     daemon=True, name="pair-wait").start()
+    return {"success": True, "tap": True, "message": "Tap Allow on the TouchDeck."}
+
+
+def pair_status():
+    with _TAP_LOCK:
+        return {"state": _TAP["state"], "message": _TAP["message"]}
+
+
+def pair_cancel(state):
+    config = state.get_config()
+    try:
+        _post_device(config.get("esp32_ip", ""), "/api/pc/pair/cancel", {"id": config.get("pc_id", "")})
+    except Exception:
+        pass  # it times out on the device anyway
+    return {"success": True, "message": "Pairing cancelled."}
+
+
+def watch_pairing(core, state, stop):
+    """Pair again by itself when the device lost this PC's key (a flash erase):
+    the device then asks Allow on its screen. A Deny holds until a restart."""
+    next_try = 0.0
+    while not stop.wait(_AUTO_CHECK):
+        config = state.get_config()
+        if not config.get("pc_key") or not config.get("esp32_ip") or time.monotonic() < next_try:
+            continue
+        with _TAP_LOCK:
+            if _TAP["state"] == "waiting" or (_TAP["auto"] and _TAP["denied"]):
+                continue
+        try:
+            body = _fetch_device_json(config["esp32_ip"],
+                                      "/api/pc/status?id=" + quote(config.get("pc_id", "")), timeout=3.0)
+        except Exception:
+            continue  # offline, or firmware without the check
+        if body.get("known") and body.get("paired") is False:
+            print("pairing: the device lost this PC's key, asking it to pair again")
+            pair_start(core, state, auto=True)
+            next_try = time.monotonic() + _AUTO_RETRY
 
 
 def pair_confirm(core, state, code_text):
@@ -324,6 +419,8 @@ def pair_confirm(core, state, code_text):
         if not core.save_config(config):
             return {"success": False, "message": "Could not write the configuration file."}
         state.set_config(config)
+        with _TAP_LOCK:
+            _TAP.update(state="paired", message="", denied=False)
         return {"success": True, "message": "Paired. Control tiles on the device can now reach this PC."}
 
 
@@ -493,6 +590,8 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json(result)
             if path == "/api/device/status":
                 return self._json(device_status(state))
+            if path == "/api/pair/status":
+                return self._json(pair_status())
             if path == "/api/panels":
                 return self._json(list_panels(state))
             if path == "/api/device/screen":
@@ -557,7 +656,9 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/api/import":
                 return self._json(apply_import(core, state, self._json_body()))
             if path == "/api/pair/start":
-                return self._json(pair_start(state))
+                return self._json(pair_start(core, state))
+            if path == "/api/pair/cancel":
+                return self._json(pair_cancel(state))
             if path == "/api/pair/confirm":
                 return self._json(pair_confirm(core, state, self._form().get("code", [""])[0]))
             if path == "/api/pair/forget":

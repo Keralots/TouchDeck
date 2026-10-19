@@ -5706,8 +5706,9 @@ void destroyPages(bool keepGlass = false) {
   portEXIT_CRITICAL(&s_mux);
 }
 
-// The pairing card: shows the code a companion asked for, until it is
-// entered, cancelled or times out (pc_metrics owns the state).
+// The pairing card: Allow / Deny for a companion's request, or the code an
+// older companion asked for, until answered, cancelled or timed out
+// (pc_metrics owns the state).
 lv_obj_t* s_pairCard = nullptr;
 lv_obj_t* s_pairScrim = nullptr;
 uint32_t s_pairChecked = 0;
@@ -5724,6 +5725,11 @@ void pairClose() {
 void onPairCancel(lv_event_t*) {
   pcPairCancel();
   lv_async_call([](void*) { pairClose(); }, nullptr);  // runs in the button's own event
+}
+
+void onPairAllow(lv_event_t*) {
+  pcPairAllow();
+  lv_async_call([](void*) { pairClose(); }, nullptr);
 }
 
 void pairSync() {
@@ -5765,6 +5771,25 @@ void pairSync() {
   lv_label_set_long_mode(t, LV_LABEL_LONG_MODE_DOTS);
   lv_obj_set_width(t, cw - 32);
   lv_obj_set_pos(t, 16, 14);
+  if (!code.length()) {
+    // Tap mode: the companion waits for this answer.
+    lv_obj_t* q = lv_label_create(c);
+    lv_label_set_text_fmt(q, "Let this deck control %s: media, volume, lock, power and hotkeys?", name.c_str());
+    lv_label_set_long_mode(q, LV_LABEL_LONG_MODE_WRAP);
+    lv_obj_set_width(q, cw - 32);
+    lv_obj_set_style_text_color(q, lv_color_hex(C_DIM), 0);
+    lv_obj_set_pos(q, 16, 52);
+    const int bw = (cw - 40) / 2;
+    lv_obj_t* deny = qpButton(c, 16, 196 - 16 - 44, bw, "Deny", false);
+    lv_obj_set_height(deny, 44);
+    lv_obj_add_event_cb(deny, onPairCancel, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* allow = qpButton(c, 24 + bw, 196 - 16 - 44, bw, "Allow", false);
+    lv_obj_set_height(allow, 44);
+    lv_obj_add_state(allow, LV_STATE_CHECKED);  // the accent look
+    lv_obj_add_event_cb(allow, onPairAllow, LV_EVENT_CLICKED, nullptr);
+    setModalOpen(true);
+    return;
+  }
   lv_obj_t* k = lv_label_create(c);
   String spaced = code.substring(0, 3) + " " + code.substring(3);
   lv_label_set_text(k, spaced.c_str());

@@ -473,37 +473,56 @@ bool pcTakeCmdResult(PcCmdResult& out) {
 // --- Pairing -----------------------------------------------------------------
 static struct {
   String id;
-  char code[7];
+  char code[7];    // code mode; "" in tap mode
+  char token[33];  // tap mode: only the companion that started it may collect the key
+  bool allowed;    // tap mode: the user tapped Allow
   uint8_t key[32];
   uint32_t until;  // millis deadline, 0 = no pairing
   uint8_t tries;
 } s_pair = {};
 constexpr uint32_t PAIR_MS = 120000;
 
-bool pcPairStart(const String& id, String& err) {
+bool pcPairStart(const String& id, bool tap, String& token, String& err) {
   PcSource* pc = pcSource(id);
   if (!pc || id != pc->id) {
     err = "unknown PC: start the companion's metric stream to this device first";
     return false;
   }
   s_pair.id = id;
-  snprintf(s_pair.code, sizeof(s_pair.code), "%06lu", (unsigned long)(esp_random() % 1000000));
+  s_pair.code[0] = s_pair.token[0] = 0;
+  if (tap) {
+    uint8_t t[16];
+    esp_fill_random(t, sizeof(t));
+    toHex(t, sizeof(t), s_pair.token);
+    token = s_pair.token;
+  } else {
+    snprintf(s_pair.code, sizeof(s_pair.code), "%06lu", (unsigned long)(esp_random() % 1000000));
+  }
+  s_pair.allowed = false;
   esp_fill_random(s_pair.key, sizeof(s_pair.key));
   s_pair.until = millis() + PAIR_MS;
   if (!s_pair.until) s_pair.until = 1;
   s_pair.tries = 0;
-  Serial.printf("pc_metrics: pairing '%s' started\n", pc->name);
+  Serial.printf("pc_metrics: pairing '%s' started (%s)\n", pc->name, tap ? "tap" : "code");
   return true;
 }
 
-bool pcPairConfirm(const String& id, const String& code, String& keyHex, String& err) {
+bool pcPairConfirm(const String& id, const String& code, const String& token, String& keyHex,
+                   bool& waiting, String& err) {
+  waiting = false;
   if (!s_pair.until || (int32_t)(millis() - s_pair.until) >= 0 || id != s_pair.id) {
     err = "no pairing in progress for this PC";
     return false;
   }
-  if (code != s_pair.code) {
+  const bool tap = s_pair.token[0] != 0;
+  if (tap ? token != s_pair.token : code != s_pair.code) {
     if (++s_pair.tries >= 5) pcPairCancel();
-    err = "wrong code";
+    err = tap ? "wrong token" : "wrong code";
+    return false;
+  }
+  if (tap && !s_pair.allowed) {
+    waiting = true;
+    err = "waiting for Allow on the device";
     return false;
   }
   PcSource* pc = pcSource(id);
@@ -524,9 +543,15 @@ bool pcPairConfirm(const String& id, const String& code, String& keyHex, String&
   return true;
 }
 
+void pcPairAllow() {
+  if (s_pair.until && s_pair.token[0]) s_pair.allowed = true;
+}
+
 void pcPairCancel() {
   s_pair.until = 0;
   s_pair.id = "";
+  s_pair.allowed = false;
+  s_pair.code[0] = s_pair.token[0] = 0;
   memset(s_pair.key, 0, sizeof(s_pair.key));
 }
 
@@ -536,9 +561,17 @@ bool pcPairPending(String& pcName, String& code) {
     pcPairCancel();
     return false;
   }
+  if (s_pair.allowed) return false;  // answered; the companion collects the key
   const PcSource* pc = pcSource(s_pair.id);
   pcName = pc ? pc->name : "PC";
   code = s_pair.code;
+  return true;
+}
+
+bool pcPairedState(const String& id, bool& paired) {
+  const PcSource* pc = id.length() ? pcSource(id) : nullptr;
+  if (!pc || id != pc->id) return false;
+  paired = pc->paired;
   return true;
 }
 

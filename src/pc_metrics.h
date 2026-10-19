@@ -103,8 +103,10 @@ const PcState* pcStateOf(const PcSource* pc);
 // latest metrics packet (single use on the PC side). The PC answers {"ack": nonce,
 // "ok", "msg"} to the device's port 4210.
 //
-// Pairing (the companion calls it): pcPairStart shows a 6-digit code on the
-// device; pcPairConfirm with that code returns the new key once.
+// Pairing (the companion calls it). Tap mode: the device asks Allow / Deny on
+// screen and the companion polls pcPairConfirm with the token pcPairStart gave
+// it; once allowed it gets the new key. Code mode (older companions, panels):
+// the device shows a 6-digit code the user types into the companion.
 // Over the USB cable the same JSON travels as "@TD <json>" lines on Serial.
 bool pcSendCommand(const String& pcId, const char* cmd, String& err);
 struct PcCmdResult {
@@ -114,11 +116,19 @@ struct PcCmdResult {
 // Next finished command (acked, refused or timed out), if any.
 bool pcTakeCmdResult(PcCmdResult& out);
 
-bool pcPairStart(const String& id, String& err);
-// keyHex is filled on success. A wrong code counts toward a limit of 5.
-bool pcPairConfirm(const String& id, const String& code, String& keyHex, String& err);
+// token is filled in tap mode.
+bool pcPairStart(const String& id, bool tap, String& token, String& err);
+// keyHex is filled on success; waiting = tap mode, not allowed yet. A wrong
+// code or token counts toward a limit of 5.
+bool pcPairConfirm(const String& id, const String& code, const String& token, String& keyHex,
+                   bool& waiting, String& err);
+// The Allow button (a real touch only).
+void pcPairAllow();
 void pcPairCancel();
-// For the device's pairing card: true while a pairing waits for its code.
+// For the device's pairing card: true while a pairing waits for the user;
+// code is "" in tap mode.
 bool pcPairPending(String& pcName, String& code);
+// The companion's check that the device still holds its key. False = unknown PC.
+bool pcPairedState(const String& id, bool& paired);
 
 #endif // PC_METRICS_H
