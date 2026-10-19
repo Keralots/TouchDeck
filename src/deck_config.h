@@ -53,6 +53,8 @@
 // "type": "slider": the tile is a level control (light brightness, cover
 // position, fan speed, media volume, input_number / number); drag sideways to
 // set it, tap toggles (numbers: opens the card).
+// { "type": "slider", "control": "pc-volume", "pc": "<pc_id>" (optional) }:
+// the PC's master volume through the companion; a tap mutes.
 //
 // "confirm": "off" | "always" (optional, tap and hold actions): ask on the
 // device before turning the tile off, or before any action it runs.
@@ -64,6 +66,9 @@
 //     period, so a companion restart does not reshuffle the page.
 //   { "entity": "switch.pc", "state": "on" }: the HA state equals "state";
 //     "!on" = differs. Hidden until Home Assistant reports the entity.
+// A page takes "when" too (its PC is the first known one) and "auto": true:
+// the deck slides to the page when it appears and back to the page shown
+// before when it goes.
 //
 // An HTTP request as a tap or hold action (plain http on the LAN only):
 // { "action": "http", "method": "POST", "url": "http://host/path",
@@ -110,7 +115,13 @@ enum ActionKind : uint8_t {
   ACT_PC,            // {pc, cmd}: a command to a paired PC's companion
 };
 enum ConfirmMode : uint8_t { CONFIRM_NONE = 0, CONFIRM_OFF, CONFIRM_ALWAYS };
-enum TileWhen : uint8_t { WHEN_ALWAYS = 0, WHEN_PC_ON, WHEN_PC_OFF, WHEN_ENTITY };
+enum WhenKind : uint8_t { WHEN_ALWAYS = 0, WHEN_PC_ON, WHEN_PC_OFF, WHEN_ENTITY };
+
+struct WhenDef {
+  WhenKind kind = WHEN_ALWAYS;
+  String entity, state;  // WHEN_ENTITY
+  bool negate = false;   // "state": "!on"
+};
 
 struct TileAction {
   ActionKind kind = ACT_NONE;
@@ -161,10 +172,9 @@ struct TileDef {
   PrinterShow show = PS_HERO;
   uint8_t nozzle = 0;     // PS_NOZZLE: 0 = right / only, 1 = left
   uint8_t amsUnit = 1;    // PS_AMS: 1-based position in the reported units
-  TileWhen when = WHEN_ALWAYS;
-  String whenEntity, whenState;  // WHEN_ENTITY
-  bool whenNot = false;          // WHEN_ENTITY: "state": "!on"
-  bool shown = true;             // runtime: the condition as the pages were last built
+  bool pcVolume = false;  // TILE_SLIDER: "control": "pc-volume"
+  WhenDef when;
+  bool shown = true;  // runtime: "when" as the pages were last built
 };
 
 struct PrinterDef {
@@ -176,6 +186,9 @@ struct PageDef {
   String id, name;
   String group;  // adjacent pages with the same group form one column
   String printer;  // built only while this printer is powered
+  WhenDef when;
+  bool autoShow = false;  // "auto": slide here when it appears, back when it goes
+  bool shown = true;      // runtime, as for tiles
   uint8_t cols[2] = {4, 3};
   uint8_t rows[2] = {3, 4};
   std::vector<TileDef> tiles;

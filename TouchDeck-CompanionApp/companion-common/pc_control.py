@@ -35,6 +35,9 @@ COMMANDS = ("media_play_pause", "media_next", "media_prev", "media_stop",
 # These would cut the acknowledgement off, so they start a moment after it.
 DEFERRED = ("lock", "sleep", "restart", "shutdown")
 
+# "volume_set:40": the master volume in percent (the deck's volume slider).
+VOLUME_PREFIX = "volume_set:"
+
 # "hotkey:ctrl+shift+m": keys pressed in order, released in reverse.
 HOTKEY_PREFIX = "hotkey:"
 HOTKEY_MAX_KEYS = 5
@@ -55,6 +58,16 @@ def parse_hotkey(cmd):
             or any(k not in _KEY_NAMES for k in keys)):
         return None
     return keys
+
+
+def parse_volume(cmd):
+    """Percent 0..100 of a "volume_set:N" command, or None when it is not a valid one."""
+    if not isinstance(cmd, str) or not cmd.startswith(VOLUME_PREFIX):
+        return None
+    value = cmd[len(VOLUME_PREFIX):]
+    if not value.isdigit() or len(value) > 3 or int(value) > 100:
+        return None
+    return int(value)
 
 
 class NonceBook:
@@ -126,7 +139,7 @@ def verify(config, packet, addr=None, *, via_usb=False):
         return False, "this PC is not paired"
     if pc != config.get("pc_id"):
         return False, "command for another PC"
-    if cmd not in COMMANDS and parse_hotkey(cmd) is None:
+    if cmd not in COMMANDS and parse_hotkey(cmd) is None and parse_volume(cmd) is None:
         return False, "unknown keys" if cmd.startswith(HOTKEY_PREFIX) else "unknown command"
     # Check the signature before spending the nonce, so a forged packet cannot
     # use up the one the device is about to send.
@@ -192,10 +205,34 @@ def _win_suspend():
         raise OSError("SetSuspendState failed")
 
 
+_com_thread = threading.local()
+
+
+def _win_set_volume(percent):
+    # Own endpoint per call: COM objects stay in the thread that made them,
+    # and pc_state's live in its poll thread.
+    import comtypes
+    from pycaw import constants, pycaw
+    if not getattr(_com_thread, "ready", False):
+        comtypes.CoInitialize()
+        _com_thread.ready = True
+    enumerator = comtypes.CoCreateInstance(
+        constants.CLSID_MMDeviceEnumerator, pycaw.IMMDeviceEnumerator, comtypes.CLSCTX_INPROC_SERVER)
+    device = enumerator.GetDefaultAudioEndpoint(
+        pycaw.EDataFlow.eRender.value, pycaw.ERole.eMultimedia.value)
+    endpoint = device.Activate(
+        pycaw.IAudioEndpointVolume._iid_, comtypes.CLSCTX_ALL, None
+    ).QueryInterface(pycaw.IAudioEndpointVolume)
+    endpoint.SetMasterVolumeLevelScalar(percent / 100.0, None)
+
+
 def _run_windows(cmd):
     keys = parse_hotkey(cmd)
+    volume = parse_volume(cmd)
     if keys:
         _win_hotkey(keys)
+    elif volume is not None:
+        _win_set_volume(volume)
     elif cmd in _WIN_VK:
         user32 = ctypes.windll.user32
         user32.keybd_event(_WIN_VK[cmd], 0, 0, 0)
@@ -236,7 +273,10 @@ _XDOTOOL_KEYS = {
 
 def _run_linux(cmd):
     keys = parse_hotkey(cmd)
-    if keys:
+    volume = parse_volume(cmd)
+    if volume is not None:
+        argv = ["pactl", "set-sink-volume", "@DEFAULT_SINK@", "%d%%" % volume]
+    elif keys:
         names = [_XDOTOOL_KEYS.get(k, k.upper() if k.startswith("f") and k[1:].isdigit() else k)
                  for k in keys]
         argv = ["xdotool", "key", "+".join(names)]
