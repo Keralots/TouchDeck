@@ -60,6 +60,8 @@ if exist dist  rmdir /s /q dist
   --hidden-import config_model ^
   --hidden-import pc_control ^
   --hidden-import pc_state ^
+  --hidden-import art_server ^
+  --hidden-import winrt.windows.storage.streams ^
   --hidden-import pycaw.pycaw ^
   --hidden-import comtypes.stream ^
   --hidden-import comtypes.gen ^

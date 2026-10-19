@@ -226,6 +226,23 @@ def _win_set_volume(percent):
     endpoint.SetMasterVolumeLevelScalar(percent / 100.0, None)
 
 
+def _win_media(cmd):
+    session_id = pc_state.selected_session_id()
+    if not session_id:
+        return False
+
+    async def send():
+        from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionManager
+        manager = await GlobalSystemMediaTransportControlsSessionManager.request_async()
+        methods = {"media_play_pause": "try_toggle_play_pause_async",
+                   "media_next": "try_skip_next_async",
+                   "media_prev": "try_skip_previous_async", "media_stop": "try_stop_async"}
+        session = pc_state._choose_session(manager, session_id)
+        return bool(await getattr(session, methods[cmd])()) if session is not None else False
+
+    return bool(pc_state.run_winrt("media", send, 1.0))
+
+
 def _run_windows(cmd):
     keys = parse_hotkey(cmd)
     volume = parse_volume(cmd)
@@ -233,6 +250,8 @@ def _run_windows(cmd):
         _win_hotkey(keys)
     elif volume is not None:
         _win_set_volume(volume)
+    elif cmd.startswith("media_") and _win_media(cmd):
+        pass
     elif cmd in _WIN_VK:
         user32 = ctypes.windll.user32
         user32.keybd_event(_WIN_VK[cmd], 0, 0, 0)

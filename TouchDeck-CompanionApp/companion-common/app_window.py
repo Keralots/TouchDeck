@@ -17,6 +17,7 @@ from app_state import AppState
 from config_model import normalize_config
 import pc_control
 import pc_state
+from art_server import ART
 import serial_link
 import udp_stream
 import server as srv
@@ -67,6 +68,7 @@ def gui_quit():
     _quitting = True
     _stop.set()
     pc_state.STATE.stop()
+    ART.stop()
     if _serial_link is not None:
         _serial_link.stop()
     if _httpd is not None:
@@ -345,6 +347,7 @@ def run(core, start_hidden=False, notify_startup=False):
     if config != loaded:
         core.save_config(config)
     _state = AppState(config)
+    ART.start()
     pc_state.STATE.start()
 
     _httpd, port = srv.make_server(core, _state)
@@ -393,4 +396,5 @@ def run(core, start_hidden=False, notify_startup=False):
     # webview.start returns when the window is destroyed (tray Quit).
     _stop.set()
     pc_state.STATE.stop()
+    ART.stop()
     _serial_link.stop()

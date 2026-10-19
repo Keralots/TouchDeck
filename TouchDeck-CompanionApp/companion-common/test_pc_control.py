@@ -17,6 +17,50 @@ def packet(nonce, cmd="media_play_pause", key=KEY, pc="0123456789ab"):
     return {"pc": pc, "cmd": cmd, "nonce": nonce, "sig": pc_control.sign(key, pc, nonce, cmd)}
 
 
+class MediaCommandTest(unittest.TestCase):
+    def test_selected_session_methods_and_key_fallback(self):
+        manager = mock.Mock()
+        other = mock.Mock(source_app_user_model_id="chrome")
+        selected = mock.Mock(source_app_user_model_id="tidal")
+        paused = mock.Mock(source_app_user_model_id="tidal")
+        paused.get_playback_info.return_value.playback_status = 5
+        selected.get_playback_info.return_value.playback_status = 4
+        manager.get_sessions.return_value = [other, paused, selected]
+        manager.get_current_session.return_value = other
+        module = mock.Mock()
+        module.GlobalSystemMediaTransportControlsSessionManager.request_async = mock.AsyncMock(
+            return_value=manager)
+        methods = {"media_play_pause": "try_toggle_play_pause_async",
+                   "media_next": "try_skip_next_async",
+                   "media_prev": "try_skip_previous_async", "media_stop": "try_stop_async"}
+        with mock.patch.dict(sys.modules, {"winrt.windows.media.control": module}), \
+                mock.patch.object(pc_control.pc_state, "selected_session_id", return_value="tidal") as chosen, \
+                mock.patch.object(pc_control.ctypes, "windll", create=True) as windll:
+            for cmd, method in methods.items():
+                action = mock.AsyncMock(return_value=True)
+                setattr(selected, method, action)
+                pc_control._run_windows(cmd)
+                action.assert_awaited_once()
+                windll.user32.keybd_event.assert_not_called()
+                for failure in (False, OSError("session closed")):
+                    action.return_value = False
+                    action.side_effect = failure if isinstance(failure, Exception) else None
+                    pc_control._run_windows(cmd)
+                    self.assertEqual(windll.user32.keybd_event.call_count, 2)
+                    self.assertEqual(windll.user32.keybd_event.call_args_list[0].args[0],
+                                     pc_control._WIN_VK[cmd])
+                    windll.user32.keybd_event.reset_mock()
+            manager.get_sessions.return_value = [other]
+            pc_control._run_windows("media_stop")
+            self.assertEqual(windll.user32.keybd_event.call_count, 2)
+            windll.user32.keybd_event.reset_mock()
+            chosen.return_value = None
+            pc_control._run_windows("media_stop")
+            self.assertEqual(windll.user32.keybd_event.call_count, 2)
+        self.assertFalse(other.try_stop_async.called)
+        self.assertFalse(paused.try_stop_async.called)
+
+
 class PcControlTest(unittest.TestCase):
     def test_missing_sender_is_only_allowed_for_usb(self):
         nonce = pc_control.NONCES.issue()

@@ -2,6 +2,7 @@
 
 from config_model import device_host
 import pc_control
+from art_server import ART
 
 
 def packet_identity(config):
@@ -9,6 +10,8 @@ def packet_identity(config):
     if config.get("pc_key") or any(panel.get("key") for panel in config.get("panels", [])):
         payload["cmd_port"] = int(config.get("cmd_port") or pc_control.DEFAULT_CMD_PORT)
         payload["nonces"] = [pc_control.NONCES.issue() for _ in range(4)]
+    if ART.port is not None:
+        payload["art_port"] = ART.port
     return payload
 
 
