@@ -223,6 +223,7 @@ def _monitor_loop():
                         core.lhm_health_monitor.record_success()
                         status = core.STATUS_OK
 
+        snapshot = None
         try:
             snapshot = core.build_snapshot(cfg)
             payload, values, _fresh, last_good, _stale = core.collect_metrics(cfg, snapshot, last_good, status)
@@ -235,6 +236,11 @@ def _monitor_loop():
             _state.update_values(values)
         except Exception as e:
             print("send error: %s" % e)
+
+        try:
+            core.recover_source(_state, cfg, snapshot)
+        except Exception as e:
+            print("source recovery error: %s" % e)
 
         # Light reachability probe for the status readout (every ~10s).
         if usb_connected:
