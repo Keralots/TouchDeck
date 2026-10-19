@@ -110,6 +110,18 @@ Optional `unit` is appended only to JSON numbers, formatted with at most one dec
 
 `detail` adds a small line under the name, built from the same reply: `{path}` inserts a value, `{path|min}` shows a number of minutes as a duration (also `s`, `h`, `d`), anything else is literal text, for example `"{StatusSNS.ENERGY.Voltage} V  {StatusSNS.ENERGY.Current} A"`. In the portal, Test shows "+ Detail" next to each value. The line gives way on tiles too small for it.
 
+`rows` shows up to four values from the same reply under the name, one line each with a label, a bar and the value, instead of one big reading. The bar spans 0..`scaleMax` (default 100) and is left out when the tile is too narrow for it. `unit`, `format`, `warn` and `crit` apply to every row; `http.path` and `style` are ignored. For example, Claude usage from a local endpoint:
+
+```json
+{ "type": "sensor", "label": "Claude", "icon": "mdi:robot",
+  "http": { "url": "http://192.168.0.10:8760/usage", "poll": 60 },
+  "unit": "%", "warn": 70, "crit": 90,
+  "rows": [ { "label": "5h:", "path": "claude.five_hour.used" },
+            { "label": "W:", "path": "claude.weekly.used" } ] }
+```
+
+The portal keeps `rows` when a tile is edited but has no editor for them yet; add them in the JSON.
+
 ## Bambu Lab printers
 
 Up to two Bambu Lab printers report to the deck over the LAN (MQTT over TLS, port 8883), so the printer needs LAN mode or LAN access turned on. Printers are off by default: turn them on under **Advanced**. Turned off again, the deck drops the printer connections and hides printer pages and tiles, but keeps their setup. In **Pages & tiles**, "Printers": add the printer's IP address, then store its serial number and LAN access code (both stay on the device and are never shown again). "Create printer page" adds a page with progress and time left on top, the nozzle, bed and chamber temperatures, the filament in use, the layer and the chamber light. An AMS page is stacked below it, with one tile per unit and an all-slots strip when a row is free.
