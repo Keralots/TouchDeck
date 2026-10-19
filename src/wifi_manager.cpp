@@ -174,6 +174,9 @@ static void completeWiFiStartup() {
 }
 
 static void beginStaConnectAttempt() {
+  // Modem sleep delays inbound ACKs to the beacon interval and stalls web
+  // transfers for seconds. The core re-applies this on every STA start.
+  WiFi.setSleep(false);
   WiFi.mode(WIFI_STA);
   applyStaticNetworkConfig();
   WiFi.begin(wifiSSID, wifiPass);
