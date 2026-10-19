@@ -183,12 +183,12 @@ void parsePos(JsonVariantConst v, TilePos& p) {
   p.h = halves(v["h"], 2, 1, 12);
 }
 
-bool parseWhen(JsonVariantConst v, TileDef& t, String* err, const String& where) {
+bool parseWhen(JsonVariantConst v, WhenDef& w, String* err, const String& where) {
   if (v.isNull()) return true;
   if (v.is<const char*>()) {
     const char* s = v.as<const char*>();
-    if (!strcmp(s, "pc-on")) t.when = WHEN_PC_ON;
-    else if (!strcmp(s, "pc-off")) t.when = WHEN_PC_OFF;
+    if (!strcmp(s, "pc-on")) w.kind = WHEN_PC_ON;
+    else if (!strcmp(s, "pc-off")) w.kind = WHEN_PC_OFF;
     else {
       if (err) *err = where + ": unknown when '" + s + "'";
       return false;
@@ -201,10 +201,10 @@ bool parseWhen(JsonVariantConst v, TileDef& t, String* err, const String& where)
     if (err) *err = where + ": when needs an entity and a state";
     return false;
   }
-  t.when = WHEN_ENTITY;
-  t.whenEntity = entity;
-  t.whenNot = state[0] == '!';
-  t.whenState = state + (t.whenNot ? 1 : 0);
+  w.kind = WHEN_ENTITY;
+  w.entity = entity;
+  w.negate = state[0] == '!';
+  w.state = state + (w.negate ? 1 : 0);
   return true;
 }
 
@@ -306,6 +306,8 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
     const char* type = pv["type"] | "tiles";
     if (!strcmp(type, "metrics")) continue;
     if (!p.id.length()) p.id = "page" + String(cfg.pages.size() + 1);
+    if (!parseWhen(pv["when"], p.when, err, "page '" + p.id + "'")) return false;
+    p.autoShow = p.when.kind != WHEN_ALWAYS && (pv["auto"] | false);
     parseGrid(pv["layouts"]["landscape"], p.cols[ORIENT_LANDSCAPE], p.rows[ORIENT_LANDSCAPE]);
     parseGrid(pv["layouts"]["portrait"], p.cols[ORIENT_PORTRAIT], p.rows[ORIENT_PORTRAIT]);
     JsonArrayConst tiles = pv["tiles"].as<JsonArrayConst>();
@@ -338,7 +340,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       t.hasChartColor = parseColor(tv["chartColor"] | (const char*)nullptr, t.chartColor);
       parsePos(tv["pos"]["landscape"], t.pos[ORIENT_LANDSCAPE]);
       parsePos(tv["pos"]["portrait"], t.pos[ORIENT_PORTRAIT]);
-      if (!parseWhen(tv["when"], t, err, where)) return false;
+      if (!parseWhen(tv["when"], t.when, err, where)) return false;
       if (t.type == TILE_METRIC) {
         const int m = tv["metric"] | 0;
         if (m < 1 || m > MAX_METRICS) {
@@ -401,6 +403,11 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         p.tiles.push_back(t);
         continue;  // built-in taps: light toggles, summary opens the printer page
       }
+      if (t.type == TILE_SLIDER && !strcmp(tv["control"] | "", "pc-volume")) {
+        t.pcVolume = true;
+        t.pc = (const char*)(tv["pc"] | "");
+        t.entity = "";
+      }
       if (!parseAction(tv["tap"], t.tap, err, where + " tap")) return false;
       if (!parseAction(tv["hold"], t.hold, err, where + " hold")) return false;
       const char* cf = tv["confirm"] | "";
@@ -419,7 +426,13 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         t.tap.kind = t.entity.startsWith("input_number.") || t.entity.startsWith("number.")
                          ? ACT_MORE_INFO
                          : ACT_TOGGLE;
-      if (tv["hold"].isNull() && !t.http.enabled) t.hold.kind = ACT_MORE_INFO;
+      // PC volume: a tap mutes; no HA card to hold for.
+      if (t.pcVolume && tv["tap"].isNull()) {
+        t.tap.kind = ACT_PC;
+        t.tap.pc = t.pc;
+        t.tap.cmd = "volume_mute";
+      }
+      if (tv["hold"].isNull() && !t.http.enabled && !t.pcVolume) t.hold.kind = ACT_MORE_INFO;
       p.tiles.push_back(t);
     }
     cfg.pages.push_back(p);

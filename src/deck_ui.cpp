@@ -389,6 +389,17 @@ bool slideBy(int dir, bool vertical) {
   return true;
 }
 
+int pageIndexOf(const String& id) {
+  for (int i = 0; i < s_count; i++)
+    if (s_pages[i].def && s_pages[i].def->id == id) return i;
+  return -1;
+}
+
+String activePageId() {
+  const int a = sh.active;
+  return a >= 0 && a < s_count && s_pages[a].def ? s_pages[a].def->id : String();
+}
+
 void goToPage(const String& id) {
   for (int i = 0; i < s_count; i++) {
     if (!s_pages[i].def || s_pages[i].def->id != id) continue;
@@ -1035,6 +1046,7 @@ void haSync() {
 void pcCmdSync() {
   PcCmdResult o;
   while (pcTakeCmdResult(o)) {
+    if (o.ok && o.cmd.startsWith("volume_set:")) continue;  // the slider is the feedback
     const String t = o.pcName + ": " + pcCmdLabel(o.cmd) + (o.ok ? "" : String(" - ") + (o.msg.length() ? o.msg : "failed"));
     deckToastShow(t.c_str(), o.ok ? 1200 : 2500);
   }
@@ -1043,6 +1055,7 @@ void pcCmdSync() {
 uint32_t s_httpSeen = 0;
 uint32_t s_prnSeen = 0;  // printersVersion() last applied
 bool s_prnRebuild = false;
+String s_keepPage;  // buildPages: show this page again (set by rebuildPages)
 
 // "when" tiles. A PC counts as off only after this long offline, on top of
 // PC_STALE_TIMEOUT_MS, so a companion restart does not reshuffle the page.
@@ -1062,50 +1075,56 @@ bool pcIsOnline(const String& id) {
   return src && src->data.online;
 }
 
-bool whenWanted(const TileDef& t) {
-  if (t.when == WHEN_PC_ON || t.when == WHEN_PC_OFF) {
+// pcId: the PC a pc-on / pc-off condition follows ("" = the first known one).
+bool whenWanted(const WhenDef& w, const String& pcId) {
+  if (w.kind == WHEN_PC_ON || w.kind == WHEN_PC_OFF) {
     bool on = false;
     for (const WhenPc& p : s_whenPcs)
-      if (p.id == tilePcId(t)) on = p.on;
-    return on == (t.when == WHEN_PC_ON);
+      if (p.id == pcId) on = p.on;
+    return on == (w.kind == WHEN_PC_ON);
   }
-  if (t.when == WHEN_ENTITY) {
+  if (w.kind == WHEN_ENTITY) {
     for (const auto& s : s_whenStates)
-      if (s.first == t.whenEntity) return s.second.length() && (s.second == t.whenState) != t.whenNot;
+      if (s.first == w.entity) return s.second.length() && (s.second == w.state) != w.negate;
     return false;
   }
   return true;
 }
 
-// The PCs and entities the "when" tiles watch, keeping what is already known.
+bool whenWanted(const TileDef& t) { return whenWanted(t.when, tilePcId(t)); }
+bool whenWanted(const PageDef& p) { return whenWanted(p.when, String()); }
+
+void whenWatch(const WhenDef& w, const String& pcId, std::vector<WhenPc>& pcs,
+               std::vector<std::pair<String, String>>& states) {
+  if (w.kind == WHEN_ENTITY) {
+    for (const auto& s : states)
+      if (s.first == w.entity) return;
+    String last;
+    for (const auto& s : s_whenStates)
+      if (s.first == w.entity) last = s.second;
+    HaEntity e;
+    if (!last.length() && haGetEntity(w.entity, e) && e.known) last = e.state;
+    states.push_back({w.entity, last});
+  } else if (w.kind != WHEN_ALWAYS) {
+    for (const WhenPc& p : pcs)
+      if (p.id == pcId) return;
+    WhenPc n;
+    n.id = pcId;
+    n.on = pcIsOnline(pcId);
+    for (const WhenPc& p : s_whenPcs)
+      if (p.id == pcId) n = p;
+    pcs.push_back(n);
+  }
+}
+
+// The PCs and entities the "when" tiles and pages watch, keeping what is already known.
 void whenCollect() {
   std::vector<WhenPc> pcs;
   std::vector<std::pair<String, String>> states;
-  for (const PageDef& pd : s_cfg.pages)
-    for (const TileDef& t : pd.tiles) {
-      if (t.when == WHEN_ENTITY) {
-        bool have = false;
-        for (const auto& s : states) have |= s.first == t.whenEntity;
-        if (have) continue;
-        String last;
-        for (const auto& s : s_whenStates)
-          if (s.first == t.whenEntity) last = s.second;
-        HaEntity e;
-        if (!last.length() && haGetEntity(t.whenEntity, e) && e.known) last = e.state;
-        states.push_back({t.whenEntity, last});
-      } else if (t.when != WHEN_ALWAYS) {
-        const String& id = tilePcId(t);
-        bool have = false;
-        for (const WhenPc& p : pcs) have |= p.id == id;
-        if (have) continue;
-        WhenPc n;
-        n.id = id;
-        n.on = pcIsOnline(id);
-        for (const WhenPc& p : s_whenPcs)
-          if (p.id == id) n = p;
-        pcs.push_back(n);
-      }
-    }
+  for (const PageDef& pd : s_cfg.pages) {
+    whenWatch(pd.when, String(), pcs, states);
+    for (const TileDef& t : pd.tiles) whenWatch(t.when, tilePcId(t), pcs, states);
+  }
   s_whenPcs.swap(pcs);
   s_whenStates.swap(states);
 }
@@ -1132,8 +1151,10 @@ void whenTrack() {
 // The layout follows the conditions as they are now.
 void whenApply() {
   whenCollect();
-  for (PageDef& pd : s_cfg.pages)
+  for (PageDef& pd : s_cfg.pages) {
+    pd.shown = whenWanted(pd);
     for (TileDef& t : pd.tiles) t.shown = whenWanted(t);
+  }
 }
 
 // The detail line: literal text and fields from the same reply ("--" while missing).
@@ -1298,6 +1319,7 @@ const char* pcCmdLabel(const String& cmd) {
   for (const auto& l : kLabels)
     if (cmd == l[0]) return l[1];
   if (cmd.startsWith("hotkey:")) return "Hotkey";
+  if (cmd.startsWith("volume_set:")) return "Volume";
   return "Run";
 }
 
@@ -1357,6 +1379,64 @@ void tileEvent(lv_event_t* e) {
 }
 
 bool modalShown();
+void applyPcStateToTile(TileRt& r);
+
+// PC volume slider: the level the finger asks for goes out at most every
+// LEVEL_GAP_MS (each command spends a companion nonce); the tile shows it
+// until PC_VOL_HOLD_MS after the last move, then follows the PC again.
+constexpr uint32_t PC_VOL_HOLD_MS = 1500;
+struct PcVolume {
+  String pc;
+  int want = -1, sent = -1;
+  uint32_t sentMs = 0, holdUntil = 0;
+  bool reapply = false;
+} s_pcVol;
+
+bool pcVolHeld() { return (int32_t)(millis() - s_pcVol.holdUntil) < 0; }
+
+void pcVolumeTick() {
+  const uint32_t now = millis();
+  if (s_pcVol.want >= 0 && s_pcVol.want != s_pcVol.sent && now - s_pcVol.sentMs >= LEVEL_GAP_MS) {
+    String err;
+    s_pcVol.sentMs = now;
+    if (pcSendCommand(s_pcVol.pc, ("volume_set:" + String(s_pcVol.want)).c_str(), err)) s_pcVol.sent = s_pcVol.want;
+    else if (!pcVolHeld()) {
+      s_pcVol.want = -1;
+      deckToastShow(err.c_str(), 2200);
+    }
+  }
+  if (s_pcVol.reapply && !pcVolHeld()) {
+    s_pcVol.reapply = false;
+    s_pcVol.want = s_pcVol.sent = -1;
+    for (TileRt& r : s_tiles)
+      if (r.def->pcVolume && !r.sliding) applyPcStateToTile(r);
+  }
+}
+
+void pcVolumeDrag(TileRt& r, lv_event_code_t code, const lv_point_t& p) {
+  if (code == LV_EVENT_PRESSING) {
+    if (!r.sliding) {
+      if (!pcIsOnline(tilePcId(*r.def)) || modalShown() || abs(p.x - r.slX0) < 8) return;
+      r.sliding = true;
+      r.slX0 = p.x;
+      r.slFrac0 = r.slValue = r.frac;
+    }
+    const int w = lv_obj_get_width(r.obj);
+    const float f = constrain(r.slFrac0 + (p.x - r.slX0) / (float)(w > 0 ? w : 1), 0.0f, 1.0f);
+    if (fabsf(f - r.slValue) < 0.005f) return;
+    r.slValue = f;
+    setSliderFill(r, f);
+    s_pcVol.pc = tilePcId(*r.def);
+    s_pcVol.want = (int)lroundf(f * 100);
+    if (!r.def->sub.length()) lv_label_set_text(r.sub, (String(s_pcVol.want) + "%").c_str());
+  } else if (code != LV_EVENT_RELEASED && code != LV_EVENT_PRESS_LOST) {
+    return;
+  }
+  if (!r.sliding) return;
+  s_pcVol.holdUntil = millis() + PC_VOL_HOLD_MS;
+  s_pcVol.reapply = true;
+  markPageStale(r.page);
+}
 
 // Slider tile: a sideways drag moves the level from where it was (no jump to
 // the finger). The shared wish coalesces calls and flushes the final value.
@@ -1374,6 +1454,10 @@ void sliderEvent(lv_event_t* e) {
   if (code == LV_EVENT_PRESSED) {
     r.sliding = false;
     r.slX0 = p.x;
+    return;
+  }
+  if (r.def->pcVolume) {
+    pcVolumeDrag(r, code, p);
     return;
   }
   const bool canSlide = r.def->entity.length() && haLink() == HA_CONNECTED && !modalShown();
@@ -3986,6 +4070,7 @@ void makeMetricContent(TileRt& r, lv_obj_t* t) {
 void applyPcStateToTile(TileRt& r) {
   const TileDef& d = *r.def;
   if (d.tap.kind != ACT_PC || !r.sub) return;
+  if (d.pcVolume && (r.sliding || pcVolHeld())) return;  // the finger's level stands
   const String& cmd = d.tap.cmd;
   const PcState* st = pcStateOf(pcSource(d.tap.pc));
   String sub;
@@ -4003,6 +4088,13 @@ void applyPcStateToTile(TileRt& r) {
     if (cmd == "media_play_pause") icon = st->media == PC_MEDIA_PLAYING ? "pause" : "play";
   }
   bool changed = false;
+  if (d.pcVolume) {
+    const float f = st && st->vol >= 0 ? st->vol / 100.0f : 0;
+    if (fabsf(f - r.frac) > 0.001f) {
+      setSliderFill(r, f);
+      changed = true;
+    }
+  }
   if (cmd == "media_play_pause" && r.name && (d.label.isEmpty() || d.label == "Play / pause")) {
     String name = tileLabel(d);
     if (st && st->media >= 0 && st->title[0]) {
@@ -5503,17 +5595,22 @@ void buildPages() {
   s_zonesDirty = true;
   s_tiles.reserve(64);
   whenApply();
+  int keep = -1;
   for (const PageDef& pd : s_cfg.pages) {
     if (s_count >= MAX_PAGES) break;
     if (pd.printer.length() && !printerPowered(pd.printer)) continue;
+    if (!pd.shown) continue;
+    if (s_keepPage.length() && pd.id == s_keepPage) keep = s_count;
     addTilesPage(pd);
   }
+  const bool byId = s_keepPage.length() > 0;
+  s_keepPage = "";
 
   portENTER_CRITICAL(&s_mux);
   sh.count = s_count;
   sh.owned = false;
   for (int i = 0; i < MAX_PAGES; i++) { sh.valid[i] = false; sh.busy[i] = false; }
-  const int active = sh.active < s_count ? sh.active : 0;
+  const int active = byId ? (keep >= 0 ? keep : 0) : sh.active < s_count ? sh.active : 0;
   sh.active = active;
   sh.nCols = 0;
   for (int i = 0; i < s_count; i++) {
@@ -5905,8 +6002,10 @@ void updateHeaders() {
 // Pages are rebuilt only once nothing is in the user's hands.
 bool canRebuild() { return !touchIsDown() && !s_ed.root && !s_modalCard && !s_qp.open; }
 
+// The shown page stays by id, even when pages before it come or go.
 void rebuildPages() {
   stopGestures();
+  s_keepPage = activePageId();
   destroyPages(true);
   buildPages();
   s_gen++;
@@ -5932,17 +6031,63 @@ void printerSync() {
   for (TileRt& r : s_tiles) applyPrinterToTile(r);
 }
 
-// A "when" tile whose condition flipped rebuilds the pages.
+String s_autoFrom;  // the page shown before an "auto" page took over
+String s_autoTo;    // an "auto" page that appeared and is not shown yet
+uint32_t s_autoUntil = 0;
+constexpr uint32_t AUTO_WAIT_MS = 3000;
+
+// The slide to an "auto" page needs its image: wait for it, then jump when it
+// is late. Dropped if the user is busy with the screen all that time.
+void autoNavTick() {
+  if (!s_autoTo.length()) return;
+  const bool late = (int32_t)(millis() - s_autoUntil) > 0;
+  if (!canRebuild() || compMode() != COMP_NONE) {
+    if (late) s_autoTo = "";
+    return;
+  }
+  const int i = pageIndexOf(s_autoTo);
+  if (i >= 0 && i != sh.active && !sh.valid[i] && !late) return;
+  if (i >= 0 && i != sh.active) goToPage(s_autoTo);
+  s_autoTo = "";
+}
+
+// A "when" tile or page whose condition flipped rebuilds the pages. A page
+// that goes while shown is left first (back where an "auto" switch came from).
 void whenSync() {
   whenTrack();
-  if (!canRebuild()) return;
+  autoNavTick();
+  if (!canRebuild() || compMode() != COMP_NONE) return;
+  const String cur = activePageId();
+  String autoTo;
+  bool flip = false;
+  for (const PageDef& pd : s_cfg.pages) {
+    if (pd.when.kind == WHEN_ALWAYS || whenWanted(pd) == pd.shown) continue;
+    if (pd.shown && pd.id == cur) {
+      int back = pageIndexOf(s_autoFrom);
+      if (back < 0 || back == sh.active) back = 0;
+      if (back != sh.active) {
+        s_autoFrom = "";
+        goToPage(s_pages[back].def->id);
+        return;  // rebuilt once the slide is over
+      }
+    }
+    if (!pd.shown && pd.autoShow && !autoTo.length()) autoTo = pd.id;
+    Serial.printf("Deck: page '%s' %s\n", pd.id.c_str(), pd.shown ? "hides" : "shows");
+    flip = true;
+  }
   for (const PageDef& pd : s_cfg.pages)
     for (const TileDef& t : pd.tiles)
-      if (t.when != WHEN_ALWAYS && whenWanted(t) != t.shown) {
-        Serial.printf("Deck: tile '%s' %s, rebuilding pages\n", t.id.c_str(), t.shown ? "hides" : "shows");
-        rebuildPages();
-        return;
+      if (!flip && t.when.kind != WHEN_ALWAYS && whenWanted(t) != t.shown) {
+        Serial.printf("Deck: tile '%s' %s\n", t.id.c_str(), t.shown ? "hides" : "shows");
+        flip = true;
       }
+  if (!flip) return;
+  rebuildPages();
+  if (autoTo.length()) {
+    s_autoFrom = cur;
+    s_autoTo = autoTo;
+    s_autoUntil = millis() + AUTO_WAIT_MS;
+  }
 }
 
 void logStats() {
@@ -6090,6 +6235,7 @@ void deckTick() {
   pcCmdSync();
   pairSync();
   pcSync(false);
+  pcVolumeTick();
   if (!systemScreen) sparkTick();
   syncSwipeZones();
   lv_timer_handler();

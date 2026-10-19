@@ -109,6 +109,25 @@ class PcControlTest(unittest.TestCase):
             pc_control._run_linux("hotkey:ctrl+pageup+f5")
         self.assertEqual(["xdotool", "key", "ctrl+Prior+F5"], run.call_args[0][0])
 
+    def test_volume_parsing(self):
+        self.assertEqual(0, pc_control.parse_volume("volume_set:0"))
+        self.assertEqual(100, pc_control.parse_volume("volume_set:100"))
+        for bad in ("volume_set:", "volume_set:101", "volume_set:-1", "volume_set:4.5", "volume_set:0100",
+                    "volume_set: 5", "volume_up", None):
+            with self.subTest(bad=bad):
+                self.assertIsNone(pc_control.parse_volume(bad))
+
+    def test_signed_volume_passes_and_out_of_range_is_refused(self):
+        n = pc_control.NONCES.issue()
+        self.assertEqual((True, ""), pc_control.verify(CFG, packet(n, cmd="volume_set:40"), ("127.0.0.1", 4210)))
+        n = pc_control.NONCES.issue()
+        self.assertEqual((False, "unknown command"), pc_control.verify(CFG, packet(n, cmd="volume_set:140"), ("127.0.0.1", 4210)))
+
+    def test_volume_on_linux_uses_pactl(self):
+        with mock.patch.object(pc_control.subprocess, "run") as run:
+            pc_control._run_linux("volume_set:35")
+        self.assertEqual(["pactl", "set-sink-volume", "@DEFAULT_SINK@", "35%"], run.call_args[0][0])
+
     def test_firmware_message_layout(self):
         # Same input as the device's mbedtls HMAC: "pc_id|nonce|cmd".
         import hashlib

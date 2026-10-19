@@ -68,6 +68,14 @@ In **Pages & tiles**, a tile's "more options" has "Show": Always, Only while the
 - `"pc-on"` / `"pc-off"` follow the tile's own PC (the PC of its command or metric, otherwise the first known PC). The PC counts as off about a minute after its companion stops sending, so a companion restart does not rearrange the page; it counts as on again with the first packet.
 - `{ "entity": ..., "state": ... }` compares the state Home Assistant reports (`on`, `off`, `home`, `playing`...); a leading `!` means "is not". The tile stays hidden until Home Assistant has reported the entity; while Home Assistant is unreachable the last known state stands.
 
+A whole page can follow a condition the same way ("Page shown" in the page settings; its PC is the first known one). With "Switch to it when it appears" (`"auto": true`) the deck slides to the page when the condition starts to hold, for example a PC stats page when the PC comes on, and back to the page shown before when it stops:
+
+```json
+{ "id": "pcstats", "name": "PC", "when": "pc-on", "auto": true, "tiles": [ ... ] }
+```
+
+A page that goes away while it is shown always hands over to another page first; a slide waits until nothing is being touched and no card is open.
+
 ## HTTP buttons
 
 A button tile can send an HTTP request instead of calling Home Assistant, for devices and services on the LAN that take commands over plain http (Tasmota, Node-RED, your own ESP projects). In **Pages & tiles**, use "+ Add HTTP button", or open a button's "more options" and set "On tap" to "HTTP request". Fill in the method, URL and optionally a body and headers; "Test" sends the request from the device and shows the answer. On the device a tap shows a short toast: "OK" for a 2xx answer, otherwise the status code or why it failed.
@@ -131,6 +139,7 @@ The companion UI opens at `http://127.0.0.1:8750`; point it at the device IP. Th
 
 - **Several PCs:** each companion sends its own id and name (Connection page, "This PC's name"); the device keeps up to four PCs and a metric tile picks one.
 - **Control:** on the companion's Device page, "Pair for control" shows a code on the device; type it in. Tiles made with "+ Add PC control" then send media keys, volume, lock, sleep, restart or shut down to that PC (Sleep, Restart and Shut down ask on the device first). Commands are signed with the key from pairing and arrive on UDP `4211` (allow it in the firewall).
+- **Volume slider:** "+ Add PC volume" adds a slider for the PC's master volume: drag sideways to set it, tap to mute. In deck.json: `{ "type": "slider", "control": "pc-volume" }` (optional `"pc"`). The companion receives it as `volume_set:N` (Windows through the audio endpoint, Linux through `pactl`).
 - **Hotkeys:** the command "Hotkey" sends a key combination such as `ctrl+shift+m` (up to five keys: ctrl, shift, alt, win, a-z, 0-9, f1-f24 and named keys like enter, esc or pageup) to the PC's focused window, handy for app shortcuts bound to F13-F24. In deck.json: `{ "action": "pc", "cmd": "hotkey", "keys": "ctrl+shift+m" }`. Windows does not let it reach a window running as administrator unless the companion runs as administrator too. On Linux it uses `xdotool`, so X11 only.
 - **USB cable:** when the device is plugged into the PC, the companion finds it (Espressif USB serial, 303A:1001) and sends metrics and commands over the cable instead of WiFi. While it holds the port, USB flashing and the serial monitor cannot open it: use OTA, or set "USB cable" to Off.
 
