@@ -370,8 +370,26 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
           t.unit = (const char*)(tv["unit"] | "");
           t.detail = (const char*)(tv["detail"] | "");
           t.entity = "";
+          JsonVariantConst rows = tv["rows"];
+          if (!rows.isNull()) {
+            if (!rows.is<JsonArrayConst>() || rows.size() < 1 || rows.size() > MAX_SENSOR_ROWS) {
+              if (err) *err = where + ": rows must be an array of 1.." + String(MAX_SENSOR_ROWS);
+              return false;
+            }
+            for (JsonVariantConst rv : rows.as<JsonArrayConst>()) {
+              SensorRowDef row;
+              row.label = (const char*)(rv["label"] | "");
+              row.path = (const char*)(rv["path"] | "");
+              if (!row.path.length()) {
+                if (err) *err = where + ": every row needs a path";
+                return false;
+              }
+              t.rows.push_back(row);
+            }
+            t.scaleMax = (uint16_t)constrain((int)(tv["scaleMax"] | 0), 0, 65535);
+          }
         }
-        t.style = !strcmp(tv["style"] | "number", "chart") ? METRIC_CHART : METRIC_NUMBER;
+        t.style = !strcmp(tv["style"] | "number", "chart") && t.rows.empty() ? METRIC_CHART : METRIC_NUMBER;
         t.duration = !strcmp(tv["format"] | "", "duration");
         t.hours = (uint8_t)constrain((int)(tv["hours"] | 24), 1, 168);
         t.warn = tv["warn"] | 0.0f;

@@ -34,6 +34,9 @@
 // HTTP sensors have no default tap/hold action or HA detail card.
 // "detail": "runtime {ups.runtime_min|min}" adds a small line with
 // values from the same reply; "|unit" formats a number as a duration.
+// "rows": [{ "label": "5h", "path": "claude.five_hour.used" }, ...] (1..4)
+// shows label, bar and value per row under the name instead of one reading;
+// the bar spans 0..scaleMax (default 100) and goes when the tile is too narrow.
 //
 // Bambu printers: "printers": [{ "id": "h2c", "name": "H2C",
 //   "ip": "192.168.0.54", "plug": "switch.printer_plug" }] (plug optional:
@@ -146,6 +149,11 @@ struct HttpSensorDef {
   uint16_t poll = 30;
 };
 
+constexpr int MAX_SENSOR_ROWS = 4;
+struct SensorRowDef {
+  String label, path;
+};
+
 struct TileDef {
   String id;
   TileType type = TILE_ACTION;
@@ -153,6 +161,7 @@ struct TileDef {
   HttpSensorDef http;
   String unit;  // HTTP sensor: unit for JSON numbers only
   String detail;  // HTTP sensor: second line template, see above
+  std::vector<SensorRowDef> rows;  // HTTP sensor: label + bar + value lines
   bool duration = false;  // sensor: "format": "duration"
   bool hasColor = false;
   uint32_t color = 0;
@@ -167,7 +176,7 @@ struct TileDef {
   uint8_t hours = 24;  // TILE_SENSOR: history period, 1..168 hours
   bool hasWarn = false, hasCrit = false;
   float warn = 0, crit = 0;
-  uint16_t scaleMax = 0;  // 0 = full scale by unit
+  uint16_t scaleMax = 0;  // 0 = full scale by unit (sensor rows: 100)
   String printer;         // TILE_PRINTER: printer id
   PrinterShow show = PS_HERO;
   uint8_t nozzle = 0;     // PS_NOZZLE: 0 = right / only, 1 = left

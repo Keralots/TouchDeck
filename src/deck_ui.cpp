@@ -145,6 +145,8 @@ struct TileRt {
   float slFrac0, slValue;
   struct Spark* spark;    // PC metric chart, drawn by the deck (see sparkPaint)
   lv_obj_t* detail;       // HTTP sensor: the "detail" line
+  lv_obj_t* rows;         // HTTP sensor rows: one box per row (label, bar, value)
+  int16_t rowH;           // height of one row box
   lv_obj_t* px[4];        // printer tiles: extra labels, swatches
   // Clock tiles: hours in sub, then these two; the colon blinks.
   lv_obj_t* colon;
@@ -440,20 +442,21 @@ uint32_t sensorLine(const TileRt& r) {
          d.hasColor ? d.color : domainColor(entityDomain(d.entity));
 }
 
+// 0 = fine, 1 = warn, 2 = crit; prev is the level shown now (hysteresis).
+uint8_t thresholdLevel(const TileDef& d, float value, uint8_t prev) {
+  const bool low = d.hasWarn && d.hasCrit && d.crit < d.warn;
+  auto active = [&](float threshold, bool held) {
+    const float margin = held ? max(0.01f, fabsf(threshold) * 0.01f) : 0;
+    return low ? (held ? value < threshold + margin : value <= threshold) :
+                 (held ? value > threshold - margin : value >= threshold);
+  };
+  if (d.hasCrit && active(d.crit, prev == 2)) return 2;
+  if (d.hasWarn && active(d.warn, prev >= 1)) return 1;
+  return 0;
+}
+
 void sensorThreshold(TileRt& r, bool numeric, float value) {
-  const TileDef& d = *r.def;
-  if (!numeric) r.threshold = 0;
-  else {
-    const bool low = d.hasWarn && d.hasCrit && d.crit < d.warn;
-    auto active = [&](float threshold, bool held) {
-      const float margin = held ? max(0.01f, fabsf(threshold) * 0.01f) : 0;
-      return low ? (held ? value < threshold + margin : value <= threshold) :
-                   (held ? value > threshold - margin : value >= threshold);
-    };
-    if (d.hasCrit && active(d.crit, r.threshold == 2)) r.threshold = 2;
-    else if (d.hasWarn && active(d.warn, r.threshold >= 1)) r.threshold = 1;
-    else r.threshold = 0;
-  }
+  r.threshold = numeric ? thresholdLevel(*r.def, value, r.threshold) : 0;
   lv_obj_set_style_text_color(r.sub, lv_color_hex(sensorColour(r, true)), 0);
   if (r.viz && r.ser) lv_chart_set_series_color(r.viz, r.ser, lv_color_hex(sensorLine(r)));
 }
@@ -1175,9 +1178,57 @@ String httpDetail(const TileDef& d) {
   return out;
 }
 
+// Rows put "%" and "°" right after the number ("8%").
+String rowUnit(const TileDef& d) {
+  if (!d.unit.length()) return "";
+  return d.unit.startsWith("%") || d.unit.startsWith("\xC2\xB0") ? d.unit : " " + d.unit;
+}
+
+void layoutRows(TileRt& r);
+void setText(lv_obj_t* l, const char* text);
+
+// Each row box holds label, bar, value; its user data is the threshold level.
+void applyHttpRows(TileRt& r) {
+  const TileDef& d = *r.def;
+  const float full = d.scaleMax ? d.scaleMax : 100;
+  const uint32_t line = d.hasChartColor ? d.chartColor : d.hasColor ? d.color : domainColor(entityDomain(d.entity));
+  bool dim = true;
+  for (size_t i = 0; i < d.rows.size() && i < lv_obj_get_child_count(r.rows); i++) {
+    lv_obj_t* box = lv_obj_get_child(r.rows, i);
+    lv_obj_t* value = lv_obj_get_child(box, 2);
+    HttpSensorValue v;
+    const bool found = httpSensorRead(d.http, d.rows[i].path, v);
+    dim = dim && (!found || v.offline);
+    const bool numeric = found && !v.offline && v.present && v.numeric;
+    char number[48];
+    String text = "--";
+    if (numeric && d.duration && formatDuration(v.number, d.unit, number, sizeof(number))) text = number;
+    else if (numeric) {
+      formatReading(v.number, number, sizeof(number));
+      text = String(number) + rowUnit(d);
+    } else if (found && !v.offline && v.present && v.text) text = v.text.get();
+    setText(value, text.c_str());
+    const uint8_t level = numeric ? thresholdLevel(d, v.number, (uint8_t)(uintptr_t)lv_obj_get_user_data(box)) : 0;
+    lv_obj_set_user_data(box, (void*)(uintptr_t)level);
+    // Level 0 inherits the tile text colour, so Glass auto text reaches it.
+    if (level) lv_obj_set_style_text_color(value, lv_color_hex(level == 2 ? C_CRIT : C_WARN), 0);
+    else lv_obj_remove_local_style_prop(value, LV_STYLE_TEXT_COLOR, 0);
+    lv_obj_t* bar = lv_obj_get_child(box, 1);
+    lv_bar_set_value(bar, numeric ? (int32_t)lround(constrain(v.number * 100 / full, 0.0f, 100.0f)) : 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(level == 2 ? C_CRIT : level ? C_WARN : line), LV_PART_INDICATOR);
+  }
+  lv_obj_set_style_opa(r.obj, dim ? LV_OPA_50 : LV_OPA_COVER, 0);
+  layoutRows(r);
+  markPageStale(r.page);
+}
+
 void applyHttpToTile(TileRt& r) {
   const TileDef& d = *r.def;
   if (!d.http.enabled) return;
+  if (r.rows) {
+    applyHttpRows(r);
+    return;
+  }
   HttpSensorValue value;
   const bool found = httpSensorRead(d.http, d.http.path, value);
   const bool numeric = found && !value.offline && value.present && value.numeric;
@@ -2576,9 +2627,83 @@ void fitDetail(TileRt& r, const lv_font_t* f, int w, lv_align_t align, int y, bo
   lv_obj_align(r.detail, align, 0, y);
 }
 
+constexpr int ROW_BAR_MIN = 20;
+
+// Sensor rows: labels and values take what they need, the bar the rest.
+void layoutRows(TileRt& r) {
+  const lv_font_t* f = r.valFont;
+  if (!f || !r.rows) return;
+  const int n = lv_obj_get_child_count(r.rows);
+  int labelW = 0, valueW = textW(("100" + rowUnit(*r.def)).c_str(), f);
+  for (int i = 0; i < n; i++) {
+    lv_obj_t* box = lv_obj_get_child(r.rows, i);
+    labelW = LV_MAX(labelW, textW(lv_label_get_text(lv_obj_get_child(box, 0)), f));
+    valueW = LV_MAX(valueW, textW(lv_label_get_text(lv_obj_get_child(box, 2)), f));
+  }
+  valueW = LV_MIN(valueW, r.valW - labelW);
+  const int gap = 6;
+  const int barX = labelW ? labelW + gap : 0;
+  const int barW = r.valW - barX - valueW - gap;
+  for (int i = 0; i < n; i++) {
+    lv_obj_t* box = lv_obj_get_child(r.rows, i);
+    lv_obj_t* label = lv_obj_get_child(box, 0);
+    lv_obj_t* bar = lv_obj_get_child(box, 1);
+    lv_obj_t* value = lv_obj_get_child(box, 2);
+    lv_obj_set_size(box, r.valW, r.rowH);
+    lv_obj_set_pos(box, 0, i * r.rowH);
+    setFont(label, f);
+    setFont(value, f);
+    lv_obj_set_size(label, labelW, lineH(f));
+    lv_obj_align(label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_size(value, valueW, lineH(f));
+    lv_obj_align(value, LV_ALIGN_RIGHT_MID, 0, 0);
+    showObj(bar, barW >= ROW_BAR_MIN);
+    lv_obj_set_size(bar, LV_MAX(barW, 0), 6);
+    lv_obj_align(bar, LV_ALIGN_LEFT_MID, barX, 0);
+  }
+}
+
+// Sensor rows: the name and icon on top, the rows sharing the space under it.
+void fitRows(TileRt& r, int cw, int ch) {
+  struct Opt {
+    const lv_font_t* name;
+    const lv_font_t* row;
+  };
+  static const Opt kOpts[] = {{&deck_font_20, &deck_font_20}, {&deck_font_14, &deck_font_20},
+                              {&deck_font_14, &deck_font_14}, {&deck_font_14, &deck_font_12},
+                              {&deck_font_12, &deck_font_12}};
+  const int n = lv_obj_get_child_count(r.rows);
+  const Opt* o = &kOpts[4];
+  for (const Opt& k : kOpts)
+    if (lineH(k.name) + n * lineH(k.row) <= ch) { o = &k; break; }
+  showObj(r.sub, false);
+  showObj(r.detail, false);
+  const int chip = lineH(o->name) >= 22 ? 22 : 18;
+  fitChip(r, chip);
+  lv_obj_align(r.chip, LV_ALIGN_TOP_RIGHT, 2, -2);
+  showObj(r.chip, true);
+  r.chipRoom = 0;
+  r.nameFont = nullptr;
+  fitName(r.name, o->name, 1);
+  lv_obj_set_width(r.name, cw - chip - 4);
+  lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, 0, -2);
+  showObj(r.name, true);
+  const int top = lineH(o->name);
+  r.rowH = n ? LV_MAX(lineH(o->row), (ch - top) / n) : 0;
+  lv_obj_set_size(r.rows, cw, ch - top);
+  lv_obj_align(r.rows, LV_ALIGN_TOP_LEFT, 0, top);
+  r.valFont = o->row;
+  r.valW = cw;
+  layoutRows(r);
+}
+
 // Sensor: the reading big at the top with a small icon top right, the name
 // under it; a row (name left, reading right) on short tiles.
 void fitSensor(TileRt& r, int cw, int ch) {
+  if (r.rows) {
+    fitRows(r, cw, ch);
+    return;
+  }
   struct Opt {
     const lv_font_t* val;
     const lv_font_t* name;
@@ -3979,6 +4104,35 @@ void applyPcToTile(TileRt& r) {
   }
 }
 
+lv_obj_t* makeRows(lv_obj_t* t, const TileDef& d) {
+  if (!d.http.enabled || d.rows.empty()) return nullptr;
+  const auto plain = [](lv_obj_t* o) {
+    lv_obj_remove_flag(o, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+  };
+  lv_obj_t* rows = lv_obj_create(t);
+  lv_obj_remove_style_all(rows);
+  plain(rows);
+  for (const SensorRowDef& row : d.rows) {
+    lv_obj_t* box = lv_obj_create(rows);
+    lv_obj_remove_style_all(box);
+    plain(box);
+    lv_obj_t* label = lv_label_create(box);
+    lv_label_set_text(label, row.label.c_str());
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_CLIP);
+    lv_obj_set_style_text_opa(label, LV_OPA_70, 0);
+    lv_obj_t* bar = lv_bar_create(box);
+    plain(bar);
+    lv_bar_set_range(bar, 0, 100);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(C_TRACK), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_t* value = lv_label_create(box);
+    lv_label_set_text(value, "--");
+    lv_label_set_long_mode(value, LV_LABEL_LONG_MODE_CLIP);
+    lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
+  }
+  return rows;
+}
+
 lv_obj_t* makeDetail(lv_obj_t* t, const TileDef& d) {
   if (!d.http.enabled || !d.detail.length()) return nullptr;
   lv_obj_t* l = lv_label_create(t);
@@ -4351,7 +4505,10 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   r.iconPx = iconPx;
   r.iconCp = showIcon(ic, def, nullptr, false, iconPx, 0);
   r.fill = fill;
-  if (def.type == TILE_SENSOR) r.detail = makeDetail(t, def);
+  if (def.type == TILE_SENSOR) {
+    r.detail = makeDetail(t, def);
+    r.rows = makeRows(t, def);
+  }
   lv_label_set_text(sub, tileSub(r).c_str());
   const size_t idx = s_tiles.size();
   s_tiles.push_back(r);
