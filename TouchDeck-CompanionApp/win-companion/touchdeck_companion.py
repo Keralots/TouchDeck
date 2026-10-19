@@ -2300,6 +2300,30 @@ def detect_source(state):
                 pass
 
 
+REST_REPROBE_S = 10
+_last_rest_reprobe = 0.0
+
+
+def recover_source(state, config, snapshot):
+    """Auto mode stuck on WMI with no readings (LHM's web server was down at
+    startup): re-probe REST and rediscover once it answers."""
+    global _last_rest_reprobe
+    if use_rest_api or snapshot or source_preference(config) != "auto":
+        return
+    if not any(m.get("source") == "wmi" for m in config.get("metrics") or []):
+        return
+    now = time.monotonic()
+    if now - _last_rest_reprobe < REST_REPROBE_S:
+        return
+    _last_rest_reprobe = now
+    ok, count, _ = check_rest_api_connectivity(rest_api_host, rest_api_port)
+    if not (ok and count > 0):
+        return
+    print("  ✓ LHM REST API is up - switching from WMI and rescanning")
+    ensure_discovered(rescan=True)
+    state.set_source_text(source_text())
+
+
 def main():
     """Main entry point (v4: pywebview web UI + system tray, single process)."""
     parser = argparse.ArgumentParser(description='TouchDeck Companion')

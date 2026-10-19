@@ -376,7 +376,8 @@ def test_monitor_prefers_usb_and_preserves_udp_payload(rig, monkeypatch, connect
     payload = {"metrics": [{"id": 1, "v": 42}]}
     core = SimpleNamespace(PYTHONCOM_AVAILABLE=False, use_rest_api=False, STATUS_OK=0,
         psutil=SimpleNamespace(cpu_percent=mock.Mock()), build_snapshot=mock.Mock(return_value={}),
-        collect_metrics=mock.Mock(return_value=(payload, {1: 42}, None, {}, None)))
+        collect_metrics=mock.Mock(return_value=(payload, {1: 42}, None, {}, None)),
+        recover_source=mock.Mock())
     stop = threading.Event()
     monkeypatch.setattr(stop, "wait", lambda _: stop.set())
     link = mock.Mock()

@@ -69,7 +69,8 @@ class UdpStreamTest(unittest.TestCase):
         core = SimpleNamespace(PYTHONCOM_AVAILABLE=False, use_rest_api=False, STATUS_OK=0,
                                psutil=mock.Mock(), build_snapshot=mock.Mock(return_value={}),
                                collect_metrics=mock.Mock(return_value=(
-                                   {"metrics": [{"id": 1, "value": 42}]}, {1: 42}, True, {}, 0)))
+                                   {"metrics": [{"id": 1, "value": 42}]}, {1: 42}, True, {}, 0)),
+                               recover_source=mock.Mock())
         stop = threading.Event()
         sock = mock.Mock()
         with mock.patch.object(app_window, "_core", core), \

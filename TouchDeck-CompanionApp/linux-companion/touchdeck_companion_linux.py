@@ -158,6 +158,10 @@ def detect_source(state):
     state.set_source_text(source_text())
 
 
+def recover_source(state, config, snapshot):
+    pass  # Windows-only: no REST/WMI source to switch between here.
+
+
 def is_lhm_process_running():
     return False  # N/A on Linux; only referenced by the (skipped) REST branch.
 
