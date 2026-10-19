@@ -53,6 +53,8 @@ struct PcState {
   int8_t vol;     // master volume 0..100
   int8_t mute;    // 0 / 1
   int8_t media;   // PC_MEDIA_*, -1 = no media session
+  int32_t dur, pos, t0;  // seconds, 0 = unknown; t0 is a Unix epoch
+  char   art[9];         // CRC32 of the source cover, empty = none
   char   title[200], artist[200];  // UTF-8, up to 48 characters each
 };
 enum : int8_t { PC_MEDIA_STOPPED = 0, PC_MEDIA_PAUSED, PC_MEDIA_PLAYING };
@@ -63,6 +65,7 @@ struct PcSource {
   char     name[24];
   IPAddress ip;          // where its last packet came from
   uint16_t cmdPort;      // its command listener ("cmd_port"), 0 = none
+  uint16_t artPort;      // cover HTTP server, 0 = unavailable
   bool     viaSerial;    // its latest packet came over the USB cable
   char     nonces[4][17];  // one-time nonces from its latest packet, "" = used
   bool     paired;

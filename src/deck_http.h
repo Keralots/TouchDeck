@@ -4,6 +4,7 @@
 #define DECK_HTTP_H
 
 #include <Arduino.h>
+#include <IPAddress.h>
 #include <memory>
 #include <vector>
 #include "deck_config.h"
@@ -25,6 +26,11 @@ uint32_t httpTestStart(const TileAction& a, bool sensor = false);
 // The test's outcome once it has run (false while it waits). body = the
 // first 512 bytes of an action answer, or 8192 bytes for a sensor test.
 bool httpTestResult(uint32_t ticket, int& code, String& err, std::shared_ptr<char>& body);
+
+// One cover job at a time, including a result waiting for the UI.
+bool httpArtFetch(IPAddress ip, uint16_t port, const char* id, int px);
+// A finished job, including failure (pixels == nullptr). Caller owns pixels.
+bool httpArtTake(String& id, int& px, uint8_t*& pixels);
 
 constexpr int HTTP_HISTORY_POINTS = 48;
 struct HttpSensorValue {

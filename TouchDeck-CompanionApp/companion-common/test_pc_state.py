@@ -1,5 +1,9 @@
 import asyncio
 import copy
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+import tempfile
+import zlib
 import json
 import os
 import subprocess
@@ -91,6 +95,24 @@ class StateTest(unittest.TestCase):
             self.assertEqual(poll.call_count, 7)
 
 
+class WinrtCallTest(unittest.TestCase):
+    def test_result_timeout_and_stuck_call(self):
+        async def value():
+            return 7
+        self.assertEqual(pc_state.run_winrt("t1", value, 1.0), 7)
+        release = threading.Event()
+
+        async def stuck():
+            await asyncio.get_running_loop().run_in_executor(None, release.wait)
+            return 1
+        self.assertIsNone(pc_state.run_winrt("t2", stuck, 0.05))
+        # The stuck call still runs: a new one with the same key is skipped, not stacked.
+        self.assertIsNone(pc_state.run_winrt("t2", value, 1.0))
+        release.set()
+        pc_state._winrt_busy["t2"].join(1.0)
+        self.assertEqual(pc_state.run_winrt("t2", value, 1.0), 7)
+
+
 class PacketTest(unittest.TestCase):
     def test_size_guard_drops_text_then_media_without_mutating_cache(self):
         payload = {"padding": "", "pcstate": {"vol": 45, "media": {
@@ -124,14 +146,16 @@ class PacketTest(unittest.TestCase):
 class LinuxTest(unittest.TestCase):
     def test_pactl_and_playerctl_output(self):
         output = ["Volume: front-left: 29491 /  45% / -20.81 dB,   front-right: 29491 / 45%",
-                  "Mute: yes\n", "Playing\n", "An artist\tA title\n"]
+                  "Mute: yes\n", "Paused\n", "An artist\tA title\t180000000\t\n", "12.5\n"]
         with mock.patch.object(pc_state.subprocess, "run") as run:
             run.side_effect = [SimpleNamespace(stdout=value) for value in output]
             state = asyncio.run(pc_state._LinuxReader().read())
         self.assertEqual(state, {"vol": 45, "mute": True, "media": {
-            "status": "playing", "artist": "An artist", "title": "A title"}})
-        self.assertEqual(run.call_args.args[0],
-                         ("playerctl", "metadata", "--format", "{{artist}}\t{{title}}"))
+            "status": "paused", "artist": "An artist", "title": "A title", "dur": 180, "pos": 12}})
+        self.assertEqual(run.call_args.args[0], ("playerctl", "position"))
+        self.assertEqual(run.call_args_list[3].args[0],
+                         ("playerctl", "metadata", "--format",
+                          "{{artist}}\t{{title}}\t{{mpris:length}}\t{{mpris:artUrl}}"))
         for call in run.call_args_list:
             self.assertEqual(call.kwargs["timeout"], pc_state.TOOL_TIMEOUT)
             self.assertEqual(call.kwargs["env"]["LC_ALL"], "C")
@@ -196,6 +220,8 @@ class WindowsTest(unittest.TestCase):
         session.try_get_media_properties_async = mock.AsyncMock(
             return_value=SimpleNamespace(title="Song", artist="Artist"))
         reader._manager = mock.Mock()
+        reader._manager.get_sessions.return_value = []
+        session.source_app_user_model_id = "player"
         reader._manager.get_current_session.return_value = session
         for code, status in ((3, "stopped"), (4, "playing"), (5, "paused")):
             session.get_playback_info.return_value = SimpleNamespace(playback_status=code)
@@ -216,6 +242,192 @@ class WindowsTest(unittest.TestCase):
             self.assertEqual(asyncio.run(reader.read()), {})
             reader.close()
         self.assertEqual(len(logs.output), 2)
+
+
+class TimelineTest(unittest.TestCase):
+    def test_playing_origin_and_position_stay_stable_until_seek(self):
+        timeline = pc_state._Timeline()
+        state = pc_state.PCState()
+        first = {"status": "playing"}
+        timeline.apply(first, "track", 180, 10, 1000)
+        state._publish({"media": first})
+        state.changed.clear()
+        for position, now in ((11, 1001), (12, 1003), (14, 1004)):
+            media = {"status": "playing"}
+            timeline.apply(media, "track", 180, position, now)
+            self.assertEqual(media, first)
+            state._publish({"media": media})
+            self.assertFalse(state.changed.is_set())
+        media = {"status": "playing"}
+        timeline.apply(media, "track", 180, 60, 1005)
+        self.assertEqual((media["pos"], media["t0"]), (60, 945))
+        state._publish({"media": media})
+        self.assertTrue(state.changed.is_set())
+
+    def test_pause_resume_track_change_and_clamp(self):
+        timeline = pc_state._Timeline()
+        for status, key, pos, now, expected in (
+                ("playing", "one", 4, 100, {"pos": 4, "t0": 96}),
+                ("paused", "one", 5.9, 101, {"pos": 5}),
+                ("paused", "one", 6.1, 102, {"pos": 6}),
+                ("playing", "one", 6.1, 103, {"pos": 6, "t0": 97}),
+                ("playing", "two", 7, 104, {"pos": 7, "t0": 97}),
+                ("stopped", "two", -4, 105, {"pos": 0}),
+                ("paused", "two", 999, 106, {"pos": 180})):
+            media = {"status": status}
+            timeline.apply(media, key, 180, pos, now)
+            self.assertEqual(media, dict(expected, status=status, dur=180))
+
+    def test_clean_new_fields(self):
+        media = {"status": "playing", "dur": 180, "pos": 0,
+                 "t0": 1700000000, "art": "A012B3FF"}
+        self.assertEqual(pc_state._clean({"media": media}),
+                         {"media": dict(media, art="a012b3ff")})
+        for key, bad in (("dur", 0), ("dur", -1), ("pos", "3"), ("pos", True),
+                         ("t0", 2147483648), ("art", "abc"), ("art", "zzzzzzzz")):
+            cleaned = pc_state._clean({"media": dict(media, **{key: bad})})
+            self.assertNotIn(key, cleaned["media"])
+        self.assertNotIn("t0", pc_state._clean({"media": dict(media, status="paused")})["media"])
+
+    def test_packet_keeps_timing_and_art_before_text(self):
+        media = {"status": "playing", "dur": 200, "pos": 10,
+                 "t0": 1700000000, "art": "0123abcd"}
+        packet = {"art_port": 8751, "padding": "x" * 1100, "pcstate": {"media":
+                  dict(media, title="x" * 200, artist="y" * 200)}}
+        result, data = pc_state.encode_packet(packet)
+        self.assertLessEqual(len(data), pc_state.PACKET_LIMIT)
+        self.assertEqual(result["pcstate"]["media"], media)
+        self.assertEqual(result["art_port"], 8751)
+
+
+class MediaReaderTest(unittest.TestCase):
+    reader = WindowsTest.reader
+
+    def tearDown(self):
+        pc_state.ART.set_current(None)
+        pc_state._session_id = None
+
+    def session(self, app, status):
+        session = mock.Mock(source_app_user_model_id=app)
+        session.get_playback_info.return_value = SimpleNamespace(playback_status=status)
+        session.try_get_media_properties_async = mock.AsyncMock(
+            return_value=SimpleNamespace(title="Song", artist="Artist", thumbnail=None))
+        return session
+
+    def test_session_choice_playing_current_first_none(self):
+        chrome, tidal = self.session("chrome", 5), self.session("tidal", 4)
+        manager = mock.Mock()
+        manager.get_sessions.return_value = [chrome, tidal]
+        manager.get_current_session.return_value = chrome
+        self.assertIs(pc_state._choose_session(manager), tidal)
+        tidal.get_playback_info.return_value.playback_status = 5
+        self.assertIs(pc_state._choose_session(manager), chrome)
+        self.assertIs(pc_state._choose_session(manager, keep="tidal"), tidal)
+        manager.get_current_session.return_value = None
+        self.assertIs(pc_state._choose_session(manager), chrome)
+        manager.get_sessions.return_value = []
+        self.assertIsNone(pc_state._choose_session(manager))
+
+    def test_windows_estimated_position_and_selected_id(self):
+        reader = self.reader()
+        session = self.session("tidal", 4)
+        reader._manager = mock.Mock()
+        reader._manager.get_sessions.return_value = [session]
+        reader._manager.get_current_session.return_value = session
+        session.get_timeline_properties.return_value = SimpleNamespace(
+            position=timedelta(seconds=0.0155), end_time=timedelta(seconds=180),
+            last_updated_time=datetime.fromtimestamp(1700000000, timezone.utc))
+        with mock.patch.object(pc_state.time, "time", return_value=1700000005.4):
+            media = asyncio.run(reader._media())
+        self.assertEqual((media["dur"], media["pos"], media["t0"]), (180, 5, 1700000000))
+        self.assertEqual(pc_state.selected_session_id(), "tidal")
+        session.get_playback_info.return_value.playback_status = 5
+        with mock.patch.object(pc_state.time, "time", return_value=1700000090):
+            media = asyncio.run(reader._media())
+        self.assertEqual(media["pos"], 0)
+        self.assertNotIn("t0", media)
+        reader.close()
+
+    def test_thumbnail_refresh_crc_change_clear_and_timeout(self):
+        reader = self.reader()
+        reader._media_key = ("chrome", "Song", "Artist")
+        reader._props = SimpleNamespace(thumbnail=object())
+        reader._thumbnail = mock.AsyncMock(return_value=b"png bytes")
+        with mock.patch.object(pc_state.time, "monotonic", return_value=10) as clock:
+            media = {}
+            asyncio.run(reader._refresh_art(media))
+            self.assertEqual(media["art"], "%08x" % zlib.crc32(b"png bytes"))
+            clock.return_value = 14.9
+            asyncio.run(reader._refresh_art({}))
+            self.assertEqual(reader._thumbnail.await_count, 1)
+            clock.return_value = 15
+            reader._thumbnail.return_value = b"late chrome cover"
+            updated = {}
+            asyncio.run(reader._refresh_art(updated))
+            self.assertNotEqual(media["art"], updated["art"])
+            clock.return_value = 20
+            reader._thumbnail.side_effect = asyncio.TimeoutError
+            retained = {}
+            asyncio.run(reader._refresh_art(retained))
+            self.assertEqual(retained, updated)
+            reader._media_key = ("chrome", "New song", "Artist")
+            reader._thumbnail.side_effect = None
+            reader._thumbnail.return_value = None
+            cleared = {}
+            asyncio.run(reader._refresh_art(cleared))
+            self.assertNotIn("art", cleared)
+            self.assertIsNone(pc_state.ART.pixels(updated["art"], 32))
+        reader.close()
+
+    def test_winrt_thumbnail_stream_buffer_and_short_read(self):
+        reader = self.reader()
+        stream = mock.Mock(size=5)
+        stream.read_async = mock.AsyncMock(return_value=bytearray(b"cover"))
+        thumbnail = SimpleNamespace(open_read_async=mock.AsyncMock(return_value=stream))
+        reader._props = SimpleNamespace(thumbnail=thumbnail)
+        streams = SimpleNamespace(Buffer=mock.Mock(side_effect=bytearray),
+                                  InputStreamOptions=SimpleNamespace(READ_AHEAD=1))
+        with mock.patch.dict(sys.modules, {"winrt.windows.storage.streams": streams}):
+            self.assertEqual(asyncio.run(reader._thumbnail()), b"cover")
+            streams.Buffer.assert_called_once_with(5)
+            self.assertEqual(stream.read_async.call_args.args[1:], (5, 1))
+            stream.close.assert_called_once()
+            stream.read_async.return_value = bytearray(b"bad")
+            self.assertIsNone(asyncio.run(reader._thumbnail()))
+            self.assertEqual(stream.close.call_count, 2)
+        reader.close()
+
+    def test_thumbnail_budget_is_outside_media_timeout(self):
+        reader = self.reader()
+        reader._volume = lambda: {}
+        reader._media_key = ("player", "Song", "Artist")
+        reader._props = SimpleNamespace(thumbnail=object())
+        reader._media = mock.AsyncMock(return_value={"status": "playing", "title": "Song"})
+
+        async def thumbnail():
+            await asyncio.sleep(0.45)
+            return b"cover"
+
+        reader._thumbnail = thumbnail
+        state = asyncio.run(reader.read())
+        self.assertEqual(state["media"]["title"], "Song")
+        self.assertIn("art", state["media"])
+        reader.close()
+
+    def test_linux_file_art_only_and_playing_timeline(self):
+        reader = pc_state._LinuxReader()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "a cover.png"
+            path.write_bytes(b"cover")
+            for url, has_art in ((path.as_uri(), True), ("https://example.com/cover", False)):
+                output = [None, None, "Playing", "Artist\tSong\t180000000\t" + url, "12.5"]
+                with mock.patch.object(reader, "_run", side_effect=output), \
+                        mock.patch.object(pc_state.time, "time", return_value=1700000012.5), \
+                        mock.patch.object(pc_state.Path, "read_bytes", return_value=b"cover") as read:
+                    media = asyncio.run(reader.read())["media"]
+                self.assertEqual((media["dur"], media["pos"], media["t0"]), (180, 12, 1700000000))
+                self.assertEqual("art" in media, has_art)
+                self.assertEqual(read.call_count, int(has_art))
 
 
 class SendLoopTest(unittest.TestCase):
