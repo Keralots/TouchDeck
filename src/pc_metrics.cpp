@@ -203,6 +203,7 @@ static void parsePacket(const char* json, IPAddress from, bool serial) {
   pc->viaSerial = serial;
   if (!serial) pc->ip = from;
   pc->cmdPort = doc["cmd_port"] | 0;
+  pc->artPort = (uint16_t)constrain(doc["art_port"] | 0, 0, 65535);
   // A few nonces per packet, so quick taps (volume) need not wait for the next one.
   memset(pc->nonces, 0, sizeof(pc->nonces));
   int n = 0;
@@ -220,6 +221,12 @@ static void parsePacket(const char* json, IPAddress from, bool serial) {
                                   : !strcmp(ms, "paused") ? PC_MEDIA_PAUSED : PC_MEDIA_STOPPED;
   strlcpy(st.title, media["title"] | "", sizeof(st.title));
   strlcpy(st.artist, media["artist"] | "", sizeof(st.artist));
+  st.dur = max((int32_t)0, media["dur"] | (int32_t)0);
+  st.pos = max((int32_t)0, media["pos"] | (int32_t)0);
+  st.t0 = max((int32_t)0, media["t0"] | (int32_t)0);
+  uint8_t art[4];
+  st.art[0] = 0;
+  if (fromHex(media["art"] | (const char*)nullptr, art, sizeof(art))) toHex(art, sizeof(art), st.art);
   asciiPunct(st.title);
   asciiPunct(st.artist);
   // A state-only packet (sent when the state changes between metrics

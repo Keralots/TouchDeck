@@ -326,6 +326,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       else if (!strcmp(tt, "slider")) t.type = TILE_SLIDER;
       else if (!strcmp(tt, "metric")) t.type = TILE_METRIC;
       else if (!strcmp(tt, "clock")) t.type = TILE_CLOCK;
+      else if (!strcmp(tt, "media")) t.type = TILE_MEDIA;
       else if (!strcmp(tt, "printer")) t.type = TILE_PRINTER;
       else {
         if (err) *err = where + ": unknown type '" + tt + "'";
@@ -397,7 +398,8 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         t.hasWarn = tv["warn"].is<float>() && isfinite(t.warn);
         t.hasCrit = tv["crit"].is<float>() && isfinite(t.crit);
       }
-      if (t.type == TILE_CLOCK) {
+      if (t.type == TILE_CLOCK || t.type == TILE_MEDIA) {
+        if (t.type == TILE_MEDIA) t.pc = (const char*)(tv["pc"] | "");
         p.tiles.push_back(t);
         continue;
       }

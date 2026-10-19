@@ -22,6 +22,7 @@
 #include <lvgl.h>
 #include <time.h>
 #include <algorithm>
+#include <esp_heap_caps.h>
 #include <new>
 #include <vector>
 
@@ -107,6 +108,18 @@ struct Page {
   uint32_t snapMs;  // when snap was last taken
 };
 
+// Stable descriptors shared by tiles showing the same cover and size.
+struct MediaArt {
+  String id;
+  int px = 0;
+  lv_image_dsc_t dsc = {};
+  uint8_t* pixels = nullptr;
+  ~MediaArt() {
+    lv_image_cache_drop(&dsc);
+    heap_caps_free(pixels);
+  }
+};
+
 // One tile on screen. LVGL user data holds the index into s_tiles.
 struct TileRt {
   const TileDef* def;
@@ -152,6 +165,14 @@ struct TileRt {
   lv_obj_t* colon;
   lv_obj_t* mins;
   bool colonLit;
+  lv_obj_t* cover;
+  lv_obj_t* mediaButtons[3];
+  lv_obj_t* mediaIcons[3];
+  std::shared_ptr<MediaArt> art;
+  String artWanted;
+  uint32_t artAttempt;
+  int16_t coverPx;
+  bool mediaFull;
   // Glass auto text: the colour picked from the picture under the tile.
   uint32_t autoText;
   bool hasAuto;
@@ -350,6 +371,7 @@ uint32_t showIcon(lv_obj_t* label, const TileDef& d, const HaEntity* e, bool on,
 String tileLabel(const TileDef& t) {
   if (t.label.length()) return t.label;
   if (t.type == TILE_CLOCK) return "Clock";
+  if (t.type == TILE_MEDIA) return "Now playing";
   const int dot = t.entity.indexOf('.');
   if (dot > 0) return t.entity.substring(dot + 1);
   return t.id.length() ? t.id : String("Tile");
@@ -904,7 +926,7 @@ void setSliderFill(TileRt& r, float frac) {
 // Pull the latest HA state into one tile's widgets.
 void applyHaToTile(TileRt& r, bool force) {
   const TileDef& d = *r.def;
-  if (d.http.enabled || !d.entity.length()) return;
+  if (d.type == TILE_MEDIA || d.http.enabled || !d.entity.length()) return;
   HaEntity e;
   if (!haGetEntity(d.entity, e)) return;
   if (!force && e.version == r.haVersion) return;
@@ -2932,6 +2954,167 @@ void fitMetric(TileRt& r, int cw, int ch) {
   fitValue(r);
 }
 
+// --- Now playing ----------------------------------------------------------------------
+void mediaGlyph(lv_obj_t* label, const char* name, const char* fallback, int px) {
+  const uint32_t cp = iconCodepoint(name);
+  const lv_font_t* font = cp ? iconFont(px) : nullptr;
+  char text[5];
+  if (font) iconUtf8(cp, text);
+  setFont(label, font ? font : &deck_font_20);
+  setText(label, font ? text : fallback);
+}
+
+void mediaSetArt(TileRt& r, const std::shared_ptr<MediaArt>& art) {
+  if (r.art == art) return;
+  lv_image_set_src(r.cover, art ? &art->dsc : nullptr);
+  r.art = art;  // the previous descriptor is no longer referenced by this image
+  showObj(r.cover, (bool)art);
+  showObj(r.icon, !art);
+  markPageStale(r.page);
+}
+
+void mediaProgress(TileRt& r) {
+  const PcState* st = pcStateOf(pcSource(r.def->pc));
+  const time_t now = time(nullptr);
+  const bool visible = r.mediaFull && st && st->media >= 0 && st->dur > 0 && now >= 1609459200 &&
+                       (st->media != PC_MEDIA_PLAYING || st->t0 > 0);
+  bool changed = visible == lv_obj_has_flag(r.viz, LV_OBJ_FLAG_HIDDEN);
+  showObj(r.viz, visible);
+  if (visible) {
+    const int64_t elapsed = st->media == PC_MEDIA_PLAYING ? (int64_t)now - st->t0 : st->pos;
+    const int value = (int)(std::max((int64_t)0, std::min(elapsed, (int64_t)st->dur)) * 1000 / st->dur);
+    if (value != lv_bar_get_value(r.viz)) {
+      lv_bar_set_value(r.viz, value, LV_ANIM_OFF);
+      changed = true;
+    }
+  }
+  if (changed) markPageStale(r.page);
+}
+
+void mediaCover(TileRt& r) {
+  const PcSource* pc = pcSource(r.def->pc);
+  const PcState* st = pcStateOf(pc);
+  const String wanted = st && st->media >= 0 && r.coverPx ? String(st->art) : String();
+  if (wanted != r.artWanted || (r.art && r.art->px != r.coverPx)) {
+    r.artWanted = wanted;
+    r.artAttempt = 0;
+    mediaSetArt(r, {});
+  }
+  if (!wanted.length() || r.art) return;
+  for (const TileRt& other : s_tiles) {
+    if (other.art && other.art->id == wanted && other.art->px == r.coverPx) {
+      mediaSetArt(r, other.art);
+      return;
+    }
+  }
+  if (!pc || pc->viaSerial || !pc->artPort || (r.artAttempt && millis() - r.artAttempt < 10000)) return;
+  if (httpArtFetch(pc->ip, pc->artPort, wanted.c_str(), r.coverPx)) {
+    for (TileRt& other : s_tiles)
+      if (other.def->type == TILE_MEDIA && other.artWanted == wanted && other.coverPx == r.coverPx)
+        other.artAttempt = millis() ? millis() : 1;
+  }
+}
+
+void applyMedia(TileRt& r) {
+  const PcState* st = pcStateOf(pcSource(r.def->pc));
+  const bool available = st && st->media >= 0;
+  const char* title = available && st->title[0] ? st->title : "Nothing playing";
+  const char* artist = available ? st->artist : "";
+  const uint32_t cp = available && st->media == PC_MEDIA_PLAYING ? 1 : 0;
+  bool changed = strcmp(lv_label_get_text(r.name), title) || strcmp(lv_label_get_text(r.sub), artist);
+  setText(r.name, title);
+  setText(r.sub, artist);
+  const lv_opa_t opacity = available ? LV_OPA_COVER : LV_OPA_50;
+  if (lv_obj_get_style_opa(r.obj, LV_PART_MAIN) != opacity) {
+    lv_obj_set_style_opa(r.obj, opacity, 0);
+    changed = true;
+  }
+  if (r.iconCp != cp) {
+    mediaGlyph(r.mediaIcons[1], cp ? "pause" : "play", cp ? "||" : ">", 24);
+    r.iconCp = cp;
+    changed = true;
+  }
+  mediaCover(r);
+  mediaProgress(r);
+  if (changed) markPageStale(r.page);
+}
+
+void mediaArtTick() {
+  String id;
+  int px;
+  uint8_t* pixels = nullptr;
+  if (!httpArtTake(id, px, pixels)) return;
+  std::shared_ptr<MediaArt> art;
+  if (pixels) {
+    art = std::make_shared<MediaArt>();
+    art->id = id;
+    art->px = px;
+    art->pixels = pixels;
+    art->dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+    art->dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+    art->dsc.header.w = art->dsc.header.h = px;
+    art->dsc.header.stride = px * 2;
+    art->dsc.data_size = px * px * 2;
+    art->dsc.data = pixels;
+  }
+  for (TileRt& r : s_tiles) {
+    if (r.def->type != TILE_MEDIA || r.coverPx != px) continue;
+    const PcState* st = pcStateOf(pcSource(r.def->pc));
+    if (!st || st->media < 0 || id != st->art) continue;
+    r.artWanted = id;
+    r.artAttempt = millis() ? millis() : 1;
+    if (art) mediaSetArt(r, art);
+  }
+}
+
+void mediaEvent(lv_event_t* e) {
+  const size_t tag = (size_t)(uintptr_t)lv_event_get_user_data(e), idx = tag / 4;
+  if (idx >= s_tiles.size()) return;
+  TileRt& r = s_tiles[idx];
+  const int button = tag % 4;
+  if (button == 3 && r.mediaFull) return;
+  static const char* const cmds[] = {"media_prev", "media_play_pause", "media_next", "media_play_pause"};
+  String err;
+  if (!pcSendCommand(r.def->pc, cmds[button], err)) deckToastShow(err.c_str(), 2200);
+}
+
+void fitMedia(TileRt& r, int cw, int ch) {
+  r.mediaFull = cw >= 150 && ch >= 112;
+  const int topH = r.mediaFull ? ch - 48 : ch;
+  const int cover = cw >= 150 && topH >= 40 ? min(200, min(topH, cw * 3 / 8)) : 0;
+  if (r.coverPx != cover) {
+    mediaSetArt(r, {});
+    r.coverPx = cover;
+    r.artAttempt = 0;
+  }
+  showObj(r.chip, cover > 0);
+  if (cover) {
+    lv_obj_set_size(r.chip, cover, cover);
+    lv_obj_set_pos(r.chip, 0, (topH - cover) / 2);
+  }
+  const int left = cover ? cover + 10 : 0, width = max(1, cw - left);
+  const lv_font_t* font = cw >= 150 ? &deck_font_14 : &deck_font_12;
+  const int titleH = min(topH, textH(font, 2));
+  const bool artist = cover && topH >= titleH + lineH(&deck_font_12) + 4;
+  const int blockH = titleH + (artist ? lineH(&deck_font_12) + 4 : 0);
+  setFont(r.name, font);
+  lv_obj_set_style_text_line_space(r.name, NAME_LINE_SP, 0);
+  lv_obj_set_pos(r.name, left, max(0, (topH - blockH) / 2));
+  lv_obj_set_size(r.name, width, titleH);
+  setFont(r.sub, &deck_font_12);
+  lv_obj_set_pos(r.sub, left, max(0, (topH - blockH) / 2) + titleH + 4);
+  lv_obj_set_size(r.sub, width, lineH(&deck_font_12));
+  showObj(r.sub, artist);
+  lv_obj_set_pos(r.viz, 0, ch - 44);
+  lv_obj_set_size(r.viz, cw, 4);
+  for (int i = 0; i < 3; i++) {
+    showObj(r.mediaButtons[i], r.mediaFull);
+    lv_obj_set_pos(r.mediaButtons[i], i * cw / 3, ch - 34);
+    lv_obj_set_size(r.mediaButtons[i], cw / 3, 34);
+  }
+  applyMedia(r);
+}
+
 // Clock: the largest time that fits, the date under it when there is room
 // (a one step smaller time is worth it for the date).
 void fitClock(TileRt& r, int cw, int ch) {
@@ -3788,6 +3971,7 @@ void fitTile(TileRt& r) {
   lv_obj_set_style_pad_all(r.obj, pad, 0);
   const int cw = w - 2 * pad, ch = h - 2 * pad;
   if (r.def->type == TILE_METRIC || (r.def->type == TILE_SENSOR && r.def->style == METRIC_CHART)) fitMetric(r, cw, ch);
+  else if (r.def->type == TILE_MEDIA) fitMedia(r, cw, ch);
   else if (r.def->type == TILE_CLOCK) fitClock(r, cw, ch);
   else if (r.def->type == TILE_PRINTER) fitPrinter(r, cw, ch);
   else if (r.def->type == TILE_SENSOR) fitSensor(r, cw, ch);
@@ -4319,6 +4503,7 @@ void pcSync(bool force) {
   if (!force && pcVersion() == s_pcSeen) return;
   s_pcSeen = pcVersion();
   for (TileRt& r : s_tiles) {
+    if (r.def->type == TILE_MEDIA) applyMedia(r);
     if (r.def->tap.kind == ACT_PC) applyPcStateToTile(r);
     if (r.def->type != TILE_METRIC) continue;
     applyPcToTile(r);
@@ -4415,6 +4600,61 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
       lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
       lv_obj_add_event_cb(t, tileEvent, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)idx);
     }
+    lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
+    return;
+  }
+
+  if (def.type == TILE_MEDIA) {
+    TileRt r = {};
+    r.def = &def;
+    r.page = page;
+    r.obj = t;
+    r.chip = lv_obj_create(t);
+    lv_obj_remove_style_all(r.chip);
+    lv_obj_remove_flag(r.chip, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_set_style_radius(r.chip, 8, 0);
+    lv_obj_set_style_clip_corner(r.chip, true, 0);
+    lv_obj_set_style_bg_color(r.chip, lv_color_hex(C_TRACK), 0);
+    lv_obj_set_style_bg_opa(r.chip, LV_OPA_COVER, 0);
+    r.cover = lv_image_create(r.chip);
+    lv_obj_remove_flag(r.cover, LV_OBJ_FLAG_CLICKABLE);
+    showObj(r.cover, false);
+    r.icon = lv_label_create(r.chip);
+    mediaGlyph(r.icon, "music", "M", 32);
+    lv_obj_center(r.icon);
+    r.name = lv_label_create(t);
+    r.sub = lv_label_create(t);
+    lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
+    lv_label_set_long_mode(r.sub, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_style_text_opa(r.sub, LV_OPA_70, 0);
+    r.viz = lv_bar_create(t);
+    lv_obj_remove_style_all(r.viz);
+    lv_obj_remove_flag(r.viz, LV_OBJ_FLAG_CLICKABLE);
+    lv_bar_set_range(r.viz, 0, 1000);
+    lv_obj_set_style_bg_color(r.viz, lv_color_hex(C_TRACK), 0);
+    lv_obj_set_style_bg_opa(r.viz, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(r.viz, lv_color_hex(accent), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(r.viz, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(r.viz, 2, 0);
+    lv_obj_set_style_radius(r.viz, 2, LV_PART_INDICATOR);
+    const size_t idx = s_tiles.size();
+    static const char* const icons[] = {"skip-previous", "play", "skip-next"};
+    static const char* const fallback[] = {"|<", ">", ">|"};
+    for (int i = 0; i < 3; i++) {
+      lv_obj_t* button = r.mediaButtons[i] = lv_obj_create(t);
+      lv_obj_remove_style_all(button);
+      lv_obj_remove_flag(button, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_EVENT_BUBBLE));
+      lv_obj_set_style_radius(button, 8, 0);
+      lv_obj_set_style_bg_color(button, lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
+      lv_obj_set_style_bg_opa(button, LV_OPA_50, LV_STATE_PRESSED);
+      r.mediaIcons[i] = lv_label_create(button);
+      mediaGlyph(r.mediaIcons[i], icons[i], fallback[i], 24);
+      lv_obj_center(r.mediaIcons[i]);
+      lv_obj_add_event_cb(button, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 4 + i));
+    }
+    s_tiles.push_back(r);
+    applyMedia(s_tiles.back());
+    lv_obj_add_event_cb(t, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 4 + 3));
     lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
     return;
   }
@@ -5853,6 +6093,7 @@ void destroyPages(bool keepGlass = false) {
   }
   s_count = 0;
   for (TileRt& r : s_tiles) {
+    r.art.reset();
     if (r.pts) lv_free(r.pts);
     sparkFree(r.spark);
   }
@@ -6152,6 +6393,10 @@ void updateHeaders() {
   const uint32_t now = millis();
   if (now - s_lastClockCheck < 1000) return;
   s_lastClockCheck = now;
+  for (TileRt& r : s_tiles) if (r.def->type == TILE_MEDIA) {
+    mediaProgress(r);
+    mediaCover(r);
+  }
   const int wifi = WiFi.status() == WL_CONNECTED ? 1 : 0;
   if (wifi != s_lastWifi) {
     s_lastWifi = wifi;
@@ -6417,6 +6662,7 @@ void deckTick() {
   pcCmdSync();
   pairSync();
   pcSync(false);
+  mediaArtTick();
   pcVolumeTick();
   if (!systemScreen) sparkTick();
   syncSwipeZones();
@@ -6636,7 +6882,7 @@ bool deckTestCard(const String& tileId) {
 bool deckTestTap(const String& tileId, bool hold) {
   if (s_ed.root) return false;
   for (TileRt& r : s_tiles) {
-    if (r.def->id != tileId || r.def->type == TILE_METRIC || r.def->type == TILE_CLOCK) continue;
+    if (r.def->id != tileId || r.def->type == TILE_METRIC || r.def->type == TILE_CLOCK || r.def->type == TILE_MEDIA) continue;
     const TileAction& a = hold ? r.def->hold : r.def->tap;
     if (a.kind == ACT_PC) return false;  // PC commands require a real touch.
     requestAction(r, hold);

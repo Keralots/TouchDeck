@@ -5,6 +5,7 @@
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
 #include <algorithm>
+#include <ctype.h>
 
 namespace deck {
 namespace {
@@ -14,6 +15,8 @@ struct Job {
   String label;
   uint32_t ticket;  // portal test, 0 = a tile
   bool sensor = false;
+  String artId;
+  int artPx = 0;
 };
 
 QueueHandle_t s_jobs = nullptr;
@@ -21,6 +24,10 @@ QueueHandle_t s_done = nullptr;  // HttpOutcome*
 SemaphoreHandle_t s_lock = nullptr;
 TaskHandle_t s_task = nullptr;
 uint32_t s_nextTicket = 1;
+bool s_artBusy = false, s_artDone = false;
+String s_artId;
+int s_artPx = 0;
+uint8_t* s_artPixels = nullptr;
 // The last few finished tests, so two quick Test clicks both get an answer.
 struct TestResult {
   uint32_t ticket = 0;
@@ -282,11 +289,54 @@ void run(const Job& j, int& code, String& err, String* body) {
   http.end();
 }
 
+void fetchArt(const Job& j) {
+  uint8_t* pixels = nullptr;
+  const size_t bytes = j.artPx * j.artPx * 2;
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClient client;
+    HTTPClient http;
+    http.setConnectTimeout(3000);
+    http.setTimeout(3000);
+    http.setReuse(false);
+    http.useHTTP10(true);
+    const uint32_t started = millis();
+    if (http.begin(client, j.a.url) && http.GET() == 200 && http.getSize() == (int)bytes) {
+      pixels = (uint8_t*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+      size_t read = 0;
+      WiFiClient* stream = http.getStreamPtr();
+      while (pixels && stream && read < bytes && millis() - started < 3000) {
+        const int available = stream->available();
+        if (available > 0) {
+          const int n = stream->read(pixels + read, min(bytes - read, (size_t)available));
+          if (n <= 0) break;
+          read += n;
+        } else {
+          if (!stream->connected()) break;
+          delay(5);
+        }
+      }
+      if (read != bytes) { heap_caps_free(pixels); pixels = nullptr; }
+    }
+    http.end();
+  }
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  s_artId = j.artId;
+  s_artPx = j.artPx;
+  s_artPixels = pixels;
+  s_artDone = true;
+  xSemaphoreGive(s_lock);
+}
+
 void task(void*) {
   for (;;) {
     Job* j = nullptr;
     if (xQueueReceive(s_jobs, &j, pdMS_TO_TICKS(100)) != pdTRUE || !j) {
       pollOne();
+      continue;
+    }
+    if (j->artPx) {
+      fetchArt(*j);
+      delete j;
       continue;
     }
     int code;
@@ -337,6 +387,37 @@ bool enqueue(const TileAction& a, const String& label, uint32_t ticket, bool sen
 }
 
 }  // namespace
+
+bool httpArtFetch(IPAddress ip, uint16_t port, const char* id, int px) {
+  if (!port || !id || strlen(id) != 8 || px < 32 || px > 200 || !ensureTask()) return false;
+  for (int i = 0; i < 8; i++) if (!isxdigit((unsigned char)id[i])) return false;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (s_artBusy) { xSemaphoreGive(s_lock); return false; }
+  Job* j = new Job{};
+  j->artId = id;
+  j->artPx = px;
+  j->a.url = "http://" + ip.toString() + ":" + String(port) + "/art?id=" + id + "&s=" + String(px);
+  s_artBusy = xQueueSend(s_jobs, &j, 0) == pdTRUE;
+  if (!s_artBusy) delete j;
+  const bool queued = s_artBusy;
+  xSemaphoreGive(s_lock);
+  return queued;
+}
+
+bool httpArtTake(String& id, int& px, uint8_t*& pixels) {
+  if (!s_lock) return false;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  const bool done = s_artDone;
+  if (done) {
+    id = s_artId;
+    px = s_artPx;
+    pixels = s_artPixels;
+    s_artPixels = nullptr;
+    s_artBusy = s_artDone = false;
+  }
+  xSemaphoreGive(s_lock);
+  return done;
+}
 
 bool httpSend(const TileAction& a, const String& label) { return enqueue(a, label, 0); }
 

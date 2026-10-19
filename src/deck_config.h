@@ -50,6 +50,10 @@
 // "type": "clock": the time, and the date when the tile has room
 // (24h and time zone from the device settings). Read-only.
 //
+// "type": "media": the PC's current track, cover and playback controls.
+// { "type": "media", "pc": "<pc_id>" (optional), "color": "#7DB5FF" }.
+// Takes "when" like other tiles; touches are built in, with no tap/hold actions.
+//
 // "textColor": "#RRGGBB" (optional) colours the tile's text; for a metric
 // tile "chartColor" colours the chart or bar line apart from "color" (the name).
 //
@@ -104,7 +108,7 @@ constexpr int ORIENT_PORTRAIT = 1;
 constexpr int MAX_DECK_PAGES = 8;
 constexpr int MAX_PAGE_TILES = 24;
 
-enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER, TILE_CLOCK, TILE_PRINTER };
+enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER, TILE_CLOCK, TILE_PRINTER, TILE_MEDIA };
 enum PrinterShow : uint8_t { PS_HERO = 0, PS_NOZZLE, PS_BED, PS_CHAMBER, PS_FILAMENT, PS_LAYER, PS_LIGHT, PS_AMS, PS_SLOTS, PS_SUMMARY };
 constexpr int MAX_PRINTERS = 2;
 enum MetricStyle : uint8_t { METRIC_NUMBER = 0, METRIC_CHART, METRIC_BAR };
@@ -171,7 +175,7 @@ struct TileDef {
   TileAction tap, hold;
   ConfirmMode confirm = CONFIRM_NONE;
   uint8_t metric = 0;  // TILE_METRIC: companion metric id
-  String pc;           // TILE_METRIC: companion pc_id, "" = the first known PC
+  String pc;           // PC metric, media and volume: companion pc_id, "" = the first known PC
   MetricStyle style = METRIC_NUMBER;
   uint8_t hours = 24;  // TILE_SENSOR: history period, 1..168 hours
   bool hasWarn = false, hasCrit = false;
