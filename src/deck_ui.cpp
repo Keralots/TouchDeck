@@ -6466,6 +6466,7 @@ bool deckTestTap(const String& tileId, bool hold) {
 bool deckTestSlide(const String& tileId, int pct) {
   for (TileRt& r : s_tiles) {
     if (r.def->id != tileId || !r.fill) continue;
+    if (r.def->pcVolume) return false;  // PC commands require a real touch.
     const float f = constrain(pct, 0, 100) / 100.0f;
     return setWish(r.def->entity, true, f);
   }
