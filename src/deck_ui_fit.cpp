@@ -58,6 +58,8 @@ void fitName(lv_obj_t* name, const lv_font_t* f, int lines) {
   lv_obj_set_style_max_height(name, textH(f, lines), 0);
 }
 
+bool iconOff(const TileRt& r) { return r.def->icon == "none"; }
+
 void fitChip(TileRt& r, int size) {
   lv_obj_set_size(r.chip, size, size);
   const int px = size >= 28 ? 20 : 16;
@@ -135,6 +137,9 @@ void fitButton(TileRt& r, int cw, int ch) {
       {30, &deck_font_20, 2, true}, {30, &deck_font_20, 1, true}, {30, &deck_font_14, 2, false},
       {22, &deck_font_12, 2, false}, {30, &deck_font_14, 1, false}, {22, &deck_font_12, 1, false},
   };
+  // "icon": "none" keeps the layout and leaves the icon's corner empty.
+  const bool icon = !iconOff(r);
+  showObj(r.chip, icon);
   for (const Opt& o : kOpts) {
     if (cw < 40 || (o.wideOnly && cw < WIDE_W) || o.chip + textH(o.font, o.lines) > ch) continue;
     fitChip(r, o.chip);
@@ -149,7 +154,7 @@ void fitButton(TileRt& r, int cw, int ch) {
     const lv_font_t* sf = o.chip >= 30 && textW("Off", &deck_font_14) <= room ? &deck_font_14 : &deck_font_12;
     setFont(r.sub, sf);
     lv_obj_set_size(r.sub, lv_pct(100), lineH(sf));
-    lv_obj_set_style_pad_left(r.sub, o.chip + 6, 0);  // clear of the icon
+    lv_obj_set_style_pad_left(r.sub, icon ? o.chip + 6 : 0, 0);  // clear of the icon
     lv_obj_align(r.sub, LV_ALIGN_TOP_RIGHT, 0, (o.chip - lineH(sf)) / 2);
     showObj(r.name, true);
     showObj(r.sub, textW("Off", sf) <= room);
@@ -160,9 +165,10 @@ void fitButton(TileRt& r, int cw, int ch) {
     fitChip(r, 22);
     lv_obj_align(r.chip, LV_ALIGN_LEFT_MID, 0, 0);
     const bool state = cw >= 140;
+    const int nameX = icon ? 28 : 0;
     fitName(r.name, &deck_font_12, 1);
-    lv_obj_set_width(r.name, cw - 28 - (state ? 48 : 0));
-    lv_obj_align(r.name, LV_ALIGN_LEFT_MID, 28, 0);
+    lv_obj_set_width(r.name, cw - nameX - (state ? 48 : 0));
+    lv_obj_align(r.name, LV_ALIGN_LEFT_MID, nameX, 0);
     setFont(r.sub, &deck_font_12);
     lv_obj_set_size(r.sub, 44, lineH(&deck_font_12));
     lv_obj_set_style_pad_left(r.sub, 0, 0);
@@ -171,11 +177,18 @@ void fitButton(TileRt& r, int cw, int ch) {
     showObj(r.sub, state);
     return;
   }
+  showObj(r.sub, false);
+  if (!icon) {  // too small for the icon alone: the name takes its place
+    fitName(r.name, &deck_font_12, LV_MAX(1, linesIn(&deck_font_12, ch)));
+    lv_obj_set_width(r.name, cw);
+    lv_obj_center(r.name);
+    showObj(r.name, true);
+    return;
+  }
   const int s = LV_MIN(30, LV_MIN(cw, ch));
   fitChip(r, s);
   lv_obj_center(r.chip);
   showObj(r.name, false);
-  showObj(r.sub, false);
 }
 
 void fitDetail(TileRt& r, const lv_font_t* f, int w, lv_align_t align, int y, bool show) {
@@ -193,17 +206,27 @@ constexpr int ROW_BAR_MIN = 20;
 void layoutRows(TileRt& r) {
   const lv_font_t* f = r.valFont;
   if (!f || !r.rows) return;
-  const int n = lv_obj_get_child_count(r.rows);
-  int labelW = 0, valueW = textW(("100" + rowUnit(*r.def)).c_str(), f);
-  for (int i = 0; i < n; i++) {
-    lv_obj_t* box = lv_obj_get_child(r.rows, i);
-    labelW = LV_MAX(labelW, textW(lv_label_get_text(lv_obj_get_child(box, 0)), f));
-    valueW = LV_MAX(valueW, textW(lv_label_get_text(lv_obj_get_child(box, 2)), f));
-  }
-  valueW = LV_MIN(valueW, r.valW - labelW);
+  const TileDef& d = *r.def;
+  const int n = LV_MIN((int)lv_obj_get_child_count(r.rows), (int)d.rows.size());
+  bool templated = false;
+  for (int i = 0; i < n; i++) templated = templated || d.rows[i].value.length();
+  // Row value templates give way to the plain reading when the bar would not fit.
   const int gap = 6;
-  const int barX = labelW ? labelW + gap : 0;
-  const int barW = r.valW - barX - valueW - gap;
+  int labelW = 0, valueW = 0, barX = 0, barW = 0;
+  for (int pass = templated ? 0 : 1; pass < 2; pass++) {
+    labelW = 0;
+    valueW = textW(("100" + rowUnit(d)).c_str(), f);
+    for (int i = 0; i < n; i++) {
+      lv_obj_t* box = lv_obj_get_child(r.rows, i);
+      setText(lv_obj_get_child(box, 2), rowText(d, i, pass == 0).c_str());
+      labelW = LV_MAX(labelW, textW(lv_label_get_text(lv_obj_get_child(box, 0)), f));
+      valueW = LV_MAX(valueW, textW(lv_label_get_text(lv_obj_get_child(box, 2)), f));
+    }
+    valueW = LV_MIN(valueW, r.valW - labelW);
+    barX = labelW ? labelW + gap : 0;
+    barW = r.valW - barX - valueW - gap;
+    if (barW >= ROW_BAR_MIN) break;
+  }
   for (int i = 0; i < n; i++) {
     lv_obj_t* box = lv_obj_get_child(r.rows, i);
     lv_obj_t* label = lv_obj_get_child(box, 0);
@@ -238,14 +261,16 @@ void fitRows(TileRt& r, int cw, int ch) {
     if (lineH(k.name) + n * lineH(k.row) <= ch) { o = &k; break; }
   showObj(r.sub, false);
   showObj(r.detail, false);
-  const int chip = lineH(o->name) >= 22 ? 22 : 18;
-  fitChip(r, chip);
-  lv_obj_align(r.chip, LV_ALIGN_TOP_RIGHT, 2, -2);
-  showObj(r.chip, true);
+  const int chip = iconOff(r) ? 0 : lineH(o->name) >= 22 ? 22 : 18;
+  if (chip) {
+    fitChip(r, chip);
+    lv_obj_align(r.chip, LV_ALIGN_TOP_RIGHT, 2, -2);
+  }
+  showObj(r.chip, chip > 0);
   r.chipRoom = 0;
   r.nameFont = nullptr;
   fitName(r.name, o->name, 1);
-  lv_obj_set_width(r.name, cw - chip - 4);
+  lv_obj_set_width(r.name, chip ? cw - chip - 4 : cw);
   lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, 0, -2);
   showObj(r.name, true);
   const int top = lineH(o->name);
@@ -281,9 +306,13 @@ void fitSensor(TileRt& r, int cw, int ch) {
     const lv_font_t* df = o.val == &deck_font_28 ? &deck_font_14 : &deck_font_12;
     const int dh = pass ? 0 : lineH(df);
     if ((o.wideOnly && cw < WIDE_W) || lineH(o.val) + textH(o.name, o.lines) + dh > ch) continue;
-    const int chip = o.val == &deck_font_14 ? 18 : 22;
-    fitChip(r, chip);
-    lv_obj_align(r.chip, LV_ALIGN_TOP_RIGHT, 2, -2);
+    const int chip = iconOff(r) ? 0 : o.val == &deck_font_14 ? 18 : 22;
+    if (chip) {
+      fitChip(r, chip);
+      lv_obj_align(r.chip, LV_ALIGN_TOP_RIGHT, 2, -2);
+    }
+    showObj(r.chip, chip > 0);
+    lv_obj_set_style_pad_right(r.sub, 0, 0);
     setFont(r.sub, o.val);
     lv_obj_set_size(r.sub, lv_pct(100), lineH(o.val));
     lv_obj_set_style_text_align(r.sub, LV_TEXT_ALIGN_LEFT, 0);

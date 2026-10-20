@@ -473,9 +473,14 @@ void httpSetSensors(const DeckConfig& cfg) {
     } else source->poll = min(source->poll, d.poll);
     std::vector<String> paths;
     if (tile.rows.empty()) paths.push_back(d.path);
-    for (const SensorRowDef& row : tile.rows) paths.push_back(row.path);
-    for (const DetailPart& part : httpParseDetail(tile.detail))
-      if (part.field) paths.push_back(part.text);
+    std::vector<const String*> templates = {&tile.detail, &tile.label};
+    for (const SensorRowDef& row : tile.rows) {
+      paths.push_back(row.path);
+      templates.push_back(&row.value);
+    }
+    for (const String* tmpl : templates)
+      for (const DetailPart& part : httpParseDetail(*tmpl))
+        if (part.field) paths.push_back(part.text);
     for (const String& want : paths) {
       auto path = std::find_if(source->paths.begin(), source->paths.end(), [&](const PathValue& p) { return p.path == want; });
       if (path == source->paths.end()) source->paths.emplace_back(want);

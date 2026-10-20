@@ -722,10 +722,11 @@ void whenApply() {
   }
 }
 
-// The detail line: literal text and fields from the same reply ("--" while missing).
-String httpDetail(const TileDef& d) {
+// A template (detail line, row value, name): literal text and fields from the
+// same reply ("--" while missing).
+String httpTemplate(const TileDef& d, const String& tmpl) {
   String out;
-  for (const DetailPart& part : httpParseDetail(d.detail)) {
+  for (const DetailPart& part : httpParseDetail(tmpl)) {
     if (!part.field) { out += part.text; continue; }
     HttpSensorValue v;
     char buf[48];
@@ -746,7 +747,21 @@ String rowUnit(const TileDef& d) {
   return d.unit.startsWith("%") || d.unit.startsWith("\xC2\xB0") ? d.unit : " " + d.unit;
 }
 
+// Row i's value text: its "value" template when asked for, else the reading.
+String rowText(const TileDef& d, size_t i, bool useTemplate) {
+  const SensorRowDef& row = d.rows[i];
+  if (useTemplate && row.value.length()) return httpTemplate(d, row.value);
+  HttpSensorValue v;
+  if (!httpSensorRead(d.http, row.path, v) || v.offline || !v.present) return "--";
+  if (!v.numeric) return v.text ? v.text.get() : "--";
+  char number[48];
+  if (d.duration && formatDuration(v.number, d.unit, number, sizeof(number))) return number;
+  formatReading(v.number, number, sizeof(number));
+  return String(number) + rowUnit(d);
+}
+
 // Each row box holds label, bar, value; its user data is the threshold level.
+// layoutRows sets the value texts.
 void applyHttpRows(TileRt& r) {
   const TileDef& d = *r.def;
   const float full = d.scaleMax ? d.scaleMax : 100;
@@ -759,14 +774,6 @@ void applyHttpRows(TileRt& r) {
     const bool found = httpSensorRead(d.http, d.rows[i].path, v);
     dim = dim && (!found || v.offline);
     const bool numeric = found && !v.offline && v.present && v.numeric;
-    char number[48];
-    String text = "--";
-    if (numeric && d.duration && formatDuration(v.number, d.unit, number, sizeof(number))) text = number;
-    else if (numeric) {
-      formatReading(v.number, number, sizeof(number));
-      text = String(number) + rowUnit(d);
-    } else if (found && !v.offline && v.present && v.text) text = v.text.get();
-    setText(value, text.c_str());
     const uint8_t level = numeric ? thresholdLevel(d, v.number, (uint8_t)(uintptr_t)lv_obj_get_user_data(box)) : 0;
     lv_obj_set_user_data(box, (void*)(uintptr_t)level);
     // Level 0 inherits the tile text colour, so Glass auto text reaches it.
@@ -784,6 +791,7 @@ void applyHttpRows(TileRt& r) {
 void applyHttpToTile(TileRt& r) {
   const TileDef& d = *r.def;
   if (!d.http.enabled) return;
+  if (d.label.indexOf('{') >= 0) setText(r.name, httpTemplate(d, d.label).c_str());
   if (r.rows) {
     applyHttpRows(r);
     return;
@@ -805,7 +813,7 @@ void applyHttpToTile(TileRt& r) {
                           ? value.text.get() : text.c_str();
   lv_label_set_text(r.sub, shown);
   if (r.unit) lv_label_set_text(r.unit, numeric && !dur ? d.unit.c_str() : "");
-  if (r.detail) lv_label_set_text(r.detail, httpDetail(d).c_str());
+  if (r.detail) lv_label_set_text(r.detail, httpTemplate(d, d.detail).c_str());
   lv_obj_set_style_opa(r.obj, !found || value.offline ? LV_OPA_50 : LV_OPA_COVER, 0);
   sensorThreshold(r, numeric, value.number);
   if (found && r.viz && r.pts) plotHistory(r.viz, r.pts, value.history, HTTP_HISTORY_POINTS);

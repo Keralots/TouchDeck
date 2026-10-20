@@ -81,7 +81,7 @@
 <div class="dk-status"><span id="dkListInfo">-</span><button type="button" class="btn" id="dkListUpdate" style="margin-left:auto;padding:5px 10px">Update from HA</button></div></div>
 <div class="dk-list" id="dkEnts"></div></div></div>
 <div class="dk-modal" id="dkIcPick"><div class="dk-sheet"><div class="dk-head">
-<div class="dk-row"><input type="text" id="dkIcQ" placeholder="Search icons, e.g. lamp, fan, thermometer" autocomplete="off" style="flex:1"><button type="button" class="btn" id="dkIcAuto">Automatic</button><button type="button" class="btn" id="dkIcClose">Close</button></div>
+<div class="dk-row"><input type="text" id="dkIcQ" placeholder="Search icons, e.g. lamp, fan, thermometer" autocomplete="off" style="flex:1"><button type="button" class="btn" id="dkIcAuto">Automatic</button><button type="button" class="btn" id="dkIcNone">None</button><button type="button" class="btn" id="dkIcClose">Close</button></div>
 <div class="dk-status"><span id="dkIcInfo">-</span></div></div>
 <div class="dk-igrid" id="dkIcGrid"></div></div></div>`,
   );
@@ -1978,7 +1978,7 @@
             '" data-ic="' +
             i +
             '" title="' +
-            esc(cp ? t.icon || (en && en.icon) || "automatic" : "Choose an icon") +
+            esc(t.icon === "none" ? "No icon" : cp ? t.icon || (en && en.icon) || "automatic" : "Choose an icon") +
             '" style="background:' +
             (t.color || COL[d] || "#7DB5FF") +
             '">' +
@@ -3024,6 +3024,7 @@
   }
   $("dkIcQ").oninput = renderIcons;
   $("dkIcAuto").onclick = () => setIcon("");
+  $("dkIcNone").onclick = () => setIcon("none");
   $("dkIcClose").onclick = () => $("dkIcPick").classList.remove("show");
   $("dkIcPick").onclick = (e) => {
     if (e.target === $("dkIcPick")) $("dkIcPick").classList.remove("show");

@@ -41,7 +41,7 @@ Captured from the device (`/screen.bmp`) with the Glass theme.
 Open the device IP (or `http://<hostname>.local`) in a browser:
 
 - **Overview:** live picture of the screen, PC stream, Home Assistant link, diagnostics.
-- **Pages & tiles:** Home Assistant address and token, the icon font, pages, tiles, entity and icon pickers, columns, and a grid editor: drag tiles to move them (dropped onto another tile, that tile jumps to the dragged one's old place if it fits there), resize from the corner (half-cell steps), separately for landscape and portrait.
+- **Pages & tiles:** Home Assistant address and token, the icon font, pages, tiles, entity and icon pickers (None leaves a tile without an icon), columns, and a grid editor: drag tiles to move them (dropped onto another tile, that tile jumps to the dragged one's old place if it fits there), resize from the corner (half-cell steps), separately for landscape and portrait.
 - **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper you upload), brightness, night schedule, PC metric tile scales.
 - **Time:** 12/24 h clock and timezone.
 - **Hardware:** the status LED.
@@ -119,6 +119,18 @@ Optional `unit` is appended only to JSON numbers, formatted with at most one dec
   "unit": "%", "warn": 70, "crit": 90,
   "rows": [ { "label": "5h:", "path": "claude.five_hour.used" },
             { "label": "W:", "path": "claude.weekly.used" } ] }
+```
+
+A row's optional `value` is a template like `detail`: the bar still follows `path`, the text shows the template, and the row falls back to the plain reading when the bar would not fit beside it. `{path}` fields also work in the tile's `label`. For example, a 1x1 tile named "Claude 18%" with the time to each reset next to the usage bars:
+
+```json
+{ "type": "sensor", "label": "Claude {claude.five_hour.used}%", "icon": "none",
+  "http": { "url": "http://192.168.0.10:8760/usage", "poll": 60 },
+  "unit": "%", "warn": 70, "crit": 90,
+  "rows": [ { "label": "5h:", "path": "claude.five_hour.used",
+              "value": "{claude.five_hour.reset_min|min}" },
+            { "label": "W:", "path": "claude.weekly.used",
+              "value": "{claude.weekly.reset_min|min}" } ] }
 ```
 
 The portal keeps `rows` when a tile is edited but has no editor for them yet; add them in the JSON.

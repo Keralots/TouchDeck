@@ -386,6 +386,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
               SensorRowDef row;
               row.label = (const char*)(rv["label"] | "");
               row.path = (const char*)(rv["path"] | "");
+              row.value = (const char*)(rv["value"] | "");
               if (!row.path.length()) {
                 if (err) *err = where + ": every row needs a path";
                 return false;
