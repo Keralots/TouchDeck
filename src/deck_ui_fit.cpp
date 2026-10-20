@@ -372,11 +372,13 @@ int rowNameW(const TileRt& r) {
   return LV_MIN(t, r.valW * 2 / 5);
 }
 
-// Chart or bar width between the name and a value sized for three digits, so
-// it does not jump as the value changes.
+// Chart or bar width between the name and the longest value seen (at least two
+// digits): it shrinks once when the value grows and never widens back.
 int rowVizW(const TileRt& r, const lv_font_t* f, int unitW) {
-  const int valueW = LV_MAX(textW(lv_label_get_text(r.sub), f), textW("000", f)) + unitW;
-  return r.valW - rowNameW(r) - valueW - 20;
+  static const char kZeros[] = "000000";
+  const int n = LV_MIN(LV_MAX(r.rowChars, 2), (int)sizeof(kZeros) - 1);
+  const int valueW = LV_MAX(textW(lv_label_get_text(r.sub), f), textW(kZeros + sizeof(kZeros) - 1 - n, f)) + unitW;
+  return r.valW - rowNameW(r) - valueW - 16;
 }
 
 // Row: the name gets what the value leaves, or on a wide row shares it with
@@ -421,6 +423,7 @@ void fitValue(TileRt& r) {
     f = valueFont(r.valFont, text, room);
   }
   if (!f) f = &deck_font_12;
+  if (r.row == 2) r.rowChars = LV_MAX(r.rowChars, (int)LV_MIN(strlen(text), 255u));
   // A wide row gives up the largest value font for its chart or bar.
   if (r.row == 2 && f == &deck_font_28 && rowVizW(r, f, unit ? unitW : 0) < ROW_VIZ_MIN) f = &deck_font_20;
   setFont(r.sub, f);
