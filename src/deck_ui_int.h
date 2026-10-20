@@ -181,6 +181,7 @@ struct QuickPanel {
   lv_obj_t* screenLbl;
   lv_obj_t* screenSlider;
   lv_obj_t* screenVal;
+  lv_obj_t* lightLbl;
   lv_obj_t* lightSlider;
   lv_obj_t* lightVal;
   lv_obj_t* nightBtn;

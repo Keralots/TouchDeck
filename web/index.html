@@ -636,7 +636,7 @@
                       ><span class="check-text"
                         ><strong>Dim at night</strong
                         ><span class="ct-hint"
-                          >Use a separate level during the night interval set on the Display page.</span
+                          >Use a separate level during its own local-time interval, independent of the screen.</span
                         ></span
                       ></label
                     >
@@ -655,6 +655,17 @@
                         </div>
                         <p class="field-hint">Set to 0 to switch the LED fully off at night.</p>
                       </div>
+                      <div class="grid-2">
+                        <div class="field">
+                          <label class="field-label" for="ledNightStart">Night starts</label
+                          ><input type="time" id="ledNightStart" name="ledNightStart" step="60" />
+                        </div>
+                        <div class="field">
+                          <label class="field-label" for="ledNightEnd">Night ends</label
+                          ><input type="time" id="ledNightEnd" name="ledNightEnd" step="60" />
+                        </div>
+                      </div>
+                      <p class="field-hint">Matching start and end times disable the night interval.</p>
                     </div>
                     <div class="check-list">
                       <label class="check-row"

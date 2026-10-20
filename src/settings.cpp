@@ -14,7 +14,7 @@ AdvancedSettings advSettings = {};
 
 static Preferences prefs;
 static const uint8_t BACKLIGHT_SETTINGS_VERSION = 1;
-static const uint8_t LED_SETTINGS_VERSION = 1;
+static const uint8_t LED_SETTINGS_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 //  StatNode migration
@@ -108,6 +108,8 @@ void defaultLedSettings(LedSettings& ls) {
   ls.nightBrightness = 24;
   ls.followDisplay = 1;
   ls.offlineOff = 0;
+  ls.nightStartMinute = 22 * 60;
+  ls.nightEndMinute = 7 * 60;
 }
 
 void defaultNetworkSettings(NetworkSettings& ns) {
@@ -158,10 +160,22 @@ void loadSettings() {
     prefs.getBytes("backlight", &stored, sizeof(stored));
     if (stored.version == BACKLIGHT_SETTINGS_VERSION) backlightSettings = stored;
   }
-  if (prefs.getBytesLength("led") == sizeof(LedSettings)) {
+  const size_t ledLen = prefs.getBytesLength("led");
+  if (ledLen == sizeof(LedSettings)) {
     LedSettings stored;
     prefs.getBytes("led", &stored, sizeof(stored));
     if (stored.version == LED_SETTINGS_VERSION) ledSettings = stored;
+  } else if (ledLen == offsetof(LedSettings, nightStartMinute)) {
+    // v1 dimmed only inside the backlight's schedule: take its times and switch.
+    LedSettings stored = ledSettings;
+    prefs.getBytes("led", &stored, ledLen);
+    if (stored.version == 1) {
+      stored.version = LED_SETTINGS_VERSION;
+      stored.nightStartMinute = backlightSettings.nightStartMinute;
+      stored.nightEndMinute = backlightSettings.nightEndMinute;
+      if (!backlightSettings.nightEnabled) stored.nightEnabled = 0;
+      ledSettings = stored;
+    }
   }
   prefs.getString("ssid", wifiSSID, sizeof(wifiSSID));
   prefs.getString("pass", wifiPass, sizeof(wifiPass));
