@@ -56,6 +56,10 @@
 //
 // "textColor": "#RRGGBB" (optional) colours the tile's text; for a metric
 // tile "chartColor" colours the chart or bar line apart from "color" (the name).
+// Tile look, all optional, else the theme: "bgColor" (background while off,
+// the glass tint in Glass), "onColor" (fill while on, default "color"),
+// "onTextColor", and in Glass "opacity" / "onOpacity" (0..100 %, else the
+// display's Tile opacity / On opacity; auto text may still darken the glass).
 //
 // "type": "slider": the tile is a level control (light brightness, cover
 // position, fan speed, media volume, input_number / number); drag sideways to
@@ -171,6 +175,9 @@ struct TileDef {
   uint32_t color = 0;
   bool hasTextColor = false, hasChartColor = false;
   uint32_t textColor = 0, chartColor = 0;
+  bool hasBgColor = false, hasOnColor = false, hasOnTextColor = false;
+  uint32_t bgColor = 0, onColor = 0, onTextColor = 0;
+  int8_t opacity = -1, onOpacity = -1;  // Glass, %, -1 = the display setting
   TilePos pos[2];
   TileAction tap, hold;
   ConfirmMode confirm = CONFIRM_NONE;

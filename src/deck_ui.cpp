@@ -4511,32 +4511,41 @@ void pcSync(bool force) {
   }
 }
 
+uint32_t tileAccent(const TileDef& def) {
+  return def.hasColor ? def.color : def.type == TILE_PRINTER ? C_PRN_HEAT : domainColor(entityDomain(def.entity));
+}
+
+// Per-tile look from deck.json, else the theme and display settings.
+uint32_t tileBg(const TileDef& d) { return d.hasBgColor ? d.bgColor : C_TILE; }
+uint32_t tileOnFill(const TileDef& d) { return d.hasOnColor ? d.onColor : tileAccent(d); }
+int tileTint(const TileDef& d) { return d.opacity >= 0 ? d.opacity : dispSettings.glassTint; }
+int tileOnOpa(const TileDef& d) { return d.onOpacity >= 0 ? d.onOpacity : dispSettings.glassOn; }
+
 // Glass tiles are see-through: their glass is baked into the page
 // background (bakeGlass); pressed and on states draw over it.
-void glassStyle(lv_obj_t* t, uint32_t accent) {
-  const lv_opa_t on = (lv_opa_t)(dispSettings.glassOn * 255 / 100);
+void glassStyle(lv_obj_t* t, const TileDef& def) {
+  const int onPct = tileOnOpa(def);
+  const lv_opa_t on = (lv_opa_t)(onPct * 255 / 100);
   lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, 0);
   lv_obj_set_style_bg_opa(t, LV_OPA_30, LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(t, on, LV_STATE_CHECKED);
   lv_obj_set_style_bg_opa(t, on, LV_STATE_PRESSED | LV_STATE_CHECKED);
   lv_obj_set_style_border_width(t, 0, 0);
   // A faint fill alone hardly tells on from off: outline it in the accent.
-  if (dispSettings.glassOn < 50) {
+  if (onPct < 50) {
     lv_obj_set_style_border_width(t, 2, LV_STATE_CHECKED);
-    lv_obj_set_style_border_color(t, lv_color_hex(accent), LV_STATE_CHECKED);
+    lv_obj_set_style_border_color(t, lv_color_hex(tileOnFill(def)), LV_STATE_CHECKED);
   }
 }
 
-// Text on an "on" tile: dark while the accent fill is bright enough, else
-// the normal light text (Glass with a faint fill over a dark picture).
-uint32_t onTextColor(uint32_t accent, bool glass) {
+// Text on an "on" tile: its own colour, else dark while the fill is bright
+// enough, else the normal light text (Glass with a faint fill over a dark picture).
+uint32_t onTextColor(const TileDef& def, bool glass) {
+  if (def.hasOnTextColor) return def.onTextColor;
   if (!glass) return C_TEXT_ON;
-  const uint32_t lum = ((accent >> 16 & 0xFF) * 299 + (accent >> 8 & 0xFF) * 587 + (accent & 0xFF) * 114) / 1000;
-  return lum * dispSettings.glassOn / 100 >= 115 ? C_TEXT_ON : C_TEXT;
-}
-
-uint32_t tileAccent(const TileDef& def) {
-  return def.hasColor ? def.color : def.type == TILE_PRINTER ? C_PRN_HEAT : domainColor(entityDomain(def.entity));
+  const uint32_t fill = tileOnFill(def);
+  const uint32_t lum = ((fill >> 16 & 0xFF) * 299 + (fill >> 8 & 0xFF) * 587 + (fill & 0xFF) * 114) / 1000;
+  return lum * tileOnOpa(def) / 100 >= 115 ? C_TEXT_ON : C_TEXT;
 }
 
 void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, int w, int h) {
@@ -4552,19 +4561,21 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_border_width(t, s_theme == THEME_DAYLIGHT ? 1 : 0, 0);
   lv_obj_set_style_border_color(t, lv_color_hex(C_TILE_LINE), 0);
   lv_obj_set_style_pad_all(t, 9, 0);
-  lv_obj_set_style_bg_color(t, lv_color_hex(C_TILE), 0);
-  lv_obj_set_style_bg_color(t, lv_color_hex(accent), LV_STATE_CHECKED);
+  const uint32_t onFill = tileOnFill(def);
+  lv_obj_set_style_bg_color(t, lv_color_hex(tileBg(def)), 0);
+  lv_obj_set_style_bg_color(t, lv_color_hex(onFill), LV_STATE_CHECKED);
   lv_obj_set_style_text_color(t, lv_color_hex(tileText(def)), 0);
-  lv_obj_set_style_text_color(t, lv_color_hex(onTextColor(accent, glass)), LV_STATE_CHECKED);
+  lv_obj_set_style_text_color(t, lv_color_hex(onTextColor(def, glass)), LV_STATE_CHECKED);
   // Press feedback: the card darkens and shrinks a little, eased in 90 ms.
-  lv_obj_set_style_bg_color(t, lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
-  lv_obj_set_style_bg_color(t, lv_color_mix(lv_color_hex(accent), lv_color_black(), 200),
+  lv_obj_set_style_bg_color(t, def.hasBgColor ? lv_color_mix(lv_color_hex(def.bgColor), lv_color_black(), 200)
+                                              : lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(t, lv_color_mix(lv_color_hex(onFill), lv_color_black(), 200),
                             LV_STATE_PRESSED | LV_STATE_CHECKED);
   lv_obj_set_style_transform_width(t, -3, LV_STATE_PRESSED);
   lv_obj_set_style_transform_height(t, -3, LV_STATE_PRESSED);
   lv_obj_set_style_transition(t, &s_pressTrans, 0);
   lv_obj_set_style_transition(t, &s_pressTrans, LV_STATE_PRESSED);
-  if (glass) glassStyle(t, accent);
+  if (glass) glassStyle(t, def);
 
   if (def.type == TILE_PRINTER) {
     TileRt r = {};
@@ -4764,6 +4775,8 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
 
 // Keep the exact draw inputs, including child order, to avoid hash collisions.
 // Coordinates are page-relative so moving a page offscreen does not change its key.
+TileRt* tileOf(lv_obj_t* o);
+
 std::vector<uint32_t> glassKey(Page& p) {
   if (!wallSharp() || !wallBlur() || !p.root || !p.grid) return {};
   lv_obj_update_layout(p.root);
@@ -4773,7 +4786,7 @@ std::vector<uint32_t> glassKey(Page& p) {
       dispSettings.glassOn, dispSettings.glassAutoText, GLASS_BORDER_COLOR, GLASS_BORDER_OPA,
       GLASS_BORDER_WIDTH};
   const uint32_t count = lv_obj_get_child_count(p.grid);
-  key.reserve(key.size() + 1 + count * 5);
+  key.reserve(key.size() + 1 + count * 7);
   key.push_back(count);
   lv_area_t rc;
   lv_obj_get_coords(p.root, &rc);
@@ -4784,6 +4797,9 @@ std::vector<uint32_t> glassKey(Page& p) {
     lv_area_move(&tc, -rc.x1, -rc.y1);
     for (int32_t v : {tc.x1, tc.y1, tc.x2, tc.y2, lv_obj_get_style_radius(t, LV_PART_MAIN)})
       key.push_back((uint32_t)v);
+    const TileRt* r = tileOf(t);
+    key.push_back(r ? tileBg(*r->def) : C_TILE);
+    key.push_back(r ? (uint32_t)tileTint(*r->def) : dispSettings.glassTint);
   }
   return key;
 }
@@ -4838,17 +4854,25 @@ struct AutoPick {
 // Light text if it reads, else dark text, else glass darkened until light
 // text reads. Printer tiles and tiles with their own text colour stay light.
 AutoPick autoPick(const TileRt* r, const lv_area_t& a) {
-  const int base = dispSettings.glassTint;
+  const int base = r ? tileTint(*r->def) : dispSettings.glassTint;
   AutoPick pk = {(lv_opa_t)(base * 255 / 100), C_TEXT, false};
   if (!dispSettings.glassAutoText || !r || r->def->hasTextColor || !wallBlur()) return pk;
   int lo, hi;
   lumaRange(wallBlur(), a, lo, hi);
-  const int tint = luma(C_TILE);
+  const int tint = luma(tileBg(*r->def));
   auto glassed = [&](int v) { return (v * (100 - base) + tint * base) / 100; };
   pk.set = true;
   if (glassed(hi) <= AUTO_LIGHT_MAX) return pk;
   if (r->def->type != TILE_PRINTER && glassed(lo) >= AUTO_DARK_MIN) {
     pk.text = AUTO_DARK_TEXT;
+    return pk;
+  }
+  if (tint > AUTO_LIGHT_MAX) {
+    // A light tint ("bgColor"): more glass brightens it toward dark text.
+    if (r->def->type == TILE_PRINTER) return pk;
+    const int pct = min(95, ((AUTO_DARK_MIN - lo) * 100 + (tint - lo) - 1) / (tint - lo));
+    pk.text = AUTO_DARK_TEXT;
+    pk.opa = (lv_opa_t)(max(pct, base) * 255 / 100);
     return pk;
   }
   const int pct = min(95, ((hi - AUTO_LIGHT_MAX) * 100 + (hi - tint) - 1) / (hi - tint));
@@ -4866,9 +4890,10 @@ void applyAutoPick(TileRt& r, const AutoPick& pk) {
   if (!pk.set && !r.hasAuto) return;
   r.hasAuto = pk.set;
   r.autoText = pk.text;
-  const uint32_t text = tileTextRt(r), on = onTextColor(tileAccent(*r.def), true);
+  const uint32_t text = tileTextRt(r), on = onTextColor(*r.def, true);
   lv_obj_set_style_text_color(r.obj, lv_color_hex(text), 0);
-  lv_obj_set_style_text_color(r.obj, lv_color_hex(on == C_TEXT ? text : on), LV_STATE_CHECKED);
+  lv_obj_set_style_text_color(r.obj, lv_color_hex(on == C_TEXT && !r.def->hasOnTextColor ? text : on),
+                              LV_STATE_CHECKED);
   if (r.sub && r.def->type == TILE_SENSOR && !r.threshold)
     lv_obj_set_style_text_color(r.sub, lv_color_hex(text), 0);
   if (r.sub && r.def->type == TILE_METRIC && !r.warn) lv_obj_set_style_text_color(r.sub, lv_color_hex(text), 0);
@@ -4954,7 +4979,7 @@ bool bakeGlass(Page& p) {
     TileRt* tr = tileOf(t);
     const AutoPick pk = autoPick(tr, tc);
     if (tr) applyAutoPick(*tr, pk);
-    rd.bg_color = lv_color_hex(C_TILE);
+    rd.bg_color = lv_color_hex(tr ? tileBg(*tr->def) : C_TILE);
     rd.bg_opa = pk.opa;
     rd.border_color = lv_color_hex(GLASS_BORDER_COLOR);
     rd.border_opa = GLASS_BORDER_OPA;

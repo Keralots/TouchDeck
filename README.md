@@ -28,6 +28,7 @@ Captured from the device (`/screen.bmp`) with the Glass theme.
 - **Slider tiles:** a light, cover, fan, media player or number as a tile that fills to its level; drag sideways on it to change the level (the page does not swipe there), tap to toggle, hold for the card. Pick "Slider" as the tile type in the portal.
 - **Confirm before acting:** a tile can ask on the device before it turns something off (a printer mid-print) or before every action. Set it under the tile's "more options" button in the portal.
 - **Conditional tiles:** a tile can show only while the PC is on, only while it is off, or only while a Home Assistant entity is (or is not) in a given state. Its cell stays free otherwise, so a tile with the opposite condition can share it: volume buttons while the PC runs, a "PC power" switch in the same place while it is off. See [Conditional tiles](#conditional-tiles).
+- **Tile colours:** per tile, the icon, text, off background and on fill colours, and in Glass its own glass and on opacity, all optional on top of the theme ("more options" in Pages & tiles).
 - **HTTP buttons:** a button can send an HTTP request to a device on the LAN (Tasmota, Node-RED, your own projects) instead of calling Home Assistant.
 - **PC stats:** metric tiles fed by the TouchDeck Companion; values, units, history chart and an amber warning colour above a set share of the scale.
 - **Quick panel:** pull down from the top edge for screen and LED brightness, link status, screen off, night mode, the top bar switch and the page editor.
