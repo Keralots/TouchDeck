@@ -1,0 +1,840 @@
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id),
+    qa = (s, r = document) => Array.from(r.querySelectorAll(s));
+  let config = null,
+    dirty = false,
+    previewBusy = false,
+    toastTimer = 0,
+    populating = false,
+    selectedMetricId = 0,
+    dragPayload = null;
+  function esc(v) {
+    return String(v == null ? "" : v).replace(
+      /[&<>"']/g,
+      (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
+    );
+  }
+  function fmtBytes(n) {
+    n = Number(n) || 0;
+    return n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.round(n / 1024) + " KB";
+  }
+  function fmtUptime(s) {
+    s = Number(s) || 0;
+    const d = Math.floor(s / 86400);
+    s %= 86400;
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return (d ? d + "d " : "") + h + "h " + m + "m";
+  }
+  function showToast(message, error) {
+    const t = $("toast");
+    t.textContent = message;
+    t.className = "toast show" + (error ? " error" : "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (t.className = "toast"), 4200);
+  }
+  async function getJson(url, options) {
+    const r = await fetch(url, options);
+    let data = {};
+    try {
+      data = await r.json();
+    } catch (e) {}
+    if (!r.ok) throw new Error(data.message || data.error || "Request failed: " + r.status);
+    return data;
+  }
+
+  function applyTheme() {
+    const mode = document.documentElement.dataset.mode || "dark",
+      accent = document.documentElement.dataset.accent || "green";
+    qa("[data-mode-choice]").forEach((b) => b.classList.toggle("on", b.dataset.modeChoice === mode));
+    qa("[data-accent-choice]").forEach((b) => b.classList.toggle("on", b.dataset.accentChoice === accent));
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = mode === "dark" ? "#161512" : "#f4f0e7";
+  }
+  qa("[data-mode-choice]").forEach((b) =>
+    b.addEventListener("click", () => {
+      document.documentElement.dataset.mode = b.dataset.modeChoice;
+      localStorage.setItem("sn_mode", b.dataset.modeChoice);
+      applyTheme();
+    }),
+  );
+  qa("[data-accent-choice]").forEach((b) =>
+    b.addEventListener("click", () => {
+      document.documentElement.dataset.accent = b.dataset.accentChoice;
+      localStorage.setItem("sn_accent", b.dataset.accentChoice);
+      applyTheme();
+    }),
+  );
+  applyTheme();
+
+  function activeForm() {
+    const page = document.querySelector(".page.active");
+    return page ? page.querySelector(".portal-form") : null;
+  }
+  function updateSaveBar() {
+    const f = activeForm();
+    $("saveBar").classList.toggle("hidden", !f);
+    if (!f) return;
+    $("saveBtnText").textContent = f.dataset.saveLabel || "Save settings";
+    $("saveMeta").classList.toggle("clean", !dirty);
+    $("saveMeta").querySelector(".txt").textContent = dirty ? "Unsaved changes" : "All saved";
+  }
+  async function showPage(name) {
+    const current = document.querySelector(".page.active")?.dataset.page;
+    if (current === name) {
+      document.documentElement.classList.remove("nav-open");
+      $("navToggle").setAttribute("aria-expanded", "false");
+      return true;
+    }
+    if (dirty) {
+      if (!confirm("Discard unsaved changes on this page?")) return false;
+      if (!(await loadConfig())) return false;
+    }
+    if (name !== "hardware") stopLedPreview();
+    qa(".page").forEach((p) => p.classList.toggle("active", p.dataset.page === name));
+    qa(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
+    const button = document.querySelector('.nav-item[data-nav="' + name + '"]');
+    $("crumb").textContent = button ? button.textContent.replace(/\s+/g, " ").trim() : "TouchDeck";
+    document.documentElement.classList.remove("nav-open");
+    $("navToggle").setAttribute("aria-expanded", "false");
+    updateSaveBar();
+    try {
+      localStorage.setItem("sn_page", name);
+    } catch (e) {}
+    return true;
+  }
+  qa(".nav-item").forEach((b) =>
+    b.addEventListener("click", () => showPage(b.dataset.nav)),
+  ); /* cross links inside card text, such as "see the Display page". Nothing listens for the hash, so without this they only changed the URL. */
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest("a[data-page]");
+    if (!a) return;
+    e.preventDefault();
+    showPage(a.dataset.page);
+  });
+  $("navToggle").addEventListener("click", () => {
+    const open = document.documentElement.classList.toggle("nav-open");
+    $("navToggle").setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  $("navScrim").addEventListener("click", () =>
+    showPage(document.querySelector(".nav-item.active").dataset.nav),
+  );
+
+  function markDirty() {
+    if (populating) return;
+    dirty = true;
+    updateSaveBar();
+  }
+  qa(".portal-form").forEach((f) => {
+    f.addEventListener("input", markDirty);
+    f.addEventListener("change", markDirty);
+    f.addEventListener("submit", (e) => e.preventDefault());
+  });
+  window.addEventListener("beforeunload", (e) => {
+    if (!dirty) return;
+    e.preventDefault();
+    e.returnValue = "";
+  });
+  function setVal(id, value) {
+    const e = $(id);
+    if (e) e.value = value == null ? "" : value;
+  }
+  function setCheck(id, value) {
+    const e = $(id);
+    if (e) e.checked = !!value;
+  }
+  function updateRangeLabels() {
+    const pct = (id) => Math.round((Number($(id).value) * 100) / 255) + "%";
+    $("brightnessVal").textContent = pct("brightness");
+    $("nightBrightnessVal").textContent = pct("nightBrightness");
+    $("warnThresholdVal").textContent =
+      $("warnThreshold").value === "0" ? "Off" : $("warnThreshold").value + "%";
+    $("ledBrightnessVal").textContent = pct("ledBrightness");
+    $("ledNightBrightnessVal").textContent = pct("ledNightBrightness");
+    $("glassTintVal").textContent = $("glassTint").value + "%";
+    $("glassBlurVal").textContent = $("glassBlur").value === "0" ? "Off" : $("glassBlur").value + " px";
+    $("glassDimVal").textContent = $("glassDim").value + "%";
+    $("glassOnVal").textContent = $("glassOn").value + "%";
+  }
+  [
+    "brightness",
+    "nightBrightness",
+    "warnThreshold",
+    "ledBrightness",
+    "ledNightBrightness",
+    "glassTint",
+    "glassBlur",
+    "glassDim",
+    "glassOn",
+  ].forEach((id) => $(id).addEventListener("input", updateRangeLabels));
+  function updateGlassFields() {
+    const g = $("theme").value === "2";
+    $("glassLook").classList.toggle("hidden", !g);
+    $("glassWall").classList.toggle("hidden", !g);
+  }
+  $("theme").addEventListener("change", updateGlassFields);
+  function updateNightFields() {
+    $("nightScheduleFields").classList.toggle("hidden", !$("nightEnabled").checked);
+  }
+  $("nightEnabled").addEventListener("change", updateNightFields);
+  function updateLedFields() {
+    $("ledFields").classList.toggle("hidden", !$("ledEnabled").checked);
+    $("ledNightFields").classList.toggle("hidden", !$("ledNightEnabled").checked);
+  }
+  /* Live LED preview: the slider drives the real LED while the page is open, so
+   a brightness is chosen by looking at the LED rather than by saving and
+   re-saving. The device forgets the preview on the next save or on stop. */
+  let ledPreviewTimer = null,
+    ledPreviewOn = false;
+  function sendLedPreview() {
+    const fd = new FormData();
+    if ($("ledEnabled").checked) fd.append("ledEnabled", "1");
+    fd.append("ledPin", $("ledPin").value);
+    fd.append("ledBrightness", $("ledBrightness").value);
+    ledPreviewOn = true;
+    fetch("/led/preview", { method: "POST", body: fd }).catch(() => {});
+  }
+  function queueLedPreview() {
+    if (populating) return;
+    clearTimeout(ledPreviewTimer);
+    ledPreviewTimer = setTimeout(sendLedPreview, 120);
+  }
+  function stopLedPreview() {
+    clearTimeout(ledPreviewTimer);
+    if (!ledPreviewOn) return;
+    ledPreviewOn = false;
+    const fd = new FormData();
+    fd.append("stop", "1");
+    fetch("/led/preview", { method: "POST", body: fd }).catch(() => {});
+  }
+  $("ledEnabled").addEventListener("change", () => {
+    updateLedFields();
+    queueLedPreview();
+  });
+  $("ledNightEnabled").addEventListener("change", updateLedFields);
+  ["ledBrightness", "ledPin"].forEach((id) => $(id).addEventListener("input", queueLedPreview));
+
+  function renderChips(target, metrics) {
+    const el = $(target);
+    if (!metrics || !metrics.length) {
+      el.innerHTML = '<span class="chip-empty">Waiting for the PC companion.</span>';
+      return;
+    }
+    el.innerHTML = metrics
+      .map(
+        (m) =>
+          '<span class="chip"><b>' +
+          esc(m.name) +
+          "</b><small>" +
+          esc(m.value == null ? "" : m.value) +
+          " " +
+          esc(m.unit) +
+          "</small></span>",
+      )
+      .join("");
+  }
+  function metricById(id) {
+    return (config.metrics || []).find((m) => Number(m.id) === Number(id));
+  }
+
+  function fillConfig(c) {
+    config = c;
+    populating = true;
+    $("topVersion").textContent = "v" + c.version;
+    $("aboutVersion").textContent = "v" + c.version;
+    $("aboutBoard").textContent = c.board;
+    $("maintVersion").textContent = c.version;
+    $("maintBoard").textContent = c.board;
+    $("maintIp").textContent = c.ip || "--";
+    $("diagBoard").textContent = c.board;
+    setVal("rotation", c.display.rotation);
+    setVal("theme", c.display.theme || 0);
+    setVal("brightness", c.display.brightness);
+    setVal("tempScale", c.display.tempScale);
+    setVal("powerScale", c.display.powerScale);
+    setVal("warnThreshold", c.display.warnThreshold);
+    setVal("wallEvery", c.display.wallEvery ?? 5);
+    setVal("wallOrder", c.display.wallOrder ?? 0);
+    setVal("glassTint", c.display.glassTint);
+    setVal("glassBlur", c.display.glassBlur);
+    setVal("glassDim", c.display.glassDim);
+    setVal("glassOn", c.display.glassOn || 80);
+    setCheck("glassAutoText", c.display.glassAutoText === true);
+    updateGlassFields();
+    setCheck("smoothCharts", c.display.smoothCharts !== false);
+    {
+      const nd = $("navDeck");
+      if (nd) nd.classList.toggle("hidden", !c.deck);
+      if (c.deck && !window.snDeck) {
+        window.snDeck = 1;
+        const s = document.createElement("script");
+        s.src = "/deck.js";
+        document.head.appendChild(s);
+      }
+    }
+    const b = c.backlight || {};
+    setCheck("nightEnabled", b.nightEnabled);
+    setVal("nightBrightness", b.nightBrightness == null ? 32 : b.nightBrightness);
+    setVal("nightStart", b.nightStart || "22:00");
+    setVal("nightEnd", b.nightEnd || "07:00");
+    updateNightFields();
+    const l = c.led || {};
+    setCheck("ledEnabled", l.enabled);
+    setVal("ledPin", l.pin == null ? 0 : l.pin);
+    setVal("ledBrightness", l.brightness == null ? 160 : l.brightness);
+    setCheck("ledNightEnabled", l.nightEnabled);
+    setVal("ledNightBrightness", l.nightBrightness == null ? 24 : l.nightBrightness);
+    setCheck("ledFollowDisplay", l.followDisplay);
+    setCheck("ledOfflineOff", l.offlineOff);
+    $("ledAllowedPins").textContent = (l.allowedPins || []).join(", ") || "none";
+    updateLedFields();
+    const adv = c.advanced || {};
+    setCheck("printersEnabled", adv.printers);
+    window.snPrn = !!adv.printers;
+    if (window.dkPrnSync) window.dkPrnSync();
+    setVal("timeFormat", c.clock.use24h ? "24" : "12");
+    setVal("timezone", c.clock.timezone || "");
+    const tz = qa("#timezonePreset option").find((o) => o.value === (c.clock.timezone || ""));
+    setVal("timezonePreset", tz ? tz.value : "");
+    setVal("wifiSsid", c.network.ssid || "");
+    setVal("wifiPass", "");
+    setVal("hostname", c.network.hostname || "touchdeck");
+    setCheck("mdns", c.network.mdns);
+    setCheck("showIp", c.network.showIp);
+    setVal("ipMode", c.network.dhcp ? "dhcp" : "static");
+    setVal("staticIp", c.network.staticIp || "");
+    setVal("gateway", c.network.gateway || "");
+    setVal("subnet", c.network.subnet || "");
+    setVal("dns", c.network.dns || "");
+    $("staticFields").classList.toggle("hidden", c.network.dhcp);
+    renderChips("overviewMetrics", c.metrics);
+    updateRangeLabels();
+    populating = false;
+    dirty = false;
+    updateSaveBar();
+  }
+
+  $("ipMode").addEventListener("change", () =>
+    $("staticFields").classList.toggle("hidden", $("ipMode").value !== "static"),
+  );
+  $("timezonePreset").addEventListener("change", () => {
+    if ($("timezonePreset").value) setVal("timezone", $("timezonePreset").value);
+    markDirty();
+  });
+
+  async function loadConfig() {
+    try {
+      const c = await getJson("/api/config?t=" + Date.now());
+      fillConfig(c);
+      return true;
+    } catch (e) {
+      showToast(e.message, true);
+      return false;
+    }
+  }
+  /* URLSearchParams, NOT FormData: a multipart POST goes through the ESP32 WebServer's _parseForm, which allocates a FIXED RequestArgument[32] for post args and drops the connection past it (ERR_EMPTY_RESPONSE, no crash). The layout form alone posts 42 fields for 8 slots. Urlencoded uses _parseArguments, which sizes itself from the body. Keep this urlencoded, and keep file uploads (backup import, OTA) on their own handlers. */
+  async function saveActive() {
+    const f = activeForm();
+    if (!f) return false;
+    try {
+      $("saveBtn").disabled = true;
+      const data = await getJson(f.dataset.endpoint, {
+        method: "POST",
+        body: new URLSearchParams(new FormData(f)),
+      });
+      ledPreviewOn = false;
+      /* the save re-inits the LED, which drops the preview server-side */ dirty = false;
+      updateSaveBar();
+      showToast(data.message || "Settings saved", false);
+      if (data.restarting) {
+        $("saveBtnText").textContent = "Restarting...";
+        setTimeout(() => location.reload(), 5000);
+      } else {
+        await loadConfig();
+        setTimeout(refreshPreview, 350);
+      }
+      return true;
+    } catch (e) {
+      showToast(e.message, true);
+      return false;
+    } finally {
+      $("saveBtn").disabled = false;
+    }
+  }
+  $("saveBtn").addEventListener("click", saveActive);
+  $("revertBtn").addEventListener("click", loadConfig);
+
+  function pcStatusText(code) {
+    return (
+      { 1: "OK", 2: "Sensor API error", 3: "LHM offline", 4: "LHM starting" }[code] || "Waiting for telemetry"
+    );
+  }
+  async function pollStatus() {
+    try {
+      const s = await getJson("/api/status?t=" + Date.now());
+      $("srLed").classList.remove("offline");
+      $("srTitle").textContent = s.ap_mode ? "setup access point" : "device online";
+      $("srIp").textContent = s.ip || "--";
+      $("srHost").textContent = (s.hostname || "touchdeck") + ".local";
+      $("srPc").textContent = s.pc_online ? "online" : "offline";
+      $("srMetrics").textContent = s.metric_count;
+      $("pcStateTag").textContent = s.pc_online ? "online" : "offline";
+      $("factPcStatus").textContent = pcStatusText(s.pc_status);
+      $("factTimestamp").textContent = s.timestamp || "--";
+      $("factMetricCount").textContent = s.metric_count;
+      $("factHa").textContent = s.ha_link || "--";
+      $("diagHeap").textContent = fmtBytes(s.free_heap);
+      $("diagBlock").textContent = fmtBytes(s.max_block);
+      $("diagRssi").textContent = s.rssi + " dBm";
+      $("diagUptime").textContent = fmtUptime(s.uptime_seconds);
+      $("maintIp").textContent = s.ip || "--";
+      const pct = Math.round((Number(s.backlight || 0) * 100) / 255);
+      $("backlightState").textContent = s.manual_display_off
+        ? "screen off"
+        : s.night_active
+          ? "night " + pct + "%"
+          : !s.time_valid && $("nightEnabled").checked
+            ? "day / time pending"
+            : "day " + pct + "%";
+      if ($("ledState"))
+        $("ledState").textContent = !s.led_enabled
+          ? "disabled"
+          : !s.led_pin_valid
+            ? "invalid pin"
+            : Number(s.led_duty) === 0
+              ? "off"
+              : Math.round((Number(s.led_duty) * 100) / 255) + "%";
+    } catch (e) {
+      $("srLed").classList.add("offline");
+      $("srTitle").textContent = "device unavailable";
+    }
+  }
+
+  function refreshPreview() {
+    if (previewBusy) return;
+    previewBusy = true;
+    const img = new Image();
+    img.onload = () => {
+      const target = $("screenPreview"),
+        size = $("previewSize");
+      target.src = img.src;
+      const sh = target.closest(".screen-shell");
+      if (sh && img.naturalWidth && img.naturalHeight)
+        sh.style.setProperty("--shell-ar", img.naturalWidth + "/" + img.naturalHeight);
+      if (img.naturalWidth) size.textContent = img.naturalWidth + " x " + img.naturalHeight;
+      previewBusy = false;
+    };
+    img.onerror = () => {
+      previewBusy = false;
+    };
+    img.src = "/screen_live.bmp?t=" + Date.now();
+  }
+  $("previewNow").addEventListener("click", refreshPreview);
+  setInterval(() => {
+    if ($("previewAuto").checked && document.querySelector(".page.active")?.dataset.page === "overview")
+      refreshPreview();
+  }, 5000);
+
+  function uploadFirmware(file) {
+    if (!file || !file.name.toLowerCase().endsWith(".bin")) {
+      showToast("Choose a firmware .bin file", true);
+      return;
+    }
+    const fd = new FormData();
+    fd.append("firmware", file);
+    const xhr = new XMLHttpRequest();
+    $("otaProgress").classList.add("show");
+    $("otaBar").style.width = "0%";
+    $("otaText").textContent = "Starting upload...";
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const p = Math.round((e.loaded * 100) / e.total);
+        $("otaBar").style.width = p + "%";
+        $("otaText").textContent = "Uploading " + p + "%";
+      }
+    };
+    xhr.onload = () => {
+      let data = {};
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch (e) {}
+      if (xhr.status >= 200 && xhr.status < 300) {
+        $("otaBar").style.width = "100%";
+        $("otaText").textContent = "Update complete. Device is restarting.";
+        showToast(data.message || "Firmware installed", false);
+      } else {
+        $("otaText").textContent = data.message || "Update failed";
+        showToast($("otaText").textContent, true);
+      }
+    };
+    xhr.onerror = () => {
+      showToast("Firmware upload failed", true);
+      $("otaText").textContent = "Upload failed";
+    };
+    xhr.open("POST", "/ota/upload");
+    xhr.send(fd);
+  }
+  $("otaBrowse").addEventListener("click", () => $("otaFile").click());
+  $("otaFile").addEventListener("change", () => uploadFirmware($("otaFile").files[0]));
+  ["dragenter", "dragover"].forEach((n) =>
+    $("otaDrop").addEventListener(n, (e) => {
+      e.preventDefault();
+      $("otaDrop").classList.add("drag");
+    }),
+  );
+  ["dragleave", "drop"].forEach((n) =>
+    $("otaDrop").addEventListener(n, (e) => {
+      e.preventDefault();
+      $("otaDrop").classList.remove("drag");
+    }),
+  );
+  $("otaDrop").addEventListener("drop", (e) => uploadFirmware(e.dataTransfer.files[0]));
+
+  function exportConfiguration() {
+    const a = document.createElement("a");
+    a.href = "/api/config/export?t=" + Date.now();
+    a.download = "touchdeck-config-" + new Date().toISOString().slice(0, 10) + ".json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    showToast("Configuration backup download started", false);
+  }
+  async function importConfiguration(file) {
+    if (!file) return;
+    if (file.size > 98304) {
+      showToast("The configuration backup is too large", true);
+      $("backupFile").value = "";
+      return;
+    }
+    try {
+      const raw = await file.text();
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (e) {
+        throw new Error("The selected file is not valid JSON");
+      }
+      if (!parsed || parsed.format !== "touchdeck-config")
+        throw new Error("This is not a TouchDeck configuration backup");
+      if (!confirm("Restore this configuration and restart the device? WiFi credentials will be preserved."))
+        return;
+      $("backupImport").disabled = true;
+      const data = await getJson("/api/config/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: raw,
+      });
+      showToast(data.message || "Configuration restored", false);
+      $("backupImport").textContent = "Restarting...";
+    } catch (e) {
+      showToast(e.message, true);
+      $("backupImport").disabled = false;
+    } finally {
+      $("backupFile").value = "";
+    }
+  }
+  $("backupExport").addEventListener("click", exportConfiguration);
+  $("backupImport").addEventListener("click", () => $("backupFile").click());
+  $("backupFile").addEventListener("change", () => importConfiguration($("backupFile").files[0]));
+
+  function updateFactoryReset() {
+    const ready = $("factoryConfirm").value.trim() === "RESET";
+    $("factoryReset").disabled = !ready;
+  }
+  $("factoryConfirm").addEventListener("input", updateFactoryReset);
+  $("factoryReset").addEventListener("click", async () => {
+    if ($("factoryConfirm").value.trim() !== "RESET") return;
+    if (!confirm("Erase all settings and WiFi credentials? The device will restart in setup mode.")) return;
+    try {
+      $("factoryReset").disabled = true;
+      $("factoryConfirm").disabled = true;
+      const body = new URLSearchParams({ confirmation: "RESET" });
+      const data = await getJson("/api/factory-reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      });
+      showToast(data.message || "Factory reset complete", false);
+      $("factoryReset").textContent = "Restarting...";
+    } catch (e) {
+      showToast(e.message, true);
+      $("factoryConfirm").disabled = false;
+      updateFactoryReset();
+    }
+  });
+
+  /* Glass galleries: crop and upload sequentially to bound device memory use. */
+  /* Help tips: long hints (or ones marked data-tip) fold behind a "?" next to
+   their label, card title or check text. Hints with an id are filled by code
+   and stay as they are. */
+  function tipButton(target) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "tip-btn";
+    b.textContent = "?";
+    b.setAttribute("aria-label", "More info");
+    b.setAttribute("aria-expanded", "false");
+    b.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const open = target.classList.toggle("tip-open");
+      b.setAttribute("aria-expanded", open ? "true" : "false");
+    };
+    return b;
+  }
+  function initHelpTips() {
+    const fold = (el) =>
+      !el.id && (el.hasAttribute("data-tip") || el.textContent.replace(/\s+/g, " ").trim().length >= 80);
+    qa(".ct-hint").forEach((el) => {
+      const host = el.closest(".check-text")?.querySelector("strong");
+      if (!fold(el) || !host || host.querySelector(".tip-btn")) return;
+      host.appendChild(tipButton(el));
+      el.classList.add("tip");
+    });
+    qa("p.field-hint").forEach((el) => {
+      const prev = el.previousElementSibling;
+      const host =
+        prev && prev.classList.contains("card-title")
+          ? prev
+          : el.closest(".field")?.querySelector(".field-label");
+      if (!fold(el) || !host || host.querySelector(".tip-btn")) return;
+      host.appendChild(tipButton(el));
+      el.classList.add("tip");
+    });
+  }
+  const walls = { l: { files: [], selected: new Set() }, p: { files: [], selected: new Set() } };
+  let wallBusy = false,
+    wallRefreshing = false,
+    wallCache = Date.now();
+  async function wallApi(path, method = "GET", body) {
+    const r = await fetch("/api/deck/" + path, { method, body, cache: "no-store" });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.message || "HTTP " + r.status);
+    return j;
+  }
+  function wallButtons() {
+    for (const o of ["l", "p"]) {
+      const s = walls[o];
+      $("wallPick_" + o).disabled = wallBusy;
+      $("wallShow_" + o).disabled = wallBusy || s.selected.size !== 1;
+      $("wallDelete_" + o).disabled = wallBusy || !s.selected.size;
+      $("wallAll_" + o).disabled = wallBusy || !s.files.length;
+      qa("button", $("wallLegacy_" + o)).forEach((b) => (b.disabled = wallBusy));
+    }
+  }
+  function wallRender(o) {
+    const s = walls[o],
+      grid = $("wallGrid_" + o);
+    s.selected = new Set([...s.selected].filter((n) => s.files.some((f) => f.n === n)));
+    // The status poll re-renders every 5 s: skip when nothing changed and reuse
+    // the <img> nodes, or the one-request-at-a-time device restarts every thumbnail.
+    const sig = [
+      wallCache,
+      s.current,
+      s.pinned,
+      s.free,
+      s.legacy,
+      ...s.files.map((f) => f.n),
+      "|",
+      ...s.selected,
+    ].join(",");
+    if (sig === s.sig) return;
+    s.sig = sig;
+    if (s.imgsFor !== wallCache) {
+      s.imgs = new Map();
+      s.imgsFor = wallCache;
+    }
+    grid.replaceChildren();
+    for (const f of s.files) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn";
+      const sel = s.selected.has(f.n);
+      button.style.cssText =
+        "position:relative;display:flex;flex-direction:column;gap:5px;padding:5px;white-space:normal;border-width:2px";
+      button.setAttribute("aria-pressed", sel ? "true" : "false");
+      button.title = f.n;
+      let img = s.imgs.get(f.n);
+      if (!img) {
+        img = document.createElement("img");
+        img.loading = "lazy";
+        img.alt = f.n;
+        img.src = "/api/deck/walls/file?o=" + o + "&n=" + encodeURIComponent(f.n) + "&v=" + wallCache;
+        img.style.cssText = "width:100%;height:80px;object-fit:cover;border-radius:4px";
+        s.imgs.set(f.n, img);
+      }
+      const label = document.createElement("span");
+      label.style.cssText = "font-size:11px;min-height:14px;color:var(--accent)";
+      label.textContent = [s.current === f.n ? "Current" : "", s.pinned === f.n ? "Pinned" : ""]
+        .filter(Boolean)
+        .join(" - ");
+      button.style.borderColor = sel ? "var(--accent)" : "";
+      const mark = document.createElement("span");
+      mark.textContent = sel ? "\u2713" : "";
+      mark.style.cssText =
+        "position:absolute;top:9px;right:9px;width:20px;height:20px;border-radius:50%;display:" +
+        (sel ? "flex" : "none") +
+        ";align-items:center;justify-content:center;font-size:13px;background:var(--accent);color:#fff";
+      button.append(img, label, mark);
+      button.onclick = () => {
+        if (wallBusy) return;
+        if (s.selected.has(f.n)) s.selected.delete(f.n);
+        else s.selected.add(f.n);
+        wallRender(o);
+      };
+      grid.appendChild(button);
+    }
+    $("wallSpace_" + o).textContent =
+      s.files.length +
+      " pictures - about " +
+      Math.max(0, Math.floor(((s.free || 0) - 256 * 1024) / (60 * 1024))) +
+      " more pictures fit";
+    const legacy = $("wallLegacy_" + o);
+    legacy.replaceChildren();
+    if (s.legacy) {
+      legacy.append(document.createTextNode("Old single picture in use - "));
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "btn";
+      remove.textContent = "Remove";
+      remove.onclick = () => wallAction(o, "wallpaper/remove?o=" + o);
+      legacy.appendChild(remove);
+    }
+    wallButtons();
+  }
+  async function wallStatus() {
+    if (wallRefreshing) return;
+    wallRefreshing = true;
+    try {
+      for (const o of ["l", "p"]) {
+        const data = await wallApi("walls?o=" + o),
+          s = walls[o];
+        const changed =
+          JSON.stringify([data.files, data.current, data.pinned, data.legacy, data.free]) !==
+          JSON.stringify([s.files, s.current, s.pinned, s.legacy, s.free]);
+        Object.assign(s, data);
+        if (changed) wallRender(o);
+      }
+    } catch (e) {
+      showToast(e.message, true);
+    } finally {
+      wallRefreshing = false;
+    }
+  }
+  // bust: after deletes, as names are reused once the newest files are gone.
+  async function wallAction(o, path, bust = true) {
+    if (wallBusy) return;
+    wallBusy = true;
+    wallButtons();
+    try {
+      await wallApi(path, "POST");
+      if (bust) wallCache = Date.now();
+      await wallStatus();
+    } catch (e) {
+      showToast(e.message, true);
+    } finally {
+      wallBusy = false;
+      wallButtons();
+    }
+  }
+  async function wallJpeg(file, o) {
+    const img = await createImageBitmap(file);
+    try {
+      const c = document.createElement("canvas");
+      c.width = o === "l" ? 480 : 320;
+      c.height = o === "l" ? 320 : 480;
+      const scale = Math.max(c.width / img.width, c.height / img.height),
+        w = img.width * scale,
+        h = img.height * scale;
+      const ctx = c.getContext("2d");
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, (c.width - w) / 2, (c.height - h) / 2, w, h);
+      return await new Promise((resolve, reject) =>
+        c.toBlob(
+          (blob) => (blob ? resolve(blob) : reject(new Error("JPEG conversion failed"))),
+          "image/jpeg",
+          0.9,
+        ),
+      );
+    } finally {
+      img.close();
+    }
+  }
+  async function wallBatch(o, files) {
+    if (wallBusy || !files.length) return;
+    wallBusy = true;
+    wallButtons();
+    $("wallErrors_" + o).replaceChildren();
+    let stored = 0,
+      attempted = 0;
+    try {
+      for (let i = 0; i < files.length; i++) {
+        attempted = i + 1;
+        $("wallProgress_" + o).textContent = i + 1 + " / " + files.length;
+        try {
+          const blob = await wallJpeg(files[i], o),
+            form = new FormData();
+          form.append("wall", blob, "wall.jpg");
+          await wallApi("walls?o=" + o + "&i=" + (i + 1) + "&c=" + files.length, "POST", form);
+          stored++;
+        } catch (e) {
+          const line = document.createElement("div");
+          line.textContent = files[i].name + ": " + e.message;
+          $("wallErrors_" + o).appendChild(line);
+          if (e.message === "flash full") break;
+        }
+      }
+    } finally {
+      $("wallProgress_" + o).textContent = attempted + " / " + files.length + " - " + stored + " stored";
+      wallCache = Date.now();
+      await wallStatus();
+      wallBusy = false;
+      wallButtons();
+    }
+  }
+  for (const o of ["l", "p"]) {
+    $("wallPick_" + o).onclick = () => $("wallFile_" + o).click();
+    $("wallFile_" + o).oninput = (e) => e.stopPropagation();
+    $("wallFile_" + o).onchange = (e) => {
+      e.stopPropagation();
+      const files = [...e.target.files];
+      e.target.value = "";
+      wallBatch(o, files);
+    };
+    const gallery = $("wallGallery_" + o);
+    gallery.ondragover = (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = wallBusy ? "none" : "copy";
+    };
+    gallery.ondrop = (e) => {
+      e.preventDefault();
+      wallBatch(o, [...e.dataTransfer.files]);
+    };
+    $("wallShow_" + o).onclick = () =>
+      wallAction(o, "walls/show?o=" + o + "&n=" + encodeURIComponent([...walls[o].selected][0]), false);
+    $("wallDelete_" + o).onclick = () =>
+      wallAction(o, "walls/delete?o=" + o + "&n=" + encodeURIComponent([...walls[o].selected].join(",")));
+    $("wallAll_" + o).onclick = () => {
+      if (confirm("Delete all " + (o === "l" ? "landscape" : "portrait") + " pictures?"))
+        wallAction(o, "walls/delete?o=" + o + "&n=*");
+    };
+  }
+  wallStatus();
+  setInterval(() => {
+    if (!document.hidden && !wallBusy && $("wallGrid_l").offsetParent !== null) wallStatus();
+  }, 5000);
+
+  let initial = "overview";
+  try {
+    initial = localStorage.getItem("sn_page") || "overview";
+  } catch (e) {}
+  if (!document.querySelector('[data-nav="' + initial + '"]')) initial = "overview";
+  initHelpTips();
+  showPage(initial);
+  loadConfig();
+  pollStatus();
+  refreshPreview();
+  setInterval(pollStatus, 2000);
+})();

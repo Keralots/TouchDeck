@@ -5032,7 +5032,7 @@ void layoutHeader(Page& p) {
 
 // Where each tile of a page lands: explicit cells first (in tile order), then
 // the rest flow into the first free place that fits. The portal grid editor
-// mirrors this rule (layout() in deck_web.h). Cells count in half cells.
+// mirrors this rule (layout() in web/deck.js). Cells count in half cells.
 struct Cell {
   bool placed;
   int x, y, w, h;
@@ -5205,7 +5205,7 @@ bool edFree(const Cell& c, int a, int b) {
 
 // Can tile k go to c? Free cells, or (a move of a placed tile) onto a tile that
 // then takes k's old place (*swap, *swapTo). A same-size tile covered at least
-// half snaps c onto it. The portal mirrors this (swapPlan() in deck_web.h).
+// half snaps c onto it. The portal mirrors this (swapPlan() in web/deck.js).
 bool edCheck(int k, Cell& c, bool sizing, int* swap, Cell* swapTo) {
   *swap = -1;
   if (c.x < 0 || c.y < 0 || c.x + c.w > s_ed.cols || c.y + c.h > s_ed.rows) return false;

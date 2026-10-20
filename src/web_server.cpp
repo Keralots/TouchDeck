@@ -8,13 +8,12 @@
 #include "pc_metrics.h"
 #include "led.h"
 #include "config.h"
-#include "web_pages.h"
+#include "web_assets.h"
 #include "deck_ui.h"
 #include "deck_printers.h"
 #include "deck_config.h"
 #include "deck_ha.h"
 #include "deck_http.h"
-#include "deck_web.h"
 #include "deck_icons.h"
 #include "deck_wall.h"
 #include "deck_sys.h"
@@ -64,8 +63,8 @@ static bool writeClientAll(WiFiClient& client, const uint8_t* data, size_t len) 
   return len == 0;
 }
 
-static void streamAsset(const char* data, size_t len, const char* contentType,
-                        const char* cacheControl) {
+static void streamAsset(const void* data, size_t len, const char* contentType,
+                        const char* cacheControl, bool gzipped = false) {
   static const size_t CHUNK_SIZE = 2048;
   uint8_t* chunk = (uint8_t*)malloc(CHUNK_SIZE);
   if (!chunk) {
@@ -74,6 +73,7 @@ static void streamAsset(const char* data, size_t len, const char* contentType,
   }
 
   server.sendHeader("Cache-Control", cacheControl);
+  if (gzipped) server.sendHeader("Content-Encoding", "gzip");
   server.setContentLength(len);
   server.send(200, contentType, "");
   WiFiClient client = server.client();
@@ -81,7 +81,7 @@ static void streamAsset(const char* data, size_t len, const char* contentType,
   bool ok = true;
   for (size_t offset = 0; offset < len && ok; offset += CHUNK_SIZE) {
     size_t count = min(CHUNK_SIZE, len - offset);
-    memcpy_P(chunk, data + offset, count);
+    memcpy_P(chunk, (const uint8_t*)data + offset, count);
     ok = writeClientAll(client, chunk, count);
     esp_task_wdt_reset();   // large asset + slow client can outlast the WDT
     delay(0);
@@ -91,23 +91,23 @@ static void streamAsset(const char* data, size_t len, const char* contentType,
 }
 
 static void handleRoot() {
-  streamAsset(PAGE_HTML, sizeof(PAGE_HTML) - 1, "text/html",
-              "no-cache, no-store, must-revalidate");
+  streamAsset(WEB_INDEX_HTML, sizeof(WEB_INDEX_HTML), "text/html",
+              "no-cache, no-store, must-revalidate", true);
 }
 
 static void handlePortalCss() {
-  streamAsset(PORTAL_CSS, sizeof(PORTAL_CSS) - 1, "text/css",
-              "public, max-age=31536000, immutable");
+  streamAsset(WEB_PORTAL_CSS, sizeof(WEB_PORTAL_CSS), "text/css",
+              "public, max-age=31536000, immutable", true);
 }
 
 static void handlePortalLayoutCss() {
-  streamAsset(PORTAL_LAYOUT_CSS, sizeof(PORTAL_LAYOUT_CSS) - 1, "text/css",
-              "public, max-age=31536000, immutable");
+  streamAsset(WEB_PORTAL_LAYOUT_CSS, sizeof(WEB_PORTAL_LAYOUT_CSS), "text/css",
+              "public, max-age=31536000, immutable", true);
 }
 
 static void handlePortalJs() {
-  streamAsset(PORTAL_JS, sizeof(PORTAL_JS) - 1, "application/javascript",
-              "public, max-age=31536000, immutable");
+  streamAsset(WEB_PORTAL_JS, sizeof(WEB_PORTAL_JS), "application/javascript",
+              "public, max-age=31536000, immutable", true);
 }
 
 static void sendJsonMessage(int status, bool ok, const char* message,
@@ -892,7 +892,7 @@ static void handleDeckSwipe() {
 // The Deck section of the portal; loaded by portal.js only when /api/config
 // reports "deck". no-cache so a firmware update is picked up at once.
 static void handleDeckJs() {
-  streamAsset(DECK_JS, sizeof(DECK_JS) - 1, "application/javascript", "no-cache");
+  streamAsset(WEB_DECK_JS, sizeof(WEB_DECK_JS), "application/javascript", "no-cache", true);
 }
 
 // Old address of the separate Deck page: the section now lives in the portal.
