@@ -15,6 +15,7 @@
 .dk-tmain{min-width:0}.dk-tmain input{max-width:none;padding:7px 10px;font-size:14px}
 .dk-tsub{font:11px var(--mono);color:var(--dim);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dk-tact{display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.dk-tact select{width:auto;padding:6px 8px;font-size:12px}.dk-tact .btn{padding:6px 9px}
+.dk-phead .btn{padding:6px 9px}.dk-phead .dk-row{gap:6px}@media (min-width:561px){.dk-phead{grid-template-columns:minmax(160px,1fr) auto}}
 .dk-cap{font:12px var(--mono);color:var(--dim);margin:10px 0 0}.dk-cap.over{color:var(--err)}
 .dk-tile.sel{border-color:var(--accent)}
 .dk-more{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;padding-top:10px;border-top:1px solid var(--line)}
@@ -1896,7 +1897,7 @@
       "</div>" +
       whenBar(p);
     h +=
-      '<div class="grid-2"><div class="field"><label class="field-label">Page name</label><input type="text" id="dkPName" value="' +
+      '<div class="grid-2 dk-phead"><div class="field"><label class="field-label">Page name</label><input type="text" id="dkPName" value="' +
       esc(p.name || "") +
       '"></div><div class="field"><label class="field-label">Grid (columns x rows)</label><div class="dk-row"><select id="dkPCols" style="width:auto">' +
       (land ? [2, 3, 4, 5, 6] : [2, 3, 4])
@@ -1906,7 +1907,7 @@
       (land ? [2, 3, 4] : [2, 3, 4, 5, 6])
         .map((n) => "<option" + (n === r ? " selected" : "") + ">" + n + "</option>")
         .join("") +
-      '</select><button type="button" class="btn" id="dkPLeft" style="margin-left:auto;padding:6px 9px">Move left</button><button type="button" class="btn" id="dkPRight" style="padding:6px 9px">Move right</button><button type="button" class="btn" id="dkPDup">Duplicate</button><button type="button" class="btn btn-danger" id="dkPDel">Delete page</button></div></div></div>';
+      '</select><button type="button" class="btn" id="dkPLeft" style="margin-left:auto">Move left</button><button type="button" class="btn" id="dkPRight">Move right</button><button type="button" class="btn" id="dkPDup">Duplicate</button><button type="button" class="btn btn-danger" id="dkPDel">Delete page</button></div></div></div>';
     if (prnOn() && (deck.printers || []).length && (p.printer || p.tiles.some((t) => t.type === "printer")))
       h +=
         '<div class="field"><label class="field-label">Printer page</label><select id="dkPPrn" style="width:auto">' +
