@@ -566,8 +566,8 @@
 
   /* Glass galleries: crop and upload sequentially to bound device memory use. */
   /* Help tips: long hints (or ones marked data-tip) fold behind a "?" next to
-   their label, card title or check text. Hints with an id are filled by code
-   and stay as they are. */
+   their label, card title or check text. Hints with an id are filled by code,
+   and hints with nothing to hang on stay as they are. */
   function tipButton(target) {
     const b = document.createElement("button");
     b.type = "button";
@@ -594,10 +594,11 @@
     });
     qa("p.field-hint").forEach((el) => {
       const prev = el.previousElementSibling;
-      const host =
-        prev && prev.classList.contains("card-title")
-          ? prev
-          : el.closest(".field")?.querySelector(".field-label");
+      const title = prev?.classList.contains("card-head") ? prev.querySelector(".card-title") : prev;
+      const host = title?.classList.contains("card-title")
+        ? title
+        : el.closest(".field")?.querySelector(".field-label") ||
+          (prev?.classList.contains("field") ? prev.querySelector(".field-label") : null);
       if (!fold(el) || !host || host.querySelector(".tip-btn")) return;
       host.appendChild(tipButton(el));
       el.classList.add("tip");
@@ -832,6 +833,16 @@
   } catch (e) {}
   if (!document.querySelector('[data-nav="' + initial + '"]')) initial = "overview";
   initHelpTips();
+  // The deck editor (deck.js) renders late and re-renders on every edit.
+  let tipsQueued = false;
+  new MutationObserver(() => {
+    if (tipsQueued) return;
+    tipsQueued = true;
+    setTimeout(() => {
+      tipsQueued = false;
+      initHelpTips();
+    });
+  }).observe(document.body, { childList: true, subtree: true });
   showPage(initial);
   loadConfig();
   pollStatus();

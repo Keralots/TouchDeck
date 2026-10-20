@@ -66,7 +66,8 @@
 <div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
 <div class="dk-status"><span class="dk-dot" id="dkIcDot"></span><span id="dkIcState">checking...</span></div></div>
 <div class="card" id="dkPrnCard"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag" id="dkPrnTag">Bambu Lab, LAN</span><button type="button" class="btn" id="dkPrnTog" style="margin-left:auto;padding:5px 10px" aria-expanded="false">Show</button></div>
-<div id="dkPrnBody" hidden><p class="field-hint">The printer must be in LAN mode or have LAN access on. Serial and access code are stored only on the device. With a plug (an HA switch), the printer connects and its pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
+<p class="field-hint">The printer must be in LAN mode or have LAN access on. Serial and access code are stored only on the device. With a plug (an HA switch), the printer connects and its pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
+<div id="dkPrnBody" hidden>
 <div id="dkPrn"></div><div class="dk-row"><button type="button" class="btn" id="dkPrnAdd">+ Add printer</button></div></div></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
 <label class="check-row standalone" style="margin-bottom:14px"><input type="checkbox" id="dkHeader"><span class="check-box"></span><span class="check-text"><strong>Show the top bar</strong><span class="ct-hint">Page name, WiFi and clock above the tiles. Also switchable in the quick panel on the device.</span></span></label>
@@ -998,7 +999,7 @@
           i +
           '" value="' +
           esc(t.hours == null ? 24 : t.hours) +
-          '"></div>';
+          '"><p class="field-hint">Defaults to 24 h; longer periods take longer to load from Home Assistant (a chatty sensor over a week can take many seconds).</p></div>';
       [
         ["warn", "Warn at"],
         ["crit", "Critical at"],
@@ -1012,11 +1013,12 @@
           k +
           '" value="' +
           esc(t[k] == null ? "" : t[k]) +
-          '" placeholder="Unset"></div>';
+          '" placeholder="Unset">' +
+          (k === "crit" && !isHttpSensor(t)
+            ? '<p class="field-hint" data-tip>Thresholds use the sensor unit; Critical lower than Warn = low is bad.</p>'
+            : "") +
+          "</div>";
       });
-      if (!isHttpSensor(t))
-        h +=
-          '<p class="field-hint wide" style="margin:0">History defaults to 24 h; longer periods take longer to load from Home Assistant (a chatty sensor over a week can take many seconds). Thresholds use the sensor unit; Critical lower than Warn = low is bad.</p>';
     }
     if (t.type === "action" || isHttpSensor(t)) {
       const tp = t.tap || {},
