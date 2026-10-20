@@ -10,9 +10,9 @@
 // this firmware does not talk to, so they were left out rather than
 // repurposed into something invented.
 //
-// The LED follows the schedule the panel already has: a separate night level
-// during the configured night interval, and dark whenever the display itself
-// is dark (manual off, PC-offline sleep, or a night brightness of 0).
+// The LED has its own night interval and level, independent of the backlight
+// schedule and the manual night button, and goes dark whenever the display
+// itself is dark (manual off, PC-offline sleep, or a night brightness of 0).
 
 // Lifecycle. initLed() re-reads ledSettings, so the save handler calls it to
 // apply a changed pin or brightness. ledTick() must run every loop pass.

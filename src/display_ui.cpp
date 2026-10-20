@@ -15,6 +15,7 @@ void displayTick() { deckTick(); }
 // ---------------------------------------------------------------------------
 static uint8_t lastAppliedBrightness = 0;
 static bool g_night_active = false;
+static bool g_led_night = false;
 static bool g_time_valid = false;
 static bool g_backlight_refresh = true;
 static bool g_manual_display_off = false;
@@ -28,6 +29,7 @@ void setBacklight(uint8_t level) {
 
 uint8_t currentBacklightLevel() { return lastAppliedBrightness; }
 bool nightBrightnessActive() { return g_night_active; }
+bool ledNightActive() { return g_led_night; }
 bool backlightTimeValid() { return g_time_valid; }
 bool manualDisplayOff() { return g_manual_display_off; }
 bool manualNightActive() { return g_manual_night; }
@@ -50,6 +52,13 @@ void wakeDisplayFromTouch() {
 
 void refreshBacklightControl() { g_backlight_refresh = true; }
 
+// start == end is no interval; start > end wraps past midnight.
+static bool inNightWindow(uint16_t minute, uint16_t start, uint16_t end) {
+  if (start < end) return minute >= start && minute < end;
+  if (start > end) return minute >= start || minute < end;
+  return false;
+}
+
 void updateBacklightControl() {
   const uint32_t nowMs = millis();
   if (!g_backlight_refresh && nowMs - g_last_backlight_check_ms < 1000) return;
@@ -59,14 +68,16 @@ void updateBacklightControl() {
   const time_t epoch = time(nullptr);
   g_time_valid = epoch >= 1609459200;  // 2021-01-01, safely past an unsynced epoch
   bool nightWindow = false;
-  if (g_time_valid && backlightSettings.nightEnabled) {
+  g_led_night = false;
+  if (g_time_valid) {
     struct tm localTime;
     localtime_r(&epoch, &localTime);
     const uint16_t minute = localTime.tm_hour * 60 + localTime.tm_min;
-    const uint16_t start = backlightSettings.nightStartMinute;
-    const uint16_t end = backlightSettings.nightEndMinute;
-    if (start < end) nightWindow = minute >= start && minute < end;
-    else if (start > end) nightWindow = minute >= start || minute < end;
+    if (backlightSettings.nightEnabled)
+      nightWindow = inNightWindow(minute, backlightSettings.nightStartMinute,
+                                  backlightSettings.nightEndMinute);
+    g_led_night = ledSettings.nightEnabled &&
+                  inNightWindow(minute, ledSettings.nightStartMinute, ledSettings.nightEndMinute);
   }
   g_night_active = nightWindow || g_manual_night;
 

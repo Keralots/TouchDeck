@@ -54,6 +54,8 @@ void sanitizeLedPin() {
   ledSettings.nightEnabled = ledSettings.nightEnabled ? 1 : 0;
   ledSettings.followDisplay = ledSettings.followDisplay ? 1 : 0;
   ledSettings.offlineOff = ledSettings.offlineOff ? 1 : 0;
+  if (ledSettings.nightStartMinute >= 24 * 60) ledSettings.nightStartMinute = 22 * 60;
+  if (ledSettings.nightEndMinute >= 24 * 60) ledSettings.nightEndMinute = 7 * 60;
   // Nothing is driven while the LED is off, so a stored pin is just a
   // remembered choice - policing it there would silently erase what the user
   // typed before they ticked the box. initLed() guards the park-LOW path with
@@ -186,9 +188,7 @@ void ledTick() {
   }
   if (!ledSettings.enabled) return;
 
-  uint8_t duty = (ledSettings.nightEnabled && nightBrightnessActive())
-                   ? ledSettings.nightBrightness
-                   : ledDayLevel();
+  uint8_t duty = ledNightActive() ? ledSettings.nightBrightness : ledDayLevel();
   if (haLevel == 0) duty = 0;  // switched off from HA: off at night too
   // One test covers manual off and a night brightness of 0: whatever put the
   // panel out, the LED goes with it.

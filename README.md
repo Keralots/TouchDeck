@@ -33,7 +33,7 @@ Captured from the device (`/screen.bmp`) with the Glass theme.
 - **PC stats:** metric tiles fed by the TouchDeck Companion; values, units, history chart and an amber warning colour above a set share of the scale.
 - **Quick panel:** pull down from the top edge for screen and LED brightness, link status, screen off, night mode, the top bar switch and the page editor.
 - **Edit on the device:** long press an empty spot of a page (or Edit in the quick panel) to move (swap works as in the portal), resize or remove its tiles, or add one with + (a list of Home Assistant entities by group, from the list cached with "Update from HA" in the portal); Done saves the page.
-- **Night schedule** for the backlight and an optional status / filament LED on a PWM pin. The LED's day brightness can follow a Home Assistant input_boolean, input_number or light, and the quick panel's Light slider sets that entity.
+- **Night schedules** for the backlight and, separately, an optional status / filament LED on a PWM pin. The LED's day brightness can follow a Home Assistant input_boolean, input_number or light, and the quick panel's Light slider sets that entity.
 - **System screens** for start-up, WiFi setup (with a QR code to join the setup network), connecting, and a firmware update screen with progress.
 
 ## Web portal

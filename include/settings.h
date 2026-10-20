@@ -22,10 +22,12 @@ struct LedSettings {
   uint8_t enabled;
   uint8_t pin;
   uint8_t brightness;       // 0..255, the normal daytime level
-  uint8_t nightEnabled;     // use nightBrightness inside the night interval
+  uint8_t nightEnabled;     // use nightBrightness inside the LED's own night interval
   uint8_t nightBrightness;  // 0..255, 0 switches the LED fully off at night
   uint8_t followDisplay;    // dark whenever the panel itself is dark
   uint8_t offlineOff;       // dark while the PC companion is offline
+  uint16_t nightStartMinute;  // minute of day, 0..1439; v2, v1 shared the backlight's
+  uint16_t nightEndMinute;    // minute of day, 0..1439
 };
 
 // Panel and PC metric tile settings, each its own NVS scalar.

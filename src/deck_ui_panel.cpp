@@ -27,8 +27,7 @@ uint8_t& screenLevelRef() {
 bool ledUsable() { return ledSettings.enabled && ledPinValid(); }
 
 uint8_t& lightLevelRef() {
-  return (ledSettings.nightEnabled && nightBrightnessActive()) ? ledSettings.nightBrightness
-                                                               : ledSettings.brightness;
+  return ledNightActive() ? ledSettings.nightBrightness : ledSettings.brightness;
 }
 
 void qpSyncValues() {
@@ -37,10 +36,10 @@ void qpSyncValues() {
   lv_label_set_text(s_qp.screenLbl, night ? "Screen (night)" : "Screen");
   lv_slider_set_value(s_qp.screenSlider, screenLevelRef(), LV_ANIM_OFF);
   lv_label_set_text_fmt(s_qp.screenVal, "%d%%", (screenLevelRef() * 100 + 127) / 255);
+  lv_label_set_text(s_qp.lightLbl, ledNightActive() ? "Light (night)" : "Light");
   if (ledUsable()) {
     lv_obj_remove_state(s_qp.lightSlider, LV_STATE_DISABLED);
-    const uint8_t lv = (ledSettings.nightEnabled && nightBrightnessActive()) ? ledSettings.nightBrightness
-                                                                           : ledDayLevel();
+    const uint8_t lv = ledNightActive() ? ledSettings.nightBrightness : ledDayLevel();
     lv_slider_set_value(s_qp.lightSlider, lv, LV_ANIM_OFF);
     lv_label_set_text_fmt(s_qp.lightVal, "%d%%", (lv * 100 + 127) / 255);
   } else {
@@ -131,7 +130,7 @@ void onLightSlider(lv_event_t* e) {
     qpMarkStale();
   } else if (code == LV_EVENT_RELEASED) {
     // By day a linked LED is set through its HA entity; the night level stays local.
-    if (s_cfg.ledEntity.length() && !(ledSettings.nightEnabled && nightBrightnessActive())) {
+    if (s_cfg.ledEntity.length() && !ledNightActive()) {
       if (!ledToHa(v)) deckToastShow("Home Assistant is offline", 1800);
       clearLedPreview();
       qpSyncValues();
@@ -328,9 +327,9 @@ void buildQuickPanel() {
   lv_obj_add_event_cb(s_qp.screenSlider, onScreenSlider, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(s_qp.screenSlider, onScreenSlider, LV_EVENT_RELEASED, nullptr);
 
-  lv_obj_t* lightLbl = lv_label_create(box);
-  lv_label_set_text(lightLbl, "Light");
-  lv_obj_set_pos(lightLbl, 16, y0 + 98);
+  s_qp.lightLbl = lv_label_create(box);
+  lv_label_set_text(s_qp.lightLbl, "Light");
+  lv_obj_set_pos(s_qp.lightLbl, 16, y0 + 98);
   s_qp.lightSlider = qpSlider(box, slX, y0 + 103, slW, C_LIGHT_ACCENT);
   lv_slider_set_range(s_qp.lightSlider, 0, 255);  // 0 = LED off (or the HA entity off)
   s_qp.lightVal = lv_label_create(box);

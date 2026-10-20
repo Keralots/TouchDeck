@@ -285,6 +285,8 @@
     setVal("ledBrightness", l.brightness == null ? 160 : l.brightness);
     setCheck("ledNightEnabled", l.nightEnabled);
     setVal("ledNightBrightness", l.nightBrightness == null ? 24 : l.nightBrightness);
+    setVal("ledNightStart", l.nightStart || "22:00");
+    setVal("ledNightEnd", l.nightEnd || "07:00");
     setCheck("ledFollowDisplay", l.followDisplay);
     setCheck("ledOfflineOff", l.offlineOff);
     $("ledAllowedPins").textContent = (l.allowedPins || []).join(", ") || "none";
@@ -404,7 +406,7 @@
             ? "invalid pin"
             : Number(s.led_duty) === 0
               ? "off"
-              : Math.round((Number(s.led_duty) * 100) / 255) + "%";
+              : (s.led_night ? "night " : "") + Math.round((Number(s.led_duty) * 100) / 255) + "%";
     } catch (e) {
       $("srLed").classList.add("offline");
       $("srTitle").textContent = "device unavailable";

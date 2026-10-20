@@ -182,6 +182,10 @@ static void handleApiConfig() {
   led["brightness"] = ledSettings.brightness;
   led["nightEnabled"] = ledSettings.nightEnabled != 0;
   led["nightBrightness"] = ledSettings.nightBrightness;
+  formatMinuteOfDay(ledSettings.nightStartMinute, timeBuf, sizeof(timeBuf));
+  led["nightStart"] = timeBuf;
+  formatMinuteOfDay(ledSettings.nightEndMinute, timeBuf, sizeof(timeBuf));
+  led["nightEnd"] = timeBuf;
   led["followDisplay"] = ledSettings.followDisplay != 0;
   led["offlineOff"] = ledSettings.offlineOff != 0;
   doc["advanced"]["printers"] = advSettings.printers;
@@ -285,6 +289,8 @@ static void handleConfigExport() {
   led["brightness"] = ledSettings.brightness;
   led["nightEnabled"] = ledSettings.nightEnabled != 0;
   led["nightBrightness"] = ledSettings.nightBrightness;
+  led["nightStartMinute"] = ledSettings.nightStartMinute;
+  led["nightEndMinute"] = ledSettings.nightEndMinute;
   led["followDisplay"] = ledSettings.followDisplay != 0;
   led["offlineOff"] = ledSettings.offlineOff != 0;
   doc["advanced"]["printers"] = advSettings.printers;
@@ -484,6 +490,15 @@ static void handleConfigImport() {
   READ_INT(led, "brightness", 0, 255, nextLed.brightness, uint8_t);
   READ_BOOL(led, "nightEnabled", nextLed.nightEnabled);
   READ_INT(led, "nightBrightness", 0, 255, nextLed.nightBrightness, uint8_t);
+  if (!led["nightStartMinute"].isNull()) {
+    READ_INT(led, "nightStartMinute", 0, 1439, nextLed.nightStartMinute, uint16_t);
+    READ_INT(led, "nightEndMinute", 0, 1439, nextLed.nightEndMinute, uint16_t);
+  } else {
+    // Older backup: the LED dimmed only inside the backlight's schedule.
+    nextLed.nightStartMinute = nextBacklight.nightStartMinute;
+    nextLed.nightEndMinute = nextBacklight.nightEndMinute;
+    if (!nextBacklight.nightEnabled) nextLed.nightEnabled = 0;
+  }
   READ_BOOL(led, "followDisplay", nextLed.followDisplay);
   READ_BOOL(led, "offlineOff", nextLed.offlineOff);
   if (nextLed.enabled && !ledPinAllowed(nextLed.pin)) {
@@ -580,6 +595,8 @@ static void handleSaveHardware() {
   nextLed.nightEnabled = server.hasArg("ledNightEnabled") ? 1 : 0;
   nextLed.nightBrightness =
     (uint8_t)clampedArg("ledNightBrightness", nextLed.nightBrightness, 0, 255);
+  nextLed.nightStartMinute = minuteOfDayArg("ledNightStart", nextLed.nightStartMinute);
+  nextLed.nightEndMinute = minuteOfDayArg("ledNightEnd", nextLed.nightEndMinute);
   nextLed.followDisplay = server.hasArg("ledFollowDisplay") ? 1 : 0;
   nextLed.offlineOff = server.hasArg("ledOfflineOff") ? 1 : 0;
   if (nextLed.enabled && !ledPinAllowed(nextLed.pin)) {
@@ -590,6 +607,7 @@ static void handleSaveHardware() {
   ledSettings = nextLed;
   saveSettings();
   initLed();
+  refreshBacklightControl();  // re-evaluates the LED night interval
   sendJsonMessage(200, true, "Hardware settings applied.");
 }
 
@@ -804,6 +822,7 @@ static void handleApiStatus() {
   doc["led_enabled"] = ledSettings.enabled != 0;
   doc["led_pin_valid"] = ledPinValid();
   doc["led_duty"] = ledCurrentDuty();
+  doc["led_night"] = ledNightActive();
   doc["led_ha"] = ledHaLevel();  // -1 not linked, -2 on at the local level
   doc["free_heap"]    = ESP.getFreeHeap();
   doc["max_block"]    = ESP.getMaxAllocHeap();

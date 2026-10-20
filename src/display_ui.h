@@ -31,6 +31,8 @@ void updateBacklightControl();
 void refreshBacklightControl();
 uint8_t currentBacklightLevel();
 bool nightBrightnessActive();
+// Inside the LED's own night interval (and dimming enabled); manual night does not count.
+bool ledNightActive();
 bool backlightTimeValid();
 void setManualDisplayOff(bool off);
 bool manualDisplayOff();
