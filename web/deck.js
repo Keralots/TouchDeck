@@ -1421,6 +1421,7 @@
     return h;
   }
   const pages = () => deck.pages.filter((p) => p.type !== "metrics" && (prnOn() || !p.printer));
+  const MAX_PAGES = 8; // firmware MAX_DECK_PAGES, counts every page in deck.json
   window.dkPrnSync = () => {
     if (deck) render();
   };
@@ -1905,7 +1906,7 @@
       (land ? [2, 3, 4] : [2, 3, 4, 5, 6])
         .map((n) => "<option" + (n === r ? " selected" : "") + ">" + n + "</option>")
         .join("") +
-      '</select><button type="button" class="btn" id="dkPLeft" style="margin-left:auto;padding:6px 9px">Move left</button><button type="button" class="btn" id="dkPRight" style="padding:6px 9px">Move right</button><button type="button" class="btn btn-danger" id="dkPDel">Delete page</button></div></div></div>';
+      '</select><button type="button" class="btn" id="dkPLeft" style="margin-left:auto;padding:6px 9px">Move left</button><button type="button" class="btn" id="dkPRight" style="padding:6px 9px">Move right</button><button type="button" class="btn" id="dkPDup">Duplicate</button><button type="button" class="btn btn-danger" id="dkPDel">Delete page</button></div></div></div>';
     if (prnOn() && (deck.printers || []).length && (p.printer || p.tiles.some((t) => t.type === "printer")))
       h +=
         '<div class="field"><label class="field-label">Printer page</label><select id="dkPPrn" style="width:auto">' +
@@ -2176,6 +2177,24 @@
     $("dkPRight").disabled = !canMovePage(ps, cur, 1);
     $("dkPLeft").onclick = () => movePage(-1);
     $("dkPRight").onclick = () => movePage(1);
+    /* The copy is a plain page after this page's column: stacking, conditions and
+     the printer link stay with the original. */
+    $("dkPDup").disabled = deck.pages.length >= MAX_PAGES;
+    $("dkPDup").title = $("dkPDup").disabled ? "The deck holds at most " + MAX_PAGES + " pages" : "";
+    $("dkPDup").onclick = () => {
+      const copy = JSON.parse(JSON.stringify(p));
+      ["group", "when", "auto", "printer"].forEach((k) => delete copy[k]);
+      copy.id = "p" + Date.now().toString(36);
+      copy.name = (p.name || p.id) + " copy";
+      let end = cur + 1;
+      while (end < ps.length && stackedAt(ps, end)) end++;
+      deck.pages.splice(deck.pages.indexOf(ps[end - 1]) + 1, 0, copy);
+      cur = pages().indexOf(copy);
+      sel = -1;
+      more = -1;
+      setDirty(true);
+      render();
+    };
     $("dkPDel").onclick = () => {
       if (!confirm('Delete the page "' + (p.name || p.id) + '"?')) return;
       deck.pages.splice(deck.pages.indexOf(p), 1);
