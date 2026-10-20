@@ -41,7 +41,7 @@ Captured from the device (`/screen.bmp`) with the Glass theme.
 Open the device IP (or `http://<hostname>.local`) in a browser:
 
 - **Overview:** live picture of the screen, PC stream, Home Assistant link, diagnostics.
-- **Pages & tiles:** Home Assistant address and token, the icon font, pages, tiles, entity and icon pickers (None leaves a tile without an icon), columns, and a grid editor: drag tiles to move them (dropped onto another tile, that tile jumps to the dragged one's old place if it fits there), resize from the corner (half-cell steps), separately for landscape and portrait.
+- **Pages & tiles:** Home Assistant address and token, the icon font, pages (Duplicate copies one as a plain page), tiles, entity and icon pickers (None leaves a tile without an icon), columns, and a grid editor: drag tiles to move them (dropped onto another tile, that tile jumps to the dragged one's old place if it fits there), resize from the corner (half-cell steps), separately for landscape and portrait.
 - **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper you upload), brightness, night schedule, PC metric tile scales.
 - **Time:** 12/24 h clock and timezone.
 - **Hardware:** the status LED.
