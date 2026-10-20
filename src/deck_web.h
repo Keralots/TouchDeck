@@ -131,12 +131,25 @@ function colRow(t,i,k,label,auto,hint,sw){const c=(t[k]||auto).toLowerCase(),on=
     (sw||SW).map(s=>'<button type="button" class="dk-swb'+(on===s.toLowerCase()?' on':'')+'" data-cs="'+i+'" data-ck="'+k+'" data-v="'+s+'" style="background:'+s+'" title="'+s+'"></button>').join('')+
     '<button type="button" class="btn'+(t[k]?'':' on')+'" data-ca="'+i+'" data-ck="'+k+'">Auto</button></div><p class="field-hint" style="margin:4px 0 0">'+hint+'</p></div>';}
 function colorField(t,i){const tx=TXT.concat(SW),theme='Auto uses the theme text colour.';
-  if(t.type==='clock')return colRow(t,i,'color','Time colour','#E6E8EC',theme+readHint(t.color),tx)+colRow(t,i,'textColor','Date colour','#E6E8EC',theme+readHint(t.textColor),tx);
+  if(t.type==='clock')return colRow(t,i,'color','Time colour','#E6E8EC',theme+readHint(t.color),tx)+colRow(t,i,'textColor','Date colour','#E6E8EC',theme+readHint(t.textColor),tx)+lookField(t,i);
   const m=t.type==='metric';
-  const what=m?'the name, and the chart or bar line unless Chart colour is set':t.type==='toggle'?'the icon, and the whole tile while it is on':t.type==='slider'?'the icon and the level fill':'the icon';
+  const what=m?'the name, and the chart or bar line unless Chart colour is set':t.type==='toggle'?'the icon, and the whole tile while it is on unless On colour is set':t.type==='slider'?'the icon and the level fill':'the icon';
   let h=colRow(t,i,'color','Colour',autoCol(t),'Colours '+what+'. Auto picks it from the '+(m?'metric':'entity type')+'.');
   if(m)h+=colRow(t,i,'chartColor','Chart colour',t.color||autoCol(t),'The chart or bar line. Auto follows Colour.');
-  return h+colRow(t,i,'textColor','Text colour','#E6E8EC',(m?'The value. ':'')+theme+readHint(t.textColor),tx);}
+  return h+colRow(t,i,'textColor','Text colour','#E6E8EC',(m?'The value. ':'')+theme+readHint(t.textColor),tx)+lookField(t,i);}
+/* Tile look: background, on state and Glass opacity; Auto = the theme and Glass look settings. */
+const glassPct=(id,def)=>{const e=document.getElementById(id);return e&&e.value!==''?+e.value:def;};
+function opRow(t,i,k,label,gid,def,hint){const set=t[k]!=null,v=set?t[k]:glassPct(gid,def);
+  return '<div class="field wide"><label class="field-label">'+label+'</label><div class="dk-row"><div class="range-row" style="flex:1"><input type="range" min="0" max="100" step="5" data-op="'+i+'" data-ok="'+k+'" value="'+v+'"><span class="range-val">'+v+'%</span></div>'+
+    '<button type="button" class="btn'+(set?'':' on')+'" data-oa="'+i+'" data-ok="'+k+'">Auto</button></div><p class="field-hint" style="margin:4px 0 0">'+hint+'</p></div>';}
+function lookField(t,i){const th=(document.getElementById('theme')||{}).value,bg=th==='1'?'#FFFFFF':th==='2'?'#0B0E13':'#1A1D23';
+  const canOn=!['metric','sensor','clock','media'].includes(t.type);
+  let h=colRow(t,i,'bgColor','Off colour',bg,'The tile background while it is off; in Glass the tint of its glass. Auto uses the theme.',['#1A1D23','#0B0E13','#FFFFFF'].concat(SW));
+  h+=opRow(t,i,'opacity','Tile opacity','glassTint',10,'Glass only: how much of the Off colour covers the picture. Auto text may still darken it. Auto = Glass look.');
+  if(!canOn)return h;
+  h+=colRow(t,i,'onColor','On colour',t.color||autoCol(t),'The whole tile while it is on. Auto follows Colour.');
+  h+=opRow(t,i,'onOpacity','On opacity','glassOn',80,'Glass only: the On colour fill. Below 50% the tile also gets an outline. Auto = Glass look.');
+  return h+colRow(t,i,'onTextColor','On text colour','#221602','Text while the tile is on. Auto picks dark text, or light text in Glass when the fill is faint or dark.',TXT.concat(['#221602'],SW));}
 /* The clock tile: no entity or actions, just its size and colours. */
 /* Bambu printers: deck.printers is saved with the deck; serial and code go
    straight to the device and are never read back. */
@@ -436,6 +449,8 @@ function renderPage(){const ps=pages();const el=$('dkPage');if(!ps.length){el.in
   el.querySelectorAll('[data-co]').forEach(x=>{x.oninput=e=>{p.tiles[+x.dataset.co][x.dataset.ck]=e.target.value.toUpperCase();setDirty(true);};x.onchange=()=>renderPage();});
   el.querySelectorAll('[data-cs]').forEach(x=>x.onclick=()=>{p.tiles[+x.dataset.cs][x.dataset.ck]=x.dataset.v;setDirty(true);renderPage();});
   el.querySelectorAll('[data-ca]').forEach(x=>x.onclick=()=>{delete p.tiles[+x.dataset.ca][x.dataset.ck];setDirty(true);renderPage();});
+  el.querySelectorAll('[data-op]').forEach(x=>{x.oninput=e=>{p.tiles[+x.dataset.op][x.dataset.ok]=+e.target.value;x.nextElementSibling.textContent=e.target.value+'%';setDirty(true);};x.onchange=()=>renderPage();});
+  el.querySelectorAll('[data-oa]').forEach(x=>x.onclick=()=>{delete p.tiles[+x.dataset.oa][x.dataset.ok];setDirty(true);renderPage();});
   $('dkAddTile').onclick=()=>openPicker(-1);
   $('dkAddHttpSensor').onclick=()=>{p.tiles.push({id:'s'+Date.now().toString(36),type:'sensor',http:{url:'',path:'',poll:30}});more=p.tiles.length-1;setDirty(true);renderPage();};
   el.querySelectorAll('[data-hs]').forEach(x=>{const update=()=>{const t=p.tiles[+x.dataset.hs],k=x.dataset.hsk,v=x.value;if(k==='unit'||k==='detail'){if(v)t[k]=v;else delete t[k];}else if(k==='poll'){t.http.poll=Math.max(5,Math.min(3600,Math.round(+v)||30));x.value=t.http.poll;}else t.http[k]=v.trim();setDirty(true);};if(x.dataset.hsk==='poll')x.onchange=update;else x.oninput=update;});

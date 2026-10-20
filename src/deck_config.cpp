@@ -339,6 +339,11 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       t.hasColor = parseColor(tv["color"] | (const char*)nullptr, t.color);
       t.hasTextColor = parseColor(tv["textColor"] | (const char*)nullptr, t.textColor);
       t.hasChartColor = parseColor(tv["chartColor"] | (const char*)nullptr, t.chartColor);
+      t.hasBgColor = parseColor(tv["bgColor"] | (const char*)nullptr, t.bgColor);
+      t.hasOnColor = parseColor(tv["onColor"] | (const char*)nullptr, t.onColor);
+      t.hasOnTextColor = parseColor(tv["onTextColor"] | (const char*)nullptr, t.onTextColor);
+      if (tv["opacity"].is<int>()) t.opacity = (int8_t)constrain(tv["opacity"].as<int>(), 0, 100);
+      if (tv["onOpacity"].is<int>()) t.onOpacity = (int8_t)constrain(tv["onOpacity"].as<int>(), 0, 100);
       parsePos(tv["pos"]["landscape"], t.pos[ORIENT_LANDSCAPE]);
       parsePos(tv["pos"]["portrait"], t.pos[ORIENT_PORTRAIT]);
       if (!parseWhen(tv["when"], t.when, err, where)) return false;
