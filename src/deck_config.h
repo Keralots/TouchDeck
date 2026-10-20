@@ -37,6 +37,10 @@
 // "rows": [{ "label": "5h", "path": "claude.five_hour.used" }, ...] (1..4)
 // shows label, bar and value per row under the name instead of one reading;
 // the bar spans 0..scaleMax (default 100) and goes when the tile is too narrow.
+// A row "value": "{codex.five_hour.reset_min|min}" shows that text instead of
+// the reading while the bar fits, else the reading. "{path}" fields also work
+// in an HTTP sensor's "label" ("Codex {codex.five_hour.used}%").
+// "icon": "none" on a button or sensor tile shows no icon.
 //
 // Bambu printers: "printers": [{ "id": "h2c", "name": "H2C",
 //   "ip": "192.168.0.54", "plug": "switch.printer_plug" }] (plug optional:
@@ -160,6 +164,7 @@ struct HttpSensorDef {
 constexpr int MAX_SENSOR_ROWS = 4;
 struct SensorRowDef {
   String label, path;
+  String value;  // optional text template like "detail"; the bar keeps path
 };
 
 struct TileDef {

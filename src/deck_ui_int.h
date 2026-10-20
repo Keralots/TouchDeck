@@ -298,6 +298,7 @@ bool whenWanted(const PageDef& p);
 void whenTrack();
 void whenApply();
 String rowUnit(const TileDef& d);
+String rowText(const TileDef& d, size_t i, bool useTemplate);
 void httpSync();
 void collectEntities();
 void runAction(TileRt& r, const TileAction& a);
