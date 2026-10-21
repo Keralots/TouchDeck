@@ -18,6 +18,10 @@ bool deckBegin(uint8_t rotation);
 void deckTick();
 // Short message pill above the page dots (loop task only).
 void deckToast(const char* text);
+// Wake the screen and restart the presence sleep timer (loop task only).
+void deckPresenceWake();
+// /api/status "presence": present, asleep, idle_s, sleep_min.
+String deckPresenceJson();
 // Render pending LVGL changes now, from inside a long web handler (OTA).
 void deckRefreshNow();
 // Rotation changed in the portal: re-layout everything at the new size.

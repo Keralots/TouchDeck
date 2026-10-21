@@ -820,6 +820,7 @@ void deckTick() {
     wakeDisplayFromTouch();
     touchSuppressUntilRelease();
   }
+  presenceTick();
 
   // System screens (splash, WiFi setup, OTA) cover the pages: no gestures,
   // no panel or card under them.

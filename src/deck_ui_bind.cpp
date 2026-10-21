@@ -850,6 +850,8 @@ void collectEntities() {
   for (const auto& s : s_whenStates) ids.push_back(s.first);
   if (s_cfg.ledEntity.length()) ids.push_back(s_cfg.ledEntity);
   else ledSetHaLevel(LED_HA_NONE);
+  for (const String& id : s_cfg.presence.entities) ids.push_back(id);
+  presenceRestart();
   s_ledSeen = 0;
   haSetEntities(ids);
   for (Wish& w : s_wishes) {

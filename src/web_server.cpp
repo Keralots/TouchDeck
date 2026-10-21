@@ -819,6 +819,7 @@ static void handleApiStatus() {
   doc["night_active"] = nightBrightnessActive();
   doc["time_valid"] = backlightTimeValid();
   doc["manual_display_off"] = manualDisplayOff();
+  doc["presence"] = serialized(deckPresenceJson());
   doc["led_enabled"] = ledSettings.enabled != 0;
   doc["led_pin_valid"] = ledPinValid();
   doc["led_duty"] = ledCurrentDuty();

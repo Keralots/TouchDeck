@@ -38,6 +38,7 @@ Captured from the device (`/screen.bmp`), Glass theme unless noted.
 - **Quick panel:** pull down from the top edge for screen and LED brightness, link status, screen off, night mode, the top bar switch and the page editor.
 - **Edit on the device:** long press an empty spot of a page (or Edit in the quick panel) to move (swap works as in the portal), resize or remove its tiles, or add one with + (a list of Home Assistant entities by group, from the list cached with "Update from HA" in the portal); Done saves the page.
 - **Night schedules** for the backlight and, separately, an optional status / filament LED on a PWM pin. The LED's day brightness can follow a Home Assistant input_boolean, input_number or light, and the quick panel's Light slider sets that entity.
+- **Screen sleep:** after a set time without touch and without presence the screen fades out or dims. Presence is up to four Home Assistant entities (motion, occupancy, a person) and optionally a PC online; someone arriving wakes it. See [Screen sleep](#screen-sleep).
 - **System screens** for start-up, WiFi setup (with a QR code to join the setup network), connecting, and a firmware update screen with progress.
 
 ## Web portal
@@ -80,6 +81,18 @@ A whole page can follow a condition the same way ("Page shown" in the page setti
 ```
 
 A page that goes away while it is shown always hands over to another page first; a slide waits until nothing is being touched and no card is open.
+
+## Screen sleep
+
+In **Pages & tiles**, the Screen sleep card sets the time without touch and without presence after which the screen turns off or dims, and what counts as presence:
+
+```json
+"presence": { "entities": ["binary_sensor.office_occupancy"], "pc": true, "sleep": 5, "dim": 0 }
+```
+
+- `sleep`: minutes, 0 = never sleeps. `dim`: 0 turns the backlight off, 1..100 dims it to at most that % (the night level still applies when it is lower).
+- An entity counts as present while its state is `on` or `home`; `"pc": true` adds any PC sending metrics. Presence starting wakes the screen, also after Off in the quick panel.
+- A touch always wakes it; that first touch does nothing else.
 
 ## HTTP buttons
 

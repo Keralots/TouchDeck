@@ -250,6 +250,25 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
     if (err) *err = "led entity must be an input_boolean, input_number or light";
     return false;
   }
+  JsonObjectConst pres = doc["presence"].as<JsonObjectConst>();
+  if (pres) {
+    for (JsonVariantConst v : pres["entities"].as<JsonArrayConst>()) {
+      const String id = (const char*)(v | "");
+      if (id.indexOf('.') <= 0 || cfg.presence.entities.size() >= MAX_PRESENCE_ENTITIES) {
+        if (err) *err = "presence: up to 4 entity ids";
+        return false;
+      }
+      cfg.presence.entities.push_back(id);
+    }
+    cfg.presence.pc = pres["pc"] | false;
+    const int sleep = pres["sleep"] | 0, dim = pres["dim"] | 0;
+    if (sleep < 0 || sleep > 1440 || dim < 0 || dim > 100) {
+      if (err) *err = "presence: sleep 0..1440 min, dim 0..100 %";
+      return false;
+    }
+    cfg.presence.sleepMin = sleep;
+    cfg.presence.dimPct = dim;
+  }
   auto printerKnown = [&](const String& id) {
     for (const PrinterDef& d : cfg.printers)
       if (d.id == id) return true;
