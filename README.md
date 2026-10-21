@@ -8,12 +8,14 @@ No cloud, no accounts: the device talks to Home Assistant over its local WebSock
 
 ## Screenshots
 
-Captured from the device (`/screen.bmp`) with the Glass theme.
+Captured from the device (`/screen.bmp`), Glass theme unless noted.
 
 | | |
 |:---:|:---:|
-| ![Main page: Home Assistant switches, clock, media and sensors](docs/images/deck-main.png) | ![PC stats: CPU and GPU charts, RAM, temperatures, power and fans](docs/images/deck-pc.png) |
-| Home Assistant tiles, clock and media | PC stats from the companion |
+| ![Main page: Home Assistant switches, media, PC volume, CPU chart and sensors](docs/images/deck-main.png) | ![PC stats: CPU and GPU charts, RAM, temperatures, power and fans](docs/images/deck-pc.png) |
+| Home Assistant tiles, media and PC volume | PC stats from the companion |
+| ![Main page in the Midnight theme](docs/images/deck-main-midnight.png) | ![Main page in the Daylight theme](docs/images/deck-main-daylight.png) |
+| Midnight theme | Daylight theme |
 | ![Bambu Lab printer page during a print](docs/images/deck-printer.png) | ![AMS units with humidity, temperature and spools](docs/images/deck-ams.png) |
 | Bambu Lab printer page | AMS units and all slots |
 | ![Home lab page: Proxmox and pfSense from Home Assistant](docs/images/deck-lab.png) | ![Quick panel with brightness and link status](docs/images/deck-panel.png) |
