@@ -4,7 +4,7 @@
 // =============================================================================
 //  Firmware version
 // =============================================================================
-#define FW_VERSION          "1.0.1"
+#define FW_VERSION          "1.1.0"
 #define PRODUCT_NAME        "TouchDeck"
 
 // Board variant - reported to the portal and the OTA page.
