@@ -53,19 +53,16 @@ void deckPresenceApply() {
   presenceRestart();
 }
 
-String deckPresenceJson() {
+void deckPresenceJson(JsonObject out) {
   const PresenceSettings& p = presenceSettings;
-  const uint32_t idle = (millis() - s_activeMs) / 1000;
-  String out = String("{\"present\":") + (s_present ? "true" : "false") + ",\"asleep\":" +
-               (idleSleepActive() ? "true" : "false") + ",\"idle_s\":" + idle + ",\"sleep_min\":" + p.sleepMin +
-               ",\"states\":{";
-  bool first = true;
+  out["present"] = s_present;
+  out["asleep"] = idleSleepActive();
+  out["idle_s"] = (millis() - s_activeMs) / 1000;
+  out["sleep_min"] = p.sleepMin;
+  JsonObject states = out["states"].to<JsonObject>();
   for (const String& id : p.entities) {
     if (!id.length()) continue;
     HaEntity e;
-    const bool known = haGetEntity(id, e) && e.known;
-    out += String(first ? "" : ",") + "\"" + id + "\":\"" + (known ? e.state : String("?")) + "\"";
-    first = false;
+    states[id] = haGetEntity(id, e) && e.known ? e.state : String("?");
   }
-  return out + "}}";
 }

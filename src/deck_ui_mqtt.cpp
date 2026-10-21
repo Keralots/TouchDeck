@@ -98,9 +98,13 @@ void mqttUiCommand(MqttObject object, const String& payload) {
         refreshBacklightControl();
         qpSyncValues();
         saveSettings();
+      }
+      if (state == "OFF") {
+        hidePanelNow();
+        setManualDisplayOff(true);
+      } else if (hasLevel || state == "ON") {
         deckPresenceWake();
-      } else if (state == "ON") deckPresenceWake();
-      else if (state == "OFF") { hidePanelNow(); setManualDisplayOff(true); }
+      }
     } else if (ledSettings.enabled && ledPinValid()) {
       if (state == "OFF") ledSetHaLevel(0);
       else if (hasLevel) ledSetHaLevel(level);

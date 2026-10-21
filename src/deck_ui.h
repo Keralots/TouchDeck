@@ -10,6 +10,7 @@
 #define DECK_UI_H
 
 #include "deck_panel.h"
+#include <ArduinoJson.h>
 
 // Brings up the panel, LVGL, the pages and touch at the given rotation.
 bool deckBegin(uint8_t rotation);
@@ -27,7 +28,7 @@ String deckLedEntity();
 // Store a new LED entity in deck.json and rebuild; "" unlinks.
 bool deckSetLedEntity(const String& id, String& err);
 // /api/status "presence": present, asleep, idle_s, sleep_min.
-String deckPresenceJson();
+void deckPresenceJson(JsonObject out);
 // Render pending LVGL changes now, from inside a long web handler (OTA).
 void deckRefreshNow();
 // Rotation changed in the portal: re-layout everything at the new size.

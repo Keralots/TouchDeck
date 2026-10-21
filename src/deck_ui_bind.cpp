@@ -860,7 +860,6 @@ void collectEntities() {
   const bool hasLedEntity = s_cfg.ledEntity.length() > 0;
   if (!hasLedEntity && hadLedEntity) ledSetHaLevel(LED_HA_NONE);
   hadLedEntity = hasLedEntity;
-  presenceRestart();
   s_ledSeen = 0;
   haSetEntities(entityIds());
   for (Wish& w : s_wishes) {

@@ -152,9 +152,15 @@ static void presenceJson(JsonObject out) {
     if (id.length()) ids.add(id);
 }
 
-// An HA entity id as typed into the portal: "domain.object", no commas (NVS list separator).
+// An HA entity id as typed into the portal: domain.object, lowercase letters, digits, '_'.
 static bool validEntityId(const String& id) {
-  return id.length() <= 80 && id.indexOf('.') > 0 && id.indexOf(',') < 0 && id.indexOf(' ') < 0;
+  const int dot = id.indexOf('.');
+  if (id.length() > 80 || dot <= 0 || dot == (int)id.length() - 1 || id.indexOf('.', dot + 1) >= 0) return false;
+  for (size_t i = 0; i < id.length(); i++) {
+    const char c = id[i];
+    if (c != '.' && c != '_' && !isDigit(c) && !(c >= 'a' && c <= 'z')) return false;
+  }
+  return true;
 }
 
 static void handleApiConfig() {
@@ -704,6 +710,7 @@ static void handleSaveLight() {
     minuteOfDayArg("nightEnd", backlightSettings.nightEndMinute);
   ledSettings = nextLed;
   presenceSettings = nextPresence;
+  if (!ledEntity.length()) ledSetHaLevel(LED_HA_NONE);  // the saved level replaces one set over MQTT
   saveSettings();
   initLed();
   refreshBacklightControl();  // re-evaluates both night intervals
@@ -939,7 +946,7 @@ static void handleApiStatus() {
   doc["night_active"] = nightBrightnessActive();
   doc["time_valid"] = backlightTimeValid();
   doc["manual_display_off"] = manualDisplayOff();
-  doc["presence"] = serialized(deckPresenceJson());
+  deckPresenceJson(doc["presence"].to<JsonObject>());
   mqttStatusJson(doc["mqtt"].to<JsonObject>());
   doc["led_enabled"] = ledSettings.enabled != 0;
   doc["led_pin_valid"] = ledPinValid();
