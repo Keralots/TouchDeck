@@ -47,6 +47,16 @@ struct DisplaySettings {
   bool     smoothCharts;      // PC metric charts glide between packets
 };
 
+// Screen sleep (portal Screen & light page); NVS scalars. Present = an entity
+// "on"/"home", or (pc) any PC online.
+constexpr size_t MAX_PRESENCE_ENTITIES = 4;
+struct PresenceSettings {
+  uint16_t sleepMin = 0;  // 0 = never sleeps
+  uint8_t dimPct = 0;     // asleep: 0 = backlight off, else at most this % of full
+  bool pc = false;
+  String entities[MAX_PRESENCE_ENTITIES];  // "" = unused slot
+};
+
 // Portal Advanced page; NVS scalars.
 struct AdvancedSettings {
   bool printers;  // Bambu printers over LAN; off hides their pages and tiles, config kept
@@ -80,6 +90,7 @@ extern NetworkSettings netSettings;
 extern BacklightSettings backlightSettings;
 extern LedSettings ledSettings;
 extern AdvancedSettings advSettings;
+extern PresenceSettings presenceSettings;
 
 bool validWallEvery(int minutes);
 void loadSettings();

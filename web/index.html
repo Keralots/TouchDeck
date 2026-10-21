@@ -136,12 +136,12 @@
             <div class="nav-group">
               <div class="nav-label">Configuration</div>
               <button type="button" class="nav-item" data-nav="display">Display</button
+              ><button type="button" class="nav-item" data-nav="light">Screen &amp; light</button
               ><button type="button" class="nav-item" data-nav="clock">Time</button>
             </div>
             <div class="nav-group">
               <div class="nav-label">Device</div>
-              <button type="button" class="nav-item" data-nav="hardware">Hardware</button
-              ><button type="button" class="nav-item" data-nav="network">Network</button
+              <button type="button" class="nav-item" data-nav="network">Network</button
               ><button type="button" class="nav-item" data-nav="advanced">Advanced</button
               ><button type="button" class="nav-item" data-nav="maintenance">Maintenance</button>
             </div>
@@ -265,7 +265,7 @@
             <section class="page" data-page="display">
               <div class="page-header">
                 <h1 class="page-h1">Display</h1>
-                <p class="page-lede">Orientation, brightness, the night schedule, and PC metric tiles.</p>
+                <p class="page-lede">Orientation, theme, the Glass look and PC metric tiles.</p>
               </div>
               <form
                 id="displayForm"
@@ -285,19 +285,6 @@
                           <option value="2">Portrait, flipped</option>
                           <option value="3">Landscape, flipped</option>
                         </select>
-                      </div>
-                    </div>
-                    <div class="field">
-                      <label class="field-label" for="brightness">Day brightness</label>
-                      <div class="range-row">
-                        <input
-                          type="range"
-                          id="brightness"
-                          name="brightness"
-                          min="0"
-                          max="255"
-                          step="1"
-                        /><span class="range-val" id="brightnessVal">--</span>
                       </div>
                     </div>
                     <div class="field">
@@ -478,57 +465,6 @@
                   </div>
                 </div>
                 <div class="card">
-                  <div class="card-head">
-                    <h2 class="card-title">Automatic brightness</h2>
-                    <span class="tag" id="backlightState">day</span>
-                  </div>
-                  <label class="check-row standalone"
-                    ><input type="checkbox" id="nightEnabled" name="nightEnabled" /><span
-                      class="check-box"
-                    ></span
-                    ><span class="check-text"
-                      ><strong>Night brightness schedule</strong
-                      ><span class="ct-hint"
-                        >Use a separate brightness level during the configured local-time interval.</span
-                      ></span
-                    ></label
-                  >
-                  <div class="subcard hidden" id="nightScheduleFields">
-                    <div class="field">
-                      <label class="field-label" for="nightBrightness">Night brightness</label>
-                      <div class="range-row">
-                        <input
-                          type="range"
-                          id="nightBrightness"
-                          name="nightBrightness"
-                          min="0"
-                          max="255"
-                          step="1"
-                        /><span class="range-val" id="nightBrightnessVal">--</span>
-                      </div>
-                      <p class="field-hint">Set to 0 to switch the backlight fully off at night.</p>
-                    </div>
-                    <div class="grid-2">
-                      <div class="field">
-                        <label class="field-label" for="nightStart">Night starts</label
-                        ><input type="time" id="nightStart" name="nightStart" step="60" />
-                      </div>
-                      <div class="field">
-                        <label class="field-label" for="nightEnd">Night ends</label
-                        ><input type="time" id="nightEnd" name="nightEnd" step="60" />
-                      </div>
-                    </div>
-                    <p class="field-hint">Matching start and end times disable the night interval.</p>
-                  </div>
-                  <div class="note">
-                    <span class="note-k">Time</span
-                    ><span
-                      >The schedule uses the timezone set on the Time page. Until network time is available,
-                      day brightness remains active.</span
-                    >
-                  </div>
-                </div>
-                <div class="card">
                   <h2 class="card-title">PC metric tiles</h2>
                   <div class="grid-2">
                     <div class="field">
@@ -581,17 +517,144 @@
               </form>
             </section>
 
-            <section class="page" data-page="hardware">
+            <section class="page" data-page="light">
               <div class="page-header">
-                <h1 class="page-h1">Hardware</h1>
-                <p class="page-lede">Peripherals wired to the board: the status LED.</p>
+                <h1 class="page-h1">Screen &amp; light</h1>
+                <p class="page-lede">Screen brightness, the night schedule, sleep and the status LED.</p>
               </div>
               <form
-                id="hardwareForm"
+                id="lightForm"
                 class="portal-form"
-                data-endpoint="/save/hardware"
-                data-save-label="Save hardware"
+                data-endpoint="/save/light"
+                data-save-label="Save screen &amp; light"
               >
+                <div class="card">
+                  <div class="card-head">
+                    <h2 class="card-title">Brightness</h2>
+                    <span class="tag" id="backlightState">day</span>
+                  </div>
+                  <div class="field">
+                    <label class="field-label" for="brightness">Day brightness</label>
+                    <div class="range-row">
+                      <input
+                        type="range"
+                        id="brightness"
+                        name="brightness"
+                        min="0"
+                        max="255"
+                        step="1"
+                      /><span class="range-val" id="brightnessVal">--</span>
+                    </div>
+                  </div>
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="nightEnabled" name="nightEnabled" /><span
+                      class="check-box"
+                    ></span
+                    ><span class="check-text"
+                      ><strong>Night brightness schedule</strong
+                      ><span class="ct-hint"
+                        >Use a separate brightness level during the configured local-time interval.</span
+                      ></span
+                    ></label
+                  >
+                  <div class="subcard hidden" id="nightScheduleFields">
+                    <div class="field">
+                      <label class="field-label" for="nightBrightness">Night brightness</label>
+                      <div class="range-row">
+                        <input
+                          type="range"
+                          id="nightBrightness"
+                          name="nightBrightness"
+                          min="0"
+                          max="255"
+                          step="1"
+                        /><span class="range-val" id="nightBrightnessVal">--</span>
+                      </div>
+                      <p class="field-hint">Set to 0 to switch the backlight fully off at night.</p>
+                    </div>
+                    <div class="grid-2">
+                      <div class="field">
+                        <label class="field-label" for="nightStart">Night starts</label
+                        ><input type="time" id="nightStart" name="nightStart" step="60" />
+                      </div>
+                      <div class="field">
+                        <label class="field-label" for="nightEnd">Night ends</label
+                        ><input type="time" id="nightEnd" name="nightEnd" step="60" />
+                      </div>
+                    </div>
+                    <p class="field-hint">Matching start and end times disable the night interval.</p>
+                  </div>
+                  <div class="note">
+                    <span class="note-k">Time</span
+                    ><span
+                      >The schedule uses the timezone set on the Time page. Until network time is available,
+                      day brightness remains active.</span
+                    >
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head">
+                    <h2 class="card-title">Sleep</h2>
+                    <span class="tag" id="sleepState">-</span>
+                  </div>
+                  <div class="grid-2">
+                    <div class="field">
+                      <label class="field-label" for="sleepMin">Sleep after (minutes)</label
+                      ><input type="number" id="sleepMin" name="sleepMin" min="0" max="1440" step="1" />
+                      <p class="field-hint">Without touch and without presence. 0 = never.</p>
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="sleepMode">When asleep</label>
+                      <div class="select-wrap">
+                        <select id="sleepMode" name="sleepMode">
+                          <option value="off">Screen off</option>
+                          <option value="dim">Dim</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="field hidden" id="sleepDimField">
+                    <label class="field-label" for="sleepDim">Dim to</label>
+                    <div class="range-row">
+                      <input type="range" id="sleepDim" name="sleepDim" min="1" max="60" step="1" value="10" /><span
+                        class="range-val"
+                        id="sleepDimVal"
+                        >--</span
+                      >
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label class="field-label">Presence entities</label>
+                    <div class="grid-2">
+                      <input type="text" id="presence0" name="presence0" list="presenceList" autocomplete="off" /><input
+                        type="text"
+                        id="presence1"
+                        name="presence1"
+                        list="presenceList"
+                        autocomplete="off"
+                      /><input type="text" id="presence2" name="presence2" list="presenceList" autocomplete="off" /><input
+                        type="text"
+                        id="presence3"
+                        name="presence3"
+                        list="presenceList"
+                        autocomplete="off"
+                      />
+                    </div>
+                    <datalist id="presenceList"></datalist>
+                    <p class="field-hint">
+                      Motion, occupancy or a person: any of them "on" or "home" keeps the screen awake, and
+                      its arrival wakes it, also after Off in the quick panel. A touch always wakes it; that
+                      first touch does nothing else.
+                    </p>
+                  </div>
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="presencePc" name="presencePc" /><span class="check-box"></span
+                    ><span class="check-text"
+                      ><strong>A PC online counts as presence</strong
+                      ><span class="ct-hint">Any PC sending metrics through the companion.</span></span
+                    ></label
+                  >
+                </div>
                 <div class="card" id="ledCard">
                   <div class="card-head">
                     <h2 class="card-title">Status LED</h2>
@@ -692,6 +755,15 @@
                         ></label
                       >
                     </div>
+                  </div>
+                  <div class="field" style="margin-top: 16px">
+                    <label class="field-label" for="ledEntity">Home Assistant entity</label
+                    ><input type="text" id="ledEntity" name="ledEntity" list="ledEntityList" autocomplete="off" />
+                    <datalist id="ledEntityList"></datalist>
+                    <p class="field-hint">
+                      Optional input_boolean, input_number or light: the LED's day brightness follows it, and
+                      the Light slider on the device sets it. Empty = not linked.
+                    </p>
                   </div>
                   <div class="note">
                     <span class="note-k">Wiring</span
@@ -894,6 +966,46 @@
                     ></label
                   >
                 </div>
+                <div class="card">
+                  <h2 class="card-title">MQTT (Home Assistant discovery)</h2>
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="mqttEnabled" name="mqttEnabled" /><span class="check-box"></span
+                    ><span class="check-text"><strong>Connect to an MQTT broker</strong></span></label
+                  >
+                  <div class="grid-2">
+                    <div class="field">
+                      <label class="field-label" for="mqttHost">Broker</label>
+                      <input type="text" id="mqttHost" name="mqttHost" maxlength="80"
+                        placeholder="192.168.0.7 or mqtt://host:1883" />
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="mqttPort">Port</label>
+                      <input type="number" id="mqttPort" name="mqttPort" min="1" max="65535" value="1883" required />
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="mqttUser">Username</label>
+                      <input type="text" id="mqttUser" name="mqttUser" maxlength="127" autocomplete="off" />
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="mqttPass">Password</label>
+                      <input type="password" id="mqttPass" name="mqttPass" maxlength="127" autocomplete="new-password" />
+                      <span class="field-hint">Leave blank to keep the stored password.</span>
+                    </div>
+                  </div>
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="mqttClearPass" name="mqttClearPass" /><span class="check-box"></span
+                    ><span class="check-text"><strong>Clear password</strong></span></label
+                  >
+                  <div class="field">
+                    <label class="field-label" for="mqttPrefix">Discovery prefix</label>
+                    <input type="text" id="mqttPrefix" name="mqttPrefix" maxlength="127" value="homeassistant" />
+                  </div>
+                  <p class="maintenance-copy">Status: <span id="mqttStatus">off</span></p>
+                  <p class="maintenance-copy">
+                    The deck appears in Home Assistant under Settings &gt; Devices &gt; MQTT.
+                    Needs the MQTT integration and a broker such as the Mosquitto add-on.
+                  </p>
+                </div>
               </form>
             </section>
 
@@ -907,9 +1019,10 @@
               <div class="card">
                 <h2 class="card-title">Configuration backup</h2>
                 <p class="maintenance-copy">
-                  Export the deck pages and tiles plus the display, LED, time and network settings. WiFi
-                  network names, passwords and the Home Assistant token are never included, and importing
-                  preserves the credentials already stored on this device.
+                  Export the deck pages and tiles plus the display, LED, time, network and MQTT settings.
+                  WiFi network names, passwords and the Home Assistant token are never included.
+                  Import preserves WiFi and Home Assistant credentials. The MQTT password is kept only
+                  when its broker host and username are unchanged.
                 </p>
                 <div class="maintenance-actions">
                   <button type="button" class="btn btn-accent" id="backupExport">Export configuration</button

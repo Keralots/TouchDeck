@@ -10,6 +10,7 @@
 #define DECK_UI_H
 
 #include "deck_panel.h"
+#include <ArduinoJson.h>
 
 // Brings up the panel, LVGL, the pages and touch at the given rotation.
 bool deckBegin(uint8_t rotation);
@@ -18,6 +19,16 @@ bool deckBegin(uint8_t rotation);
 void deckTick();
 // Short message pill above the page dots (loop task only).
 void deckToast(const char* text);
+// Wake the screen and restart the presence sleep timer (loop task only).
+void deckPresenceWake();
+// presenceSettings changed: follow the new entities, restart the timer.
+void deckPresenceApply();
+// HA entity the LED's day level follows (deck.json "led"), "" = none.
+String deckLedEntity();
+// Store a new LED entity in deck.json and rebuild; "" unlinks.
+bool deckSetLedEntity(const String& id, String& err);
+// /api/status "presence": present, asleep, idle_s, sleep_min.
+void deckPresenceJson(JsonObject out);
 // Render pending LVGL changes now, from inside a long web handler (OTA).
 void deckRefreshNow();
 // Rotation changed in the portal: re-layout everything at the new size.

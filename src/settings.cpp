@@ -11,6 +11,7 @@ NetworkSettings netSettings;
 BacklightSettings backlightSettings;
 LedSettings ledSettings;
 AdvancedSettings advSettings = {};
+PresenceSettings presenceSettings;
 
 static Preferences prefs;
 static const uint8_t BACKLIGHT_SETTINGS_VERSION = 1;
@@ -180,6 +181,17 @@ void loadSettings() {
   prefs.getString("ssid", wifiSSID, sizeof(wifiSSID));
   prefs.getString("pass", wifiPass, sizeof(wifiPass));
   brightness = prefs.getUChar("bright", 200);
+  presenceSettings.sleepMin = min<uint16_t>(prefs.getUShort("psleep", 0), 1440);
+  presenceSettings.dimPct = min<uint8_t>(prefs.getUChar("pdim", 0), 100);
+  presenceSettings.pc = prefs.getBool("ppc", false);
+  // Entity ids, comma-separated.
+  const String ids = prefs.getString("pent", "");
+  for (size_t i = 0, from = 0; i < MAX_PRESENCE_ENTITIES && from < ids.length(); i++) {
+    int comma = ids.indexOf(',', from);
+    if (comma < 0) comma = ids.length();
+    presenceSettings.entities[i] = ids.substring(from, comma);
+    from = comma + 1;
+  }
   prefs.end();
 
   dispSettings.tempScaleMax = clampScale(dispSettings.tempScaleMax, GAUGE_TEMP_SCALE_DEFAULT);
@@ -216,12 +228,19 @@ void saveSettings() {
   prefs.putString("ssid", wifiSSID);
   prefs.putString("pass", wifiPass);
   prefs.putUChar("bright", brightness);
+  prefs.putUShort("psleep", presenceSettings.sleepMin);
+  prefs.putUChar("pdim", presenceSettings.dimPct);
+  prefs.putBool("ppc", presenceSettings.pc);
+  String ids;
+  for (const String& id : presenceSettings.entities)
+    if (id.length()) ids += (ids.length() ? "," : "") + id;
+  prefs.putString("pent", ids);
   prefs.end();
 }
 
 bool factoryResetSettings() {
-  // Every NVS namespace the firmware writes: settings, PCs, HA link, deck UI, printer secrets.
-  static const char* const kSpaces[] = {NVS_NAMESPACE, "deckpc", "deckha", "deckui", "printers"};
+  // Every NVS namespace the firmware writes: settings, PCs, HA link, deck UI, printers, MQTT.
+  static const char* const kSpaces[] = {NVS_NAMESPACE, "deckpc", "deckha", "deckui", "printers", "deckmqtt"};
   bool ok = true;
   for (const char* ns : kSpaces) {
     if (!prefs.begin(ns, false)) {

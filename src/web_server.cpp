@@ -14,6 +14,7 @@
 #include "deck_config.h"
 #include "deck_ha.h"
 #include "deck_http.h"
+#include "deck_mqtt.h"
 #include "deck_icons.h"
 #include "deck_wall.h"
 #include "deck_sys.h"
@@ -142,6 +143,26 @@ static uint16_t minuteOfDayArg(const char* name, uint16_t current) {
   return (uint16_t)(hour * 60 + minute);
 }
 
+static void presenceJson(JsonObject out) {
+  out["sleep"] = presenceSettings.sleepMin;
+  out["dim"] = presenceSettings.dimPct;
+  out["pc"] = presenceSettings.pc;
+  JsonArray ids = out["entities"].to<JsonArray>();
+  for (const String& id : presenceSettings.entities)
+    if (id.length()) ids.add(id);
+}
+
+// An HA entity id as typed into the portal: domain.object, lowercase letters, digits, '_'.
+static bool validEntityId(const String& id) {
+  const int dot = id.indexOf('.');
+  if (id.length() > 80 || dot <= 0 || dot == (int)id.length() - 1 || id.indexOf('.', dot + 1) >= 0) return false;
+  for (size_t i = 0; i < id.length(); i++) {
+    const char c = id[i];
+    if (c != '.' && c != '_' && !isDigit(c) && !(c >= 'a' && c <= 'z')) return false;
+  }
+  return true;
+}
+
 static void handleApiConfig() {
   JsonDocument doc;
   doc["product"] = PRODUCT_NAME;
@@ -188,7 +209,10 @@ static void handleApiConfig() {
   led["nightEnd"] = timeBuf;
   led["followDisplay"] = ledSettings.followDisplay != 0;
   led["offlineOff"] = ledSettings.offlineOff != 0;
+  led["entity"] = deckLedEntity();
   doc["advanced"]["printers"] = advSettings.printers;
+  mqttConfigJson(doc["mqtt"].to<JsonObject>(), true);
+  presenceJson(doc["presence"].to<JsonObject>());
   JsonArray ledPins = led["allowedPins"].to<JsonArray>();
   for (uint8_t pin = 0; pin <= 48; pin++) {
     if (ledPinAllowed(pin)) ledPins.add(pin);
@@ -294,6 +318,8 @@ static void handleConfigExport() {
   led["followDisplay"] = ledSettings.followDisplay != 0;
   led["offlineOff"] = ledSettings.offlineOff != 0;
   doc["advanced"]["printers"] = advSettings.printers;
+  mqttConfigJson(doc["mqtt"].to<JsonObject>(), false);
+  presenceJson(doc["presence"].to<JsonObject>());
 
   JsonObject clock = doc["clock"].to<JsonObject>();
   clock["use24h"] = netSettings.use24h;
@@ -551,6 +577,47 @@ static void handleConfigImport() {
   bool nextPrinters = false;  // backups from before the Advanced page: the default
   JsonObjectConst advanced = root["advanced"].as<JsonObjectConst>();
   if (!advanced.isNull() && !advanced["printers"].isNull()) READ_BOOL(advanced, "printers", nextPrinters);
+  PresenceSettings nextPresence;  // older backups: never sleeps
+  JsonObjectConst presence = root["presence"].as<JsonObjectConst>();
+  if (!presence.isNull()) {
+    READ_INT(presence, "sleep", 0, 1440, nextPresence.sleepMin, uint16_t);
+    READ_INT(presence, "dim", 0, 100, nextPresence.dimPct, uint8_t);
+    READ_BOOL(presence, "pc", nextPresence.pc);
+    size_t n = 0;
+    for (JsonVariantConst v : presence["entities"].as<JsonArrayConst>()) {
+      const String id = (const char*)(v | "");
+      if (n >= MAX_PRESENCE_ENTITIES || !validEntityId(id)) {
+        sendJsonMessage(400, false, "invalid presence.entities");
+        return;
+      }
+      nextPresence.entities[n++] = id;
+    }
+  }
+  MqttSettings nextMqtt;
+  if (root.containsKey("mqtt")) {
+    JsonObjectConst mqtt = root["mqtt"].as<JsonObjectConst>();
+    const char* host = nullptr;
+    const char* user = nullptr;
+    const char* prefix = nullptr;
+    if (mqtt.isNull() || !readBackupBool(mqtt, "enabled", nextMqtt.enabled, error, "mqtt.enabled") ||
+        !readBackupString(mqtt, "host", 80, host, error, "mqtt.host") ||
+        !readBackupInteger(mqtt, "port", 1, 65535, integer, error, "mqtt.port") ||
+        !readBackupString(mqtt, "user", 127, user, error, "mqtt.user") ||
+        !readBackupString(mqtt, "prefix", 127, prefix, error, "mqtt.prefix")) {
+      sendJsonMessage(400, false, error.length() ? error.c_str() : "Invalid MQTT settings");
+      return;
+    }
+    nextMqtt.host = host;
+    nextMqtt.port = (uint16_t)integer;
+    nextMqtt.user = user;
+    nextMqtt.prefix = prefix;
+    if (!mqttNormalize(nextMqtt, error)) {
+      sendJsonMessage(400, false, error.c_str());
+      return;
+    }
+    const MqttSettings& stored = mqttSettings();
+    if (nextMqtt.host == stored.host && nextMqtt.user == stored.user) nextMqtt.pass = stored.pass;
+  }
 #undef READ_INT
 #undef READ_BOOL
 
@@ -568,6 +635,10 @@ static void handleConfigImport() {
     return;
   }
 
+  if (!mqttSaveSettings(nextMqtt)) {
+    sendJsonMessage(500, false, "Could not store MQTT settings");
+    return;
+  }
   deck::wallInvalidateJobs();
   dispSettings = nextDisplay;
   netSettings = nextNetwork;
@@ -575,6 +646,7 @@ static void handleConfigImport() {
   ledSettings = nextLed;
   brightness = nextBrightness;
   advSettings.printers = nextPrinters;
+  presenceSettings = nextPresence;
   saveSettings();
   deckSetHeader(nextHeader);
 
@@ -587,7 +659,8 @@ static void handleConfigImport() {
 // ---------------------------------------------------------------------------
 //  Save handlers
 // ---------------------------------------------------------------------------
-static void handleSaveHardware() {
+// Screen & light page: brightness, night schedule, sleep, status LED.
+static void handleSaveLight() {
   LedSettings nextLed = ledSettings;
   nextLed.enabled = server.hasArg("ledEnabled") ? 1 : 0;
   nextLed.pin = (uint8_t)clampedArg("ledPin", nextLed.pin, 0, 48);
@@ -604,14 +677,77 @@ static void handleSaveHardware() {
                     "That LED GPIO is reserved, in use, or unsupported on this board.");
     return;
   }
+  String ledEntity = server.arg("ledEntity");
+  ledEntity.trim();
+  if (ledEntity.length() && !ledEntity.startsWith("input_boolean.") &&
+      !ledEntity.startsWith("input_number.") && !ledEntity.startsWith("light.")) {
+    sendJsonMessage(400, false, "The LED entity must be an input_boolean, input_number or light.");
+    return;
+  }
+  PresenceSettings nextPresence;
+  nextPresence.sleepMin = (uint16_t)clampedArg("sleepMin", presenceSettings.sleepMin, 0, 1440);
+  nextPresence.dimPct = server.arg("sleepMode") == "dim" ? (uint8_t)clampedArg("sleepDim", 10, 1, 100) : 0;
+  nextPresence.pc = server.hasArg("presencePc");
+  size_t n = 0;
+  for (size_t i = 0; i < MAX_PRESENCE_ENTITIES; i++) {
+    String id = server.arg("presence" + String(i));
+    id.trim();
+    if (!id.length()) continue;
+    if (!validEntityId(id)) {
+      sendJsonMessage(400, false, "A presence entity is not an entity id (domain.object).");
+      return;
+    }
+    nextPresence.entities[n++] = id;
+  }
+
+  brightness = (uint8_t)clampedArg("brightness", brightness, 0, 255);
+  backlightSettings.nightEnabled = server.hasArg("nightEnabled") ? 1 : 0;
+  backlightSettings.nightBrightness =
+    (uint8_t)clampedArg("nightBrightness", backlightSettings.nightBrightness, 0, 255);
+  backlightSettings.nightStartMinute =
+    minuteOfDayArg("nightStart", backlightSettings.nightStartMinute);
+  backlightSettings.nightEndMinute =
+    minuteOfDayArg("nightEnd", backlightSettings.nightEndMinute);
   ledSettings = nextLed;
+  presenceSettings = nextPresence;
+  if (!ledEntity.length()) ledSetHaLevel(LED_HA_NONE);  // the saved level replaces one set over MQTT
   saveSettings();
   initLed();
-  refreshBacklightControl();  // re-evaluates the LED night interval
-  sendJsonMessage(200, true, "Hardware settings applied.");
+  refreshBacklightControl();  // re-evaluates both night intervals
+  deckPresenceApply();
+  String err;
+  if (!deckSetLedEntity(ledEntity, err)) {
+    sendJsonMessage(500, false, ("Saved, but the LED entity was not stored: " + err).c_str());
+    return;
+  }
+  sendJsonMessage(200, true, "Screen and light settings applied.");
 }
 
 static void handleSaveAdvanced() {
+  MqttSettings next = mqttSettings();
+  next.enabled = server.hasArg("mqttEnabled");
+  next.host = server.arg("mqttHost");
+  const String port = server.arg("mqttPort");
+  bool digits = port.length() > 0 && port.length() <= 5;
+  for (size_t i = 0; i < port.length(); i++) digits = digits && isDigit(port[i]);
+  if (!digits || port.toInt() < 1 || port.toInt() > 65535) {
+    sendJsonMessage(400, false, "MQTT port must be 1..65535");
+    return;
+  }
+  next.port = (uint16_t)port.toInt();
+  next.user = server.arg("mqttUser");
+  next.prefix = server.arg("mqttPrefix");
+  if (server.hasArg("mqttClearPass")) next.pass = "";
+  else if (server.arg("mqttPass").length()) next.pass = server.arg("mqttPass");
+  String error;
+  if (!mqttNormalize(next, error)) {
+    sendJsonMessage(400, false, error.c_str());
+    return;
+  }
+  if (!mqttSaveSettings(next)) {
+    sendJsonMessage(500, false, "Could not store MQTT settings");
+    return;
+  }
   deckSetPrinters(server.hasArg("printers"));
   saveSettings();
   sendJsonMessage(200, true, "Advanced settings applied.");
@@ -672,22 +808,13 @@ static void handleSaveDisplay() {
                             oldGlass != (uint32_t)(dispSettings.glassOn << 24 | dispSettings.glassTint << 16 |
                                                    dispSettings.glassBlur << 8 | dispSettings.glassDim);
   dispSettings.rotation = (uint8_t)clampedArg("rotation", dispSettings.rotation, 0, 3);
-  brightness = (uint8_t)clampedArg("brightness", brightness, 0, 255);
   dispSettings.tempScaleMax = (uint16_t)clampedArg("tempScale", dispSettings.tempScaleMax, 1, 500);
   dispSettings.powerScaleW = (uint16_t)clampedArg("powerScale", dispSettings.powerScaleW, 1, 65535);
   dispSettings.warnThresholdPct =
     (uint8_t)clampedArg("warnThreshold", dispSettings.warnThresholdPct, 0, 100);
   dispSettings.smoothCharts = server.hasArg("smoothCharts");
-  backlightSettings.nightEnabled = server.hasArg("nightEnabled") ? 1 : 0;
-  backlightSettings.nightBrightness =
-    (uint8_t)clampedArg("nightBrightness", backlightSettings.nightBrightness, 0, 255);
-  backlightSettings.nightStartMinute =
-    minuteOfDayArg("nightStart", backlightSettings.nightStartMinute);
-  backlightSettings.nightEndMinute =
-    minuteOfDayArg("nightEnd", backlightSettings.nightEndMinute);
 
   saveSettings();
-  refreshBacklightControl();
   if (dispSettings.rotation != oldRotation || dispSettings.theme != oldTheme) applyDisplaySettings();
   else if (glassChanged) deckReloadWallpaper(false);
   sendJsonMessage(200, true, "Display settings applied.");
@@ -819,6 +946,8 @@ static void handleApiStatus() {
   doc["night_active"] = nightBrightnessActive();
   doc["time_valid"] = backlightTimeValid();
   doc["manual_display_off"] = manualDisplayOff();
+  deckPresenceJson(doc["presence"].to<JsonObject>());
+  mqttStatusJson(doc["mqtt"].to<JsonObject>());
   doc["led_enabled"] = ledSettings.enabled != 0;
   doc["led_pin_valid"] = ledPinValid();
   doc["led_duty"] = ledCurrentDuty();
@@ -1661,7 +1790,7 @@ void initWebServer() {
   server.on("/portal.js", HTTP_GET, handlePortalJs);
   server.on("/save/wifi", HTTP_POST, handleSaveWifiLegacy);
   server.on("/save/display", HTTP_POST, handleSaveDisplay);
-  server.on("/save/hardware", HTTP_POST, handleSaveHardware);
+  server.on("/save/light", HTTP_POST, handleSaveLight);
   server.on("/save/advanced", HTTP_POST, handleSaveAdvanced);
   server.on("/led/preview", HTTP_POST, handleLedPreview);
   server.on("/save/clock", HTTP_POST, handleSaveClock);

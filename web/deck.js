@@ -60,8 +60,7 @@
 <div class="grid-2"><div class="field"><label class="field-label" for="dkHaUrl">Address</label><input type="text" id="dkHaUrl" placeholder="http://192.168.0.7:8123" autocomplete="off"></div>
 <div class="field"><label class="field-label" for="dkHaToken">Long-lived access token</label><input type="password" id="dkHaToken" autocomplete="off" placeholder="paste the token"><p class="field-hint">HA profile, Security tab, Long-lived access tokens. Stored only on the device, never shown again.</p></div></div>
 <div class="dk-row"><button type="button" class="btn btn-accent" id="dkHaSave">Save and connect</button><button type="button" class="btn" id="dkHaForget">Forget</button></div>
-<div class="dk-status"><span class="dk-dot" id="dkHaDot"></span><span id="dkHaState">checking...</span></div>
-<div class="field" style="margin-top:16px"><label class="field-label">Status LED</label><div class="dk-row"><span id="dkLedEnt" class="dk-tsub" style="margin:0">-</span><button type="button" class="btn" id="dkLedPick">Choose entity</button><button type="button" class="btn" id="dkLedClear">Unlink</button></div><p class="field-hint">The LED's day brightness follows this input_boolean, input_number or light, and the Light slider on the device sets it. The LED itself and its night level: Hardware page. Applies on "Save to device" below.</p></div></div>
+<div class="dk-status"><span class="dk-dot" id="dkHaDot"></span><span id="dkHaState">checking...</span></div></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Icons</h2><span class="tag" id="dkIcTag">-</span></div>
 <p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; "Install" downloads it in this browser and sends it to the device. Without it the deck shows a few built-in symbols.</p>
 <div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
@@ -2698,7 +2697,7 @@
   function render() {
     renderTabs();
     renderPage();
-    renderLed();
+    ledSync();
     renderPrinters();
   }
 
@@ -2722,7 +2721,6 @@
       setList(await api("/api/ha/entities" + (refresh ? "?refresh=1" : "")));
       if (deck) {
         renderPage();
-        renderLed();
       }
     } catch (e) {
       $("dkEnts").innerHTML =
@@ -2817,34 +2815,15 @@
   function closePicker() {
     $("dkPicker").classList.remove("show");
   }
-  const LEDDOM = ["input_boolean", "input_number", "light"];
-  function renderLed() {
-    const id = deck && deck.led && deck.led.entity;
-    const en = id && entMap[id];
-    $("dkLedEnt").textContent = id ? (en && en.name ? en.name + " - " : "") + id : "Not linked";
-    $("dkLedClear").disabled = !id;
+  /* deck.json "led" is set on the Screen & light page (portal.js sets window.snLedEntity); keep this copy in step
+   so a save from here does not bring back the old entity. */
+  function ledSync() {
+    if (!deck || window.snLedEntity === undefined) return;
+    if (window.snLedEntity) deck.led = { entity: window.snLedEntity };
+    else delete deck.led;
   }
-  $("dkLedPick").onclick = () => {
-    if (deck) openPicker(-2);
-  };
-  $("dkLedClear").onclick = () => {
-    if (!deck) return;
-    delete deck.led;
-    setDirty(true);
-    renderLed();
-  };
+  window.dkLedSync = ledSync;
   function pick(id) {
-    if (pickFor === -2) {
-      if (!LEDDOM.includes(domainOf(id))) {
-        alert("Pick an input_boolean, input_number or light.");
-        return;
-      }
-      deck.led = { entity: id };
-      setDirty(true);
-      closePicker();
-      renderLed();
-      return;
-    }
     const p = pages()[cur];
     const type = autoType(domainOf(id));
     if (pickFor < 0) p.tiles.push({ id: "t" + Date.now().toString(36), type: type, entity: id });

@@ -38,6 +38,7 @@ Captured from the device (`/screen.bmp`), Glass theme unless noted.
 - **Quick panel:** pull down from the top edge for screen and LED brightness, link status, screen off, night mode, the top bar switch and the page editor.
 - **Edit on the device:** long press an empty spot of a page (or Edit in the quick panel) to move (swap works as in the portal), resize or remove its tiles, or add one with + (a list of Home Assistant entities by group, from the list cached with "Update from HA" in the portal); Done saves the page.
 - **Night schedules** for the backlight and, separately, an optional status / filament LED on a PWM pin. The LED's day brightness can follow a Home Assistant input_boolean, input_number or light, and the quick panel's Light slider sets that entity.
+- **Screen sleep:** after a set time without touch and without presence the screen fades out or dims. Presence is up to four Home Assistant entities (motion, occupancy, a person) and optionally a PC online; someone arriving wakes it. See [Screen sleep](#screen-sleep).
 - **System screens** for start-up, WiFi setup (with a QR code to join the setup network), connecting, and a firmware update screen with progress.
 
 ## Web portal
@@ -46,11 +47,11 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 
 - **Overview:** live picture of the screen, PC stream, Home Assistant link, diagnostics.
 - **Pages & tiles:** Home Assistant address and token, the icon font, pages (Duplicate copies one as a plain page), tiles, entity and icon pickers (None leaves a tile without an icon), columns, and a grid editor: drag tiles to move them (dropped onto another tile, that tile jumps to the dragged one's old place if it fits there), resize from the corner (half-cell steps), separately for landscape and portrait.
-- **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper you upload), brightness, night schedule, PC metric tile scales.
+- **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper you upload), PC metric tile scales.
+- **Screen & light:** day brightness and the night schedule, screen sleep and presence, the status LED and its Home Assistant entity.
 - **Time:** 12/24 h clock and timezone.
-- **Hardware:** the status LED.
 - **Network:** WiFi, hostname / mDNS, static IP.
-- **Advanced:** optional features, off by default: Bambu Lab printers.
+- **Advanced:** optional features, off by default: Bambu Lab printers and MQTT.
 - **Maintenance:** configuration backup (pages and settings; WiFi and the Home Assistant token are never included), firmware update, factory reset.
 
 ## Home Assistant
@@ -80,6 +81,50 @@ A whole page can follow a condition the same way ("Page shown" in the page setti
 ```
 
 A page that goes away while it is shown always hands over to another page first; a slide waits until nothing is being touched and no card is open.
+
+## Screen sleep
+
+On the **Screen & light** page, the Sleep card sets the time without touch and without presence after which the screen fades out or dims (the night level still applies when it is lower), and what counts as presence:
+
+- Up to four Home Assistant entities (motion, occupancy, a person); one counts as present while its state is `on` or `home`. Optionally any PC sending metrics. Presence starting wakes the screen, also after Off in the quick panel.
+- A touch always wakes it; that first touch does nothing else.
+
+## MQTT (Home Assistant discovery)
+
+Under **Advanced**, enable **Connect to an MQTT broker**, enter its host and port (plain TCP, default 1883), and optional username/password. Broker accepts `host`, `host:port` or `mqtt://host:port`. Leave the discovery prefix as `homeassistant` unless your MQTT integration uses another one. Save the form; its status line shows the connection. The deck appears under **Settings > Devices > MQTT** with the configured hostname. Home Assistant needs its MQTT integration and a broker such as the Mosquitto add-on.
+
+- **Screen (light):** wake or turn off the display, and set the current day/night brightness.
+- **Page (select):** choose a currently visible page; duplicate names get numbered suffixes.
+- **Night (switch):** turn manual night mode on or off.
+- **Touch (occupancy):** on for 60 seconds after the last touch.
+- **Message ([MQTT notify](https://www.home-assistant.io/integrations/notify.mqtt/)):** wake and show a wrapped toast for 6 seconds, up to 200 bytes; punctuation is cleaned for the fonts.
+- **LED (light):** control the day level; available only when the LED is enabled with a valid pin. Night and follow-display rules still apply.
+- **RSSI (sensor):** WiFi signal strength in dBm, every 60 seconds.
+- **IP (sensor):** the current IP address, updated on change.
+- **Restart (button):** restart the deck after about half a second.
+
+`<id>` is the last three bytes of the STA MAC, as six lowercase hex digits. Discovery lives at `<prefix>/<component>/touchdeck_<id>/<object>/config`; device states and commands use `touchdeck/<id>/<object>/state` and `touchdeck/<id>/<object>/set`. Availability is retained at `touchdeck/<id>/status` (`online` / `offline`). States and discovery are retained and replayed after reconnect or Home Assistant's `online` birth message. Commands should not be retained.
+
+Example automation (replace the entity IDs with yours):
+
+```yaml
+alias: Wake the deck on motion
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.office_motion
+    to: "on"
+actions:
+  - action: light.turn_on
+    target:
+      entity_id: light.touchdeck_screen
+  - action: notify.send_message
+    target:
+      entity_id: notify.touchdeck_message
+    data:
+      message: "Welcome back"
+```
+
+A blank password keeps the saved one; **Clear password** removes it. Backups contain MQTT settings but never the password. Import preserves that password only when the broker host and username are unchanged; older backups leave MQTT off.
 
 ## HTTP buttons
 

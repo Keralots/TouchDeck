@@ -137,6 +137,7 @@ void onLightSlider(lv_event_t* e) {
       return;
     }
     lightLevelRef() = v;
+    if (!ledNightActive()) ledSetHaLevel(LED_HA_NONE);  // drops a level set over MQTT
     saveSettings();
     clearLedPreview();
   }

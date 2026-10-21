@@ -20,7 +20,18 @@ static bool g_time_valid = false;
 static bool g_backlight_refresh = true;
 static bool g_manual_display_off = false;
 static bool g_manual_night = false;
+static bool g_idle_sleep = false;
+static uint8_t g_idle_level = 0;  // backlight cap while idle-asleep, 0 = off
 static uint32_t g_last_backlight_check_ms = 0;
+
+// Idle sleep fades; every other change is instant.
+static int16_t g_target = -1;
+static uint16_t g_next_fade_ms = 0;
+static uint8_t g_fade_from = 0;
+static uint32_t g_fade_start = 0;
+static uint16_t g_fade_ms = 0;
+constexpr uint16_t SLEEP_FADE_MS = 1500;
+constexpr uint16_t WAKE_FADE_MS = 250;
 
 void setBacklight(uint8_t level) {
   analogWrite(BACKLIGHT_PIN, level);
@@ -33,7 +44,8 @@ bool ledNightActive() { return g_led_night; }
 bool backlightTimeValid() { return g_time_valid; }
 bool manualDisplayOff() { return g_manual_display_off; }
 bool manualNightActive() { return g_manual_night; }
-bool displaySleepingForTouch() { return g_manual_display_off; }
+bool displaySleepingForTouch() { return g_manual_display_off || g_idle_sleep; }
+bool idleSleepActive() { return g_idle_sleep; }
 
 void setManualNight(bool on) {
   g_manual_night = on;
@@ -45,8 +57,17 @@ void setManualDisplayOff(bool off) {
   refreshBacklightControl();
 }
 
+void setIdleSleep(bool sleep, uint8_t level) {
+  if (sleep == g_idle_sleep && (!sleep || level == g_idle_level)) return;
+  if (sleep != g_idle_sleep) g_next_fade_ms = sleep ? SLEEP_FADE_MS : WAKE_FADE_MS;
+  g_idle_sleep = sleep;
+  g_idle_level = level;
+  refreshBacklightControl();
+}
+
 void wakeDisplayFromTouch() {
   g_manual_display_off = false;
+  setIdleSleep(false, 0);
   refreshBacklightControl();
 }
 
@@ -61,6 +82,16 @@ static bool inNightWindow(uint16_t minute, uint16_t start, uint16_t end) {
 
 void updateBacklightControl() {
   const uint32_t nowMs = millis();
+  if (g_fade_ms) {
+    const uint32_t t = nowMs - g_fade_start;
+    if (t >= g_fade_ms) {
+      g_fade_ms = 0;
+      setBacklight((uint8_t)g_target);
+    } else {
+      const uint8_t level = g_fade_from + ((int)g_target - g_fade_from) * (int)t / g_fade_ms;
+      if (level != lastAppliedBrightness) setBacklight(level);
+    }
+  }
   if (!g_backlight_refresh && nowMs - g_last_backlight_check_ms < 1000) return;
   g_backlight_refresh = false;
   g_last_backlight_check_ms = nowMs;
@@ -82,8 +113,20 @@ void updateBacklightControl() {
   g_night_active = nightWindow || g_manual_night;
 
   uint8_t target = g_night_active ? backlightSettings.nightBrightness : brightness;
+  if (g_idle_sleep) target = min(target, g_idle_level);
   if (g_manual_display_off) target = 0;
-  if (target != lastAppliedBrightness) setBacklight(target);
+  const uint16_t fade = g_next_fade_ms;
+  g_next_fade_ms = 0;
+  if (target == g_target) return;
+  g_target = target;
+  if (fade) {
+    g_fade_from = lastAppliedBrightness;
+    g_fade_start = nowMs;
+    g_fade_ms = fade;
+  } else {
+    g_fade_ms = 0;
+    setBacklight(target);
+  }
 }
 
 // ---------------------------------------------------------------------------
