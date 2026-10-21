@@ -8,6 +8,8 @@ No cloud, no accounts: the device talks to Home Assistant over its local WebSock
 
 ## Screenshots
 
+Short video of the deck in use: [YouTube](https://youtube.com/shorts/eh1_8pJR3-M).
+
 Captured from the device (`/screen.bmp`), Glass theme unless noted.
 
 | | |
@@ -174,6 +176,12 @@ The companion UI opens at `http://127.0.0.1:8750`; point it at the device IP. Th
 ## Hardware
 
 Guition JC3248W535: AXS15231B panel over QSPI, AXS15231B touch on I2C. Nothing to wire for the panel or touch.
+
+3D printed case for the board: [MakerWorld model 3463113](https://makerworld.com/models/3463113).
+
+| | |
+|:---:|:---:|
+| ![TouchDeck in the printed case, front](docs/images/case-front.jpg) | ![Printed case from the back with the USB-C cable](docs/images/case-back.jpg) |
 
 Optional status LED: a plain single-colour LED driven through a transistor from a free GPIO (default 17 on the extended IO header). Pins used by the display, touch, USB, flash or PSRAM are refused by the portal.
 
