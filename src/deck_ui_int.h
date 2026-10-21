@@ -318,6 +318,7 @@ void sliderEvent(lv_event_t* e);
 extern bool s_header;
 extern QuickPanel s_qp;
 void qpMarkStale();
+uint8_t& screenLevelRef();
 void qpSyncValues();
 void qpUpdateStatus(bool force);
 lv_obj_t* qpButton(lv_obj_t* parent, int x, int y, int w, const char* text, bool checkable);

@@ -11,6 +11,7 @@
 #include "web_server.h"
 #include "pc_metrics.h"
 #include "led.h"
+#include "deck_mqtt.h"
 
 // Loop-task watchdog: an indefinite block in loop() panics after
 // WDT_TIMEOUT_S with a backtrace and reboots (/api/status then reports
@@ -45,6 +46,7 @@ void setup() {
   initWebServer();
   pcMetricsBegin();
   initLed();
+  mqttBegin();
 
   if (isWiFiConnected()) setScreenState(SCREEN_DECK);
 

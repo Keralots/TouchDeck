@@ -51,7 +51,7 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 - **Time:** 12/24 h clock and timezone.
 - **Hardware:** the status LED.
 - **Network:** WiFi, hostname / mDNS, static IP.
-- **Advanced:** optional features, off by default: Bambu Lab printers.
+- **Advanced:** optional features, off by default: Bambu Lab printers and MQTT.
 - **Maintenance:** configuration backup (pages and settings; WiFi and the Home Assistant token are never included), firmware update, factory reset.
 
 ## Home Assistant
@@ -93,6 +93,43 @@ In **Pages & tiles**, the Screen sleep card sets the time without touch and with
 - `sleep`: minutes, 0 = never sleeps. `dim`: 0 turns the backlight off, 1..100 dims it to at most that % (the night level still applies when it is lower).
 - An entity counts as present while its state is `on` or `home`; `"pc": true` adds any PC sending metrics. Presence starting wakes the screen, also after Off in the quick panel.
 - A touch always wakes it; that first touch does nothing else.
+
+## MQTT (Home Assistant discovery)
+
+Under **Advanced**, enable **Connect to an MQTT broker**, enter its host and port (plain TCP, default 1883), and optional username/password. Broker accepts `host`, `host:port` or `mqtt://host:port`. Leave the discovery prefix as `homeassistant` unless your MQTT integration uses another one. Save the form; its status line shows the connection. The deck appears under **Settings > Devices > MQTT** with the configured hostname. Home Assistant needs its MQTT integration and a broker such as the Mosquitto add-on.
+
+- **Screen (light):** wake or turn off the display, and set the current day/night brightness.
+- **Page (select):** choose a currently visible page; duplicate names get numbered suffixes.
+- **Night (switch):** turn manual night mode on or off.
+- **Touch (occupancy):** on for 60 seconds after the last touch.
+- **Message ([MQTT notify](https://www.home-assistant.io/integrations/notify.mqtt/)):** wake and show a wrapped toast for 6 seconds, up to 200 bytes; punctuation is cleaned for the fonts.
+- **LED (light):** control the day level; available only when the LED is enabled with a valid pin. Night and follow-display rules still apply.
+- **RSSI (sensor):** WiFi signal strength in dBm, every 60 seconds.
+- **IP (sensor):** the current IP address, updated on change.
+- **Restart (button):** restart the deck after about half a second.
+
+`<id>` is the last three bytes of the STA MAC, as six lowercase hex digits. Discovery lives at `<prefix>/<component>/touchdeck_<id>/<object>/config`; device states and commands use `touchdeck/<id>/<object>/state` and `touchdeck/<id>/<object>/set`. Availability is retained at `touchdeck/<id>/status` (`online` / `offline`). States and discovery are retained and replayed after reconnect or Home Assistant's `online` birth message. Commands should not be retained.
+
+Example automation (replace the entity IDs with yours):
+
+```yaml
+alias: Wake the deck on motion
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.office_motion
+    to: "on"
+actions:
+  - action: light.turn_on
+    target:
+      entity_id: light.touchdeck_screen
+  - action: notify.send_message
+    target:
+      entity_id: notify.touchdeck_message
+    data:
+      message: "Welcome back"
+```
+
+A blank password keeps the saved one; **Clear password** removes it. Backups contain MQTT settings but never the password. Import preserves that password only when the broker host and username are unchanged; older backups leave MQTT off.
 
 ## HTTP buttons
 

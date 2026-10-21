@@ -293,6 +293,15 @@
     updateLedFields();
     const adv = c.advanced || {};
     setCheck("printersEnabled", adv.printers);
+    const mqtt = c.mqtt || {};
+    setCheck("mqttEnabled", mqtt.enabled);
+    setVal("mqttHost", mqtt.host || "");
+    setVal("mqttPort", mqtt.port || 1883);
+    setVal("mqttUser", mqtt.user || "");
+    setVal("mqttPass", "");
+    $("mqttPass").placeholder = mqtt.has_pass ? "unchanged" : "";
+    setCheck("mqttClearPass", false);
+    setVal("mqttPrefix", mqtt.prefix || "homeassistant");
     window.snPrn = !!adv.printers;
     if (window.dkPrnSync) window.dkPrnSync();
     setVal("timeFormat", c.clock.use24h ? "24" : "12");
@@ -386,6 +395,8 @@
       $("factTimestamp").textContent = s.timestamp || "--";
       $("factMetricCount").textContent = s.metric_count;
       $("factHa").textContent = s.ha_link || "--";
+      const mqtt = s.mqtt || {};
+      $("mqttStatus").textContent = (mqtt.state || "off") + (mqtt.error ? " - " + mqtt.error : "");
       $("diagHeap").textContent = fmtBytes(s.free_heap);
       $("diagBlock").textContent = fmtBytes(s.max_block);
       $("diagRssi").textContent = s.rssi + " dBm";

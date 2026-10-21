@@ -14,6 +14,7 @@
 #include "deck_config.h"
 #include "deck_ha.h"
 #include "deck_http.h"
+#include "deck_mqtt.h"
 #include "deck_icons.h"
 #include "deck_wall.h"
 #include "deck_sys.h"
@@ -189,6 +190,7 @@ static void handleApiConfig() {
   led["followDisplay"] = ledSettings.followDisplay != 0;
   led["offlineOff"] = ledSettings.offlineOff != 0;
   doc["advanced"]["printers"] = advSettings.printers;
+  mqttConfigJson(doc["mqtt"].to<JsonObject>(), true);
   JsonArray ledPins = led["allowedPins"].to<JsonArray>();
   for (uint8_t pin = 0; pin <= 48; pin++) {
     if (ledPinAllowed(pin)) ledPins.add(pin);
@@ -294,6 +296,7 @@ static void handleConfigExport() {
   led["followDisplay"] = ledSettings.followDisplay != 0;
   led["offlineOff"] = ledSettings.offlineOff != 0;
   doc["advanced"]["printers"] = advSettings.printers;
+  mqttConfigJson(doc["mqtt"].to<JsonObject>(), false);
 
   JsonObject clock = doc["clock"].to<JsonObject>();
   clock["use24h"] = netSettings.use24h;
@@ -551,6 +554,31 @@ static void handleConfigImport() {
   bool nextPrinters = false;  // backups from before the Advanced page: the default
   JsonObjectConst advanced = root["advanced"].as<JsonObjectConst>();
   if (!advanced.isNull() && !advanced["printers"].isNull()) READ_BOOL(advanced, "printers", nextPrinters);
+  MqttSettings nextMqtt;
+  if (root.containsKey("mqtt")) {
+    JsonObjectConst mqtt = root["mqtt"].as<JsonObjectConst>();
+    const char* host = nullptr;
+    const char* user = nullptr;
+    const char* prefix = nullptr;
+    if (mqtt.isNull() || !readBackupBool(mqtt, "enabled", nextMqtt.enabled, error, "mqtt.enabled") ||
+        !readBackupString(mqtt, "host", 80, host, error, "mqtt.host") ||
+        !readBackupInteger(mqtt, "port", 1, 65535, integer, error, "mqtt.port") ||
+        !readBackupString(mqtt, "user", 127, user, error, "mqtt.user") ||
+        !readBackupString(mqtt, "prefix", 127, prefix, error, "mqtt.prefix")) {
+      sendJsonMessage(400, false, error.length() ? error.c_str() : "Invalid MQTT settings");
+      return;
+    }
+    nextMqtt.host = host;
+    nextMqtt.port = (uint16_t)integer;
+    nextMqtt.user = user;
+    nextMqtt.prefix = prefix;
+    if (!mqttNormalize(nextMqtt, error)) {
+      sendJsonMessage(400, false, error.c_str());
+      return;
+    }
+    const MqttSettings& stored = mqttSettings();
+    if (nextMqtt.host == stored.host && nextMqtt.user == stored.user) nextMqtt.pass = stored.pass;
+  }
 #undef READ_INT
 #undef READ_BOOL
 
@@ -568,6 +596,10 @@ static void handleConfigImport() {
     return;
   }
 
+  if (!mqttSaveSettings(nextMqtt)) {
+    sendJsonMessage(500, false, "Could not store MQTT settings");
+    return;
+  }
   deck::wallInvalidateJobs();
   dispSettings = nextDisplay;
   netSettings = nextNetwork;
@@ -612,6 +644,30 @@ static void handleSaveHardware() {
 }
 
 static void handleSaveAdvanced() {
+  MqttSettings next = mqttSettings();
+  next.enabled = server.hasArg("mqttEnabled");
+  next.host = server.arg("mqttHost");
+  const String port = server.arg("mqttPort");
+  bool digits = port.length() > 0 && port.length() <= 5;
+  for (size_t i = 0; i < port.length(); i++) digits = digits && isDigit(port[i]);
+  if (!digits || port.toInt() < 1 || port.toInt() > 65535) {
+    sendJsonMessage(400, false, "MQTT port must be 1..65535");
+    return;
+  }
+  next.port = (uint16_t)port.toInt();
+  next.user = server.arg("mqttUser");
+  next.prefix = server.arg("mqttPrefix");
+  if (server.hasArg("mqttClearPass")) next.pass = "";
+  else if (server.arg("mqttPass").length()) next.pass = server.arg("mqttPass");
+  String error;
+  if (!mqttNormalize(next, error)) {
+    sendJsonMessage(400, false, error.c_str());
+    return;
+  }
+  if (!mqttSaveSettings(next)) {
+    sendJsonMessage(500, false, "Could not store MQTT settings");
+    return;
+  }
   deckSetPrinters(server.hasArg("printers"));
   saveSettings();
   sendJsonMessage(200, true, "Advanced settings applied.");
@@ -820,6 +876,7 @@ static void handleApiStatus() {
   doc["time_valid"] = backlightTimeValid();
   doc["manual_display_off"] = manualDisplayOff();
   doc["presence"] = serialized(deckPresenceJson());
+  mqttStatusJson(doc["mqtt"].to<JsonObject>());
   doc["led_enabled"] = ledSettings.enabled != 0;
   doc["led_pin_valid"] = ledPinValid();
   doc["led_duty"] = ledCurrentDuty();

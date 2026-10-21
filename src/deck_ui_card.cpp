@@ -58,7 +58,10 @@ void deckToastShow(const char* text, uint32_t holdMs) {
     lv_obj_remove_flag(s_toast, LV_OBJ_FLAG_CLICKABLE);
     lv_label_create(s_toast);
   }
-  lv_label_set_text(lv_obj_get_child(s_toast, 0), text);
+  lv_obj_t* label = lv_obj_get_child(s_toast, 0);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_max_width(label, logicalW() - 40 - 32, 0);
+  lv_label_set_text(label, text);
   // Above the page dots, which the flush task draws at the very bottom.
   lv_obj_align(s_toast, LV_ALIGN_BOTTOM_MID, 0, -34);
   lv_obj_remove_flag(s_toast, LV_OBJ_FLAG_HIDDEN);

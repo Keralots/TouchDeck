@@ -848,8 +848,11 @@ void collectEntities() {
   for (const PrinterDef& d : s_cfg.printers)
     if (advSettings.printers && d.plug.length()) ids.push_back(d.plug);
   for (const auto& s : s_whenStates) ids.push_back(s.first);
-  if (s_cfg.ledEntity.length()) ids.push_back(s_cfg.ledEntity);
-  else ledSetHaLevel(LED_HA_NONE);
+  static bool hadLedEntity = false;
+  const bool hasLedEntity = s_cfg.ledEntity.length() > 0;
+  if (hasLedEntity) ids.push_back(s_cfg.ledEntity);
+  else if (hadLedEntity) ledSetHaLevel(LED_HA_NONE);
+  hadLedEntity = hasLedEntity;
   for (const String& id : s_cfg.presence.entities) ids.push_back(id);
   presenceRestart();
   s_ledSeen = 0;

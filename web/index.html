@@ -894,6 +894,46 @@
                     ></label
                   >
                 </div>
+                <div class="card">
+                  <h2 class="card-title">MQTT (Home Assistant discovery)</h2>
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="mqttEnabled" name="mqttEnabled" /><span class="check-box"></span
+                    ><span class="check-text"><strong>Connect to an MQTT broker</strong></span></label
+                  >
+                  <div class="grid-2">
+                    <div class="field">
+                      <label class="field-label" for="mqttHost">Broker</label>
+                      <input type="text" id="mqttHost" name="mqttHost" maxlength="80"
+                        placeholder="192.168.0.7 or mqtt://host:1883" />
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="mqttPort">Port</label>
+                      <input type="number" id="mqttPort" name="mqttPort" min="1" max="65535" value="1883" required />
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="mqttUser">Username</label>
+                      <input type="text" id="mqttUser" name="mqttUser" maxlength="127" autocomplete="off" />
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="mqttPass">Password</label>
+                      <input type="password" id="mqttPass" name="mqttPass" maxlength="127" autocomplete="new-password" />
+                      <span class="field-hint">Leave blank to keep the stored password.</span>
+                    </div>
+                  </div>
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="mqttClearPass" name="mqttClearPass" /><span class="check-box"></span
+                    ><span class="check-text"><strong>Clear password</strong></span></label
+                  >
+                  <div class="field">
+                    <label class="field-label" for="mqttPrefix">Discovery prefix</label>
+                    <input type="text" id="mqttPrefix" name="mqttPrefix" maxlength="127" value="homeassistant" />
+                  </div>
+                  <p class="maintenance-copy">Status: <span id="mqttStatus">off</span></p>
+                  <p class="maintenance-copy">
+                    The deck appears in Home Assistant under Settings &gt; Devices &gt; MQTT.
+                    Needs the MQTT integration and a broker such as the Mosquitto add-on.
+                  </p>
+                </div>
               </form>
             </section>
 
@@ -907,9 +947,10 @@
               <div class="card">
                 <h2 class="card-title">Configuration backup</h2>
                 <p class="maintenance-copy">
-                  Export the deck pages and tiles plus the display, LED, time and network settings. WiFi
-                  network names, passwords and the Home Assistant token are never included, and importing
-                  preserves the credentials already stored on this device.
+                  Export the deck pages and tiles plus the display, LED, time, network and MQTT settings.
+                  WiFi network names, passwords and the Home Assistant token are never included.
+                  Import preserves WiFi and Home Assistant credentials. The MQTT password is kept only
+                  when its broker host and username are unchanged.
                 </p>
                 <div class="maintenance-actions">
                   <button type="button" class="btn btn-accent" id="backupExport">Export configuration</button

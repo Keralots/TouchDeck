@@ -1,5 +1,6 @@
 // Guition JC3248W535 deck UI. See deck_ui.h for the threading contract.
 #include "deck_ui_int.h"
+#include "deck_mqtt.h"
 
 namespace deckui {
 
@@ -839,6 +840,9 @@ void deckTick() {
   sysScreenSync(sc);
 
   if (compOwnsScreen()) return;  // LVGL stays frozen during a drag or slide
+
+  mqttTick();
+  if (compOwnsScreen()) return;
 
   if (s_ed.pending != EditState::P_NONE) edFinish();
   tickWallpaper();

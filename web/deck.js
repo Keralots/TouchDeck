@@ -2871,7 +2871,7 @@
             );
           })
           .join("")
-      : '<p class="field-hint">No entities: only touch' + (p.pc ? " and the PC" : "") + " keep the screen awake.</p>";
+      : '<p class="field-hint">No entities: only touch' + (p.pc ? " and the PC keep" : " keeps") + " the screen awake.</p>";
     $("dkPrEnts")
       .querySelectorAll("[data-prdel]")
       .forEach(
