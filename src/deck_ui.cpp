@@ -1,6 +1,7 @@
 // Guition JC3248W535 deck UI. See deck_ui.h for the threading contract.
 #include "deck_ui_int.h"
 #include "deck_mqtt.h"
+#include "psram_json.h"
 
 namespace deckui {
 
@@ -962,6 +963,24 @@ bool deckApplyConfig(const String& text, String& err) {
   lv_obj_invalidate(lv_screen_active());
   Serial.printf("Deck: new config applied, %u pages\n", (unsigned)s_cfg.pages.size());
   return true;
+}
+
+String deckLedEntity() { return s_cfg.ledEntity; }
+
+bool deckSetLedEntity(const String& id, String& err) {
+  if (id == s_cfg.ledEntity) return true;
+  String text;
+  deckConfigText(text);
+  JsonDocument doc(psramJson());
+  if (deserializeJson(doc, text)) {
+    err = "stored deck.json is not valid JSON";
+    return false;
+  }
+  if (id.length()) doc["led"]["entity"] = id;
+  else doc.remove("led");
+  text = "";
+  serializeJson(doc, text);
+  return deckApplyConfig(text, err);
 }
 
 namespace deckui {

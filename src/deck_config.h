@@ -219,21 +219,10 @@ struct PageDef {
   std::vector<TileDef> tiles;
 };
 
-// "presence": the screen sleeps after sleepMin without touch or presence.
-// Present = an entity "on"/"home", or (pc) any PC online.
-constexpr size_t MAX_PRESENCE_ENTITIES = 4;
-struct PresenceDef {
-  std::vector<String> entities;
-  bool pc = false;
-  uint16_t sleepMin = 0;  // 0 = never sleeps
-  uint8_t dimPct = 0;     // asleep: 0 = backlight off, else at most this % of full
-};
-
 struct DeckConfig {
   uint8_t schema = 1;
   String theme;
   String ledEntity;  // HA entity the LED's day level follows, empty = none
-  PresenceDef presence;
   std::vector<PrinterDef> printers;
   std::vector<PageDef> pages;
 };

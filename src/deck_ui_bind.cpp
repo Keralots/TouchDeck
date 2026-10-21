@@ -836,27 +836,33 @@ void httpSync() {
   }
 }
 
-void collectEntities() {
-  printersApply(s_cfg);
-  s_prnSeen = 0;
-  httpSetSensors(s_cfg);
-  s_httpSeen = 0;
-  for (TileRt& r : s_tiles) applyHttpToTile(r);
+// Every HA entity the deck follows: tiles, printer plugs, conditions, LED, presence.
+std::vector<String> entityIds() {
   std::vector<String> ids;
   for (const TileRt& r : s_tiles)
     if (r.def->entity.length()) ids.push_back(r.def->entity);
   for (const PrinterDef& d : s_cfg.printers)
     if (advSettings.printers && d.plug.length()) ids.push_back(d.plug);
   for (const auto& s : s_whenStates) ids.push_back(s.first);
+  if (s_cfg.ledEntity.length()) ids.push_back(s_cfg.ledEntity);
+  for (const String& id : presenceSettings.entities)
+    if (id.length()) ids.push_back(id);
+  return ids;
+}
+
+void collectEntities() {
+  printersApply(s_cfg);
+  s_prnSeen = 0;
+  httpSetSensors(s_cfg);
+  s_httpSeen = 0;
+  for (TileRt& r : s_tiles) applyHttpToTile(r);
   static bool hadLedEntity = false;
   const bool hasLedEntity = s_cfg.ledEntity.length() > 0;
-  if (hasLedEntity) ids.push_back(s_cfg.ledEntity);
-  else if (hadLedEntity) ledSetHaLevel(LED_HA_NONE);
+  if (!hasLedEntity && hadLedEntity) ledSetHaLevel(LED_HA_NONE);
   hadLedEntity = hasLedEntity;
-  for (const String& id : s_cfg.presence.entities) ids.push_back(id);
   presenceRestart();
   s_ledSeen = 0;
-  haSetEntities(ids);
+  haSetEntities(entityIds());
   for (Wish& w : s_wishes) {
     if (w.holding) w.level = {};
     w.dragging = w.holding = false;

@@ -20,6 +20,12 @@ void deckTick();
 void deckToast(const char* text);
 // Wake the screen and restart the presence sleep timer (loop task only).
 void deckPresenceWake();
+// presenceSettings changed: follow the new entities, restart the timer.
+void deckPresenceApply();
+// HA entity the LED's day level follows (deck.json "led"), "" = none.
+String deckLedEntity();
+// Store a new LED entity in deck.json and rebuild; "" unlinks.
+bool deckSetLedEntity(const String& id, String& err);
 // /api/status "presence": present, asleep, idle_s, sleep_min.
 String deckPresenceJson();
 // Render pending LVGL changes now, from inside a long web handler (OTA).

@@ -91,7 +91,8 @@
       if (!confirm("Discard unsaved changes on this page?")) return false;
       if (!(await loadConfig())) return false;
     }
-    if (name !== "hardware") stopLedPreview();
+    if (name !== "light") stopLedPreview();
+    if (name === "light") loadEntityLists();
     qa(".page").forEach((p) => p.classList.toggle("active", p.dataset.page === name));
     qa(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
     const button = document.querySelector('.nav-item[data-nav="' + name + '"]');
@@ -156,6 +157,7 @@
     $("glassBlurVal").textContent = $("glassBlur").value === "0" ? "Off" : $("glassBlur").value + " px";
     $("glassDimVal").textContent = $("glassDim").value + "%";
     $("glassOnVal").textContent = $("glassOn").value + "%";
+    $("sleepDimVal").textContent = $("sleepDim").value + "%";
   }
   [
     "brightness",
@@ -167,6 +169,7 @@
     "glassBlur",
     "glassDim",
     "glassOn",
+    "sleepDim",
   ].forEach((id) => $(id).addEventListener("input", updateRangeLabels));
   function updateGlassFields() {
     const g = $("theme").value === "2";
@@ -178,6 +181,28 @@
     $("nightScheduleFields").classList.toggle("hidden", !$("nightEnabled").checked);
   }
   $("nightEnabled").addEventListener("change", updateNightFields);
+  function updateSleepFields() {
+    $("sleepDimField").classList.toggle("hidden", $("sleepMode").value !== "dim");
+  }
+  $("sleepMode").addEventListener("change", updateSleepFields);
+  /* Entity suggestions from the list cached on the device ("Update from HA" in Pages & tiles). */
+  let entityListsLoaded = false;
+  async function loadEntityLists() {
+    if (entityListsLoaded) return;
+    entityListsLoaded = true;
+    try {
+      const r = await getJson("/api/ha/entities");
+      const fill = (id, domains) =>
+        ($(id).innerHTML = (r.entities || [])
+          .filter((e) => domains.includes(e.id.split(".")[0]))
+          .map((e) => '<option value="' + e.id + '">' + (e.name || "").replace(/[<&"]/g, "") + "</option>")
+          .join(""));
+      fill("presenceList", ["binary_sensor", "person", "device_tracker", "input_boolean", "switch"]);
+      fill("ledEntityList", ["input_boolean", "input_number", "light"]);
+    } catch (e) {
+      entityListsLoaded = false;
+    }
+  }
   function updateLedFields() {
     $("ledFields").classList.toggle("hidden", !$("ledEnabled").checked);
     $("ledNightFields").classList.toggle("hidden", !$("ledNightEnabled").checked);
@@ -290,7 +315,17 @@
     setCheck("ledFollowDisplay", l.followDisplay);
     setCheck("ledOfflineOff", l.offlineOff);
     $("ledAllowedPins").textContent = (l.allowedPins || []).join(", ") || "none";
+    setVal("ledEntity", l.entity || "");
     updateLedFields();
+    window.snLedEntity = l.entity || "";
+    if (window.dkLedSync) window.dkLedSync();
+    const p = c.presence || {};
+    setVal("sleepMin", p.sleep || 0);
+    setVal("sleepMode", p.dim ? "dim" : "off");
+    setVal("sleepDim", p.dim || 10);
+    for (let i = 0; i < 4; i++) setVal("presence" + i, (p.entities || [])[i] || "");
+    setCheck("presencePc", p.pc);
+    updateSleepFields();
     const adv = c.advanced || {};
     setCheck("printersEnabled", adv.printers);
     const mqtt = c.mqtt || {};
@@ -410,6 +445,14 @@
           : !s.time_valid && $("nightEnabled").checked
             ? "day / time pending"
             : "day " + pct + "%";
+      const pr = s.presence || {};
+      $("sleepState").textContent = !pr.sleep_min
+        ? "off"
+        : pr.asleep
+          ? "asleep"
+          : pr.present
+            ? "present"
+            : "sleeps in " + Math.max(0, Math.ceil((pr.sleep_min * 60 - pr.idle_s) / 60)) + " min";
       if ($("ledState"))
         $("ledState").textContent = !s.led_enabled
           ? "disabled"

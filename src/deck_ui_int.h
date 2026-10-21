@@ -301,6 +301,7 @@ void whenApply();
 String rowUnit(const TileDef& d);
 String rowText(const TileDef& d, size_t i, bool useTemplate);
 void httpSync();
+std::vector<String> entityIds();
 void collectEntities();
 void presenceTick();
 void presenceWake();

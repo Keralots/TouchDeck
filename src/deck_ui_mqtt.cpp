@@ -51,7 +51,7 @@ bool mqttUiReady() { return deckui::s_disp && !deck::compOwnsScreen(); }
 
 void mqttUiSnapshot(MqttSnapshot& out) {
   using namespace deckui;
-  const bool lit = !manualDisplayOff() && !(idleSleepActive() && s_cfg.presence.dimPct == 0);
+  const bool lit = !manualDisplayOff() && !(idleSleepActive() && presenceSettings.dimPct == 0);
   out.state[MQ_SCREEN] = String("{\"state\":\"") + (lit ? "ON" : "OFF") + "\",\"brightness\":" + screenLevelRef() + "}";
   out.pages = pageNames();
   const int active = sh.active;

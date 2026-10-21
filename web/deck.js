@@ -60,15 +60,7 @@
 <div class="grid-2"><div class="field"><label class="field-label" for="dkHaUrl">Address</label><input type="text" id="dkHaUrl" placeholder="http://192.168.0.7:8123" autocomplete="off"></div>
 <div class="field"><label class="field-label" for="dkHaToken">Long-lived access token</label><input type="password" id="dkHaToken" autocomplete="off" placeholder="paste the token"><p class="field-hint">HA profile, Security tab, Long-lived access tokens. Stored only on the device, never shown again.</p></div></div>
 <div class="dk-row"><button type="button" class="btn btn-accent" id="dkHaSave">Save and connect</button><button type="button" class="btn" id="dkHaForget">Forget</button></div>
-<div class="dk-status"><span class="dk-dot" id="dkHaDot"></span><span id="dkHaState">checking...</span></div>
-<div class="field" style="margin-top:16px"><label class="field-label">Status LED</label><div class="dk-row"><span id="dkLedEnt" class="dk-tsub" style="margin:0">-</span><button type="button" class="btn" id="dkLedPick">Choose entity</button><button type="button" class="btn" id="dkLedClear">Unlink</button></div><p class="field-hint">The LED's day brightness follows this input_boolean, input_number or light, and the Light slider on the device sets it. The LED itself and its night level: Hardware page. Applies on "Save to device" below.</p></div></div>
-<div class="card"><div class="card-head"><h2 class="card-title">Screen sleep</h2></div>
-<div class="grid-2"><div class="field"><label class="field-label" for="dkPrSleep">Sleep after (minutes)</label><input type="number" id="dkPrSleep" min="0" max="1440" step="1"><p class="field-hint">Without touch and without presence. 0 = never.</p></div>
-<div class="field"><label class="field-label" for="dkPrMode">When asleep</label><div class="select-wrap"><select id="dkPrMode"><option value="0">Screen off</option><option value="1">Dim</option></select></div></div>
-<div class="field hidden" id="dkPrDimF"><label class="field-label" for="dkPrDim">Dim to</label><div class="range-row"><input type="range" id="dkPrDim" min="1" max="60" step="1" value="10"><span class="range-val" id="dkPrDimV">--</span></div></div></div>
-<div class="field"><label class="field-label">Presence</label><div id="dkPrEnts"></div><div class="dk-row"><button type="button" class="btn" id="dkPrAdd">Add entity</button></div><p class="field-hint">Up to 4 entities (motion, occupancy, a person). Any of them "on" or "home" keeps the screen awake, and its arrival wakes it, also after Off in the quick panel. A touch always wakes it; that first touch does nothing else.</p></div>
-<label class="check-row standalone"><input type="checkbox" id="dkPrPc"><span class="check-box"></span><span class="check-text"><strong>A PC online counts as presence</strong><span class="ct-hint">Any PC sending metrics through the companion.</span></span></label>
-<p class="field-hint">Applies on "Save to device" below.</p></div>
+<div class="dk-status"><span class="dk-dot" id="dkHaDot"></span><span id="dkHaState">checking...</span></div></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Icons</h2><span class="tag" id="dkIcTag">-</span></div>
 <p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; "Install" downloads it in this browser and sends it to the device. Without it the deck shows a few built-in symbols.</p>
 <div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
@@ -2705,8 +2697,7 @@
   function render() {
     renderTabs();
     renderPage();
-    renderLed();
-    renderPresence();
+    ledSync();
     renderPrinters();
   }
 
@@ -2730,8 +2721,6 @@
       setList(await api("/api/ha/entities" + (refresh ? "?refresh=1" : "")));
       if (deck) {
         renderPage();
-        renderLed();
-        renderPresence();
       }
     } catch (e) {
       $("dkEnts").innerHTML =
@@ -2826,113 +2815,15 @@
   function closePicker() {
     $("dkPicker").classList.remove("show");
   }
-  const LEDDOM = ["input_boolean", "input_number", "light"];
-  function renderLed() {
-    const id = deck && deck.led && deck.led.entity;
-    const en = id && entMap[id];
-    $("dkLedEnt").textContent = id ? (en && en.name ? en.name + " - " : "") + id : "Not linked";
-    $("dkLedClear").disabled = !id;
+  /* deck.json "led" is set on the Screen & light page (portal.js sets window.snLedEntity); keep this copy in step
+   so a save from here does not bring back the old entity. */
+  function ledSync() {
+    if (!deck || window.snLedEntity === undefined) return;
+    if (window.snLedEntity) deck.led = { entity: window.snLedEntity };
+    else delete deck.led;
   }
-  $("dkLedPick").onclick = () => {
-    if (deck) openPicker(-2);
-  };
-  $("dkLedClear").onclick = () => {
-    if (!deck) return;
-    delete deck.led;
-    setDirty(true);
-    renderLed();
-  };
-  /* deck.json "presence": screen sleep and the entities that keep it awake */
-  function setPresence(p) {
-    if (!(p.entities || []).length) delete p.entities;
-    if (!p.pc) delete p.pc;
-    if (!p.dim) delete p.dim;
-    if (!p.sleep) delete p.sleep;
-    if (Object.keys(p).length) deck.presence = p;
-    else delete deck.presence;
-    setDirty(true);
-    renderPresence();
-  }
-  const presence = () => Object.assign({}, deck && deck.presence);
-  function renderPresence() {
-    if (!deck) return;
-    const p = presence(),
-      list = p.entities || [];
-    $("dkPrEnts").innerHTML = list.length
-      ? list
-          .map((id, i) => {
-            const en = entMap[id];
-            return (
-              '<div class="dk-row"><span class="dk-tsub" style="margin:0">' +
-              esc((en && en.name ? en.name + " - " : "") + id + (en ? " (" + en.state + ")" : "")) +
-              '</span><button type="button" class="btn" data-prdel="' +
-              i +
-              '">Remove</button></div>'
-            );
-          })
-          .join("")
-      : '<p class="field-hint">No entities: only touch' + (p.pc ? " and the PC keep" : " keeps") + " the screen awake.</p>";
-    $("dkPrEnts")
-      .querySelectorAll("[data-prdel]")
-      .forEach(
-        (b) =>
-          (b.onclick = () => {
-            const q = presence();
-            q.entities = list.filter((_, i) => i !== +b.dataset.prdel);
-            setPresence(q);
-          }),
-      );
-    $("dkPrAdd").disabled = list.length >= 4;
-    $("dkPrSleep").value = p.sleep || 0;
-    $("dkPrMode").value = p.dim ? "1" : "0";
-    $("dkPrDimF").classList.toggle("hidden", !p.dim);
-    if (p.dim) $("dkPrDim").value = p.dim;
-    $("dkPrDimV").textContent = $("dkPrDim").value + "%";
-    $("dkPrPc").checked = !!p.pc;
-  }
-  $("dkPrAdd").onclick = () => {
-    if (deck) openPicker(-3);
-  };
-  $("dkPrSleep").onchange = (e) => {
-    const p = presence();
-    p.sleep = Math.max(0, Math.min(1440, Math.round(+e.target.value || 0)));
-    setPresence(p);
-  };
-  $("dkPrMode").onchange = (e) => {
-    const p = presence();
-    p.dim = e.target.value === "1" ? +$("dkPrDim").value || 10 : 0;
-    setPresence(p);
-  };
-  $("dkPrDim").oninput = (e) => ($("dkPrDimV").textContent = e.target.value + "%");
-  $("dkPrDim").onchange = (e) => {
-    const p = presence();
-    p.dim = +e.target.value;
-    setPresence(p);
-  };
-  $("dkPrPc").onchange = (e) => {
-    const p = presence();
-    p.pc = e.target.checked;
-    setPresence(p);
-  };
+  window.dkLedSync = ledSync;
   function pick(id) {
-    if (pickFor === -3) {
-      const p = presence();
-      p.entities = (p.entities || []).filter((x) => x !== id).concat(id).slice(0, 4);
-      closePicker();
-      setPresence(p);
-      return;
-    }
-    if (pickFor === -2) {
-      if (!LEDDOM.includes(domainOf(id))) {
-        alert("Pick an input_boolean, input_number or light.");
-        return;
-      }
-      deck.led = { entity: id };
-      setDirty(true);
-      closePicker();
-      renderLed();
-      return;
-    }
     const p = pages()[cur];
     const type = autoType(domainOf(id));
     if (pickFor < 0) p.tiles.push({ id: "t" + Date.now().toString(36), type: type, entity: id });

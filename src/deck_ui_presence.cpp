@@ -1,4 +1,4 @@
-// Deck UI: screen sleep and wake from presence (deck.json "presence").
+// Deck UI: screen sleep and wake from presence (presenceSettings, Screen & light page).
 #include "deck_ui_int.h"
 
 namespace deckui {
@@ -8,11 +8,11 @@ uint32_t s_activeMs = 0;    // last touch, presence or wake request
 uint32_t s_presenceEval = 0;
 
 bool presenceNow() {
-  const PresenceDef& p = s_cfg.presence;
+  const PresenceSettings& p = presenceSettings;
   if (p.pc && pcAnyOnline()) return true;
   for (const String& id : p.entities) {
     HaEntity e;
-    if (haGetEntity(id, e) && e.known && (e.state == "on" || e.state == "home")) return true;
+    if (id.length() && haGetEntity(id, e) && e.known && (e.state == "on" || e.state == "home")) return true;
   }
   return false;
 }
@@ -30,7 +30,7 @@ void presenceTick() {
   if (!s_activeMs) s_activeMs = now | 1;
   if (now - s_presenceEval < 250) return;
   s_presenceEval = now;
-  const PresenceDef& p = s_cfg.presence;
+  const PresenceSettings& p = presenceSettings;
   const bool present = presenceNow();
   // Arrival also undoes a manual off; staying present only holds the timer.
   if (present && !s_present) presenceWake();
@@ -48,16 +48,24 @@ using namespace deckui;
 
 void deckPresenceWake() { presenceWake(); }
 
+void deckPresenceApply() {
+  haSetEntities(entityIds());
+  presenceRestart();
+}
+
 String deckPresenceJson() {
-  const PresenceDef& p = s_cfg.presence;
+  const PresenceSettings& p = presenceSettings;
   const uint32_t idle = (millis() - s_activeMs) / 1000;
   String out = String("{\"present\":") + (s_present ? "true" : "false") + ",\"asleep\":" +
                (idleSleepActive() ? "true" : "false") + ",\"idle_s\":" + idle + ",\"sleep_min\":" + p.sleepMin +
                ",\"states\":{";
-  for (size_t i = 0; i < p.entities.size(); i++) {
+  bool first = true;
+  for (const String& id : p.entities) {
+    if (!id.length()) continue;
     HaEntity e;
-    const bool known = haGetEntity(p.entities[i], e) && e.known;
-    out += String(i ? "," : "") + "\"" + p.entities[i] + "\":\"" + (known ? e.state : String("?")) + "\"";
+    const bool known = haGetEntity(id, e) && e.known;
+    out += String(first ? "" : ",") + "\"" + id + "\":\"" + (known ? e.state : String("?")) + "\"";
+    first = false;
   }
   return out + "}}";
 }

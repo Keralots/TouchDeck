@@ -39,7 +39,7 @@ bool manualDisplayOff();
 // Night level on demand (quick panel), on top of the schedule. Not persisted.
 void setManualNight(bool on);
 bool manualNightActive();
-// Idle sleep (deck.json "presence"): backlight capped at level (0 = off), faded.
+// Idle sleep (presenceSettings): backlight capped at level (0 = off), faded.
 void setIdleSleep(bool sleep, uint8_t level);
 bool idleSleepActive();
 // Manual off or idle sleep: the next touch only wakes the screen.

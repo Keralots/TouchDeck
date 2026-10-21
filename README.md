@@ -47,9 +47,9 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 
 - **Overview:** live picture of the screen, PC stream, Home Assistant link, diagnostics.
 - **Pages & tiles:** Home Assistant address and token, the icon font, pages (Duplicate copies one as a plain page), tiles, entity and icon pickers (None leaves a tile without an icon), columns, and a grid editor: drag tiles to move them (dropped onto another tile, that tile jumps to the dragged one's old place if it fits there), resize from the corner (half-cell steps), separately for landscape and portrait.
-- **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper you upload), brightness, night schedule, PC metric tile scales.
+- **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper you upload), PC metric tile scales.
+- **Screen & light:** day brightness and the night schedule, screen sleep and presence, the status LED and its Home Assistant entity.
 - **Time:** 12/24 h clock and timezone.
-- **Hardware:** the status LED.
 - **Network:** WiFi, hostname / mDNS, static IP.
 - **Advanced:** optional features, off by default: Bambu Lab printers and MQTT.
 - **Maintenance:** configuration backup (pages and settings; WiFi and the Home Assistant token are never included), firmware update, factory reset.
@@ -84,14 +84,9 @@ A page that goes away while it is shown always hands over to another page first;
 
 ## Screen sleep
 
-In **Pages & tiles**, the Screen sleep card sets the time without touch and without presence after which the screen turns off or dims, and what counts as presence:
+On the **Screen & light** page, the Sleep card sets the time without touch and without presence after which the screen fades out or dims (the night level still applies when it is lower), and what counts as presence:
 
-```json
-"presence": { "entities": ["binary_sensor.office_occupancy"], "pc": true, "sleep": 5, "dim": 0 }
-```
-
-- `sleep`: minutes, 0 = never sleeps. `dim`: 0 turns the backlight off, 1..100 dims it to at most that % (the night level still applies when it is lower).
-- An entity counts as present while its state is `on` or `home`; `"pc": true` adds any PC sending metrics. Presence starting wakes the screen, also after Off in the quick panel.
+- Up to four Home Assistant entities (motion, occupancy, a person); one counts as present while its state is `on` or `home`. Optionally any PC sending metrics. Presence starting wakes the screen, also after Off in the quick panel.
 - A touch always wakes it; that first touch does nothing else.
 
 ## MQTT (Home Assistant discovery)
