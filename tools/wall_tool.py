@@ -80,7 +80,11 @@ def cmd_spotlight(args):
     for _ in range(args.count * 3):
         if all(got[o] >= args.count for o in orients):
             break
-        reply = json.loads(fetch(SPOTLIGHT))
+        try:
+            reply = json.loads(fetch(SPOTLIGHT))
+        except Exception as e:
+            print("Spotlight: %s" % e)
+            continue
         for item in reply["batchrsp"]["items"]:
             ad = json.loads(item["item"]).get("ad", {})
             for o, key in (("l", "landscapeImage"), ("p", "portraitImage")):
@@ -90,7 +94,12 @@ def cmd_spotlight(args):
                 seen.add(url)
                 # Named by the URL's crc32 like the deck's own downloads.
                 name = "%08x.jpg" % zlib.crc32(url.encode())
-                if save(encode(Image.open(io.BytesIO(fetch(url))), SIZES[o]), out / ("d" + o), name):
+                try:
+                    data = encode(Image.open(io.BytesIO(fetch(url))), SIZES[o])
+                except Exception as e:
+                    print("skip %s: %s" % (name, e))
+                    continue
+                if save(data, out / ("d" + o), name):
                     got[o] += 1
                     print("%s %s (%d/%d)" % (o, name, got[o], args.count))
     print(", ".join("%s: %d new" % kv for kv in got.items()))
