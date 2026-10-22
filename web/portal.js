@@ -177,6 +177,11 @@
     $("glassWall").classList.toggle("hidden", !g);
   }
   $("theme").addEventListener("change", updateGlassFields);
+  for (let h = 0; h < 24; h++) $("dailyHour").add(new Option(String(h).padStart(2, "0") + ":00", h));
+  function updateDailyFields() {
+    $("dailyFields").classList.toggle("hidden", $("wallSource").value !== "1");
+  }
+  $("wallSource").addEventListener("change", updateDailyFields);
   function updateNightFields() {
     $("nightScheduleFields").classList.toggle("hidden", !$("nightEnabled").checked);
   }
@@ -281,6 +286,12 @@
     setVal("warnThreshold", c.display.warnThreshold);
     setVal("wallEvery", c.display.wallEvery ?? 5);
     setVal("wallOrder", c.display.wallOrder ?? 0);
+    setVal("wallSource", c.display.wallDaily ? 1 : 0);
+    setVal("dailyOrient", c.display.dailyOrient ?? 0);
+    setVal("dailyCount", c.display.dailyCount ?? 12);
+    setVal("dailyHour", c.display.dailyHour ?? 3);
+    updateDailyFields();
+    dailyStatus();
     setVal("glassTint", c.display.glassTint);
     setVal("glassBlur", c.display.glassBlur);
     setVal("glassDim", c.display.glassDim);
@@ -673,7 +684,10 @@
   function wallButtons() {
     for (const o of ["l", "p"]) {
       const s = walls[o];
-      $("wallPick_" + o).disabled = wallBusy;
+      $("wallPick_" + o).disabled = wallBusy || dailyActive;
+      $("wallHint_" + o).textContent = dailyActive
+        ? "Daily pictures, downloaded by the deck."
+        : "Add pictures or drop them here.";
       $("wallShow_" + o).disabled = wallBusy || s.selected.size !== 1;
       $("wallDelete_" + o).disabled = wallBusy || !s.selected.size;
       $("wallAll_" + o).disabled = wallBusy || !s.files.length;
@@ -863,11 +877,11 @@
     const gallery = $("wallGallery_" + o);
     gallery.ondragover = (e) => {
       e.preventDefault();
-      e.dataTransfer.dropEffect = wallBusy ? "none" : "copy";
+      e.dataTransfer.dropEffect = wallBusy || dailyActive ? "none" : "copy";
     };
     gallery.ondrop = (e) => {
       e.preventDefault();
-      wallBatch(o, [...e.dataTransfer.files]);
+      if (!dailyActive) wallBatch(o, [...e.dataTransfer.files]);
     };
     $("wallShow_" + o).onclick = () =>
       wallAction(o, "walls/show?o=" + o + "&n=" + encodeURIComponent([...walls[o].selected][0]), false);
@@ -878,10 +892,48 @@
         wallAction(o, "walls/delete?o=" + o + "&n=*");
     };
   }
+  /* Daily pictures: status line, Download now, gallery refresh when the source or set changes. */
+  let dailyActive = false,
+    dailyRunning = false,
+    dailyTick = 0;
+  function dailyText(d) {
+    if (d.running) return d.step + " - " + (d.got[0] + d.got[1]) + " of " + (d.want[0] + d.want[1]) + " stored";
+    const parts = [d.files[0] + " landscape and " + d.files[1] + " portrait pictures on the device"];
+    parts.push(d.lastRun ? "last download " + new Date(d.lastRun * 1000).toLocaleString() : "not downloaded yet");
+    if (d.error) parts.push(d.error);
+    return parts.join(" - ");
+  }
+  async function dailyStatus() {
+    try {
+      const d = await wallApi("daily");
+      const refresh = dailyActive !== d.active || (dailyRunning && !d.running);
+      dailyActive = d.active;
+      dailyRunning = d.running;
+      $("dailyState").textContent = dailyText(d);
+      $("dailyFetch").disabled = d.running;
+      if (refresh) {
+        wallCache = Date.now();
+        await wallStatus();
+      }
+      wallButtons();
+    } catch (e) {}
+  }
+  $("dailyFetch").onclick = async () => {
+    try {
+      showToast((await wallApi("daily/run", "POST")).message, false);
+      await dailyStatus();
+    } catch (e) {
+      showToast(e.message, true);
+    }
+  };
   wallStatus();
   setInterval(() => {
     if (!document.hidden && !wallBusy && $("wallGrid_l").offsetParent !== null) wallStatus();
   }, 5000);
+  setInterval(() => {
+    if (document.hidden || $("wallGrid_l").offsetParent === null) return;
+    if (dailyRunning || ++dailyTick % 5 === 0) dailyStatus();
+  }, 2000);
 
   let initial = "overview";
   try {

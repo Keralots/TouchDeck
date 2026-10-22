@@ -136,11 +136,7 @@ const char* pinKey(bool portrait) {
 
 void loadSource() {
   if (s_sourceLoaded) return;
-  Preferences prefs;
-  if (prefs.begin(NVS_NAMESPACE, true)) {
-    s_daily = prefs.getBool("wdaily", false);
-    prefs.end();
-  }
+  s_daily = dispSettings.wallDaily;
   s_sourceLoaded = true;
 }
 
@@ -417,11 +413,6 @@ bool wallDaily() {
 void wallSetDaily(bool daily) {
   loadSource();
   if (s_daily == daily) return;
-  Preferences prefs;
-  if (prefs.begin(NVS_NAMESPACE, false)) {
-    prefs.putBool("wdaily", daily);
-    prefs.end();
-  }
   s_daily = daily;
   wallInvalidateJobs();
   for (int p = 0; p < 2; p++) {

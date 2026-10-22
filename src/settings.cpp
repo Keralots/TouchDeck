@@ -88,6 +88,10 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.glassOn          = 80;
   ds.wallEvery        = 5;
   ds.wallOrder        = 0;
+  ds.wallDaily        = false;
+  ds.dailyHour        = 3;
+  ds.dailyOrient      = 0;
+  ds.dailyCount       = 12;
   ds.glassAutoText    = false;
   ds.smoothCharts     = true;
 }
@@ -151,6 +155,10 @@ void loadSettings() {
   dispSettings.wallEvery = prefs.getUChar("wevery", 5);
   if (!validWallEvery(dispSettings.wallEvery)) dispSettings.wallEvery = 5;
   dispSettings.wallOrder = min<uint8_t>(prefs.getUChar("worder", 0), 1);
+  dispSettings.wallDaily = prefs.getBool("wdaily", false);
+  dispSettings.dailyHour = min<uint8_t>(prefs.getUChar("dhour", 3), 23);
+  dispSettings.dailyOrient = min<uint8_t>(prefs.getUChar("dorient", 0), 2);
+  dispSettings.dailyCount = constrain(prefs.getUChar("dcount", 12), 1, DAILY_MAX_COUNT);
   dispSettings.glassAutoText = prefs.getBool("gauto", false);
   dispSettings.smoothCharts = prefs.getBool("smooth", true);
   advSettings.printers = prefs.getBool("prn", false);
@@ -219,6 +227,10 @@ void saveSettings() {
   prefs.putUChar("gon", dispSettings.glassOn);
   prefs.putUChar("wevery", dispSettings.wallEvery);
   prefs.putUChar("worder", dispSettings.wallOrder);
+  prefs.putBool("wdaily", dispSettings.wallDaily);
+  prefs.putUChar("dhour", dispSettings.dailyHour);
+  prefs.putUChar("dorient", dispSettings.dailyOrient);
+  prefs.putUChar("dcount", dispSettings.dailyCount);
   prefs.putBool("gauto", dispSettings.glassAutoText);
   prefs.putBool("smooth", dispSettings.smoothCharts);
   prefs.putBool("prn", advSettings.printers);

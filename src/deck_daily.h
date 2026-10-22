@@ -1,5 +1,5 @@
-// Daily wallpapers: random Windows Spotlight pictures fetched into their own
-// gallery (/wall/dl, /wall/dp), scaled and re-encoded on the device.
+// Daily wallpapers: random Windows Spotlight pictures fetched once a day into
+// their own gallery (/wall/dl, /wall/dp), scaled and re-encoded on the device.
 #ifndef DECK_DAILY_H
 #define DECK_DAILY_H
 
@@ -8,12 +8,16 @@
 
 namespace deck {
 
-// Starts a background fetch of up to `landscape` + `portrait` new pictures.
-// False when a fetch is already running or the task cannot start.
-bool dailyStart(int landscape, int portrait);
+// Fetch now with the current settings. False when a fetch is already running
+// or the task cannot start.
+bool dailyStart();
 bool dailyRunning();
+// True while fetching; done/total count pictures.
+bool dailyProgress(int& done, int& total);
+// Orientation or count changed: fetch again today.
+void dailyReplan();
 void dailyStatus(JsonObject out);
-// Loop task: tells the wallpaper gallery about finished fetches.
+// Loop task: schedule, retries, gallery refresh.
 void dailyPoll();
 
 }  // namespace deck

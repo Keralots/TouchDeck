@@ -1,5 +1,6 @@
 // Deck UI: toast, detail card, confirm card and the PC pairing card.
 #include "deck_ui_int.h"
+#include "deck_daily.h"
 
 namespace deckui {
 
@@ -31,6 +32,28 @@ constexpr uint32_t CONFIRM_TIMEOUT_MS = 8000;
 constexpr uint32_t CONFIRM_ARM_MS = 400;  // a stray second tap must not confirm
 
 bool modalShown() { return s_modalCard != nullptr; }
+
+// Thin line on the top edge while daily pictures download: swipes may hitch then.
+lv_obj_t* s_dailyBar = nullptr;
+
+void dailyBarSync() {
+  int done = 0, total = 0;
+  if (!deck::dailyProgress(done, total) || !total) {
+    if (s_dailyBar) lv_obj_add_flag(s_dailyBar, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  if (!s_dailyBar) {
+    s_dailyBar = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_dailyBar);
+    lv_obj_set_style_bg_color(s_dailyBar, lv_color_hex(C_OK), 0);
+    lv_obj_set_style_bg_opa(s_dailyBar, LV_OPA_80, 0);
+    lv_obj_remove_flag(s_dailyBar, LV_OBJ_FLAG_CLICKABLE);
+  }
+  // Half a step for the picture in progress, so the line moves from the start.
+  lv_obj_set_size(s_dailyBar, std::max(6, logicalW() * (2 * done + 1) / (2 * total)), 3);
+  lv_obj_set_pos(s_dailyBar, 0, 0);
+  lv_obj_remove_flag(s_dailyBar, LV_OBJ_FLAG_HIDDEN);
+}
 
 void setModalOpen(bool open) {
   portENTER_CRITICAL(&s_mux);

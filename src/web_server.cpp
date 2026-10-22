@@ -184,6 +184,10 @@ static void handleApiConfig() {
   display["glassDim"] = dispSettings.glassDim;
   display["wallEvery"] = dispSettings.wallEvery;
   display["wallOrder"] = dispSettings.wallOrder;
+  display["wallDaily"] = dispSettings.wallDaily;
+  display["dailyHour"] = dispSettings.dailyHour;
+  display["dailyOrient"] = dispSettings.dailyOrient;
+  display["dailyCount"] = dispSettings.dailyCount;
   display["glassOn"] = dispSettings.glassOn;
   display["glassAutoText"] = dispSettings.glassAutoText;
   display["smoothCharts"] = dispSettings.smoothCharts;
@@ -298,6 +302,10 @@ static void handleConfigExport() {
   display["glassDim"] = dispSettings.glassDim;
   display["wallEvery"] = dispSettings.wallEvery;
   display["wallOrder"] = dispSettings.wallOrder;
+  display["wallDaily"] = dispSettings.wallDaily;
+  display["dailyHour"] = dispSettings.dailyHour;
+  display["dailyOrient"] = dispSettings.dailyOrient;
+  display["dailyCount"] = dispSettings.dailyCount;
   display["glassOn"] = dispSettings.glassOn;
   display["glassAutoText"] = dispSettings.glassAutoText;
   display["smoothCharts"] = dispSettings.smoothCharts;
@@ -491,6 +499,10 @@ static void handleConfigImport() {
   nextDisplay.glassDim = displayDefaults.glassDim;
   nextDisplay.wallEvery = displayDefaults.wallEvery;
   nextDisplay.wallOrder = displayDefaults.wallOrder;
+  nextDisplay.wallDaily = displayDefaults.wallDaily;
+  nextDisplay.dailyHour = displayDefaults.dailyHour;
+  nextDisplay.dailyOrient = displayDefaults.dailyOrient;
+  nextDisplay.dailyCount = displayDefaults.dailyCount;
   nextDisplay.glassOn = displayDefaults.glassOn;
   nextDisplay.glassAutoText = displayDefaults.glassAutoText;
   nextDisplay.smoothCharts = displayDefaults.smoothCharts;
@@ -499,6 +511,11 @@ static void handleConfigImport() {
   if (!display["glassDim"].isNull()) READ_INT(display, "glassDim", 0, 60, nextDisplay.glassDim, uint8_t);
   if (!display["wallEvery"].isNull()) READ_INT(display, "wallEvery", 0, 60, nextDisplay.wallEvery, uint8_t);
   if (!display["wallOrder"].isNull()) READ_INT(display, "wallOrder", 0, 1, nextDisplay.wallOrder, uint8_t);
+  if (!display["wallDaily"].isNull()) READ_BOOL(display, "wallDaily", nextDisplay.wallDaily);
+  if (!display["dailyHour"].isNull()) READ_INT(display, "dailyHour", 0, 23, nextDisplay.dailyHour, uint8_t);
+  if (!display["dailyOrient"].isNull()) READ_INT(display, "dailyOrient", 0, 2, nextDisplay.dailyOrient, uint8_t);
+  if (!display["dailyCount"].isNull())
+    READ_INT(display, "dailyCount", 1, DAILY_MAX_COUNT, nextDisplay.dailyCount, uint8_t);
   if (!validWallEvery(nextDisplay.wallEvery)) {
     sendJsonMessage(400, false, "invalid wallEvery");
     return;
@@ -794,6 +811,12 @@ static void handleSaveDisplay() {
   deck::wallInvalidateJobs();
   dispSettings.wallEvery = every;
   dispSettings.wallOrder = order;
+  const bool oldDaily = dispSettings.wallDaily;
+  const uint32_t oldPlan = dispSettings.dailyOrient << 8 | dispSettings.dailyCount;
+  if (server.hasArg("wallSource")) dispSettings.wallDaily = server.arg("wallSource") == "1";
+  dispSettings.dailyHour = (uint8_t)clampedArg("dailyHour", dispSettings.dailyHour, 0, 23);
+  dispSettings.dailyOrient = (uint8_t)clampedArg("dailyOrient", dispSettings.dailyOrient, 0, 2);
+  dispSettings.dailyCount = (uint8_t)clampedArg("dailyCount", dispSettings.dailyCount, 1, DAILY_MAX_COUNT);
   const uint8_t oldRotation = dispSettings.rotation;
   const uint8_t oldTheme = dispSettings.theme;
   dispSettings.theme = (uint8_t)clampedArg("theme", dispSettings.theme, 0, 2);
@@ -816,6 +839,9 @@ static void handleSaveDisplay() {
   dispSettings.smoothCharts = server.hasArg("smoothCharts");
 
   saveSettings();
+  if (dispSettings.wallDaily != oldDaily) deck::wallSetDaily(dispSettings.wallDaily);
+  // A new plan fetches again today instead of waiting for the hour.
+  if (oldPlan != (uint32_t)(dispSettings.dailyOrient << 8 | dispSettings.dailyCount)) deck::dailyReplan();
   if (dispSettings.rotation != oldRotation || dispSettings.theme != oldTheme) applyDisplaySettings();
   else if (glassChanged) deckReloadWallpaper(false);
   sendJsonMessage(200, true, "Display settings applied.");
@@ -1311,6 +1337,7 @@ static void handleWallUpload() {
       wallComplete = false;
       wallBytes = 0;
       if (!deck::deckFsReady()) wallError = "file system not available";
+      else if (deck::wallDaily()) wallError = "daily pictures are downloaded, switch to My pictures to add your own";
       else {
         wallUploadCleanup();
         wallUploadRoom = wallRoom(server.arg("o") == "p");
@@ -1439,11 +1466,9 @@ static void handleWallsShow() {
   sendJsonMessage(200, true, "Wallpaper queued.");
 }
 
-// Spike: start a daily fetch (?l=&p= counts), read its progress, pick the gallery.
 static void handleDailyRun() {
-  const int l = constrain(server.arg("l").toInt(), 0, 24), p = constrain(server.arg("p").toInt(), 0, 24);
-  if (!deck::dailyStart(l, p)) sendJsonMessage(409, false, "already running or no file system");
-  else sendJsonMessage(200, true, "started");
+  if (!deck::dailyStart()) sendJsonMessage(409, false, "already fetching or offline");
+  else sendJsonMessage(200, true, "Fetching daily pictures.");
 }
 
 static void handleDailyStatus() {
@@ -1453,11 +1478,6 @@ static void handleDailyStatus() {
   serializeJson(doc, out);
   server.sendHeader("Cache-Control", "no-store");
   server.send(200, "application/json", out);
-}
-
-static void handleDailySource() {
-  deck::wallSetDaily(server.arg("d") == "1");
-  sendJsonMessage(200, true, deck::wallDaily() ? "daily" : "own");
 }
 
 static void handleWallsNext() {
@@ -1851,7 +1871,6 @@ void initWebServer() {
   server.on("/api/deck/walls/next", HTTP_POST, handleWallsNext);
   server.on("/api/deck/daily", HTTP_GET, handleDailyStatus);
   server.on("/api/deck/daily/run", HTTP_POST, handleDailyRun);
-  server.on("/api/deck/daily/source", HTTP_POST, handleDailySource);
   server.on("/api/deck/wallpaper/remove", HTTP_POST, handleWallRemove);
   server.on("/api/deck/bench", HTTP_POST, handleDeckBench);
   server.on("/api/deck/prefs", HTTP_POST, handleDeckPrefs);

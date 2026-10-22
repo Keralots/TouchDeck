@@ -31,6 +31,8 @@ struct LedSettings {
 };
 
 // Panel and PC metric tile settings, each its own NVS scalar.
+constexpr uint8_t DAILY_MAX_COUNT = 16;
+
 struct DisplaySettings {
   uint8_t  rotation;          // 0..3 (x90 degrees)
   uint16_t tempScaleMax;      // C, default full scale of temperature tiles
@@ -43,6 +45,10 @@ struct DisplaySettings {
   uint8_t  glassOn;           // Glass: accent fill of an "on" tile, opacity %, 20..100
   uint8_t  wallEvery;         // Wallpaper interval in minutes, 0 = off
   uint8_t  wallOrder;         // 0 = in order, 1 = shuffle
+  bool     wallDaily;         // Glass shows the Daily gallery (Spotlight), not own pictures
+  uint8_t  dailyHour;         // Daily fetch hour, local time 0..23
+  uint8_t  dailyOrient;       // 0 = landscape, 1 = portrait, 2 = both
+  uint8_t  dailyCount;        // Daily pictures per orientation, 1..DAILY_MAX_COUNT
   bool     glassAutoText;     // Glass: text colour and tint follow the picture per tile
   bool     smoothCharts;      // PC metric charts glide between packets
 };

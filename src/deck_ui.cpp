@@ -847,6 +847,7 @@ void deckTick() {
 
   if (s_ed.pending != EditState::P_NONE) edFinish();
   tickWallpaper();
+  dailyBarSync();
   updateHeaders();
   blinkClocks();
   qpUpdateStatus(false);

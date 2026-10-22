@@ -339,6 +339,7 @@ extern int8_t s_confirmHold;
 bool modalShown();
 void setModalOpen(bool open);
 void deckToastShow(const char* text, uint32_t holdMs);
+void dailyBarSync();
 void closeModal();
 void refreshModal();
 void openModal(int tileIdx);

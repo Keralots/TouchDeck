@@ -13,10 +13,10 @@ constexpr size_t WALL_RESERVE = 256 * 1024;
 constexpr size_t WALL_MAX_JPEG = 200 * 1024;
 struct WallFile { String name; size_t size; };
 bool wallValidName(const String& name);
-// Galleries: own uploads or daily downloads; the active one is in NVS "wdaily".
+// Galleries: own uploads or daily downloads (dispSettings.wallDaily).
 const char* wallDir(bool portrait, bool daily);
 bool wallDaily();
-// Loop task only.
+// Loop task only, after dispSettings.wallDaily changed.
 void wallSetDaily(bool daily);
 String wallGalleryPath(bool portrait, const String& name = "");
 std::vector<WallFile> wallFiles(bool portrait);
