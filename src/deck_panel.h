@@ -60,7 +60,34 @@ bool panelWaitLvReady(uint32_t timeoutMs);
 // The visible strip is A | B (or A over B), offset `off` pixels into it
 // (0 = all A, logicalW() or logicalH() = all B). Only the touch task drives
 // drags; only the flush task advances animations.
-enum CompMode : uint8_t { COMP_NONE = 0, COMP_DRAG, COMP_ANIM, COMP_HOLD };
+enum CompMode : uint8_t { COMP_NONE = 0, COMP_DRAG, COMP_ANIM, COMP_HOLD, COMP_FRAME, COMP_FRAME_HOLD };
+
+struct FrameRect { int16_t x, y, w, h; };
+// Scratch for the compositor: one entry per rect, filled each frame.
+struct FrameTileRun {
+  int16_t left, top, w, h, srcX, srcY;
+  uint32_t dx, dy;
+  uint8_t a5;
+};
+struct FrameScene {
+  Src base, picture, page;
+  const FrameRect* rects = nullptr;
+  FrameTileRun* runs = nullptr;  // capacity >= count
+  uint16_t count = 0;
+  bool waking = false;
+  bool clockFade = true;
+  // Optional ARGB8888 clock patch, captured by the loop before the animation.
+  const uint32_t* clock = nullptr;
+  uint16_t clockStride = 0;
+  FrameRect clockRect = {};
+};
+// Tiles leave one after another over the still page background, then the
+// background fades to the picture (reversed when waking).
+constexpr uint32_t FRAME_TILE_MS = 300, FRAME_FADE_MS = 500;
+inline uint32_t frameTileStep(int count) { return count > 1 ? (480 / (count - 1) < 40 ? 480 / (count - 1) : 40) : 0; }
+inline uint32_t frameTilesMs(int count) { return count ? FRAME_TILE_MS + (count - 1) * frameTileStep(count) : 0; }
+// Sources stay immutable until panelQuiesce. count == 0 is a picture crossfade.
+bool compBeginFrame(const FrameScene& scene, uint32_t durationMs);
 
 // Page strip, horizontal (columns) or vertical (pages of a column); pageA is
 // the dot index of A on that axis.
@@ -98,6 +125,8 @@ struct PanelStats {
   uint32_t flushUsAvg;
   uint32_t flushUsMax;
   uint32_t buildUsAvg;
+  uint32_t frameUsAvg;  // first chunk build + elapsed flush (remaining build overlaps DMA)
+  uint32_t frameUsMax;
   uint32_t teLate;      // edges skipped because the frame was not ready in time
   uint32_t teTimeouts;  // frames sent without a TE edge (TE line dead)
   uint32_t lvDropped;   // LVGL frames superseded by the compositor
@@ -105,6 +134,8 @@ struct PanelStats {
 };
 // Snapshot and reset the counters.
 PanelStats panelTakeStats();
+// Independent counters, published after the last flush or a quiesced cancellation.
+bool compFrameResult(PanelStats& out);
 
 }  // namespace deck
 

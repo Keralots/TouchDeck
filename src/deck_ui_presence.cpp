@@ -39,7 +39,7 @@ void presenceTick() {
   const uint32_t touch = touchLastActivity();
   if (touch && (int32_t)(touch - s_activeMs) > 0) s_activeMs = touch;
   const bool sleep = p.sleepMin && getScreenState() == SCREEN_DECK && now - s_activeMs >= p.sleepMin * 60000UL;
-  setIdleSleep(sleep, (uint8_t)((p.dimPct * 255 + 50) / 100));
+  if (!frameSleep(sleep)) setIdleSleep(sleep, (uint8_t)((p.dimPct * 255 + 50) / 100));
 }
 
 }  // namespace deckui

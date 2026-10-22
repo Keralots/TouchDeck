@@ -29,6 +29,9 @@ String deckLedEntity();
 bool deckSetLedEntity(const String& id, String& err);
 // /api/status "presence": present, asleep, idle_s, sleep_min.
 void deckPresenceJson(JsonObject out);
+// Photo frame bench hooks, loop task only.
+bool deckFrameCommand(const String& op);
+void deckFrameJson(JsonObject out);
 // Render pending LVGL changes now, from inside a long web handler (OTA).
 void deckRefreshNow();
 // Rotation changed in the portal: re-layout everything at the new size.

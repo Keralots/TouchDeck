@@ -147,6 +147,10 @@ static uint16_t minuteOfDayArg(const char* name, uint16_t current) {
 static void presenceJson(JsonObject out) {
   out["sleep"] = presenceSettings.sleepMin;
   out["dim"] = presenceSettings.dimPct;
+  out["frame"] = presenceSettings.frame;
+  out["frameEvery"] = presenceSettings.frameEvery;
+  out["frameClock"] = presenceSettings.frameClock;
+  out["frameAnim"] = presenceSettings.frameAnim;
   out["pc"] = presenceSettings.pc;
   JsonArray ids = out["entities"].to<JsonArray>();
   for (const String& id : presenceSettings.entities)
@@ -601,6 +605,16 @@ static void handleConfigImport() {
     READ_INT(presence, "sleep", 0, 1440, nextPresence.sleepMin, uint16_t);
     READ_INT(presence, "dim", 0, 100, nextPresence.dimPct, uint8_t);
     READ_BOOL(presence, "pc", nextPresence.pc);
+    if (!presence["frame"].isNull()) READ_BOOL(presence, "frame", nextPresence.frame);
+    if (!presence["frameClock"].isNull()) READ_BOOL(presence, "frameClock", nextPresence.frameClock);
+    if (!presence["frameAnim"].isNull()) READ_BOOL(presence, "frameAnim", nextPresence.frameAnim);
+    if (!presence["frameEvery"].isNull()) {
+      READ_INT(presence, "frameEvery", 1, 30, nextPresence.frameEvery, uint8_t);
+      if (!validFrameEvery(nextPresence.frameEvery)) {
+        sendJsonMessage(400, false, "Invalid frame interval.");
+        return;
+      }
+    }
     size_t n = 0;
     for (JsonVariantConst v : presence["entities"].as<JsonArrayConst>()) {
       const String id = (const char*)(v | "");
@@ -706,6 +720,15 @@ static void handleSaveLight() {
   nextPresence.sleepMin = (uint16_t)clampedArg("sleepMin", presenceSettings.sleepMin, 0, 1440);
   nextPresence.dimPct = server.arg("sleepMode") == "dim" ? (uint8_t)clampedArg("sleepDim", 10, 1, 100) : 0;
   nextPresence.pc = server.hasArg("presencePc");
+  nextPresence.frame = server.arg("sleepMode") == "frame";
+  const int frameEvery = clampedArg("frameEvery", 5, 1, 30);
+  if (!validFrameEvery(frameEvery)) {
+    sendJsonMessage(400, false, "Invalid frame interval.");
+    return;
+  }
+  nextPresence.frameEvery = frameEvery;
+  nextPresence.frameClock = server.hasArg("frameClock");
+  nextPresence.frameAnim = server.hasArg("frameAnim");
   size_t n = 0;
   for (size_t i = 0; i < MAX_PRESENCE_ENTITIES; i++) {
     String id = server.arg("presence" + String(i));
@@ -1488,6 +1511,27 @@ static void handleWallsNext() {
   sendJsonMessage(200, true, "Wallpaper queued.");
 }
 
+static void handleFrameGet() {
+  JsonDocument doc;
+  deckFrameJson(doc.to<JsonObject>());
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+static void handleFramePost() {
+  const String op = server.arg("op");
+  if (op != "enter" && op != "exit" && op != "next") {
+    sendJsonMessage(400, false, "Expected enter, exit or next.");
+    return;
+  }
+  if (!deckFrameCommand(op)) {
+    sendJsonMessage(409, false, "Photo frame not available now.");
+    return;
+  }
+  handleFrameGet();
+}
+
 // POST /api/deck/bench?n=5 - bench hook, time a render of the shown page.
 static void handleDeckBench() {
   uint32_t avg = 0, mx = 0;
@@ -1873,6 +1917,8 @@ void initWebServer() {
   server.on("/api/deck/daily/run", HTTP_POST, handleDailyRun);
   server.on("/api/deck/wallpaper/remove", HTTP_POST, handleWallRemove);
   server.on("/api/deck/bench", HTTP_POST, handleDeckBench);
+  server.on("/api/deck/frame", HTTP_GET, handleFrameGet);
+  server.on("/api/deck/frame", HTTP_POST, handleFramePost);
   server.on("/api/deck/prefs", HTTP_POST, handleDeckPrefs);
   server.on("/api/deck/icons", HTTP_POST, handleIconsFinish, handleIconsUpload);
   server.on("/mdi.ttf", HTTP_GET, handleIconsFont);

@@ -188,6 +188,7 @@
   $("nightEnabled").addEventListener("change", updateNightFields);
   function updateSleepFields() {
     $("sleepDimField").classList.toggle("hidden", $("sleepMode").value !== "dim");
+    $("sleepFrameFields").classList.toggle("hidden", $("sleepMode").value !== "frame");
   }
   $("sleepMode").addEventListener("change", updateSleepFields);
   /* Entity suggestions from the list cached on the device ("Update from HA" in Pages & tiles). */
@@ -332,7 +333,10 @@
     if (window.dkLedSync) window.dkLedSync();
     const p = c.presence || {};
     setVal("sleepMin", p.sleep || 0);
-    setVal("sleepMode", p.dim ? "dim" : "off");
+    setVal("sleepMode", p.frame ? "frame" : p.dim ? "dim" : "off");
+    setVal("frameEvery", p.frameEvery || 5);
+    setCheck("frameClock", p.frameClock !== false);
+    setCheck("frameAnim", p.frameAnim !== false);
     setVal("sleepDim", p.dim || 10);
     for (let i = 0; i < 4; i++) setVal("presence" + i, (p.entities || [])[i] || "");
     setCheck("presencePc", p.pc);

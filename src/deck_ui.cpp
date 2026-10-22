@@ -109,7 +109,7 @@ void indevRead(lv_indev_t*, lv_indev_data_t* data) {
   const TouchPoint p = touchForLvgl();
   data->point.x = p.x;
   data->point.y = p.y;
-  data->state = p.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+  data->state = p.pressed && !frameActive() ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
 }
 
 // --- Navigation -------------------------------------------------------------------------
@@ -142,6 +142,7 @@ String activePageId() {
 }
 
 void goToPage(const String& id) {
+  if (frameActive()) stopGestures();
   for (int i = 0; i < s_count; i++) {
     if (!s_pages[i].def || s_pages[i].def->id != id) continue;
     const int a = sh.active;
@@ -445,6 +446,10 @@ void releaseSwipe() {
 // one the touch task (other core) took just before gets time to reach the
 // compositor, so panelQuiesce cancels it.
 void stopGestures() {
+  if (frameActive()) {
+    frameAbort();
+    presenceWake();
+  }
   portENTER_CRITICAL(&s_mux);
   for (int i = 0; i < MAX_PAGES; i++) sh.valid[i] = false;
   sh.panelValid = false;
@@ -818,11 +823,12 @@ void deckTick() {
   // A swipe took the touch: make sure LVGL never turns it into a click.
   if (touchTakeSwipeStarted()) lv_indev_reset(s_indev, nullptr);
 
-  if (touchTakeActivity() && displaySleepingForTouch()) {
+  if (touchTakeActivity() && (displaySleepingForTouch() || frameActive())) {
     wakeDisplayFromTouch();
     touchSuppressUntilRelease();
   }
   presenceTick();
+  frameTick();
 
   // System screens (splash, WiFi setup, OTA) cover the pages: no gestures,
   // no panel or card under them.
@@ -836,7 +842,7 @@ void deckTick() {
     edClose();
   }
   portENTER_CRITICAL(&s_mux);
-  sh.swipeEnabled = !systemScreen;
+  sh.swipeEnabled = !systemScreen && !frameActive();
   portEXIT_CRITICAL(&s_mux);
   sysScreenSync(sc);
 
@@ -844,6 +850,15 @@ void deckTick() {
 
   mqttTick();
   if (compOwnsScreen()) return;
+
+  if (frameActive()) {
+    frameTick();
+    if (!compOwnsScreen()) {
+      dailyBarSync();
+      lv_timer_handler();
+    }
+    return;
+  }
 
   if (s_ed.pending != EditState::P_NONE) edFinish();
   tickWallpaper();
@@ -916,6 +931,7 @@ void deckReloadWallpaper(bool fileChanged) {
 }
 
 bool deckBenchRender(int n, uint32_t& avgUs, uint32_t& maxUs) {
+  if (frameActive()) return false;
   if (!s_disp || !s_count) return false;
   const int a = sh.active;
   Page& pg = s_pages[a];
@@ -987,6 +1003,7 @@ bool deckSetLedEntity(const String& id, String& err) {
 namespace deckui {
 void setHeader(bool on) {
   if (on == s_header) return;
+  if (frameActive()) stopGestures();
   s_header = on;
   Preferences prefs;
   if (prefs.begin("deckui", false)) {
@@ -1084,6 +1101,7 @@ void deckSetPrinters(bool on) {
 }
 
 bool deckTestCard(const String& tileId) {
+  if (frameActive()) return false;
   if (s_ed.root) return false;  // the editor blocks gestures until it closes
   for (size_t i = 0; i < s_tiles.size(); i++) {
     if (s_tiles[i].def->id != tileId) continue;
@@ -1094,6 +1112,7 @@ bool deckTestCard(const String& tileId) {
 }
 
 bool deckTestTap(const String& tileId, bool hold) {
+  if (frameActive()) return false;
   if (s_ed.root) return false;
   for (TileRt& r : s_tiles) {
     if (r.def->id != tileId || r.def->type == TILE_METRIC || r.def->type == TILE_CLOCK || r.def->type == TILE_MEDIA) continue;
@@ -1106,6 +1125,7 @@ bool deckTestTap(const String& tileId, bool hold) {
 }
 
 bool deckTestSlide(const String& tileId, int pct) {
+  if (frameActive()) return false;
   for (TileRt& r : s_tiles) {
     if (r.def->id != tileId || !r.fill) continue;
     if (r.def->pcVolume) return false;  // PC commands require a real touch.
@@ -1126,6 +1146,7 @@ bool deckTestConfirm(bool ok) {
 }
 
 bool deckTestEdit(const String& op, int tile, int x, int y, int w, int h) {
+  if (frameActive()) return false;
   if (!s_disp) return false;
   if (op == "open") {
     edOpen(sh.active);

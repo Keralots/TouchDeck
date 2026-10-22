@@ -26,6 +26,8 @@ String wallPinned(bool portrait);
 bool wallPin(bool portrait, const String& name);
 void wallClearPin(bool portrait);
 bool wallValidateJpeg(const char* path, bool portrait);
+// Worker with an internal-RAM stack only. Undimmed RGB565, no full-size scratch.
+bool wallLoadPicture(const char* path, int w, int h, uint16_t* pixels);
 // Loop task only. Requests replace older jobs without touching their buffers.
 void wallRequest(bool portrait, const String& name);
 bool wallNext(bool portrait);

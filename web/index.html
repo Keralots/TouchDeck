@@ -670,9 +670,37 @@
                         <select id="sleepMode" name="sleepMode">
                           <option value="off">Screen off</option>
                           <option value="dim">Dim</option>
+                          <option value="frame">Photo frame</option>
                         </select>
                       </div>
                     </div>
+                  </div>
+                  <div class="hidden" id="sleepFrameFields" style="margin-bottom: 14px">
+                    <div class="field">
+                      <label class="field-label" for="frameEvery">Change picture every</label>
+                      <div class="select-wrap">
+                        <select id="frameEvery" name="frameEvery">
+                          <option value="1">1 minute</option>
+                          <option value="2">2 minutes</option>
+                          <option value="5" selected>5 minutes</option>
+                          <option value="10">10 minutes</option>
+                          <option value="15">15 minutes</option>
+                          <option value="30">30 minutes</option>
+                        </select>
+                      </div>
+                      <p class="field-hint">
+                        Shows the wallpaper gallery (Display &gt; Glass wallpaper) in any theme. The screen turns off
+                        at night and when the gallery is empty.
+                      </p>
+                    </div>
+                    <label class="check-row standalone"
+                      ><input type="checkbox" id="frameClock" name="frameClock" checked /><span class="check-box"></span
+                      ><span class="check-text"><strong>Show clock and date</strong></span></label
+                    >
+                    <label class="check-row standalone"
+                      ><input type="checkbox" id="frameAnim" name="frameAnim" checked /><span class="check-box"></span
+                      ><span class="check-text"><strong>Animate tiles</strong></span></label
+                    >
                   </div>
                   <div class="field hidden" id="sleepDimField">
                     <label class="field-label" for="sleepDim">Dim to</label>

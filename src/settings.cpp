@@ -13,6 +13,10 @@ LedSettings ledSettings;
 AdvancedSettings advSettings = {};
 PresenceSettings presenceSettings;
 
+bool validFrameEvery(int minutes) {
+  return minutes == 1 || minutes == 2 || minutes == 5 || minutes == 10 || minutes == 15 || minutes == 30;
+}
+
 static Preferences prefs;
 static const uint8_t BACKLIGHT_SETTINGS_VERSION = 1;
 static const uint8_t LED_SETTINGS_VERSION = 2;
@@ -192,6 +196,11 @@ void loadSettings() {
   presenceSettings.sleepMin = min<uint16_t>(prefs.getUShort("psleep", 0), 1440);
   presenceSettings.dimPct = min<uint8_t>(prefs.getUChar("pdim", 0), 100);
   presenceSettings.pc = prefs.getBool("ppc", false);
+  presenceSettings.frame = prefs.getBool("pframe", false);
+  presenceSettings.frameEvery = prefs.getUChar("pfevery", 5);
+  if (!validFrameEvery(presenceSettings.frameEvery)) presenceSettings.frameEvery = 5;
+  presenceSettings.frameClock = prefs.getBool("pfclock", true);
+  presenceSettings.frameAnim = prefs.getBool("pfanim", true);
   // Entity ids, comma-separated.
   const String ids = prefs.getString("pent", "");
   for (size_t i = 0, from = 0; i < MAX_PRESENCE_ENTITIES && from < ids.length(); i++) {
@@ -243,6 +252,10 @@ void saveSettings() {
   prefs.putUShort("psleep", presenceSettings.sleepMin);
   prefs.putUChar("pdim", presenceSettings.dimPct);
   prefs.putBool("ppc", presenceSettings.pc);
+  prefs.putBool("pframe", presenceSettings.frame);
+  prefs.putUChar("pfevery", presenceSettings.frameEvery);
+  prefs.putBool("pfclock", presenceSettings.frameClock);
+  prefs.putBool("pfanim", presenceSettings.frameAnim);
   String ids;
   for (const String& id : presenceSettings.entities)
     if (id.length()) ids += (ids.length() ? "," : "") + id;
