@@ -806,6 +806,7 @@
       grid.appendChild(button);
     }
     $("wallSpace_" + o).textContent =
+      (wallSource === 2 ? (wallGallery() === "d" ? "Daily: " : "My pictures: ") : "") +
       s.files.length +
       " of " +
       (s.count || 0) +
@@ -935,7 +936,11 @@
     } finally {
       $("wallProgress_" + o).textContent = attempted + " / " + files.length + " - " + stored + " stored";
       wallCache = Date.now();
-      await wallStatus();
+      // Uploads land in My pictures: show them when Both was browsing Daily.
+      if (wallSource === 2 && stored && $("wallBrowse").value !== "m") {
+        $("wallBrowse").value = "m";
+        resetWalls();
+      } else await wallStatus();
       wallBusy = false;
       wallButtons();
     }
