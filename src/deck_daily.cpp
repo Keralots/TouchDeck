@@ -10,7 +10,6 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
-#include <LittleFS.h>
 #include <Preferences.h>
 #include <esp_heap_caps.h>
 #include <esp_rom_crc.h>
@@ -33,7 +32,7 @@ const DecompFn romDecomp = (DecompFn)0x40000864;
 
 constexpr const char* API_URL =
     "https://fd.api.iris.microsoft.com/v4/api/selection?placement=88000820&bcnt=4&country=US&locale=en-US&fmt=json";
-constexpr const char* TMP_PATH = "/wall/daily.up";
+const char* tempPath() { return wallTemp(true); }
 constexpr int MAX_API_CALLS = 12;  // 4 candidates each; some are progressive JPEGs
 constexpr int MAX_LOG = 2 * DAILY_MAX_COUNT;
 constexpr int MAX_TRIES = 3;       // failed runs per day
@@ -88,7 +87,7 @@ struct LogEntry {
 
 struct Status {
   bool running;
-  int want[2], got[2], apiCalls, removed;
+  int want[2], got[2], apiCalls, removed, archiveMax;
   uint32_t startMs, totalMs, minInternal;
   char step[40], error[64];
   LogEntry log[MAX_LOG];
@@ -264,17 +263,21 @@ size_t writeJpeg(void* arg, size_t, const void* data, size_t len) {
   return ((File*)arg)->write((const uint8_t*)data, len);
 }
 
-size_t fsFree() { return LittleFS.totalBytes() - LittleFS.usedBytes(); }
+uint64_t fsFree() { return wallFreeBytes(); }
 
 String dailyPath(bool portrait, const String& name) { return String(wallDir(portrait, true)) + "/" + name; }
 
 // Make room for one more picture by dropping daily files that are not kept.
-bool makeRoom(bool portrait, const std::vector<String>& keep) {
+bool makeRoom(bool portrait, const WallVector<uint64_t>& keep) {
   while (fsFree() < WALL_RESERVE + WALL_MAX_JPEG) {
     bool removed = false;
-    for (const WallFile& f : wallListDir(wallDir(portrait, true))) {
-      if (std::find(keep.begin(), keep.end(), f.name) != keep.end()) continue;
-      LittleFS.remove(dailyPath(portrait, f.name));
+    auto files = wallListDir(wallDir(portrait, true));
+    if (wallOnSd()) std::sort(files.begin(), files.end(), [](const WallFile& a, const WallFile& b) {
+      return a.date == b.date ? a.id < b.id : a.date < b.date;
+    });
+    for (const WallFile& f : files) {
+      if (std::find(keep.begin(), keep.end(), (uint64_t)(uint32_t)f.id) != keep.end()) continue;
+      if (!wallRemoveFile(portrait, true, f.name(), wallOnSd())) continue;
       update([](Status& s) { s.removed++; });
       s_changed[portrait] = true;
       removed = true;
@@ -285,9 +288,26 @@ bool makeRoom(bool portrait, const std::vector<String>& keep) {
   return true;
 }
 
+// Drop the oldest daily pictures above max; -1 when protected ones keep it above.
+int trimArchive(bool portrait, int max) {
+  auto files = wallListDir(wallDir(portrait, true));
+  std::sort(files.begin(), files.end(), [](const WallFile& a, const WallFile& b) {
+    return a.date == b.date ? a.id < b.id : a.date < b.date;
+  });
+  size_t count = files.size();
+  int removed = 0;
+  for (const auto& f : files) {
+    if (count <= (size_t)max) break;
+    if (!wallRemoveFile(portrait, true, f.name(), true)) continue;
+    --count;
+    ++removed;
+  }
+  return count > (size_t)max ? -1 : removed;
+}
+
 void clearDaily(bool portrait) {
   for (const WallFile& f : wallListDir(wallDir(portrait, true))) {
-    LittleFS.remove(dailyPath(portrait, f.name));
+    if (!wallRemoveFile(portrait, true, f.name())) continue;
     update([](Status& s) { s.removed++; });
     s_changed[portrait] = true;
   }
@@ -351,38 +371,44 @@ bool fetchImage(const Pick& pick, const String& name, LogEntry& log, bool* offli
   }
   bool ok = false;
   for (int quality = 85; quality >= 60 && !ok; quality -= 10) {
-    File f = LittleFS.open(TMP_PATH, "w");
+    File f = wallFs().open(tempPath(), "w");
     ok = f && fmt2jpg_cb(out, tw * th * 3, tw, th, PIXFORMAT_RGB888, quality, writeJpeg, &f);
     log.bytesOut = f ? f.position() : 0;
     f.close();
     ok = ok && log.bytesOut <= WALL_MAX_JPEG;
   }
   free(out);
-  ok = ok && wallValidateJpeg(TMP_PATH, p);
+  ok = ok && wallValidateJpeg(tempPath(), p);
   if (ok) {
-    LittleFS.remove(dailyPath(p, name));
-    ok = LittleFS.rename(TMP_PATH, dailyPath(p, name));
+    wallFs().remove(dailyPath(p, name));
+    ok = wallFs().rename(tempPath(), dailyPath(p, name));
   }
-  LittleFS.remove(TMP_PATH);
+  wallFs().remove(tempPath());
+  if (ok) wallIndexChanged(p, true, name);
   if (!ok) strlcpy(log.error, "could not store", sizeof(log.error));
   return ok;
 }
 
 void runTask(void*) {
-  int want[2];
+  int want[2], archiveMax;
   portENTER_CRITICAL(&s_mux);
   want[0] = s_status->want[0];
   want[1] = s_status->want[1];
+  archiveMax = s_status->archiveMax;
   portEXIT_CRITICAL(&s_mux);
   if (!tlsPsramInstall()) setError("TLS setup failed");
   else {
-    LittleFS.remove(TMP_PATH);
-    LittleFS.mkdir("/wall");
-    LittleFS.mkdir(wallDir(false, true));
-    LittleFS.mkdir(wallDir(true, true));
+    wallFs().remove(tempPath());
+    wallFs().mkdir(wallRoot());
+    wallFs().mkdir(wallDir(false, true));
+    wallFs().mkdir(wallDir(true, true));
     for (int p = 0; p < 2; p++)
-      if (!want[p]) clearDaily(p);  // orientation no longer wanted: free its flash first
-    std::vector<String> keep[2], seen;
+      if (!wallOnSd() && !want[p]) clearDaily(p);  // orientation no longer wanted: free its flash first
+    WallVector<uint64_t> keep[2], seen;
+    if (wallOnSd())
+      for (int p = 0; p < 2; p++)
+        for (const auto& f : wallListDir(wallDir(p, true)))
+          seen.push_back((uint64_t)(uint32_t)f.id | (uint64_t)p << 32);
     bool stop = false;
     int got[2] = {}, offlineRun = 0;
     for (int call = 0; call < MAX_API_CALLS && !stop && (got[0] < want[0] || got[1] < want[1]); call++) {
@@ -392,11 +418,14 @@ void runTask(void*) {
       if (!fetchApi(picks)) break;
       for (const Pick& pick : picks) {
         const bool p = pick.portrait;
-        if (got[p] >= want[p] || std::find(seen.begin(), seen.end(), pick.url) != seen.end()) continue;
-        seen.push_back(pick.url);
+        if (got[p] >= want[p]) continue;
         char name[13];
         snprintf(name, sizeof(name), "%08lx.jpg",
                  (unsigned long)esp_rom_crc32_le(0, (const uint8_t*)pick.url.c_str(), pick.url.length()));
+        const uint64_t id = wallId(name) | (uint64_t)(wallOnSd() && p) << 32;
+        if (std::find(seen.begin(), seen.end(), id) != seen.end()) continue;
+        seen.push_back(id);
+        if (wallOnSd() && wallFs().exists(dailyPath(p, name))) continue;
         LogEntry log = {};
         strlcpy(log.name, name, sizeof(log.name));
         log.portrait = p;
@@ -405,12 +434,12 @@ void runTask(void*) {
         setStep(step);
         const uint32_t start = millis();
         bool offline = false;
-        if (LittleFS.exists(dailyPath(p, name))) log.ok = true;
+        if (wallFs().exists(dailyPath(p, name))) log.ok = true;
         else if (!makeRoom(p, keep[p])) strlcpy(log.error, "flash full", sizeof(log.error));
         else log.ok = fetchImage(pick, name, log, &offline);
         log.ms = millis() - start;
         if (log.ok) {
-          keep[p].push_back(name);
+          keep[p].push_back(wallId(name));
           got[p]++;
           s_changed[p] = true;
         }
@@ -430,15 +459,23 @@ void runTask(void*) {
     }
     // A full set replaces the previous pictures; a short one keeps them.
     for (int p = 0; p < 2; p++) {
+      if (wallOnSd()) {
+        const int removed = trimArchive(p, archiveMax);
+        update([removed](Status& s) { s.removed += removed < 0 ? 0 : removed; });
+        if (removed != 0) s_changed[p] = true;
+        if (removed < 0) setError("Could not trim daily archive");
+        continue;
+      }
       if (!want[p] || got[p] < want[p]) continue;
       for (const WallFile& f : wallListDir(wallDir(p, true)))
-        if (std::find(keep[p].begin(), keep[p].end(), f.name) == keep[p].end()) {
-          LittleFS.remove(dailyPath(p, f.name));
+        if (std::find(keep[p].begin(), keep[p].end(), (uint64_t)(uint32_t)f.id) == keep[p].end()) {
+          if (!wallRemoveFile(p, true, f.name())) continue;
           update([](Status& s) { s.removed++; });
           s_changed[p] = true;
         }
     }
   }
+  wallRebuildIndex();
   update([&](Status& s) {
     s.running = false;
     s.totalMs = millis() - s.startMs;
@@ -479,15 +516,18 @@ bool wants(int p) { return dispSettings.dailyOrient == 2 || dispSettings.dailyOr
 
 bool dailyStart() {
   if (!s_status) s_status = (Status*)heap_caps_calloc(1, sizeof(Status), MALLOC_CAP_SPIRAM);
-  if (!s_status || !deckFsReady() || !WiFi.isConnected()) return false;
+  if (!s_status || (!wallOnSd() && !deckFsReady()) || !WiFi.isConnected() ||
+      (wallOnSd() && time(nullptr) < 1700000000)) return false;
   bool busy;
   portENTER_CRITICAL(&s_mux);
   busy = s_status->running;
   if (!busy) {
     memset(s_status, 0, sizeof(Status));
     s_status->running = true;
-    s_status->want[0] = wants(0) ? dispSettings.dailyCount : 0;
-    s_status->want[1] = wants(1) ? dispSettings.dailyCount : 0;
+    const int count = std::min<int>(dispSettings.dailyCount, wallOnSd() ? 32 : 16);
+    s_status->want[0] = wants(0) ? count : 0;
+    s_status->want[1] = wants(1) ? count : 0;
+    s_status->archiveMax = dispSettings.dailyMax;
     s_status->startMs = millis();
     strlcpy(s_status->step, "Starting", sizeof(s_status->step));
   }
@@ -500,6 +540,10 @@ bool dailyStart() {
   }
   s_replan = false;
   return true;
+}
+
+void dailyTrim(bool portrait) {
+  if (wallOnSd() && !dailyRunning()) trimArchive(portrait, dispSettings.dailyMax);
 }
 
 bool dailyRunning() {
@@ -529,11 +573,13 @@ void dailyReplan() {
 void dailyStatus(JsonObject out) {
   loadLastRun();
   out["active"] = wallDaily();
+  out["source"] = wallSource();
+  out["archiveMax"] = wallOnSd() ? dispSettings.dailyMax : 0;
   out["running"] = false;
   out["lastRun"] = s_lastRun;
   out["files"][0] = wallListDir(wallDir(false, true)).size();
   out["files"][1] = wallListDir(wallDir(true, true)).size();
-  out["fsFree"] = deckFsReady() ? fsFree() : 0;
+  out["fsFree"] = fsFree();
   Status* s = s_status ? (Status*)heap_caps_calloc(1, sizeof(Status), MALLOC_CAP_SPIRAM) : nullptr;
   if (!s) return;
   portENTER_CRITICAL(&s_mux);
@@ -579,7 +625,7 @@ void dailyPoll() {
     if (stored) saveLastRun(time(nullptr));
     else s_retryAtMs = millis() + RETRY_MS;
   }
-  if (!dispSettings.wallDaily || dailyRunning() || millis() - s_checkMs < 10000) return;
+  if (!wallDaily() || dailyRunning() || millis() - s_checkMs < 10000) return;
   s_checkMs = millis();
   const time_t now = time(nullptr);
   if (now < 1700000000 || !WiFi.isConnected()) return;  // clock not set yet

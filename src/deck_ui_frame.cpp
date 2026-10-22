@@ -17,9 +17,10 @@ lv_image_dsc_t s_pictureDsc = {};
 lv_draw_buf_t s_clockBuf = {};
 uint32_t* s_clockPixels = nullptr;
 uint32_t s_changed = 0, s_clockCheck = 0, s_retry = 0, s_epoch = 0, s_galleryCheck = 0;
-bool s_bench = false, s_tried = false, s_nextNow = false, s_daily = false, s_night = false;
+bool s_bench = false, s_tried = false, s_nextNow = false, s_night = false;
+uint8_t s_source = 0;
 String s_name, s_nextName, s_error;
-std::vector<String> s_shown;
+WallVector<uint64_t> s_shown;
 PanelStats s_lastStats = {};
 const char* s_animation = "none";
 const char* s_lastAnimation = "none";
@@ -71,20 +72,21 @@ bool requestPicture() {
   if (files.empty()) { s_error = "empty gallery"; return false; }
   size_t index = 0;
   if (dispSettings.wallOrder && files.size() > 1) {
-    std::vector<size_t> choices;
+    WallVector<size_t> choices;
     for (size_t i = 0; i < files.size(); i++)
-      if (std::find(s_shown.begin(), s_shown.end(), files[i].name) == s_shown.end()) choices.push_back(i);
+      if (std::find(s_shown.begin(), s_shown.end(), files[i].id) == s_shown.end()) choices.push_back(i);
     if (choices.empty()) {
-      s_shown.assign(1, s_name);
+      s_shown.assign(1, wallId(s_name));
       for (size_t i = 0; i < files.size(); i++)
-        if (files[i].name != s_name) choices.push_back(i);
+        if (files[i].name() != s_name) choices.push_back(i);
     }
     index = choices[esp_random() % choices.size()];
   } else {
     for (size_t i = 0; i < files.size(); i++)
-      if (files[i].name > s_name) { index = i; break; }
+      if (files[i].name() > s_name) { index = i; break; }
   }
-  s_nextName = files[index].name;
+  s_nextName = files[index].name();
+  wallProtect(s_width < s_height, 3, wallSource() == 1 ? "d/" + s_nextName : s_nextName);
   LoadJob job = {};
   strlcpy(job.path, wallGalleryPath(s_width < s_height, s_nextName).c_str(), sizeof(job.path));
   job.w = s_width;
@@ -284,7 +286,10 @@ void recordAnimation(const PanelStats& stats, bool cancelled) {
 
 void shown() {
   s_name = s_nextName;
-  if (std::find(s_shown.begin(), s_shown.end(), s_name) == s_shown.end()) s_shown.push_back(s_name);
+  wallProtect(s_width < s_height, 2, wallSource() == 1 ? "d/" + s_name : s_name);
+  wallProtect(s_width < s_height, 3, "");
+  if (std::find(s_shown.begin(), s_shown.end(), wallId(s_name)) == s_shown.end())
+    s_shown.push_back(wallId(s_name));
   s_changed = millis();
   s_nextNow = false;
 }
@@ -296,7 +301,7 @@ bool enter() {
   stopGestures();
   s_width = logicalW();
   s_height = logicalH();
-  s_daily = wallDaily();
+  s_source = wallSource();
   s_galleryCheck = millis();
   s_error = "";
   s_name = "";
@@ -327,6 +332,8 @@ void frameAbort() {
   PanelStats stats;
   if (compFrameResult(stats)) recordAnimation(stats, true);
   ++s_epoch;
+  wallProtect(s_width < s_height, 2, "");
+  wallProtect(s_width < s_height, 3, "");
   cancelPicture();  // A running decoder frees its own output when it finishes.
   if (s_root) lv_obj_delete(s_root);
   s_root = s_clockBox = s_clockTime = s_clockDate = nullptr;
@@ -363,7 +370,7 @@ void frameTick() {
   pollPicture();
   if (!frameActive()) return;
   if (getScreenState() != SCREEN_DECK || manualDisplayOff() || nightBrightnessActive() ||
-      s_daily != wallDaily() || s_width != logicalW() || s_height != logicalH() ||
+      s_source != wallSource() || s_width != logicalW() || s_height != logicalH() ||
       s_qp.open || s_modalCard || s_ed.root) {
     frameAbort();
     setIdleSleep(getScreenState() == SCREEN_DECK, 0);
@@ -430,7 +437,7 @@ void frameTick() {
     }
   }
   if (s_next && (s_nextNow || now - s_changed >= presenceSettings.frameEvery * 60000UL)) {
-    if (!LittleFS.exists(wallGalleryPath(s_width < s_height, s_nextName))) {
+    if (!wallFs().exists(wallGalleryPath(s_width < s_height, s_nextName))) {
       free(s_next);
       s_next = nullptr;
       return;

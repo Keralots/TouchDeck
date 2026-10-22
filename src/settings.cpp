@@ -75,6 +75,10 @@ static void migrateFromStatNode() {
 // ---------------------------------------------------------------------------
 //  Defaults
 // ---------------------------------------------------------------------------
+bool validDailyMax(int count) {
+  return count == 50 || count == 100 || count == 200 || count == 500;
+}
+
 bool validWallEvery(int minutes) {
   return minutes == 0 || minutes == 1 || minutes == 2 || minutes == 5 ||
          minutes == 10 || minutes == 15 || minutes == 30 || minutes == 60;
@@ -93,6 +97,9 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.wallEvery        = 5;
   ds.wallOrder        = 0;
   ds.wallDaily        = false;
+  ds.wallSource       = 0;
+  ds.sdCard           = false;
+  ds.dailyMax         = 100;
   ds.dailyHour        = 3;
   ds.dailyOrient      = 0;
   ds.dailyCount       = 12;
@@ -159,7 +166,12 @@ void loadSettings() {
   dispSettings.wallEvery = prefs.getUChar("wevery", 5);
   if (!validWallEvery(dispSettings.wallEvery)) dispSettings.wallEvery = 5;
   dispSettings.wallOrder = min<uint8_t>(prefs.getUChar("worder", 0), 1);
-  dispSettings.wallDaily = prefs.getBool("wdaily", false);
+  dispSettings.wallSource = prefs.isKey("wsrc") ? min<uint8_t>(prefs.getUChar("wsrc", 0), 2)
+                                               : prefs.getBool("wdaily", false) ? 1 : 0;
+  dispSettings.wallDaily = dispSettings.wallSource != 0;
+  dispSettings.sdCard = prefs.getBool("sdon", false);
+  dispSettings.dailyMax = prefs.getUShort("dmax", 100);
+  if (!validDailyMax(dispSettings.dailyMax)) dispSettings.dailyMax = 100;
   dispSettings.dailyHour = min<uint8_t>(prefs.getUChar("dhour", 3), 23);
   dispSettings.dailyOrient = min<uint8_t>(prefs.getUChar("dorient", 0), 2);
   dispSettings.dailyCount = constrain(prefs.getUChar("dcount", 12), 1, DAILY_MAX_COUNT);
@@ -236,7 +248,10 @@ void saveSettings() {
   prefs.putUChar("gon", dispSettings.glassOn);
   prefs.putUChar("wevery", dispSettings.wallEvery);
   prefs.putUChar("worder", dispSettings.wallOrder);
-  prefs.putBool("wdaily", dispSettings.wallDaily);
+  prefs.putBool("wdaily", dispSettings.wallSource != 0);
+  prefs.putUChar("wsrc", dispSettings.wallSource);
+  prefs.putBool("sdon", dispSettings.sdCard);
+  prefs.putUShort("dmax", dispSettings.dailyMax);
   prefs.putUChar("dhour", dispSettings.dailyHour);
   prefs.putUChar("dorient", dispSettings.dailyOrient);
   prefs.putUChar("dcount", dispSettings.dailyCount);

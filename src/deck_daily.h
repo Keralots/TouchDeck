@@ -14,6 +14,8 @@ bool dailyStart();
 bool dailyRunning();
 // True while fetching; done/total count pictures.
 bool dailyProgress(int& done, int& total);
+// Loop task: keep the microSD archive within dailyMax after an upload.
+void dailyTrim(bool portrait);
 // Orientation or count changed: fetch again today.
 void dailyReplan();
 void dailyStatus(JsonObject out);

@@ -23,8 +23,9 @@ lv_image_dsc_t s_sharpDsc, s_blurDsc;
 uint32_t s_generation = 0;
 String s_current[2], s_pin[2], s_requested[2], s_loadedName;
 bool s_initialized[2] = {}, s_request[2] = {}, s_automatic[2] = {};
-bool s_daily = false, s_sourceLoaded = false;
-std::vector<String> s_shown[2];  // shuffle: pictures shown in this round, RAM only
+uint8_t s_source = 0;
+bool s_sourceLoaded = false;
+WallVector<uint64_t> s_shown[2];  // shuffle: pictures shown in this round, RAM only
 uint32_t s_requestId[2] = {};
 uint32_t s_epoch = 0, s_changedMs = 0, s_retryMs = 0, s_scanMs = 0;
 portMUX_TYPE s_jobMux = portMUX_INITIALIZER_UNLOCKED;
@@ -34,7 +35,7 @@ struct WallJob {
   int w, h, blur, dim;
   uint64_t settings;
   uint32_t epoch, requestId;
-  char name[13];
+  char name[15], path[64];
   uint16_t* sharp;
   uint8_t* blurred;
   bool ok, automatic;
@@ -68,7 +69,8 @@ void discardJob() {
 // The worker has an internal-RAM stack: flash reads disable the PSRAM cache.
 class WallReader {
  public:
-  explicit WallReader(const char* path) : file_(LittleFS.open(path, "r")) {}
+  explicit WallReader(const char* path, bool legacy = false)
+      : file_((legacy ? LittleFS : wallFs()).open(path, "r")) {}
   explicit operator bool() const { return (bool)file_; }
   size_t size() { return file_.size(); }
   size_t position() { return file_.position(); }
@@ -136,12 +138,13 @@ bool jpegLoad(const char* path, int w, int h, uint8_t* r, uint8_t* g, uint8_t* b
 
 // Each gallery keeps its own pin.
 const char* pinKey(bool portrait) {
-  return s_daily ? (portrait ? "wpin_dp" : "wpin_dl") : (portrait ? "wpin_p" : "wpin_l");
+  if (s_source == 2) return portrait ? "wpin_bp" : "wpin_bl";
+  return s_source == 1 ? (portrait ? "wpin_dp" : "wpin_dl") : (portrait ? "wpin_p" : "wpin_l");
 }
 
 void loadSource() {
   if (s_sourceLoaded) return;
-  s_daily = dispSettings.wallDaily;
+  s_source = dispSettings.wallSource;
   s_sourceLoaded = true;
 }
 
@@ -153,13 +156,15 @@ void initGallery(bool portrait) {
     s_pin[portrait] = prefs.getString(pinKey(portrait), "");
     prefs.end();
   }
-  if (!wallValidName(s_pin[portrait])) s_pin[portrait] = "";
+  if (!wallValidRef(s_pin[portrait])) s_pin[portrait] = "";
   auto files = wallFiles(portrait);
   for (const auto& f : files)
-    if (f.name == s_pin[portrait]) s_current[portrait] = f.name;
+    if (f.name() == s_pin[portrait]) s_current[portrait] = f.name();
   if (!s_current[portrait].length() && !files.empty())
-    s_current[portrait] = files[dispSettings.wallOrder ? esp_random() % files.size() : 0].name;
+    s_current[portrait] = files[dispSettings.wallOrder ? esp_random() % files.size() : 0].name();
   s_initialized[portrait] = true;
+  if (s_pin[portrait].length() && !wallFs().exists(wallGalleryPath(portrait, s_pin[portrait])))
+    wallClearPin(portrait);
 }
 
 void fillDsc(lv_image_dsc_t& d, const void* px, int w, int h, lv_color_format_t cf, int bpp) {
@@ -194,7 +199,7 @@ void gradient(uint8_t* r, uint8_t* g, uint8_t* b, int w, int h) {
 // The file is RGB888 (r, g, b bytes) or, from older portals, RGB565.
 bool loadFile(uint8_t* r, uint8_t* g, uint8_t* b, int w, int h) {
   if (!deckFsReady()) return false;
-  WallReader f(wallPath(w, h));
+  WallReader f(wallPath(w, h), true);
   if (!f) return false;
   const size_t n = (size_t)w * h, size = f.size();
   bool ok = false;
@@ -289,7 +294,7 @@ bool prepareImage(WallJob& job) {
   uint8_t *r = planes, *g = planes + n, *b = planes + 2 * n, *tmp = planes + 3 * n;
   uint32_t start = millis();
   const bool jpeg = job.name[0];
-  const bool loaded = jpeg ? jpegLoad(wallGalleryPath(w < h, job.name).c_str(), w, h, r, g, b)
+  const bool loaded = jpeg ? jpegLoad(job.path, w, h, r, g, b)
                            : loadFile(r, g, b, w, h);
   if (jpeg && !loaded) {
     Serial.printf("Deck: wallpaper decode failed: %s\n", job.name);
@@ -345,6 +350,8 @@ void installImage(WallJob& job) {
   s_dim = job.dim;
   s_loadedName = job.name;
   s_current[job.w < job.h] = job.name;
+  wallProtect(job.w < job.h, 0, wallSource() == 1 && job.name[0] ? "d/" + String(job.name) : String(job.name));
+  wallProtect(job.w < job.h, 1, "");
   s_changedMs = millis();
   ++s_generation;
   fillDsc(s_sharpDsc, s_sharp, s_w, s_h, LV_COLOR_FORMAT_RGB565, 2);
@@ -373,6 +380,8 @@ bool wallLoad(int w, int h, int blurR, int dimPct) {
   job.blur = blurR;
   job.dim = dimPct;
   strlcpy(job.name, s_current[p].c_str(), sizeof(job.name));
+  strlcpy(job.path, wallGalleryPath(p, job.name).c_str(), sizeof(job.path));
+  wallProtect(p, 1, s_source == 1 && job.name[0] ? "d/" + String(job.name) : String(job.name));
   if (!prepareImage(job)) {
     free(job.sharp);
     free(job.blurred);
@@ -391,6 +400,8 @@ void wallFree() {
   free(s_blur);
   s_sharp = nullptr;
   s_blur = nullptr;
+  wallProtect(false, 0, "");
+  wallProtect(true, 0, "");
   s_w = s_h = 0;
   s_blurR = s_dim = -1;
 }
@@ -406,19 +417,31 @@ bool wallValidName(const String& name) {
   return true;
 }
 
-const char* wallDir(bool portrait, bool daily) {
-  return daily ? (portrait ? "/wall/dp" : "/wall/dl") : (portrait ? "/wall/p" : "/wall/l");
+bool wallValidRef(const String& name) {
+  return wallValidName(name) || (name.length() == 14 && name[1] == '/' &&
+         (name[0] == 'm' || name[0] == 'd') && wallValidName(name.substring(2)));
 }
 
-bool wallDaily() {
-  loadSource();
-  return s_daily;
+uint64_t wallId(const String& name) {
+  const bool qualified = name.length() == 14;
+  return strtoul(name.c_str() + (qualified ? 2 : 0), nullptr, 16) |
+         (uint64_t)(qualified && name[0] == 'd') << 32;
 }
 
-void wallSetDaily(bool daily) {
+String WallFile::name() const {
+  char text[15];
+  if (qualified) snprintf(text, sizeof(text), "%c/%08lx.jpg", id >> 32 ? 'd' : 'm', (unsigned long)(uint32_t)id);
+  else snprintf(text, sizeof(text), "%08lx.jpg", (unsigned long)(uint32_t)id);
+  return text;
+}
+
+uint8_t wallSource() { loadSource(); return s_source; }
+bool wallDaily() { return wallSource() != 0; }
+
+void wallSetSource(uint8_t source) {
   loadSource();
-  if (s_daily == daily) return;
-  s_daily = daily;
+  if (s_source == source) return;
+  s_source = source;
   wallInvalidateJobs();
   for (int p = 0; p < 2; p++) {
     s_initialized[p] = false;
@@ -430,22 +453,24 @@ void wallSetDaily(bool daily) {
 }
 
 String wallGalleryPath(bool portrait, const String& name) {
-  return String(wallDir(portrait, wallDaily())) + "/" + name;
+  const bool qualified = name.length() == 14;
+  const bool daily = qualified ? name[0] == 'd' : wallSource() == 1;
+  return String(wallDir(portrait, daily)) + "/" + (qualified ? name.substring(2) : name);
 }
 
-std::vector<WallFile> wallFiles(bool portrait) { return wallListDir(wallDir(portrait, wallDaily())); }
-
-std::vector<WallFile> wallListDir(const char* path) {
-  std::vector<WallFile> files;
-  if (!deckFsReady()) return files;
-  File dir = LittleFS.open(path);
-  if (!dir || !dir.isDirectory()) return files;
-  for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
-    String name = f.name();
-    name = name.substring(name.lastIndexOf('/') + 1);
-    if (!f.isDirectory() && wallValidName(name)) files.push_back({name, f.size()});
+WallFiles wallFiles(bool portrait) {
+  auto files = wallListDir(wallDir(portrait, wallSource() == 1));
+  if (wallSource() == 1)
+    for (auto& f : files) f.id = (uint32_t)f.id;
+  if (wallSource() == 2) {
+    auto daily = wallListDir(wallDir(portrait, true));
+    for (auto& f : daily) f.id |= (uint64_t)1 << 32;
+    files.insert(files.end(), daily.begin(), daily.end());
+    for (auto& f : files) f.qualified = true;
+    std::sort(files.begin(), files.end(), [](const WallFile& a, const WallFile& b) {
+      return (a.id >> 32) != (b.id >> 32) ? (a.id >> 32) > (b.id >> 32) : a.id < b.id;
+    });
   }
-  std::sort(files.begin(), files.end(), [](const WallFile& a, const WallFile& b) { return a.name < b.name; });
   return files;
 }
 
@@ -453,13 +478,22 @@ String wallCurrent(bool portrait) { initGallery(portrait); return s_current[port
 String wallPinned(bool portrait) { initGallery(portrait); return s_pin[portrait]; }
 
 bool wallPin(bool portrait, const String& name) {
-  if (!wallValidName(name) || !LittleFS.exists(wallGalleryPath(portrait, name))) return false;
+  if (!wallValidRef(name)) return false;
   initGallery(portrait);
+  const String ref = s_source == 1 ? "d/" + name : name;
+  // Protect before checking existence, so eviction cannot race the NVS write.
+  wallProtect(portrait, 7, ref);
+  bool ok = false;
   Preferences prefs;
-  if (!prefs.begin(NVS_NAMESPACE, false)) return false;
-  const bool ok = prefs.putString(pinKey(portrait), name) > 0;
-  prefs.end();
-  if (ok) s_pin[portrait] = name;
+  if (wallFs().exists(wallGalleryPath(portrait, name)) && prefs.begin(NVS_NAMESPACE, false)) {
+    ok = prefs.putString(pinKey(portrait), name) > 0;
+    prefs.end();
+  }
+  if (ok) {
+    s_pin[portrait] = name;
+    wallProtect(portrait, 4 + s_source, ref);
+  }
+  wallProtect(portrait, 7, "");
   return ok;
 }
 
@@ -471,6 +505,7 @@ void wallClearPin(bool portrait) {
     prefs.end();
   }
   s_pin[portrait] = "";
+  wallProtect(portrait, 4 + s_source, "");
 }
 
 bool wallLoadPicture(const char* path, int w, int h, uint16_t* pixels) {
@@ -488,11 +523,12 @@ void wallInvalidateJobs() {
 }
 
 void wallRequest(bool portrait, const String& name) {
-  if (name.length() && !wallValidName(name)) return;
+  if (name.length() && !wallValidRef(name)) return;
   initGallery(portrait);
   ++s_requestId[portrait];
   s_automatic[portrait] = false;
   s_requested[portrait] = name;
+  wallProtect(portrait, 1, s_source == 1 && name.length() ? "d/" + name : name);
   s_request[portrait] = true;
   s_retryMs = 0;
   if (portrait != ((dispSettings.rotation & 1) == 0) || dispSettings.theme != THEME_GLASS)
@@ -507,24 +543,25 @@ bool wallNext(bool portrait) {
   if (dispSettings.wallOrder && files.size() > 1) {
     // Shuffle: no picture again until every one was shown, and a new round
     // never starts with the one on screen.
-    std::vector<String>& shown = s_shown[portrait];
+    WallVector<uint64_t>& shown = s_shown[portrait];
     const String& cur = s_current[portrait];
-    if (cur.length() && std::find(shown.begin(), shown.end(), cur) == shown.end()) shown.push_back(cur);
-    std::vector<size_t> choices;
+    if (cur.length() && std::find(shown.begin(), shown.end(), wallId(cur)) == shown.end())
+      shown.push_back(wallId(cur));
+    WallVector<size_t> choices;
     for (size_t i = 0; i < files.size(); i++)
-      if (std::find(shown.begin(), shown.end(), files[i].name) == shown.end()) choices.push_back(i);
+      if (std::find(shown.begin(), shown.end(), files[i].id) == shown.end()) choices.push_back(i);
     if (choices.empty()) {
-      shown.assign(1, cur);
+      shown.assign(1, wallId(cur));
       for (size_t i = 0; i < files.size(); i++)
-        if (files[i].name != cur) choices.push_back(i);
+        if (files[i].name() != cur) choices.push_back(i);
     }
     index = choices[esp_random() % choices.size()];
-    shown.push_back(files[index].name);
+    shown.push_back(files[index].id);
   } else {
     for (size_t i = 0; i < files.size(); i++)
-      if (files[i].name > s_current[portrait]) { index = i; break; }
+      if (files[i].name() > s_current[portrait]) { index = i; break; }
   }
-  wallRequest(portrait, files[index].name);
+  wallRequest(portrait, files[index].name());
   return true;
 }
 
@@ -535,23 +572,23 @@ void wallGalleryChanged(bool portrait) {
   const JobState state = s_jobState;
   portEXIT_CRITICAL(&s_jobMux);
   if (state != JOB_IDLE && (job.w < job.h) == portrait && job.name[0] &&
-      !LittleFS.exists(wallGalleryPath(portrait, job.name))) ++s_requestId[portrait];
+      !wallFs().exists(wallGalleryPath(portrait, job.name))) ++s_requestId[portrait];
   auto files = wallFiles(portrait);
   const String current = s_current[portrait];
   bool found = false, pinned = false;
   for (const auto& f : files) {
-    found |= f.name == current;
-    pinned |= f.name == s_pin[portrait];
+    found |= f.name() == current;
+    pinned |= f.name() == s_pin[portrait];
   }
   if (!pinned && s_pin[portrait].length()) wallClearPin(portrait);
   if (s_request[portrait] && s_requested[portrait].length() &&
-      !LittleFS.exists(wallGalleryPath(portrait, s_requested[portrait]))) s_request[portrait] = false;
+      !wallFs().exists(wallGalleryPath(portrait, s_requested[portrait]))) s_request[portrait] = false;
   if (found || s_request[portrait]) return;
   String next;
   if (!files.empty()) {
-    next = files.front().name;
+    next = files.front().name();
     for (const auto& f : files)
-      if (f.name > current) { next = f.name; break; }
+      if (f.name() > current) { next = f.name(); break; }
   }
   wallRequest(portrait, next);
 }
@@ -566,7 +603,7 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch) {
       discardJob();
     } else {
       if (!canSwitch || (s_job.automatic && !idle)) return false;
-      if (!s_job.name[0] || LittleFS.exists(wallGalleryPath(p, s_job.name))) return true;
+      if (!s_job.name[0] || wallFs().exists(wallGalleryPath(p, s_job.name))) return true;
       discardJob();
     }
   }
@@ -593,6 +630,7 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch) {
   job.requestId = s_requestId[p];
   job.automatic = s_automatic[p];
   strlcpy(job.name, s_requested[p].c_str(), sizeof(job.name));
+  strlcpy(job.path, wallGalleryPath(p, job.name).c_str(), sizeof(job.path));
   portENTER_CRITICAL(&s_jobMux);
   s_job = job;
   s_jobState = JOB_RUNNING;
