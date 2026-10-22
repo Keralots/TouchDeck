@@ -55,6 +55,7 @@ if exist dist  rmdir /s /q dist
   --paths "..\companion-common" ^
   --add-data "..\companion-common\webui;webui" ^
   --hidden-import server ^
+  --hidden-import walls ^
   --hidden-import app_window ^
   --hidden-import app_state ^
   --hidden-import config_model ^

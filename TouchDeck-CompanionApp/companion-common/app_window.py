@@ -117,6 +117,15 @@ class _JsApi:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    def pick_folder(self):
+        try:
+            res = _window.create_file_dialog(webview.FOLDER_DIALOG)
+            if not res:
+                return {"ok": False, "cancelled": True}
+            return {"ok": True, "path": res[0] if isinstance(res, (list, tuple)) else res}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     def open_url(self, url):
         try:
             if not str(url).startswith(("http://", "https://")):

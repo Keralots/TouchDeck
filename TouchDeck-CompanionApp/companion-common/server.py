@@ -26,6 +26,7 @@ from config_model import (
 )
 from constants import MAX_METRICS
 import serial_link
+import walls
 
 
 _CTYPES = {
@@ -512,6 +513,49 @@ def apply_import(core, state, config):
         return {"success": True, "message": "Configuration imported and migrated to version %s." % CONFIG_VERSION}
 
 
+_WALL_JOB = walls.WallJob()
+
+
+def _wall_deck(state):
+    address = _device_address(state.get_config().get("esp32_ip", ""))
+    return walls.Deck(address, "TouchDeck-Companion/%s" % CONFIG_VERSION)
+
+
+def wall_summary(state):
+    try:
+        return walls.deck_summary(_wall_deck(state))
+    except (ValueError, walls.DeckError) as exc:
+        return {"success": False, "message": str(exc)}
+
+
+def wall_start(state, kind, form):
+    def field(name, default=""):
+        return form.get(name, [default])[0].strip()
+
+    try:
+        import PIL  # noqa: F401
+    except ImportError:
+        return {"success": False, "message": "Pictures need the Pillow package (pip install pillow)."}
+    orient = field("orient", "l")
+    try:
+        deck = _wall_deck(state)
+        if kind == "download":
+            if orient not in ("l", "p", "both"):
+                raise ValueError("Unknown orientation.")
+            count = max(1, min(200, int(field("count", "25") or 25)))
+            orients = ["l", "p"] if orient == "both" else [orient]
+            _WALL_JOB.start(kind, walls.run_download, deck, orients, count)
+        else:
+            if orient not in ("l", "p", "both", "match"):
+                raise ValueError("Unknown orientation.")
+            if not field("folder"):
+                raise ValueError("Choose a folder first.")
+            _WALL_JOB.start(kind, walls.run_folder, deck, field("folder"), orient, field("recursive", "1") == "1")
+    except ValueError as exc:
+        return {"success": False, "message": str(exc)}
+    return dict(_WALL_JOB.status(), success=True)
+
+
 class _Handler(BaseHTTPRequestHandler):
     CORE = None
     STATE = None
@@ -626,6 +670,10 @@ class _Handler(BaseHTTPRequestHandler):
                 })
             if path == "/api/export":
                 return self._json(normalize_config(state.get_config()))
+            if path == "/api/walls/deck":
+                return self._json(wall_summary(state))
+            if path == "/api/walls/job":
+                return self._json(_WALL_JOB.status())
             if path == "/api/autostart":
                 return self._json({"enabled": bool(core.is_autostart_enabled())})
             self.send_error(404, "not found")
@@ -665,6 +713,11 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json(pair_forget(core, state))
             if path == "/api/revert":
                 return self._json(apply_revert(core, state))
+            if path in ("/api/walls/download", "/api/walls/folder"):
+                return self._json(wall_start(state, path.rsplit("/", 1)[1], self._form()))
+            if path == "/api/walls/cancel":
+                _WALL_JOB.cancel()
+                return self._json({"success": True, "message": "Stopping after the current picture."})
             if path == "/api/autostart":
                 enabled = self._form().get("enable", ["0"])[0] == "1"
                 core.setup_autostart(enabled)
