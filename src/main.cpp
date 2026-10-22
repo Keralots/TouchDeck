@@ -12,6 +12,7 @@
 #include "pc_metrics.h"
 #include "led.h"
 #include "deck_mqtt.h"
+#include "deck_daily.h"
 
 // Loop-task watchdog: an indefinite block in loop() panics after
 // WDT_TIMEOUT_S with a backtrace and reboots (/api/status then reports
@@ -81,4 +82,5 @@ void loop() {
   // After the backlight: the LED reads the level the panel just settled on.
   ledTick();
   displayTick();
+  deck::dailyPoll();
 }

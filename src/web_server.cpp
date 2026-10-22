@@ -17,6 +17,7 @@
 #include "deck_mqtt.h"
 #include "deck_icons.h"
 #include "deck_wall.h"
+#include "deck_daily.h"
 #include "deck_sys.h"
 #include "psram_json.h"
 #include <LittleFS.h>
@@ -1359,7 +1360,7 @@ static void handleWallFinish() {
   if (!err.length()) {
     deck::wallCurrent(p);  // Capture the empty gallery before adding its first file.
     LittleFS.mkdir("/wall");
-    LittleFS.mkdir(p ? "/wall/p" : "/wall/l");
+    LittleFS.mkdir(deck::wallDir(p, deck::wallDaily()));
     LittleFS.remove(wallFile(p));
     const String path = deck::wallGalleryPath(p, name);
     if (!LittleFS.rename(WALL_UPLOAD, path)) err = "could not store the picture";
@@ -1436,6 +1437,27 @@ static void handleWallsShow() {
   if (!deck::wallPin(p, name)) { sendJsonMessage(500, false, "could not save pin"); return; }
   deck::wallRequest(p, name);
   sendJsonMessage(200, true, "Wallpaper queued.");
+}
+
+// Spike: start a daily fetch (?l=&p= counts), read its progress, pick the gallery.
+static void handleDailyRun() {
+  const int l = constrain(server.arg("l").toInt(), 0, 24), p = constrain(server.arg("p").toInt(), 0, 24);
+  if (!deck::dailyStart(l, p)) sendJsonMessage(409, false, "already running or no file system");
+  else sendJsonMessage(200, true, "started");
+}
+
+static void handleDailyStatus() {
+  JsonDocument doc(psramJson());
+  deck::dailyStatus(doc.to<JsonObject>());
+  String out;
+  serializeJson(doc, out);
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "application/json", out);
+}
+
+static void handleDailySource() {
+  deck::wallSetDaily(server.arg("d") == "1");
+  sendJsonMessage(200, true, deck::wallDaily() ? "daily" : "own");
 }
 
 static void handleWallsNext() {
@@ -1827,6 +1849,9 @@ void initWebServer() {
   server.on("/api/deck/walls/delete", HTTP_POST, handleWallsDelete);
   server.on("/api/deck/walls/show", HTTP_POST, handleWallsShow);
   server.on("/api/deck/walls/next", HTTP_POST, handleWallsNext);
+  server.on("/api/deck/daily", HTTP_GET, handleDailyStatus);
+  server.on("/api/deck/daily/run", HTTP_POST, handleDailyRun);
+  server.on("/api/deck/daily/source", HTTP_POST, handleDailySource);
   server.on("/api/deck/wallpaper/remove", HTTP_POST, handleWallRemove);
   server.on("/api/deck/bench", HTTP_POST, handleDeckBench);
   server.on("/api/deck/prefs", HTTP_POST, handleDeckPrefs);
