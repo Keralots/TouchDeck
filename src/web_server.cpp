@@ -1567,12 +1567,18 @@ static void handleWallsDelete() {
   }
   deck::wallCurrent(p);
   bool ok = true;
+  const deck::WallFiles have[2] = {deck::wallListDir(deck::wallDir(p, false)),
+                                   deck::wallListDir(deck::wallDir(p, true))};
   for (uint64_t id : selected) {
     const deck::WallFile file = {id, 0, 0};
     const String name = file.name();
     const bool daily = id >> 32;
-    const String path = String(deck::wallDir(p, daily)) + "/" + name;
-    if (deck::wallFs().exists(path)) ok &= deck::wallRemoveFile(p, daily, name);
+    const auto& list = have[daily];
+    const bool listed = std::any_of(list.begin(), list.end(), [id](const deck::WallFile& f) {
+      return (uint32_t)f.id == (uint32_t)id;
+    });
+    if (listed) ok &= deck::wallRemoveFile(p, daily, name);
+    esp_task_wdt_reset();
   }
   deck::wallGalleryChanged(p);
   if (!ok) { sendJsonMessage(500, false, "could not delete a picture"); return; }

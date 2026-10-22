@@ -42,14 +42,19 @@ bool metadata(bool p, bool d, const String& name, WallFile& file) {
   return true;
 }
 
-void indexChanged(bool p, bool d, const String& name) {
+void indexErase(bool p, bool d, uint64_t id) {
   auto& files = s_index[p][d];
-  const uint64_t id = wallId(name) | (uint64_t)d << 32;
   files.erase(std::remove_if(files.begin(), files.end(),
                             [id](const WallFile& f) { return f.id == id; }), files.end());
+}
+
+void indexChanged(bool p, bool d, const String& name) {
+  indexErase(p, d, wallId(name) | (uint64_t)d << 32);
   WallFile file;
-  if (metadata(p, d, name, file)) files.push_back(file);
-  sortFiles(files);
+  if (metadata(p, d, name, file)) {
+    s_index[p][d].push_back(file);
+    sortFiles(s_index[p][d]);
+  }
 }
 
 }  // namespace
@@ -210,8 +215,9 @@ bool wallRemoveFile(bool p, bool d, const String& name, bool protect) {
   if (protect)
     for (uint64_t kept : s_protected[p]) if (kept == id) return false;
   const String path = String(wallDir(p, d)) + "/" + name;
+  // Each FAT lookup scans the directory: skip the stat a re-index would do.
   if (!wallFs().remove(path)) return false;
-  if (s_mounted) indexChanged(p, d, name);
+  if (s_mounted) indexErase(p, d, id);
   return true;
 }
 
