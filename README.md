@@ -95,7 +95,9 @@ On the **Screen & light** page, the Sleep card sets the time without touch and w
 
 With a microSD card in the slot, turn on **Store pictures on microSD** (the deck restarts). Both galleries then live on the card under `/touchdeck/wall/` (`l`, `p` = own landscape / portrait, `dl`, `dp` = daily), Daily downloads up to 32 new pictures a day and keeps an archive (50 to 500 per orientation) from which the oldest are removed. Pinned pictures and the one on screen are never removed. The card must be FAT formatted; pictures already on internal storage stay there.
 
-`tools/wall_tool.py` (Python 3 + Pillow) prepares pictures on a PC, much faster than on the deck:
+The companion's **Wallpapers** page does this on the PC, much faster than on the deck: it downloads Spotlight pictures into the daily archive (microSD only), or crops a folder of your photos and sends them to My pictures, skipping pictures the deck already has. The folder itself is only read.
+
+For scripts, `tools/wall_tool.py` (Python 3 + Pillow) does the same from the command line:
 
 ```
 python tools/wall_tool.py prepare <photos> <out>              # your photos -> out/l, out/p

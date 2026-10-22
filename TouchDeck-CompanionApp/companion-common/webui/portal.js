@@ -34,7 +34,7 @@ qa('[data-mode]').forEach(function(button){button.addEventListener('click',funct
 qa('[data-acc]').forEach(function(button){button.addEventListener('click',function(){setAccent(button.dataset.acc)})});
 setMode(document.documentElement.dataset.mode||'dark');setAccent(document.documentElement.dataset.accent||'green');
 
-function showPage(name){qa('.page').forEach(function(page){page.classList.toggle('active',page.dataset.page===name)});qa('.nav-item').forEach(function(button){button.classList.toggle('active',button.dataset.nav===name)});var active=document.querySelector('.nav-item[data-nav="'+name+'"]');setText('crumb',active?active.textContent.trim():name);document.documentElement.classList.remove('nav-open');$('navToggle').setAttribute('aria-expanded','false');if(name==='device'){refreshDevice(true);refreshPreview()}}
+function showPage(name){qa('.page').forEach(function(page){page.classList.toggle('active',page.dataset.page===name)});qa('.nav-item').forEach(function(button){button.classList.toggle('active',button.dataset.nav===name)});var active=document.querySelector('.nav-item[data-nav="'+name+'"]');setText('crumb',active?active.textContent.trim():name);document.documentElement.classList.remove('nav-open');$('navToggle').setAttribute('aria-expanded','false');if(name==='device'){refreshDevice(true);refreshPreview()}if(name==='walls'){loadWallDeck();pollWallJob()}}
 qa('.nav-item').forEach(function(button){button.addEventListener('click',function(){showPage(button.dataset.nav)})});
 $('navToggle').addEventListener('click',function(){var open=document.documentElement.classList.toggle('nav-open');this.setAttribute('aria-expanded',String(open))});
 $('navScrim').addEventListener('click',function(){document.documentElement.classList.remove('nav-open');$('navToggle').setAttribute('aria-expanded','false')});
@@ -122,6 +122,23 @@ $('exportBtn').addEventListener('click',async function(){try{var data=await api(
 async function importText(text){var parsed=JSON.parse(text);var data=await api('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(parsed)});await Promise.all([loadInfo(),loadSensors(false)]);setDirty(false);showToast(data.message||'Configuration imported.')}
 $('importBtn').addEventListener('click',async function(){try{if(window.pywebview&&window.pywebview.api&&window.pywebview.api.open_text){var result=await window.pywebview.api.open_text();if(result&&result.ok)await importText(result.text)}else{$('importFile').click()}}catch(error){showToast(error.message,true)}});
 $('importFile').addEventListener('change',async function(){if(!this.files.length)return;try{await importText(await this.files[0].text())}catch(error){showToast(error.message,true)}this.value=''});
+
+/* Wallpapers: the companion converts and uploads in a background job (walls.py). */
+var wallSources=['My pictures','Daily pictures','Both'];
+var wallPoll=0;
+function wallPair(l,p){return l+' landscape, '+p+' portrait'}
+async function loadWallDeck(){try{var d=await api('/api/walls/deck');var c=d.counts;setText('wallDeckTag','online');setText('wallStorage',d.sd_mounted?'microSD card':(d.sd_enabled?'internal flash (no card found)':'internal flash'));setText('wallShows',wallSources[d.source]||'-');setText('wallOwn',wallPair(c.ml,c.mp));setText('wallDaily',wallPair(c.dl,c.dp))}catch(error){setText('wallDeckTag','offline');['wallStorage','wallShows','wallOwn','wallDaily'].forEach(function(id){setText(id,'-')})}}
+function renderWallJob(s){var card=$('wallJobCard');if(!s.kind){card.classList.add('hidden');return}card.classList.remove('hidden');qa('.wall-start').forEach(function(b){b.disabled=s.running});$('wallCancelBtn').classList.toggle('hidden',!s.running);setText('wallJobTag',s.running?'running':(s.error?'stopped':'done'));$('wallJobBar').style.width=(s.total?Math.min(100,100*s.done/s.total):0)+'%';setText('wallJobCounts',s.done+' / '+s.total+' · '+s.added+' added · '+s.skipped+' already there · '+s.failed+' failed');setText('wallJobMsg',s.message);$('wallJobNote').className='note '+(s.error?'warn':'plain');$('wallJobLog').classList.toggle('hidden',!s.log.length);setText('wallJobLog',s.log.join('\n'))}
+async function pollWallJob(){clearTimeout(wallPoll);try{var s=await api('/api/walls/job');renderWallJob(s);if(s.running){wallPoll=setTimeout(pollWallJob,1000);return}if(s.kind)loadWallDeck()}catch(error){}}
+async function startWallJob(kind,body){try{renderWallJob(await api('/api/walls/'+kind,{method:'POST',body:body}));pollWallJob()}catch(error){showToast(error.message,true)}}
+$('wallDownloadBtn').addEventListener('click',function(){startWallJob('download',formBody($('wallDownloadForm')))});
+$('wallFolderBtn').addEventListener('click',function(){var body=formBody($('wallFolderForm'));body.set('recursive',$('wallRecursive').checked?'1':'0');startWallJob('folder',body)});
+$('wallCancelBtn').addEventListener('click',async function(){try{showToast((await api('/api/walls/cancel',{method:'POST'})).message)}catch(error){showToast(error.message,true)}});
+$('wallRefreshBtn').addEventListener('click',loadWallDeck);
+$('wallBrowseBtn').addEventListener('click',async function(){try{var r=await window.pywebview.api.pick_folder();if(r&&r.ok)$('wallFolder').value=r.path;else if(r&&r.error)showToast(r.error,true)}catch(error){showToast(error.message,true)}});
+/* The folder dialog exists only in the native window; pywebview injects its API after load. */
+function wallBrowseSync(){$('wallBrowseBtn').classList.toggle('hidden',!(window.pywebview&&window.pywebview.api&&window.pywebview.api.pick_folder))}
+window.addEventListener('pywebviewready',wallBrowseSync);wallBrowseSync();
 
 async function start(){try{await loadInfo();await Promise.all([loadSensors(false),loadAutostart(),loadPanels(),refreshLocalStatus(),refreshDevice(false),refreshLive()]);setDirty(false)}catch(error){showToast(error.message,true)}setInterval(refreshLocalStatus,3000);setInterval(refreshSerialStatus,3000);setInterval(refreshLive,3000);setInterval(function(){refreshDevice(false);if(document.querySelector('.page[data-page="device"]').classList.contains('active'))refreshPreview();if(document.querySelector('.page[data-page="connection"]').classList.contains('active'))loadPanels().catch(function(error){showToast(error.message,true)})},5000)}
 start();

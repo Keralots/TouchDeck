@@ -12,7 +12,8 @@ stays available from the system tray.
   styles, colors, brightness, clock settings, touch input, WiFi, and firmware.
 
 The Device page reads the firmware's `/api/status` endpoint and displays the
-real `/screen.bmp` capture. The retired 128x64 OLED emulator and layout-push
+real `/screen.bmp` capture. The Wallpapers page downloads Windows Spotlight
+pictures or converts a folder of photos (read only) and uploads them to the deck. The retired 128x64 OLED emulator and layout-push
 pipeline are not part of this companion.
 
 ## Telling look-alike sensors apart

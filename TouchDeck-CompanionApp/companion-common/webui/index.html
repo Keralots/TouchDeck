@@ -34,6 +34,7 @@
     .fact-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden}
     .fact{background:var(--card-2);padding:13px 14px;min-width:0}.fact dt{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}.fact dd{margin:4px 0 0;color:var(--ink);font-weight:600;overflow-wrap:anywhere}
     .device-note{margin-top:0;max-width:none}.toast{position:fixed;right:22px;bottom:84px;z-index:70;max-width:min(420px,calc(100vw - 32px));padding:11px 14px;border-radius:var(--r-md);background:var(--ink);color:var(--paper);box-shadow:var(--shadow-pop);opacity:0;transform:translateY(8px);pointer-events:none;transition:opacity .16s,transform .16s}.toast.show{opacity:1;transform:none}.toast.err{background:var(--err);color:#fff}
+    .wall-path{display:flex;gap:10px;max-width:640px}.wall-path input{max-width:none}.wall-log{margin:12px 0 0;max-height:180px;overflow:auto;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--inset);color:var(--mute);font-family:var(--mono);font-size:11.5px;white-space:pre-wrap;overflow-wrap:anywhere}
     @media(max-width:880px){.device-grid{grid-template-columns:1fr}.device-preview-column{position:static}}
     @media(max-width:560px){.sensor-grid,.fact-grid{grid-template-columns:1fr}.sensor-tools>*{width:100%;max-width:none!important}}
   </style>
@@ -57,6 +58,7 @@
         <button class="nav-item active" data-nav="connection">Connection</button>
         <button class="nav-item" data-nav="sensors">Sensors</button>
         <button class="nav-item" data-nav="device">Device</button>
+        <button class="nav-item" data-nav="walls">Wallpapers</button>
         <button class="nav-item" data-nav="backup">Backup &amp; restore</button>
       </nav>
       <div class="sidebar-spacer"></div>
@@ -106,6 +108,22 @@
             <div class="hidden" id="pairWaitBox" style="margin-top:14px"><p class="field-hint">Tap <strong>Allow</strong> on the TouchDeck to finish pairing.</p><div class="page-actions"><button type="button" class="btn" id="pairWaitCancel">Cancel</button></div></div>
             <p class="field-hint">Commands arrive on UDP port <span id="cmdPort">4211</span>; allow it if the firewall asks.</p></div>
         </div><div class="device-preview-column"><div class="card"><div class="card-head"><h2 class="card-title">Live screen</h2><span class="tag" id="previewTag">waiting</span></div><div class="device-preview"><img id="devicePreview" class="offline" alt="TouchDeck screen preview"><div class="preview-empty" id="previewEmpty">Connect to a TouchDeck device to load its screen.</div></div><div class="page-actions"><button type="button" class="btn" id="refreshPreviewBtn">Refresh preview</button></div></div></div></div>
+      </section>
+
+      <section class="page" data-page="walls">
+        <div class="page-header"><h1 class="page-h1">Wallpapers</h1><p class="page-lede">Prepare pictures for the Glass wallpaper and the photo frame on this PC, which is much faster than on the deck, and send them over WiFi.</p></div>
+        <div class="card"><h2 class="card-title">On the deck <span class="tag" id="wallDeckTag">checking</span></h2><dl class="fact-grid"><div class="fact"><dt>Storage</dt><dd id="wallStorage">-</dd></div><div class="fact"><dt>Shows</dt><dd id="wallShows">-</dd></div><div class="fact"><dt>My pictures</dt><dd id="wallOwn">-</dd></div><div class="fact"><dt>Downloaded</dt><dd id="wallDaily">-</dd></div></dl><div class="page-actions"><button type="button" class="btn" id="wallRefreshBtn">Refresh</button></div></div>
+        <div class="card"><h2 class="card-title">Download Windows Spotlight pictures</h2>
+          <form id="wallDownloadForm"><div class="grid-2"><div class="field"><label class="field-label" for="wallDlOrient">For</label><div class="select-wrap"><select id="wallDlOrient" name="orient"><option value="l">Landscape</option><option value="p">Portrait</option><option value="both">Landscape and portrait</option></select></div></div><div class="field"><label class="field-label" for="wallCount">New pictures</label><input type="number" id="wallCount" name="count" value="25" min="1" max="200"></div></div>
+            <p class="field-hint">Pictures go to the daily archive on the deck's microSD card, shown when Pictures is set to Daily pictures or Both. The deck keeps the newest ones up to its daily archive size and skips pictures it already has.</p></form>
+          <div class="page-actions"><button type="button" class="btn btn-accent wall-start" id="wallDownloadBtn"><span class="gl"></span>Download</button></div></div>
+        <div class="card"><h2 class="card-title">Add a folder</h2>
+          <form id="wallFolderForm"><div class="field"><label class="field-label" for="wallFolder">Folder</label><div class="wall-path"><input type="text" id="wallFolder" name="folder" placeholder="C:\Users\me\Pictures\Holidays" autocomplete="off"><button type="button" class="btn hidden" id="wallBrowseBtn">Browse</button></div></div>
+            <div class="field"><label class="field-label" for="wallFolderOrient">For</label><div class="select-wrap"><select id="wallFolderOrient" name="orient"><option value="match">Each picture's own shape</option><option value="l">Landscape</option><option value="p">Portrait</option><option value="both">Landscape and portrait</option></select></div></div>
+            <label class="check-row standalone"><input type="checkbox" id="wallRecursive" checked><span class="check-box"></span><span class="check-text"><strong>Include subfolders</strong></span></label></form>
+          <div class="note plain"><span class="note-k">Your files</span><span>The folder is only read. Each picture is cropped to the deck's screen and converted in memory, then sent to My pictures. Nothing is written to the folder, and pictures already on the deck are skipped. JPEG, PNG, WebP, BMP, GIF and TIFF.</span></div>
+          <div class="page-actions"><button type="button" class="btn btn-accent wall-start" id="wallFolderBtn"><span class="gl"></span>Send to the deck</button></div></div>
+        <div class="card hidden" id="wallJobCard"><h2 class="card-title">Progress <span class="tag" id="wallJobTag">-</span></h2><div class="ota-bar"><i id="wallJobBar"></i></div><p class="ota-pct" id="wallJobCounts"></p><div class="note plain" id="wallJobNote"><span class="note-k">Status</span><span id="wallJobMsg"></span></div><pre class="wall-log hidden" id="wallJobLog"></pre><div class="page-actions"><button type="button" class="btn btn-danger" id="wallCancelBtn">Stop</button></div></div>
       </section>
 
       <section class="page" data-page="backup">
