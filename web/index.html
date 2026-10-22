@@ -376,12 +376,73 @@
                     gallery is empty. Show now pins a picture for the next boot. Config backups include the
                     settings, not the pictures.
                   </p>
+                  <div class="grid-2">
+                    <div class="field">
+                      <label class="field-label" for="wallSource">Pictures</label>
+                      <div class="select-wrap">
+                        <select id="wallSource" name="wallSource">
+                          <option value="0">My pictures</option>
+                          <option value="1">Daily pictures (Windows Spotlight)</option>
+                        </select>
+                      </div>
+                      <p class="field-hint" data-tip>
+                        Daily downloads a new set of random Windows Spotlight pictures once a day and replaces
+                        the previous set. Your own pictures stay on the device and come back when you switch to
+                        My pictures.
+                      </p>
+                    </div>
+                  </div>
+                  <div id="dailyFields" class="hidden" style="margin-top: 14px">
+                    <div class="grid-2">
+                      <div class="field">
+                        <label class="field-label" for="dailyOrient">Download for</label>
+                        <div class="select-wrap">
+                          <select id="dailyOrient" name="dailyOrient">
+                            <option value="0">Landscape</option>
+                            <option value="1">Portrait</option>
+                            <option value="2">Both</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div class="field">
+                        <label class="field-label" for="dailyCount">Pictures per day</label>
+                        <div class="select-wrap">
+                          <select id="dailyCount" name="dailyCount">
+                            <option value="4">4</option>
+                            <option value="6">6</option>
+                            <option value="8">8</option>
+                            <option value="12">12</option>
+                            <option value="16">16</option>
+                          </select>
+                        </div>
+                        <p class="field-hint" data-tip>
+                          For each orientation. A landscape picture takes about 25 seconds, so 12 take about
+                          5 minutes. Swipes can stutter meanwhile; a thin line at the top of the screen shows
+                          the download.
+                        </p>
+                      </div>
+                      <div class="field">
+                        <label class="field-label" for="dailyHour">Download at</label>
+                        <div class="select-wrap">
+                          <select id="dailyHour" name="dailyHour"></select>
+                        </div>
+                        <p class="field-hint" data-tip>
+                          Waits until nobody has touched the screen for 30 seconds. If the deck was off at
+                          this hour, it downloads as soon as it is back.
+                        </p>
+                      </div>
+                    </div>
+                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 14px">
+                      <button type="button" class="btn" id="dailyFetch">Download now</button
+                      ><span id="dailyState" role="status" class="field-hint" style="margin: 0"></span>
+                    </div>
+                  </div>
                   <section
                     id="wallGallery_l"
                     style="margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px"
                   >
                     <h3>Landscape</h3>
-                    <p class="field-hint">Add pictures or drop them here.</p>
+                    <p class="field-hint" id="wallHint_l">Add pictures or drop them here.</p>
                     <input type="file" id="wallFile_l" multiple accept="image/*" hidden />
                     <div style="display: flex; gap: 8px; flex-wrap: wrap">
                       <button type="button" class="btn" id="wallPick_l">Add pictures</button
@@ -408,7 +469,7 @@
                     style="margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px"
                   >
                     <h3>Portrait</h3>
-                    <p class="field-hint">Add pictures or drop them here.</p>
+                    <p class="field-hint" id="wallHint_p">Add pictures or drop them here.</p>
                     <input type="file" id="wallFile_p" multiple accept="image/*" hidden />
                     <div style="display: flex; gap: 8px; flex-wrap: wrap">
                       <button type="button" class="btn" id="wallPick_p">Add pictures</button

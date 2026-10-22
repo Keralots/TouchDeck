@@ -23,6 +23,7 @@ lv_image_dsc_t s_sharpDsc, s_blurDsc;
 uint32_t s_generation = 0;
 String s_current[2], s_pin[2], s_requested[2], s_loadedName;
 bool s_initialized[2] = {}, s_request[2] = {}, s_automatic[2] = {};
+bool s_daily = false, s_sourceLoaded = false;
 std::vector<String> s_shown[2];  // shuffle: pictures shown in this round, RAM only
 uint32_t s_requestId[2] = {};
 uint32_t s_epoch = 0, s_changedMs = 0, s_retryMs = 0, s_scanMs = 0;
@@ -128,11 +129,23 @@ bool jpegLoad(const char* path, int w, int h, uint8_t* r, uint8_t* g, uint8_t* b
   return ok;
 }
 
+// Each gallery keeps its own pin.
+const char* pinKey(bool portrait) {
+  return s_daily ? (portrait ? "wpin_dp" : "wpin_dl") : (portrait ? "wpin_p" : "wpin_l");
+}
+
+void loadSource() {
+  if (s_sourceLoaded) return;
+  s_daily = dispSettings.wallDaily;
+  s_sourceLoaded = true;
+}
+
 void initGallery(bool portrait) {
   if (s_initialized[portrait]) return;
+  loadSource();
   Preferences prefs;
   if (prefs.begin(NVS_NAMESPACE, true)) {
-    s_pin[portrait] = prefs.getString(portrait ? "wpin_p" : "wpin_l", "");
+    s_pin[portrait] = prefs.getString(pinKey(portrait), "");
     prefs.end();
   }
   if (!wallValidName(s_pin[portrait])) s_pin[portrait] = "";
@@ -388,14 +401,39 @@ bool wallValidName(const String& name) {
   return true;
 }
 
-String wallGalleryPath(bool portrait, const String& name) {
-  return String(portrait ? "/wall/p/" : "/wall/l/") + name;
+const char* wallDir(bool portrait, bool daily) {
+  return daily ? (portrait ? "/wall/dp" : "/wall/dl") : (portrait ? "/wall/p" : "/wall/l");
 }
 
-std::vector<WallFile> wallFiles(bool portrait) {
+bool wallDaily() {
+  loadSource();
+  return s_daily;
+}
+
+void wallSetDaily(bool daily) {
+  loadSource();
+  if (s_daily == daily) return;
+  s_daily = daily;
+  wallInvalidateJobs();
+  for (int p = 0; p < 2; p++) {
+    s_initialized[p] = false;
+    s_current[p] = "";
+    s_shown[p].clear();
+    initGallery(p);
+    wallRequest(p, s_current[p]);
+  }
+}
+
+String wallGalleryPath(bool portrait, const String& name) {
+  return String(wallDir(portrait, wallDaily())) + "/" + name;
+}
+
+std::vector<WallFile> wallFiles(bool portrait) { return wallListDir(wallDir(portrait, wallDaily())); }
+
+std::vector<WallFile> wallListDir(const char* path) {
   std::vector<WallFile> files;
   if (!deckFsReady()) return files;
-  File dir = LittleFS.open(portrait ? "/wall/p" : "/wall/l");
+  File dir = LittleFS.open(path);
   if (!dir || !dir.isDirectory()) return files;
   for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
     String name = f.name();
@@ -414,7 +452,7 @@ bool wallPin(bool portrait, const String& name) {
   initGallery(portrait);
   Preferences prefs;
   if (!prefs.begin(NVS_NAMESPACE, false)) return false;
-  const bool ok = prefs.putString(portrait ? "wpin_p" : "wpin_l", name) > 0;
+  const bool ok = prefs.putString(pinKey(portrait), name) > 0;
   prefs.end();
   if (ok) s_pin[portrait] = name;
   return ok;
@@ -424,7 +462,7 @@ void wallClearPin(bool portrait) {
   initGallery(portrait);
   Preferences prefs;
   if (prefs.begin(NVS_NAMESPACE, false)) {
-    prefs.remove(portrait ? "wpin_p" : "wpin_l");
+    prefs.remove(pinKey(portrait));
     prefs.end();
   }
   s_pin[portrait] = "";

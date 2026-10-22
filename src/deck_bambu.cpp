@@ -7,8 +7,7 @@
 #include <esp_heap_caps.h>
 #include <algorithm>
 #include <new>
-
-extern "C" int mbedtls_platform_set_calloc_free(void* (*)(size_t, size_t), void (*)(void*));
+#include "tls_psram.h"
 
 namespace deck {
 namespace {
@@ -21,15 +20,6 @@ struct PsramAllocator : ArduinoJson::Allocator {
   void deallocate(void* p) override { heap_caps_free(p); }
   void* reallocate(void* p, size_t n) override { return heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM); }
 };
-
-void* tlsCalloc(size_t n, size_t size) {
-  if (size && n > SIZE_MAX / size) return nullptr;
-  if (n * size >= 1024) {
-    void* p = heap_caps_calloc(n, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (p) return p;
-  }
-  return heap_caps_calloc(n, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-}
 
 SemaphoreHandle_t mutex() {
   static StaticSemaphore_t storage;
@@ -592,8 +582,7 @@ void destroy(Session*& c) {
 }
 
 void task(void*) {
-  static bool tlsInstalled = false;
-  if (!tlsInstalled) tlsInstalled = mbedtls_platform_set_calloc_free(tlsCalloc, heap_caps_free) == 0;
+  const bool tlsInstalled = tlsPsramInstall();
   Session* sessions[PRN_MAX] = {};
   uint32_t allocationRetry[PRN_MAX] = {}, seenGeneration[PRN_MAX] = {};
   uint32_t lastStackLog = millis();
