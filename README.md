@@ -47,7 +47,7 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 
 - **Overview:** live picture of the screen, PC stream, Home Assistant link, diagnostics.
 - **Pages & tiles:** Home Assistant address and token, the icon font, pages (Duplicate copies one as a plain page), tiles, entity and icon pickers (None leaves a tile without an icon), columns, and a grid editor: drag tiles to move them (dropped onto another tile, that tile jumps to the dragged one's old place if it fits there), resize from the corner (half-cell steps), separately for landscape and portrait.
-- **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper you upload, or over daily pictures the deck downloads from Windows Spotlight once a day), PC metric tile scales.
+- **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper you upload, over daily pictures the deck downloads from Windows Spotlight once a day, or both mixed), optional microSD storage for the pictures, PC metric tile scales. See [Wallpapers and microSD](#wallpapers-and-microsd).
 - **Screen & light:** day brightness and the night schedule, screen sleep and presence, the status LED and its Home Assistant entity.
 - **Time:** 12/24 h clock and timezone.
 - **Network:** WiFi, hostname / mDNS, static IP.
@@ -88,6 +88,23 @@ On the **Screen & light** page, the Sleep card sets the time without touch and w
 
 - Up to four Home Assistant entities (motion, occupancy, a person); one counts as present while its state is `on` or `home`. Optionally any PC sending metrics. Presence starting wakes the screen, also after Off in the quick panel.
 - A touch always wakes it; that first touch does nothing else.
+
+## Wallpapers and microSD
+
+**Display > Glass wallpaper** picks the pictures: My pictures (uploaded in the portal, cropped in the browser), Daily (Windows Spotlight, downloaded by the deck at a set hour) or Both. Internal storage fits a few dozen pictures, and Daily replaces its set every day.
+
+With a microSD card in the slot, turn on **Store pictures on microSD** (the deck restarts). Both galleries then live on the card under `/touchdeck/wall/` (`l`, `p` = own landscape / portrait, `dl`, `dp` = daily), Daily downloads up to 32 new pictures a day and keeps an archive (50 to 500 per orientation) from which the oldest are removed. Pinned pictures and the one on screen are never removed. The card must be FAT formatted; pictures already on internal storage stay there.
+
+`tools/wall_tool.py` (Python 3 + Pillow) prepares pictures on a PC, much faster than on the deck:
+
+```
+python tools/wall_tool.py prepare <photos> <out>              # your photos -> out/l, out/p
+python tools/wall_tool.py spotlight 100 <out>                 # 100 Spotlight pictures -> out/dl
+python tools/wall_tool.py upload <out> <deck-ip>              # out/l, out/p into My pictures
+python tools/wall_tool.py upload <out> <deck-ip> --daily      # out/dl, out/dp into the daily archive
+```
+
+Or copy the folders straight onto the card under `/touchdeck/wall/` and restart the deck.
 
 ## MQTT (Home Assistant discovery)
 
