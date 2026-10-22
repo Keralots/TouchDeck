@@ -1382,7 +1382,8 @@ static void handleWallsStatus() {
   doc["sd"]["enabled"] = dispSettings.sdCard;
   doc["sd"]["mounted"] = deck::wallOnSd();
   doc["sd"]["indexMs"] = deck::wallIndexMs();
-  for (int orient = 0; orient < 2; orient++) {
+  // Index copies on the card; on LittleFS each would be a directory scan.
+  for (int orient = 0; orient < 2 && deck::wallOnSd(); orient++) {
     doc["sd"]["own"][orient] = deck::wallListDir(deck::wallDir(orient, false)).size();
     doc["sd"]["daily"][orient] = deck::wallListDir(deck::wallDir(orient, true)).size();
   }
