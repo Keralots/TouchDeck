@@ -4,23 +4,38 @@
 
 #include <Arduino.h>
 #include <lvgl.h>
-#include <vector>
+#include "deck_sd.h"
 
 namespace deck {
 
 constexpr uint32_t WALL_IDLE_MS = 30000;
 constexpr size_t WALL_RESERVE = 256 * 1024;
 constexpr size_t WALL_MAX_JPEG = 200 * 1024;
-struct WallFile { String name; size_t size; };
+struct WallFile {
+  uint64_t id;
+  size_t size;
+  uint32_t date;
+  bool qualified = false;
+  String name() const;
+};
+using WallFiles = WallVector<WallFile>;
+uint64_t wallId(const String& name);
+bool wallValidRef(const String& name);
+void wallRebuildIndex();
+void wallIndexChanged(bool portrait, bool daily, const String& name);
+bool wallRemoveFile(bool portrait, bool daily, const String& name, bool protect = false);
+// Slots: wallpaper, queued wallpaper, frame, queued frame, three source pins, pending pin.
+void wallProtect(bool portrait, int slot, const String& name);
 bool wallValidName(const String& name);
-// Galleries: own uploads or daily downloads (dispSettings.wallDaily).
+// Galleries: own uploads or daily downloads.
 const char* wallDir(bool portrait, bool daily);
 bool wallDaily();
-// Loop task only, after dispSettings.wallDaily changed.
-void wallSetDaily(bool daily);
+// Loop task only, after dispSettings.wallSource changed.
+uint8_t wallSource();
+void wallSetSource(uint8_t source);
 String wallGalleryPath(bool portrait, const String& name = "");
-std::vector<WallFile> wallFiles(bool portrait);
-std::vector<WallFile> wallListDir(const char* path);
+WallFiles wallFiles(bool portrait);
+WallFiles wallListDir(const char* path);
 String wallCurrent(bool portrait);
 String wallPinned(bool portrait);
 bool wallPin(bool portrait, const String& name);

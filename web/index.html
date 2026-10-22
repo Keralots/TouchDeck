@@ -383,15 +383,24 @@
                         <select id="wallSource" name="wallSource">
                           <option value="0">My pictures</option>
                           <option value="1">Daily pictures (Windows Spotlight)</option>
+                          <option value="2">Both</option>
                         </select>
                       </div>
                       <p class="field-hint" data-tip>
-                        Daily downloads a new set of random Windows Spotlight pictures once a day and replaces
-                        the previous set. Your own pictures stay on the device and come back when you switch to
-                        My pictures.
+                        Daily downloads Windows Spotlight pictures once a day. Internal storage replaces the
+                        previous set; microSD keeps an archive. Both mixes daily and your own pictures.
                       </p>
                     </div>
                   </div>
+                  <label class="check-row">
+                    <input type="checkbox" id="sdCard" name="sdCard" />
+                    <span class="check-box"></span>
+                    <span class="check-text"><strong>Store pictures on microSD</strong></span>
+                  </label>
+                  <p class="field-hint">
+                    Saving this change restarts the device. Pictures stay in their current storage.
+                  </p>
+                  <p id="sdState" class="field-hint" role="status"></p>
                   <div id="dailyFields" class="hidden" style="margin-top: 14px">
                     <div class="grid-2">
                       <div class="field">
@@ -413,13 +422,27 @@
                             <option value="8">8</option>
                             <option value="12">12</option>
                             <option value="16">16</option>
+                            <option value="20">20</option>
+                            <option value="24">24</option>
+                            <option value="32">32</option>
                           </select>
                         </div>
                         <p class="field-hint" data-tip>
-                          For each orientation. A landscape picture takes about 25 seconds, so 12 take about
+                          Counts above 16 require a mounted microSD card. For each orientation, 12 take about
                           5 minutes. Swipes can stutter meanwhile; a thin line at the top of the screen shows
                           the download.
                         </p>
+                      </div>
+                      <div class="field">
+                        <label class="field-label" for="dailyMax">Daily archive per orientation (microSD)</label>
+                        <div class="select-wrap">
+                          <select id="dailyMax" name="dailyMax">
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                            <option value="200">200</option>
+                            <option value="500">500</option>
+                          </select>
+                        </div>
                       </div>
                       <div class="field">
                         <label class="field-label" for="dailyHour">Download at</label>
@@ -435,6 +458,15 @@
                     <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 14px">
                       <button type="button" class="btn" id="dailyFetch">Download now</button
                       ><span id="dailyState" role="status" class="field-hint" style="margin: 0"></span>
+                    </div>
+                  </div>
+                  <div class="field hidden" id="wallBrowseField">
+                    <label class="field-label" for="wallBrowse">Browse gallery</label>
+                    <div class="select-wrap">
+                      <select id="wallBrowse">
+                        <option value="m">My pictures</option>
+                        <option value="d">Daily pictures</option>
+                      </select>
                     </div>
                   </div>
                   <section
@@ -462,6 +494,7 @@
                         margin-top: 12px;
                       "
                     ></div>
+                    <button type="button" class="btn hidden" id="wallMore_l">Show more</button>
                     <div id="wallErrors_l" role="status" class="field-hint"></div>
                   </section>
                   <section
@@ -489,6 +522,7 @@
                         margin-top: 12px;
                       "
                     ></div>
+                    <button type="button" class="btn hidden" id="wallMore_p">Show more</button>
                     <div id="wallErrors_p" role="status" class="field-hint"></div>
                   </section>
                   <div class="grid-2" style="margin-top: 16px">

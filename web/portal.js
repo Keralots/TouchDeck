@@ -179,7 +179,7 @@
   $("theme").addEventListener("change", updateGlassFields);
   for (let h = 0; h < 24; h++) $("dailyHour").add(new Option(String(h).padStart(2, "0") + ":00", h));
   function updateDailyFields() {
-    $("dailyFields").classList.toggle("hidden", $("wallSource").value !== "1");
+    $("dailyFields").classList.toggle("hidden", $("wallSource").value === "0");
   }
   $("wallSource").addEventListener("change", updateDailyFields);
   function updateNightFields() {
@@ -287,7 +287,10 @@
     setVal("warnThreshold", c.display.warnThreshold);
     setVal("wallEvery", c.display.wallEvery ?? 5);
     setVal("wallOrder", c.display.wallOrder ?? 0);
-    setVal("wallSource", c.display.wallDaily ? 1 : 0);
+    setVal("wallSource", c.display.wallSource ?? (c.display.wallDaily ? 1 : 0));
+    setCheck("sdCard", c.display.sdCard ?? false);
+    setVal("dailyMax", c.display.dailyMax ?? 100);
+    setWallSource(c.display.wallSource ?? (c.display.wallDaily ? 1 : 0));
     setVal("dailyOrient", c.display.dailyOrient ?? 0);
     setVal("dailyCount", c.display.dailyCount ?? 12);
     setVal("dailyHour", c.display.dailyHour ?? 3);
@@ -675,7 +678,37 @@
       el.classList.add("tip");
     });
   }
-  const walls = { l: { files: [], selected: new Set() }, p: { files: [], selected: new Set() } };
+  const walls = {
+    l: { files: [], selected: new Set(), loaded: 24 },
+    p: { files: [], selected: new Set(), loaded: 24 },
+  };
+  let wallSource = 0,
+    wallView = 0;
+  function wallGallery() {
+    return wallSource === 2 ? $("wallBrowse").value : wallSource === 1 ? "d" : "m";
+  }
+  function resetWalls() {
+    wallView++;
+    wallCache = Math.max(Date.now(), wallCache + 1);
+    for (const o of ["l", "p"]) {
+      walls[o].loaded = 24;
+      walls[o].files = [];
+      walls[o].selected.clear();
+      wallRender(o);
+    }
+    wallStatus();
+  }
+  function setWallSource(source) {
+    $("wallBrowseField").classList.toggle("hidden", source !== 2);
+    if (wallSource === source) return;
+    wallSource = source;
+    resetWalls();
+  }
+  $("wallBrowse").onchange = (e) => {
+    e.stopPropagation();
+    resetWalls();
+  };
+  $("wallBrowse").oninput = (e) => e.stopPropagation();
   let wallBusy = false,
     wallRefreshing = false,
     wallCache = Date.now();
@@ -686,12 +719,15 @@
     return j;
   }
   function wallButtons() {
+    $("wallBrowse").disabled = wallBusy;
     for (const o of ["l", "p"]) {
       const s = walls[o];
-      $("wallPick_" + o).disabled = wallBusy || dailyActive;
-      $("wallHint_" + o).textContent = dailyActive
-        ? "Daily pictures, downloaded by the deck."
-        : "Add pictures or drop them here.";
+      $("wallMore_" + o).disabled = wallBusy || wallRefreshing;
+      $("wallPick_" + o).disabled = wallBusy || wallSource === 1;
+      $("wallHint_" + o).textContent =
+        wallGallery() === "d"
+          ? "Daily pictures, downloaded by the deck. Uploads go to My pictures."
+          : "Add pictures or drop them here.";
       $("wallShow_" + o).disabled = wallBusy || s.selected.size !== 1;
       $("wallDelete_" + o).disabled = wallBusy || !s.selected.size;
       $("wallAll_" + o).disabled = wallBusy || !s.files.length;
@@ -710,6 +746,7 @@
       s.pinned,
       s.free,
       s.legacy,
+      s.count,
       ...s.files.map((f) => f.n),
       "|",
       ...s.selected,
@@ -735,7 +772,15 @@
         img = document.createElement("img");
         img.loading = "lazy";
         img.alt = f.n;
-        img.src = "/api/deck/walls/file?o=" + o + "&n=" + encodeURIComponent(f.n) + "&v=" + wallCache;
+        img.src =
+          "/api/deck/walls/file?o=" +
+          o +
+          "&gallery=" +
+          wallGallery() +
+          "&n=" +
+          encodeURIComponent(f.n) +
+          "&v=" +
+          wallCache;
         img.style.cssText = "width:100%;height:80px;object-fit:cover;border-radius:4px";
         s.imgs.set(f.n, img);
       }
@@ -762,9 +807,13 @@
     }
     $("wallSpace_" + o).textContent =
       s.files.length +
+      " of " +
+      (s.count || 0) +
       " pictures - about " +
       Math.max(0, Math.floor(((s.free || 0) - 256 * 1024) / (60 * 1024))) +
       " more pictures fit";
+    $("wallMore_" + o).classList.toggle("hidden", s.files.length >= (s.count || 0));
+    $("wallMore_" + o).disabled = wallBusy || wallRefreshing;
     const legacy = $("wallLegacy_" + o);
     legacy.replaceChildren();
     if (s.legacy) {
@@ -781,20 +830,42 @@
   async function wallStatus() {
     if (wallRefreshing) return;
     wallRefreshing = true;
+    const view = wallView,
+      gallery = wallGallery();
     try {
       for (const o of ["l", "p"]) {
-        const data = await wallApi("walls?o=" + o),
-          s = walls[o];
-        const changed =
-          JSON.stringify([data.files, data.current, data.pinned, data.legacy, data.free]) !==
-          JSON.stringify([s.files, s.current, s.pinned, s.legacy, s.free]);
-        Object.assign(s, data);
-        if (changed) wallRender(o);
+        const s = walls[o];
+        let data,
+          files = [];
+        for (let offset = 0; offset < s.loaded; offset += 24) {
+          data = await wallApi("walls?o=" + o + "&gallery=" + gallery + "&offset=" + offset + "&limit=24");
+          if (view !== wallView) return;
+          files.push(...data.files);
+          if (offset + 24 >= data.count) break;
+        }
+        Object.assign(s, data, { files });
+        const sd = data.sd;
+        $("sdState").textContent = !sd.enabled
+          ? "Not enabled"
+          : !sd.mounted
+            ? "Card not found - using internal storage"
+            : "Mounted: " +
+              Math.floor(data.free / 1048576) +
+              " MB free of " +
+              Math.floor(data.total / 1048576) +
+              " MB - My pictures: " +
+              sd.own.join(" landscape / ") +
+              " portrait; Daily: " +
+              sd.daily.join(" landscape / ") +
+              " portrait";
+        wallRender(o);
       }
     } catch (e) {
       showToast(e.message, true);
     } finally {
       wallRefreshing = false;
+      for (const o of ["l", "p"]) $("wallMore_" + o).disabled = wallBusy;
+      if (view !== wallView) wallStatus();
     }
   }
   // bust: after deletes, as names are reused once the newest files are gone.
@@ -803,7 +874,7 @@
     wallBusy = true;
     wallButtons();
     try {
-      await wallApi(path, "POST");
+      await wallApi(path + "&gallery=" + wallGallery(), "POST");
       if (bust) wallCache = Date.now();
       await wallStatus();
     } catch (e) {
@@ -870,6 +941,11 @@
     }
   }
   for (const o of ["l", "p"]) {
+    $("wallMore_" + o).onclick = () => {
+      if (wallBusy || wallRefreshing) return;
+      walls[o].loaded += 24;
+      wallStatus();
+    };
     $("wallPick_" + o).onclick = () => $("wallFile_" + o).click();
     $("wallFile_" + o).oninput = (e) => e.stopPropagation();
     $("wallFile_" + o).onchange = (e) => {
@@ -881,11 +957,11 @@
     const gallery = $("wallGallery_" + o);
     gallery.ondragover = (e) => {
       e.preventDefault();
-      e.dataTransfer.dropEffect = wallBusy || dailyActive ? "none" : "copy";
+      e.dataTransfer.dropEffect = wallBusy || wallSource === 1 ? "none" : "copy";
     };
     gallery.ondrop = (e) => {
       e.preventDefault();
-      if (!dailyActive) wallBatch(o, [...e.dataTransfer.files]);
+      if (wallSource !== 1) wallBatch(o, [...e.dataTransfer.files]);
     };
     $("wallShow_" + o).onclick = () =>
       wallAction(o, "walls/show?o=" + o + "&n=" + encodeURIComponent([...walls[o].selected][0]), false);
@@ -912,6 +988,7 @@
       const d = await wallApi("daily");
       const refresh = dailyActive !== d.active || (dailyRunning && !d.running);
       dailyActive = d.active;
+      setWallSource(d.source ?? (d.active ? 1 : 0));
       dailyRunning = d.running;
       $("dailyState").textContent = dailyText(d);
       $("dailyFetch").disabled = d.running;

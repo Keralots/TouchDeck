@@ -30,6 +30,7 @@ bool ledPinAllowed(uint8_t pin) {
   // every board here, so it is never a valid choice.
   if (pin == 0) return false;
   if (pin == BACKLIGHT_PIN) return false;
+  if (dispSettings.sdCard && pin >= 10 && pin <= 13) return false;  // microSD SPI
   // Guition JC3248W535 (AXS15231B QSPI 320x480)
   if (pin == 21 || pin == 39 || pin == 40 ||
       pin == 45 || pin == 47 || pin == 48) return false;  // display QSPI

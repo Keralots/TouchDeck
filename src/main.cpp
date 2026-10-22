@@ -13,6 +13,7 @@
 #include "led.h"
 #include "deck_mqtt.h"
 #include "deck_daily.h"
+#include "deck_sd.h"
 
 // Loop-task watchdog: an indefinite block in loop() panics after
 // WDT_TIMEOUT_S with a backtrace and reboots (/api/status then reports
@@ -33,6 +34,7 @@ void setup() {
   Serial.printf("Reset reason: %d\n", (int)esp_reset_reason());
 
   loadSettings();
+  deck::wallStorageBegin();
   setScreenState(SCREEN_SPLASH);
   initDisplay();
 
