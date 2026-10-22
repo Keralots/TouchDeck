@@ -59,6 +59,10 @@ constexpr size_t MAX_PRESENCE_ENTITIES = 4;
 struct PresenceSettings {
   uint16_t sleepMin = 0;  // 0 = never sleeps
   uint8_t dimPct = 0;     // asleep: 0 = backlight off, else at most this % of full
+  bool frame = false;
+  uint8_t frameEvery = 5;
+  bool frameClock = true;
+  bool frameAnim = true;
   bool pc = false;
   String entities[MAX_PRESENCE_ENTITIES];  // "" = unused slot
 };
@@ -99,6 +103,7 @@ extern AdvancedSettings advSettings;
 extern PresenceSettings presenceSettings;
 
 bool validWallEvery(int minutes);
+bool validFrameEvery(int minutes);
 void loadSettings();
 void saveSettings();
 bool factoryResetSettings();

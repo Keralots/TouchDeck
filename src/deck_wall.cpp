@@ -85,6 +85,7 @@ struct JpegInput {
   WallReader file;
   uint8_t *r, *g, *b;
   int w, h;
+  uint16_t* rgb565 = nullptr;
   JpegInput(const char* path, uint8_t* red, uint8_t* green, uint8_t* blue, int width, int height)
       : file(path), r(red), g(green), b(blue), w(width), h(height) {}
 };
@@ -105,16 +106,20 @@ int jpegOutput(JDEC* jd, void* pixels, JRECT* rect) {
     for (int x = rect->left; x <= rect->right; x++, src += 3) {
       const int i = y * in.w + x;
       // LVGL's bundled JD_FORMAT 0 emits B, G, R, not upstream RGB order.
-      in.b[i] = src[0];
-      in.g[i] = src[1];
-      in.r[i] = src[2];
+      if (in.rgb565) in.rgb565[i] = wallDither565(src[2], src[1], src[0], x, y);
+      else {
+        in.b[i] = src[0];
+        in.g[i] = src[1];
+        in.r[i] = src[2];
+      }
     }
   }
   return 1;
 }
 
-bool jpegLoad(const char* path, int w, int h, uint8_t* r, uint8_t* g, uint8_t* b) {
+bool jpegLoad(const char* path, int w, int h, uint8_t* r, uint8_t* g, uint8_t* b, uint16_t* rgb565 = nullptr) {
   JpegInput in(path, r, g, b, w, h);
+  in.rgb565 = rgb565;
   if (!in.file) return false;
   if (in.file.read() != 0xFF || in.file.read() != 0xD8 || !in.file.seek(0)) return false;
   // FASTDECODE 1 needs up to 4 KB for standard tables, input and MCU buffers.
@@ -124,7 +129,7 @@ bool jpegLoad(const char* path, int w, int h, uint8_t* r, uint8_t* g, uint8_t* b
   JDEC jd;
   bool ok = jd_prepare(&jd, jpegRead, work, workSize, &in) == JDR_OK &&
             jd.width == w && jd.height == h;
-  if (ok && r) ok = jd_decomp(&jd, jpegOutput, 0) == JDR_OK;
+  if (ok && (r || rgb565)) ok = jd_decomp(&jd, jpegOutput, 0) == JDR_OK;
   free(work);
   return ok;
 }
@@ -466,6 +471,10 @@ void wallClearPin(bool portrait) {
     prefs.end();
   }
   s_pin[portrait] = "";
+}
+
+bool wallLoadPicture(const char* path, int w, int h, uint16_t* pixels) {
+  return pixels && jpegLoad(path, w, h, nullptr, nullptr, nullptr, pixels);
 }
 
 bool wallValidateJpeg(const char* path, bool portrait) {

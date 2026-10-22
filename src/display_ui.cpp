@@ -113,7 +113,10 @@ void updateBacklightControl() {
   g_night_active = nightWindow || g_manual_night;
 
   uint8_t target = g_night_active ? backlightSettings.nightBrightness : brightness;
-  if (g_idle_sleep) target = min(target, g_idle_level);
+  if (g_idle_sleep) {
+    target = min(target, g_idle_level);
+    if (presenceSettings.frame && g_night_active) target = 0;
+  }
   if (g_manual_display_off) target = 0;
   const uint16_t fade = g_next_fade_ms;
   g_next_fade_ms = 0;

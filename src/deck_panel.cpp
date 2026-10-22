@@ -63,9 +63,11 @@ void IRAM_ATTR teIsr(void*) {
 
 // --- Shared frame / compositor state (s_mux) ----------------------------------
 SemaphoreHandle_t s_lvReady = nullptr;
+SemaphoreHandle_t s_quiet = nullptr;
+bool s_quiescing = false;
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
-enum Kind : uint8_t { KIND_HSTRIP = 0, KIND_VSTRIP, KIND_PANEL };
+enum Kind : uint8_t { KIND_HSTRIP = 0, KIND_VSTRIP, KIND_PANEL, KIND_FRAME };
 
 // Page dots: shown while a page slide owns the screen, then held and faded
 // out over LVGL frames by this task (LVGL never draws them). Horizontal dots
@@ -75,6 +77,11 @@ constexpr int64_t DOTS_HOLD_US = 1200000;
 constexpr int64_t DOTS_FADE_US = 300000;
 
 struct State {
+  FrameScene scene = {};
+  uint8_t frameDots = 0;
+  bool frameDone = false;
+  bool frameResult = false;
+  PanelStats frameStats = {};
   bool lvPending = false;
   int lvIdx = 0;
   uint32_t lvGen = 0;
@@ -111,6 +118,9 @@ State s;
 // state: one LVGL framebuffer, a horizontal or vertical A|B strip, or a panel
 // pulled down over a (dimmed) page. Plus the page-dot overlay.
 struct Frame {
+  FrameScene scene;
+  uint32_t elapsedMs, durationMs, build0Us;
+  bool frameLast;
   bool comp;
   bool releaseLv;
   uint8_t rot;
@@ -127,7 +137,10 @@ struct Frame {
 // --- Stats (approximate, single writer) ----------------------------------------
 volatile uint32_t st_frames = 0, st_comp = 0, st_flushSum = 0, st_flushMax = 0;
 volatile uint32_t st_buildSum = 0, st_teLate = 0, st_teTimeout = 0, st_lvDropped = 0;
-volatile uint32_t st_gapMax = 0;
+volatile uint32_t st_gapMax = 0, st_frameSum = 0, st_frameMax = 0;
+PanelStats s_frameStats = {};
+uint64_t s_frameSum = 0, s_frameBuildSum = 0, s_frameFlushSum = 0;
+int64_t s_frameStart = 0;
 int64_t s_lastStartUs = 0;
 bool s_lastWasComp = false;
 
@@ -266,11 +279,134 @@ inline void copyAny(uint16_t* d, int dstep, const uint16_t* s, int n, bool swap,
   }
 }
 
+// RGB565 with green moved to the top half: blends a pixel with 5-bit alpha in one multiply.
+inline uint32_t spread565(uint16_t c) { return (c | (uint32_t)c << 16) & 0x07E0F81F; }
+inline uint16_t mix565(uint16_t a, uint16_t b, uint32_t a5) {
+  const uint32_t sa = spread565(a);
+  const uint32_t x = (((spread565(b) - sa) * a5 >> 5) + sa) & 0x07E0F81F;
+  return (uint16_t)(x | x >> 16);
+}
+
+// Sources are read little-endian; `swap` says they are stored that way already.
+template <bool SA, bool SB>
+void blendRun(uint16_t* d, int step, const uint16_t* a, const uint16_t* b, int n, uint32_t a5) {
+  int k = 0;
+  // Two pixels per PSRAM load when both runs are word aligned (the usual case).
+  if (!(((uintptr_t)a | (uintptr_t)b) & 3)) {
+    const uint32_t* a2 = (const uint32_t*)a;
+    const uint32_t* b2 = (const uint32_t*)b;
+    for (; k + 1 < n; k += 2, d += 2 * step) {
+      const uint32_t wa = *a2++, wb = *b2++;
+      const uint16_t a0 = SA ? (uint16_t)wa : __builtin_bswap16((uint16_t)wa);
+      const uint16_t a1 = SA ? (uint16_t)(wa >> 16) : __builtin_bswap16((uint16_t)(wa >> 16));
+      const uint16_t b0 = SB ? (uint16_t)wb : __builtin_bswap16((uint16_t)wb);
+      const uint16_t b1 = SB ? (uint16_t)(wb >> 16) : __builtin_bswap16((uint16_t)(wb >> 16));
+      d[0] = __builtin_bswap16(mix565(a0, b0, a5));
+      d[step] = __builtin_bswap16(mix565(a1, b1, a5));
+    }
+  }
+  for (; k < n; k++, d += step) {
+    const uint16_t ca = SA ? a[k] : __builtin_bswap16(a[k]);
+    const uint16_t cb = SB ? b[k] : __builtin_bswap16(b[k]);
+    *d = __builtin_bswap16(mix565(ca, cb, a5));
+  }
+}
+
+// Per-frame values of a frame scene, set before chunk 0 (flush task only).
+struct FramePrep {
+  uint32_t photo5, clock8;
+  int count;
+};
+FramePrep s_fp;
+
+void prepFrame(const Frame& f) {
+  const FrameScene& sc = f.scene;
+  const int tilesMs = (int)frameTilesMs(sc.count), step = (int)frameTileStep(sc.count);
+  const int fadeMs = (int)f.durationMs - tilesMs;
+  // Leaving: tiles first, then the fade; waking: the fade first, then tiles.
+  const int el = (int)f.elapsedMs;
+  const int fadeAt = sc.waking ? el : el - tilesMs, tileAt = sc.waking ? el - fadeMs : el;
+  const uint32_t progress = f.frameLast || fadeAt >= fadeMs ? 256 : fadeAt <= 0 ? 0 : fadeAt * 256 / fadeMs;
+  const uint32_t photo = sc.waking ? 256 - progress : progress;
+  s_fp.photo5 = (photo + 4) >> 3;
+  s_fp.clock8 = sc.clockFade ? photo : 256;
+  s_fp.count = 0;
+  for (int i = 0; i < sc.count && sc.runs; i++) {
+    const FrameRect& r = sc.rects[i];
+    const int t = tileAt - i * step;
+    const int p = f.frameLast ? 256 : (t <= 0 ? 0 : t >= (int)FRAME_TILE_MS ? 256 : t * 256 / (int)FRAME_TILE_MS);
+    const int alpha = sc.waking ? p : 256 - p;
+    const int a5 = (alpha + 4) >> 3;
+    if (!a5) continue;
+    const int scale = 218 + (38 * alpha >> 8);
+    const int w = (r.w * scale + 128) >> 8, h = (r.h * scale + 128) >> 8;
+    if (!w || !h) continue;
+    FrameTileRun& run = sc.runs[s_fp.count++];
+    run.left = r.x + (r.w - w) / 2;
+    run.top = r.y + (r.h - h) / 2;
+    run.w = w;
+    run.h = h;
+    run.srcX = r.x;
+    run.srcY = r.y;
+    run.dx = ((uint32_t)r.w << 16) / w;
+    run.dy = ((uint32_t)r.h << 16) / h;
+    run.a5 = a5;
+  }
+}
+
+void emitFrameRow(const Frame& f, int y, int x0, int n, uint16_t* d, int step) {
+  const FrameScene& sc = f.scene;
+  const uint32_t a5 = s_fp.photo5;
+  const Src& base = sc.base;
+  const Src& pic = sc.picture;
+  const uint16_t* pa = base.px + y * base.stride + x0;
+  const uint16_t* pb = pic.px + y * pic.stride + x0;
+  if (a5 == 0) copyAny(d, step, pa, n, base.swap, 0);
+  else if (a5 == 32) copyAny(d, step, pb, n, pic.swap, 0);
+  else if (base.swap && pic.swap) blendRun<true, true>(d, step, pa, pb, n, a5);
+  else if (base.swap) blendRun<true, false>(d, step, pa, pb, n, a5);
+  else if (pic.swap) blendRun<false, true>(d, step, pa, pb, n, a5);
+  else blendRun<false, false>(d, step, pa, pb, n, a5);
+  const Src& page = sc.page;
+  for (int i = 0; i < s_fp.count; i++) {
+    const FrameTileRun& r = sc.runs[i];
+    if (y < r.top || y >= r.top + r.h) continue;
+    const int first = x0 > r.left ? x0 : r.left;
+    const int end = x0 + n < r.left + r.w ? x0 + n : r.left + r.w;
+    if (first >= end) continue;
+    const uint16_t* row = page.px + (r.srcY + ((uint32_t)(y - r.top) * r.dy >> 16)) * page.stride + r.srcX;
+    uint32_t sx = (first - r.left) * r.dx;
+    uint16_t* out = d + (first - x0) * step;
+    for (int x = first; x < end; x++, sx += r.dx, out += step) {
+      const uint16_t c = row[sx >> 16];
+      *out = __builtin_bswap16(mix565(__builtin_bswap16(*out), page.swap ? c : __builtin_bswap16(c), r.a5));
+    }
+  }
+  const FrameRect& c = sc.clockRect;
+  if (sc.clock && s_fp.clock8 && y >= c.y && y < c.y + c.h) {
+    const int first = x0 > c.x ? x0 : c.x;
+    const int end = x0 + n < c.x + c.w ? x0 + n : c.x + c.w;
+    const uint32_t* row = sc.clock + (y - c.y) * sc.clockStride;
+    for (int x = first; x < end; x++) {
+      const uint32_t px = row[x - c.x];
+      const uint32_t ca5 = ((px >> 24) * s_fp.clock8 + 1024) >> 11;
+      if (!ca5) continue;
+      const uint16_t fg = ((px >> 8) & 0xF800) | ((px >> 5) & 0x07E0) | ((px >> 3) & 0x001F);
+      uint16_t& out = d[(x - x0) * step];
+      out = __builtin_bswap16(mix565(__builtin_bswap16(out), fg, ca5));
+    }
+  }
+}
+
 // Emit n pixels of logical row ly starting at logical x0 (ascending). PSRAM
 // is always read forward; mirrored rotations walk the destination backwards.
 inline void emitRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int dstep) {
   if (!f.comp) {
     copyAny(d, dstep, f.lv + ly * f.w + x0, n, true, 0);
+    return;
+  }
+  if (f.kind == KIND_FRAME) {
+    emitFrameRow(f, ly, x0, n, d, dstep);
     return;
   }
   if (f.kind == KIND_PANEL) {
@@ -382,6 +518,7 @@ void overlayDots(const Frame& f, uint16_t* dst, int ny0) {
 //   2: lx = 319 - nx,  ly = 479 - ny
 //   3: lx = 479 - ny,  ly = nx
 void buildChunk(const Frame& f, uint16_t* dst, int ny0) {
+  if (f.comp && f.kind == KIND_FRAME && ny0 == 0) prepFrame(f);
   if (!f.comp && (f.rot & 1)) {
     // Plain landscape LVGL frame: the hot path, free of the per-run
     // bookkeeping emitRow() needs for composed frames.
@@ -450,6 +587,8 @@ bool decide(Frame& f) {
   f.w = w;
   f.h = h;
   f.releaseLv = false;
+  f.build0Us = 0;
+  f.frameLast = false;
   f.dotsV = s.dotsV;
   f.dotCount = (uint8_t)(s.dotsV ? s.vCount : s.pageCount);
   f.dotActive = (uint8_t)(s.dotsV ? s.vActive : s.pageActive);
@@ -468,6 +607,17 @@ bool decide(Frame& f) {
       give = true;
       st_lvDropped = st_lvDropped + 1;
     }
+  }
+  if (!have && !s_quiescing && s.mode == COMP_FRAME) {
+    const int64_t elapsed = now + ANIM_LEAD_US - s.t0;
+    f.comp = true;
+    f.kind = KIND_FRAME;
+    f.scene = s.scene;
+    f.durationMs = (s.durUs + 999) / 1000;
+    f.elapsedMs = elapsed > 0 ? elapsed / 1000 : 0;
+    f.frameLast = elapsed >= s.durUs;
+    if (f.frameLast) s.mode = COMP_FRAME_HOLD;
+    have = true;
   }
   if (!have && (s.mode == COMP_DRAG || s.mode == COMP_ANIM)) {
     int off = s.off;
@@ -517,8 +667,10 @@ bool decide(Frame& f) {
       have = true;
     }
   }
-  const bool panelOwns = s.kind == KIND_PANEL && s.mode != COMP_NONE;
-  const uint8_t dots = panelOwns ? 0 : dotsAlphaAt(now);
+  const bool panelOwns = (s.kind == KIND_PANEL || s.kind == KIND_FRAME) && s.mode != COMP_NONE;
+  uint8_t dots = panelOwns ? 0 : dotsAlphaAt(now);
+  if (have && f.comp && f.kind == KIND_FRAME && !f.scene.waking)
+    dots = f.elapsedMs >= 300 || f.frameLast ? 0 : s.frameDots * (300 - f.elapsedMs) / 300;
   if (!have && s.mode == COMP_NONE && s.lvLatest >= 0 && dots != s.lastSentDots) {
     // Dots fading over a static LVGL screen: resend the latest complete frame.
     // Safe: LVGL only ever renders into the other buffer.
@@ -558,6 +710,18 @@ void waitTe(bool backToBack) {
   st_teTimeout = st_teTimeout + 1;
 }
 
+void publishFrameStats() {
+  const uint32_t n = s_frameStats.frames;
+  s_frameStats.frameUsAvg = n ? s_frameSum / n : 0;
+  s_frameStats.buildUsAvg = n ? s_frameBuildSum / n : 0;
+  s_frameStats.flushUsAvg = n ? s_frameFlushSum / n : 0;
+  portENTER_CRITICAL(&s_mux);
+  s.frameStats = s_frameStats;
+  s.frameDone = true;
+  s.frameResult = true;
+  portEXIT_CRITICAL(&s_mux);
+}
+
 // Send f (chunk 0 already built into s_bounce[0]). While the tail of f is on
 // the wire, decide the following frame and pre-build its chunk 0; returns
 // true when `next` is ready that way.
@@ -576,7 +740,7 @@ bool sendFrame(const Frame& f, Frame& next, bool backToBack) {
   fillTr(s_tr[0], true, s_bounce[0], CHUNK_BYTES);
   spi_device_queue_trans(s_dev, (spi_transaction_t*)&s_tr[0], portMAX_DELAY);
   int inflight = 1;
-  uint32_t build = 0;
+  uint32_t build = f.build0Us;
   spi_transaction_t* r;
   for (int i = 1; i < NCHUNK; i++) {
     if (inflight == 2) {
@@ -602,7 +766,7 @@ bool sendFrame(const Frame& f, Frame& next, bool backToBack) {
   if (have) {
     const int64_t b0 = esp_timer_get_time();
     buildChunk(next, s_bounce[0], 0);
-    build += (uint32_t)(esp_timer_get_time() - b0);
+    next.build0Us = (uint32_t)(esp_timer_get_time() - b0);
   }
   while (inflight--) spi_device_get_trans_result(s_dev, &r, portMAX_DELAY);
   csHigh();
@@ -614,28 +778,53 @@ bool sendFrame(const Frame& f, Frame& next, bool backToBack) {
   st_flushSum = st_flushSum + fl;
   if (fl > st_flushMax) st_flushMax = fl;
   st_buildSum = st_buildSum + build;
+  const uint32_t cost = fl + f.build0Us;
+  st_frameSum = st_frameSum + cost;
+  if (cost > st_frameMax) st_frameMax = cost;
+  if (f.comp && f.kind == KIND_FRAME) {
+    s_frameStats.frames++;
+    s_frameStats.compFrames++;
+    s_frameSum += cost;
+    s_frameBuildSum += build;
+    s_frameFlushSum += fl;
+    if (cost > s_frameStats.frameUsMax) s_frameStats.frameUsMax = cost;
+    if (fl > s_frameStats.flushUsMax) s_frameStats.flushUsMax = fl;
+    if (s_frameStart && f0 - s_frameStart > s_frameStats.gapMaxUs)
+      s_frameStats.gapMaxUs = f0 - s_frameStart;
+    s_frameStart = f0;
+    if (f.frameLast) publishFrameStats();
+  }
   return have;
 }
 
 static_assert(NCHUNK % 2 == 0, "the last chunk must use s_bounce[1]");
 
-volatile bool s_inFrame = false;
-
 void flushTask(void*) {
   Frame cur = {}, next = {};
   bool ready = false;
   for (;;) {
-    s_inFrame = false;
+    portENTER_CRITICAL(&s_mux);
+    const bool quiet = s_quiescing;
+    const bool partial = quiet && s.kind == KIND_FRAME && !s.frameDone;
+    s_quiescing = false;
+    portEXIT_CRITICAL(&s_mux);
+    if (quiet) {
+      if (partial) publishFrameStats();
+      if (ready && cur.releaseLv) xSemaphoreGive(s_lvReady);
+      ready = false;
+      xSemaphoreGive(s_quiet);
+    }
     if (!ready) {
       if (!decide(cur)) {
-        const bool animating = compMode() == COMP_ANIM;
+        const CompMode mode = compMode();
+        const bool animating = mode == COMP_ANIM || mode == COMP_FRAME;
         ulTaskNotifyTake(pdTRUE, animating ? 1 : pdMS_TO_TICKS(50));
         continue;
       }
-      s_inFrame = true;
+      const int64_t b0 = esp_timer_get_time();
       buildChunk(cur, s_bounce[0], 0);
+      cur.build0Us = esp_timer_get_time() - b0;
     }
-    s_inFrame = true;
     ready = sendFrame(cur, next, ready);
     if (ready) cur = next;
   }
@@ -700,6 +889,7 @@ bool panelBegin(uint8_t rotation) {
 
   s_teSem = xSemaphoreCreateBinary();
   s_lvReady = xSemaphoreCreateBinary();
+  s_quiet = xSemaphoreCreateBinary();
   gpio_config_t g = {};
   g.pin_bit_mask = 1ULL << PIN_TE;
   g.mode = GPIO_MODE_INPUT;
@@ -829,7 +1019,7 @@ CompMode compMode() {
 
 bool compOwnsScreen() {
   CompMode m = compMode();
-  return m == COMP_DRAG || m == COMP_ANIM;
+  return m == COMP_DRAG || m == COMP_ANIM || m == COMP_FRAME || m == COMP_FRAME_HOLD;
 }
 
 bool compTakeLanding(int8_t* landing) {
@@ -861,9 +1051,41 @@ void compCancel() {
 
 void panelQuiesce() {
   compCancel();
-  // A frame already being built may still read a page image; wait it out
-  // (one frame is ~16 ms) before the caller frees anything.
-  for (int i = 0; i < 40 && s_inFrame; i++) vTaskDelay(1);
+  if (!s_task) return;
+  portENTER_CRITICAL(&s_mux);
+  s_quiescing = true;
+  portEXIT_CRITICAL(&s_mux);
+  xTaskNotifyGive(s_task);
+  xSemaphoreTake(s_quiet, portMAX_DELAY);
+}
+
+bool compBeginFrame(const FrameScene& scene, uint32_t durationMs) {
+  if (!scene.base.px || !scene.picture.px || (scene.count && (!scene.page.px || !scene.rects))) return false;
+  panelQuiesce();
+  s_frameStats = {};
+  s_frameSum = s_frameBuildSum = s_frameFlushSum = 0;
+  s_frameStart = 0;
+  portENTER_CRITICAL(&s_mux);
+  s.scene = scene;
+  s.frameDots = dotsAlphaAt(esp_timer_get_time());
+  s.kind = KIND_FRAME;
+  s.mode = COMP_FRAME;
+  s.frameDone = s.frameResult = false;
+  s.t0 = esp_timer_get_time();
+  s.durUs = durationMs ? durationMs * 1000 : 1;
+  s.dotsForce = false;
+  s.dotsUntil = 0;
+  portEXIT_CRITICAL(&s_mux);
+  xTaskNotifyGive(s_task);
+  return true;
+}
+
+bool compFrameResult(PanelStats& out) {
+  portENTER_CRITICAL(&s_mux);
+  const bool done = s.frameDone && s.frameResult;
+  if (done) { out = s.frameStats; s.frameResult = false; }
+  portEXIT_CRITICAL(&s_mux);
+  return done;
 }
 
 PanelStats panelTakeStats() {
@@ -874,6 +1096,8 @@ PanelStats panelTakeStats() {
   p.flushUsAvg = n ? st_flushSum / n : 0;
   p.flushUsMax = st_flushMax;
   p.buildUsAvg = n ? st_buildSum / n : 0;
+  p.frameUsAvg = n ? st_frameSum / n : 0;
+  p.frameUsMax = st_frameMax;
   p.teLate = st_teLate;
   p.teTimeouts = st_teTimeout;
   p.lvDropped = st_lvDropped;
@@ -883,6 +1107,8 @@ PanelStats panelTakeStats() {
   st_flushSum = 0;
   st_flushMax = 0;
   st_buildSum = 0;
+  st_frameSum = 0;
+  st_frameMax = 0;
   st_teLate = 0;
   st_teTimeout = 0;
   st_lvDropped = 0;
