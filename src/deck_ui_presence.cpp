@@ -22,7 +22,7 @@ void presenceRestart() { s_activeMs = millis(); }
 
 void presenceWake() {
   s_activeMs = millis();
-  wakeDisplayFromTouch();
+  wakeDisplay();
 }
 
 void presenceTick() {

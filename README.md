@@ -87,7 +87,7 @@ A page that goes away while it is shown always hands over to another page first;
 On the **Screen & light** page, the Sleep card sets the time without touch and without presence after which the screen fades out or dims (the night level still applies when it is lower), and what counts as presence:
 
 - Up to four Home Assistant entities (motion, occupancy, a person); one counts as present while its state is `on` or `home`. Optionally any PC sending metrics. Presence starting wakes the screen, also after Off in the quick panel.
-- A touch always wakes it; that first touch does nothing else.
+- A touch always wakes it; that first touch does nothing else. With a night brightness of 0 a touch lights the screen at 10% until a minute after the last touch.
 
 ## Wallpapers and microSD
 

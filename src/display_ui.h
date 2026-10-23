@@ -42,9 +42,13 @@ bool manualNightActive();
 // Idle sleep (presenceSettings): backlight capped at level (0 = off), faded.
 void setIdleSleep(bool sleep, uint8_t level);
 bool idleSleepActive();
-// Manual off or idle sleep: the next touch only wakes the screen.
+// Night schedule (or manual night) with a 0% night level.
+bool nightScreenOff();
+// Manual off, idle sleep or a 0% screen: the next touch only wakes the screen.
 bool displaySleepingForTouch();
 // Clears manual off and idle sleep.
+void wakeDisplay();
+// wakeDisplay() plus a 10% minute on a 0% screen.
 void wakeDisplayFromTouch();
 
 #endif // DISPLAY_UI_H

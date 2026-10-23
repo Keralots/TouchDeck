@@ -2,6 +2,7 @@
 #include "config.h"
 #include "settings.h"
 #include "deck_ui.h"
+#include "deck_touch.h"
 #include <time.h>
 
 static ScreenState s_screen = SCREEN_SPLASH;
@@ -33,6 +34,12 @@ static uint16_t g_fade_ms = 0;
 constexpr uint16_t SLEEP_FADE_MS = 1500;
 constexpr uint16_t WAKE_FADE_MS = 250;
 
+// A touch on a 0% screen lights it at 10% until a minute after the last touch.
+static bool g_peek = false;
+static uint32_t g_peek_ms = 0;
+constexpr uint8_t PEEK_LEVEL = 26;
+constexpr uint32_t PEEK_MS = 60000;
+
 void setBacklight(uint8_t level) {
   analogWrite(BACKLIGHT_PIN, level);
   lastAppliedBrightness = level;
@@ -44,8 +51,9 @@ bool ledNightActive() { return g_led_night; }
 bool backlightTimeValid() { return g_time_valid; }
 bool manualDisplayOff() { return g_manual_display_off; }
 bool manualNightActive() { return g_manual_night; }
-bool displaySleepingForTouch() { return g_manual_display_off || g_idle_sleep; }
+bool displaySleepingForTouch() { return g_manual_display_off || g_idle_sleep || g_target == 0; }
 bool idleSleepActive() { return g_idle_sleep; }
+bool nightScreenOff() { return g_night_active && !backlightSettings.nightBrightness; }
 
 void setManualNight(bool on) {
   g_manual_night = on;
@@ -65,10 +73,16 @@ void setIdleSleep(bool sleep, uint8_t level) {
   refreshBacklightControl();
 }
 
-void wakeDisplayFromTouch() {
+void wakeDisplay() {
   g_manual_display_off = false;
   setIdleSleep(false, 0);
   refreshBacklightControl();
+}
+
+void wakeDisplayFromTouch() {
+  g_peek = true;
+  g_peek_ms = millis();
+  wakeDisplay();
 }
 
 void refreshBacklightControl() { g_backlight_refresh = true; }
@@ -113,10 +127,17 @@ void updateBacklightControl() {
   g_night_active = nightWindow || g_manual_night;
 
   uint8_t target = g_night_active ? backlightSettings.nightBrightness : brightness;
-  if (g_idle_sleep) {
-    target = min(target, g_idle_level);
-    if (presenceSettings.frame && g_night_active) target = 0;
+  if (g_peek) {
+    uint32_t last = deck::touchLastActivity();
+    if ((int32_t)(last - g_peek_ms) < 0) last = g_peek_ms;
+    if (nowMs - last >= PEEK_MS) {
+      g_peek = false;
+      g_next_fade_ms = SLEEP_FADE_MS;
+    } else if (!target) {
+      target = PEEK_LEVEL;
+    }
   }
+  if (g_idle_sleep) target = min(target, g_idle_level);
   if (g_manual_display_off) target = 0;
   const uint16_t fade = g_next_fade_ms;
   g_next_fade_ms = 0;

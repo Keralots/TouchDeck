@@ -313,7 +313,7 @@ void wake() {
 bool enter() {
   if (s_state != FRAME_OFF || !s_disp || !s_count || getScreenState() != SCREEN_DECK ||
       s_qp.open || s_modalCard || s_ed.root || sh.owned || compMode() != COMP_NONE ||
-      touchIsDown() || manualDisplayOff() || nightBrightnessActive()) return false;
+      touchIsDown() || manualDisplayOff() || nightScreenOff()) return false;
   stopGestures();
   s_width = logicalW();
   s_height = logicalH();
@@ -372,7 +372,7 @@ void frameAbort() {
 }
 
 bool frameSleep(bool sleep) {
-  const bool night = nightBrightnessActive();
+  const bool night = nightScreenOff();
   if (!sleep || night != s_night) s_tried = false;
   s_night = night;
   if (frameActive()) {
@@ -388,7 +388,7 @@ bool frameSleep(bool sleep) {
 void frameTick() {
   pollPicture();
   if (!frameActive()) return;
-  if (getScreenState() != SCREEN_DECK || manualDisplayOff() || nightBrightnessActive() ||
+  if (getScreenState() != SCREEN_DECK || manualDisplayOff() || nightScreenOff() ||
       s_source != wallSource() || s_width != logicalW() || s_height != logicalH() ||
       s_qp.open || s_modalCard || s_ed.root) {
     frameAbort();
