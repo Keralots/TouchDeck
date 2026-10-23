@@ -309,6 +309,7 @@ bool frameActive();
 void frameAbort();
 bool frameSleep(bool sleep);
 void frameTick();
+void frameCatchUp();
 void presenceTick();
 void presenceWake();
 void presenceRestart();

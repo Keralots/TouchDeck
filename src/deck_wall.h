@@ -51,6 +51,8 @@ void wallInvalidateJobs();
 // Poll/start work, then commit only after the UI has stopped gestures.
 bool wallPoll(int w, int h, bool idle, bool canSwitch);
 void wallCommit();
+// The automatic change interval starts again (the photo frame covered the wallpaper).
+void wallRestartTimer();
 
 // Where the wallpaper for a w x h screen lives on LittleFS.
 const char* wallPath(int w, int h);
