@@ -7,6 +7,7 @@
 #include "display_ui.h"
 #include "pc_metrics.h"
 #include "led.h"
+#include "haptic.h"
 #include "config.h"
 #include "web_assets.h"
 #include "deck_ui.h"
@@ -230,6 +231,11 @@ static void handleApiConfig() {
   for (uint8_t pin = 0; pin <= 48; pin++) {
     if (ledPinAllowed(pin)) ledPins.add(pin);
   }
+  JsonObject haptic = doc["haptic"].to<JsonObject>();
+  haptic["enabled"] = hapticSettings.enabled;
+  haptic["pin"] = hapticSettings.pin;
+  haptic["strength"] = hapticSettings.strength;
+  haptic["pulseMs"] = hapticSettings.pulseMs;
 
   JsonObject clock = doc["clock"].to<JsonObject>();
   clock["use24h"] = netSettings.use24h;
@@ -337,6 +343,11 @@ static void handleConfigExport() {
   led["nightEndMinute"] = ledSettings.nightEndMinute;
   led["followDisplay"] = ledSettings.followDisplay != 0;
   led["offlineOff"] = ledSettings.offlineOff != 0;
+  JsonObject haptic = doc["haptic"].to<JsonObject>();
+  haptic["enabled"] = hapticSettings.enabled;
+  haptic["pin"] = hapticSettings.pin;
+  haptic["strength"] = hapticSettings.strength;
+  haptic["pulseMs"] = hapticSettings.pulseMs;
   doc["advanced"]["printers"] = advSettings.printers;
   mqttConfigJson(doc["mqtt"].to<JsonObject>(), false);
   presenceJson(doc["presence"].to<JsonObject>());
@@ -577,6 +588,22 @@ static void handleConfigImport() {
     return;
   }
 
+  HapticSettings nextHaptic;  // older backups: off
+  JsonObjectConst haptic = root["haptic"].as<JsonObjectConst>();
+  if (!haptic.isNull()) {
+    READ_BOOL(haptic, "enabled", nextHaptic.enabled);
+    READ_INT(haptic, "pin", 0, 48, nextHaptic.pin, uint8_t);
+    READ_INT(haptic, "strength", HAPTIC_MIN_STRENGTH, 100, nextHaptic.strength, uint8_t);
+    READ_INT(haptic, "pulseMs", HAPTIC_MIN_MS, HAPTIC_MAX_MS, nextHaptic.pulseMs, uint8_t);
+    const bool sdPin = nextHaptic.pin >= 10 && nextHaptic.pin <= 13;
+    if (nextHaptic.enabled &&
+        ((sdPin ? nextDisplay.sdCard : !ledPinAllowed(nextHaptic.pin)) ||
+         (nextLed.enabled && nextLed.pin == nextHaptic.pin))) {
+      sendJsonMessage(400, false, "The backup uses a vibration motor GPIO this board does not allow.");
+      return;
+    }
+  }
+
   READ_BOOL(clock, "use24h", nextNetwork.use24h);
   const char* textValue = nullptr;
   if (!readBackupString(clock, "timezone", sizeof(nextNetwork.timezoneStr) - 1,
@@ -699,6 +726,7 @@ static void handleConfigImport() {
   netSettings = nextNetwork;
   backlightSettings = nextBacklight;
   ledSettings = nextLed;
+  hapticSettings = nextHaptic;
   brightness = nextBrightness;
   advSettings.printers = nextPrinters;
   presenceSettings = nextPresence;
@@ -730,6 +758,20 @@ static void handleSaveLight() {
   if (nextLed.enabled && !ledPinAllowed(nextLed.pin)) {
     sendJsonMessage(400, false,
                     "That LED GPIO is reserved, in use, or unsupported on this board.");
+    return;
+  }
+  HapticSettings nextHaptic = hapticSettings;
+  nextHaptic.enabled = server.hasArg("hapticEnabled");
+  nextHaptic.pin = (uint8_t)clampedArg("hapticPin", nextHaptic.pin, 0, 48);
+  nextHaptic.strength = (uint8_t)clampedArg("hapticStrength", nextHaptic.strength, HAPTIC_MIN_STRENGTH, 100);
+  nextHaptic.pulseMs = (uint8_t)clampedArg("hapticMs", nextHaptic.pulseMs, HAPTIC_MIN_MS, HAPTIC_MAX_MS);
+  if (nextHaptic.enabled && !ledPinAllowed(nextHaptic.pin)) {
+    sendJsonMessage(400, false,
+                    "That vibration motor GPIO is reserved, in use, or unsupported on this board.");
+    return;
+  }
+  if (nextHaptic.enabled && nextLed.enabled && nextHaptic.pin == nextLed.pin) {
+    sendJsonMessage(400, false, "The status LED and the vibration motor cannot share a GPIO.");
     return;
   }
   String ledEntity = server.arg("ledEntity");
@@ -773,10 +815,12 @@ static void handleSaveLight() {
   backlightSettings.nightEndMinute =
     minuteOfDayArg("nightEnd", backlightSettings.nightEndMinute);
   ledSettings = nextLed;
+  hapticSettings = nextHaptic;
   presenceSettings = nextPresence;
   if (!ledEntity.length()) ledSetHaLevel(LED_HA_NONE);  // the saved level replaces one set over MQTT
   saveSettings();
   initLed();
+  initHaptic();
   refreshBacklightControl();  // re-evaluates both night intervals
   deckPresenceApply();
   String err;
@@ -827,13 +871,26 @@ static void handleLedPreview() {
     sendJsonMessage(200, true, "Preview ended.");
     return;
   }
-  if (enabled && !ledPinAllowed(pin)) {
+  if (enabled && (!ledPinAllowed(pin) || (hapticSettings.enabled && hapticSettings.pin == pin))) {
     sendJsonMessage(400, false,
                     "That LED GPIO is reserved, in use, or unsupported on this board.");
     return;
   }
   previewLed(enabled, pin, level);
   sendJsonMessage(200, true, "Preview applied.");
+}
+
+static void handleHapticTest() {
+  const uint8_t pin = (uint8_t)clampedArg("hapticPin", hapticSettings.pin, 0, 48);
+  const uint8_t strength =
+    (uint8_t)clampedArg("hapticStrength", hapticSettings.strength, HAPTIC_MIN_STRENGTH, 100);
+  const uint8_t ms = (uint8_t)clampedArg("hapticMs", hapticSettings.pulseMs, HAPTIC_MIN_MS, HAPTIC_MAX_MS);
+  if (!hapticTest(pin, strength, ms)) {
+    sendJsonMessage(400, false,
+                    "That GPIO is reserved, used by the status LED, or unsupported on this board.");
+    return;
+  }
+  sendJsonMessage(200, true, "Pulse sent.");
 }
 
 static void handleSaveDisplay() {
@@ -1997,6 +2054,7 @@ void initWebServer() {
   server.on("/save/light", HTTP_POST, handleSaveLight);
   server.on("/save/advanced", HTTP_POST, handleSaveAdvanced);
   server.on("/led/preview", HTTP_POST, handleLedPreview);
+  server.on("/haptic/test", HTTP_POST, handleHapticTest);
   server.on("/save/clock", HTTP_POST, handleSaveClock);
   server.on("/save/network", HTTP_POST, handleSaveNetwork);
   server.on("/api/config", HTTP_GET, handleApiConfig);

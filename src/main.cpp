@@ -11,6 +11,7 @@
 #include "web_server.h"
 #include "pc_metrics.h"
 #include "led.h"
+#include "haptic.h"
 #include "deck_mqtt.h"
 #include "deck_daily.h"
 #include "deck_sd.h"
@@ -49,6 +50,7 @@ void setup() {
   initWebServer();
   pcMetricsBegin();
   initLed();
+  initHaptic();
   mqttBegin();
 
   if (isWiFiConnected()) setScreenState(SCREEN_DECK);
