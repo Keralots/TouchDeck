@@ -294,6 +294,22 @@ void shown() {
   s_nextNow = false;
 }
 
+// The deck may have changed while asleep: catch it up, then take the page image again.
+void wake() {
+  frameCatchUp();
+  if (!frameActive()) return;
+  lv_obj_move_foreground(s_root);  // a rebuild adds pages above it
+  free(s_page); free(s_base); free(s_rects); free(s_runs);
+  s_page = s_base = nullptr;
+  s_rects = nullptr;
+  s_runs = nullptr;
+  if (!s_count || !capturePage()) {
+    frameAbort();
+    return;
+  }
+  startAnimation(FRAME_EXIT);
+}
+
 bool enter() {
   if (s_state != FRAME_OFF || !s_disp || !s_count || getScreenState() != SCREEN_DECK ||
       s_qp.open || s_modalCard || s_ed.root || sh.owned || compMode() != COMP_NONE ||
@@ -414,7 +430,7 @@ void frameTick() {
     s_state = FRAME_IDLE;
   }
   if (s_state != FRAME_IDLE) return;
-  if (!idleSleepActive()) { startAnimation(FRAME_EXIT); return; }
+  if (!idleSleepActive()) { wake(); return; }
   updateClock(false);
   const uint32_t now = millis();
   if (now - s_galleryCheck >= 5000) {

@@ -17,6 +17,7 @@ struct GlassCacheEntry {
   lv_draw_buf_t* buffer = nullptr;
 };
 GlassCacheEntry s_glassCache[MAX_PAGES];
+bool s_frameSync = false;  // frameCatchUp: rebuilds and page changes keep the frame
 
 void clearGlassCache() {
   for (GlassCacheEntry& c : s_glassCache) {
@@ -142,11 +143,15 @@ String activePageId() {
 }
 
 void goToPage(const String& id) {
-  if (frameActive()) stopGestures();
+  if (frameActive() && !s_frameSync) stopGestures();
   for (int i = 0; i < s_count; i++) {
     if (!s_pages[i].def || s_pages[i].def->id != id) continue;
     const int a = sh.active;
     if (i == a) return;
+    if (s_frameSync) {  // under the frame picture: no slide
+      switchTo(i);
+      return;
+    }
     const int dc = sh.col[i] - sh.col[a];
     if (dc == 0 && (i - a == 1 || i - a == -1) && slideBy(i - a, true)) return;
     if ((dc == 1 || dc == -1) && sh.colCur[sh.col[i]] == i && slideBy(dc, false)) return;
@@ -446,7 +451,7 @@ void releaseSwipe() {
 // one the touch task (other core) took just before gets time to reach the
 // compositor, so panelQuiesce cancels it.
 void stopGestures() {
-  if (frameActive()) {
+  if (frameActive() && !s_frameSync) {
     frameAbort();
     presenceWake();
   }
@@ -689,7 +694,7 @@ void whenSync() {
       if (back != sh.active) {
         s_autoFrom = "";
         goToPage(s_pages[back].def->id);
-        return;  // rebuilt once the slide is over
+        if (!s_frameSync) return;  // rebuilt once the slide is over
       }
     }
     if (!pd.shown && pd.autoShow && !autoTo.length()) autoTo = pd.id;
@@ -709,6 +714,20 @@ void whenSync() {
     s_autoTo = autoTo;
     s_autoUntil = millis() + AUTO_WAIT_MS;
   }
+}
+
+// Frame wake: what deckTick skipped while asleep runs under the picture, so
+// the page that flies back in is current.
+void frameCatchUp() {
+  s_frameSync = true;
+  updateHeaders();
+  haSync();
+  httpSync();
+  printerSync();
+  whenSync();
+  pcSync(false);
+  mediaArtTick();
+  s_frameSync = false;
 }
 
 void logStats() {
