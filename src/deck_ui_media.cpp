@@ -122,6 +122,7 @@ void mediaEvent(lv_event_t* e) {
   TileRt& r = s_tiles[idx];
   const int button = tag % 4;
   if (button == 3 && r.mediaFull) return;
+  hapticTap();
   static const char* const cmds[] = {"media_prev", "media_play_pause", "media_next", "media_play_pause"};
   String err;
   if (!pcSendCommand(r.def->pc, cmds[button], err)) deckToastShow(err.c_str(), 2200);

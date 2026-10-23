@@ -158,6 +158,8 @@
     $("glassDimVal").textContent = $("glassDim").value + "%";
     $("glassOnVal").textContent = $("glassOn").value + "%";
     $("sleepDimVal").textContent = $("sleepDim").value + "%";
+    $("hapticStrengthVal").textContent = $("hapticStrength").value + "%";
+    $("hapticMsVal").textContent = $("hapticMs").value + " ms";
   }
   [
     "brightness",
@@ -170,6 +172,8 @@
     "glassDim",
     "glassOn",
     "sleepDim",
+    "hapticStrength",
+    "hapticMs",
   ].forEach((id) => $(id).addEventListener("input", updateRangeLabels));
   function updateGlassFields() {
     const g = $("theme").value === "2";
@@ -244,6 +248,19 @@
     queueLedPreview();
   });
   $("ledNightEnabled").addEventListener("change", updateLedFields);
+  function updateHapticFields() {
+    $("hapticFields").classList.toggle("hidden", !$("hapticEnabled").checked);
+  }
+  $("hapticEnabled").addEventListener("change", updateHapticFields);
+  $("hapticTest").addEventListener("click", async () => {
+    const fd = new URLSearchParams();
+    ["hapticPin", "hapticStrength", "hapticMs"].forEach((id) => fd.append(id, $(id).value));
+    try {
+      await getJson("/haptic/test", { method: "POST", body: fd });
+    } catch (e) {
+      showToast(e.message, true);
+    }
+  });
   ["ledBrightness", "ledPin"].forEach((id) => $(id).addEventListener("input", queueLedPreview));
 
   function renderChips(target, metrics) {
@@ -330,6 +347,13 @@
     setCheck("ledFollowDisplay", l.followDisplay);
     setCheck("ledOfflineOff", l.offlineOff);
     $("ledAllowedPins").textContent = (l.allowedPins || []).join(", ") || "none";
+    const hp = c.haptic || {};
+    setCheck("hapticEnabled", hp.enabled);
+    setVal("hapticPin", hp.pin == null ? 0 : hp.pin);
+    setVal("hapticStrength", hp.strength == null ? 100 : hp.strength);
+    setVal("hapticMs", hp.pulseMs == null ? 40 : hp.pulseMs);
+    $("hapticAllowedPins").textContent = $("ledAllowedPins").textContent;
+    updateHapticFields();
     setVal("ledEntity", l.entity || "");
     updateLedFields();
     window.snLedEntity = l.entity || "";

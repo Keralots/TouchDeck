@@ -1,6 +1,7 @@
 #include "settings.h"
 #include "config.h"
 #include "led.h"       // sanitizeLedPin()
+#include "haptic.h"    // sanitizeHapticPin()
 #include <Preferences.h>
 
 char wifiSSID[33] = "";
@@ -12,6 +13,7 @@ BacklightSettings backlightSettings;
 LedSettings ledSettings;
 AdvancedSettings advSettings = {};
 PresenceSettings presenceSettings;
+HapticSettings hapticSettings;
 
 bool validFrameEvery(int minutes) {
   return minutes == 1 || minutes == 2 || minutes == 5 || minutes == 10 || minutes == 15 || minutes == 30;
@@ -213,6 +215,10 @@ void loadSettings() {
   if (!validFrameEvery(presenceSettings.frameEvery)) presenceSettings.frameEvery = 5;
   presenceSettings.frameClock = prefs.getBool("pfclock", true);
   presenceSettings.frameAnim = prefs.getBool("pfanim", true);
+  hapticSettings.enabled = prefs.getBool("hapon", false);
+  hapticSettings.pin = prefs.getUChar("happin", 0);
+  hapticSettings.strength = constrain(prefs.getUChar("hapstr", 100), HAPTIC_MIN_STRENGTH, 100);
+  hapticSettings.pulseMs = constrain(prefs.getUChar("hapms", 40), HAPTIC_MIN_MS, HAPTIC_MAX_MS);
   // Entity ids, comma-separated.
   const String ids = prefs.getString("pent", "");
   for (size_t i = 0, from = 0; i < MAX_PRESENCE_ENTITIES && from < ids.length(); i++) {
@@ -232,10 +238,12 @@ void loadSettings() {
   netSettings.hostname[sizeof(netSettings.hostname) - 1] = '\0';
   netSettings.timezoneStr[sizeof(netSettings.timezoneStr) - 1] = '\0';
   sanitizeLedPin();
+  sanitizeHapticPin();
 }
 
 void saveSettings() {
   sanitizeLedPin();
+  sanitizeHapticPin();
   prefs.begin(NVS_NAMESPACE, false);
   prefs.putUChar("rot", dispSettings.rotation);
   prefs.putUShort("tscale", dispSettings.tempScaleMax);
@@ -271,6 +279,10 @@ void saveSettings() {
   prefs.putUChar("pfevery", presenceSettings.frameEvery);
   prefs.putBool("pfclock", presenceSettings.frameClock);
   prefs.putBool("pfanim", presenceSettings.frameAnim);
+  prefs.putBool("hapon", hapticSettings.enabled);
+  prefs.putUChar("happin", hapticSettings.pin);
+  prefs.putUChar("hapstr", hapticSettings.strength);
+  prefs.putUChar("hapms", hapticSettings.pulseMs);
   String ids;
   for (const String& id : presenceSettings.entities)
     if (id.length()) ids += (ids.length() ? "," : "") + id;

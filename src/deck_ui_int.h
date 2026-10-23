@@ -14,6 +14,7 @@
 #include "display_ui.h"
 #include "settings.h"
 #include "led.h"
+#include "haptic.h"
 #include "pc_metrics.h"
 #include "metric_format.h"
 #include <ArduinoJson.h>

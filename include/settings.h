@@ -75,6 +75,17 @@ struct AdvancedSettings {
   bool printers;  // Bambu printers over LAN; off hides their pages and tiles, config kept
 };
 
+// Vibration motor module on a GPIO (portal Screen & light page); NVS scalars.
+struct HapticSettings {
+  bool enabled = false;
+  uint8_t pin = 0;        // 0 = not chosen yet
+  uint8_t strength = 100; // PWM duty %, HAPTIC_MIN_STRENGTH..100
+  uint8_t pulseMs = 40;   // HAPTIC_MIN_MS..HAPTIC_MAX_MS
+};
+constexpr uint8_t HAPTIC_MIN_STRENGTH = 20;
+constexpr uint8_t HAPTIC_MIN_MS = 10;
+constexpr uint8_t HAPTIC_MAX_MS = 200;
+
 constexpr uint8_t THEME_MIDNIGHT = 0;
 constexpr uint8_t THEME_DAYLIGHT = 1;
 constexpr uint8_t THEME_GLASS = 2;  // Midnight colours, glass tiles over a wallpaper
@@ -104,6 +115,7 @@ extern BacklightSettings backlightSettings;
 extern LedSettings ledSettings;
 extern AdvancedSettings advSettings;
 extern PresenceSettings presenceSettings;
+extern HapticSettings hapticSettings;
 
 bool validDailyMax(int count);
 bool validWallEvery(int minutes);
