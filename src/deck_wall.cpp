@@ -654,4 +654,6 @@ void wallCommit() {
   Serial.printf("Deck: wallpaper swap %lu ms\n", (unsigned long)(millis() - start));
 }
 
+void wallRestartTimer() { s_changedMs = millis(); }
+
 }  // namespace deck

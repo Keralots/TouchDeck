@@ -351,7 +351,10 @@ void frameAbort() {
   wallProtect(s_width < s_height, 2, "");
   wallProtect(s_width < s_height, 3, "");
   cancelPicture();  // A running decoder frees its own output when it finishes.
-  if (s_root) lv_obj_delete(s_root);
+  if (s_root) {
+    lv_obj_delete(s_root);
+    wallRestartTimer();  // else an overdue Glass change follows the wake
+  }
   s_root = s_clockBox = s_clockTime = s_clockDate = nullptr;
   lv_image_cache_drop(&s_pictureDsc);
   free(s_clockPixels);
