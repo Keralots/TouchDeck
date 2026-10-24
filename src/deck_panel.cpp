@@ -99,6 +99,7 @@ struct State {
   int64_t t0 = 0;
   uint32_t durUs = 1;
   int8_t landing = 0;
+  bool fade = false;  // this strip crossfades
   uint32_t holdGen = UINT32_MAX;
   bool landedPending = false;
   int8_t landed = 0;
@@ -113,6 +114,7 @@ struct State {
   uint8_t lastSentDots = 0;
 };
 State s;
+volatile bool s_pageFade = false;
 
 // A frame to send, resolved under the lock so the build never reads shared
 // state: one LVGL framebuffer, a horizontal or vertical A|B strip, or a panel
@@ -130,6 +132,7 @@ struct Frame {
   Src a, b;
   int off;
   uint8_t dim;
+  bool fade;
   uint8_t dotCount, dotActive, dotAlpha;
   bool dotsV;
 };
@@ -312,6 +315,17 @@ void blendRun(uint16_t* d, int step, const uint16_t* a, const uint16_t* b, int n
   }
 }
 
+// a5 = 0 is all A, 32 all B.
+inline void mixAny(uint16_t* d, int step, const uint16_t* a, bool sa, const uint16_t* b, bool sb, int n,
+                   uint32_t a5) {
+  if (a5 == 0) copyAny(d, step, a, n, sa, 0);
+  else if (a5 >= 32) copyAny(d, step, b, n, sb, 0);
+  else if (sa && sb) blendRun<true, true>(d, step, a, b, n, a5);
+  else if (sa) blendRun<true, false>(d, step, a, b, n, a5);
+  else if (sb) blendRun<false, true>(d, step, a, b, n, a5);
+  else blendRun<false, false>(d, step, a, b, n, a5);
+}
+
 // Per-frame values of a frame scene, set before chunk 0 (flush task only).
 struct FramePrep {
   uint32_t photo5, clock8;
@@ -361,12 +375,7 @@ void emitFrameRow(const Frame& f, int y, int x0, int n, uint16_t* d, int step) {
   const Src& pic = sc.picture;
   const uint16_t* pa = base.px + y * base.stride + x0;
   const uint16_t* pb = pic.px + y * pic.stride + x0;
-  if (a5 == 0) copyAny(d, step, pa, n, base.swap, 0);
-  else if (a5 == 32) copyAny(d, step, pb, n, pic.swap, 0);
-  else if (base.swap && pic.swap) blendRun<true, true>(d, step, pa, pb, n, a5);
-  else if (base.swap) blendRun<true, false>(d, step, pa, pb, n, a5);
-  else if (pic.swap) blendRun<false, true>(d, step, pa, pb, n, a5);
-  else blendRun<false, false>(d, step, pa, pb, n, a5);
+  mixAny(d, step, pa, base.swap, pb, pic.swap, n, a5);
   const Src& page = sc.page;
   for (int i = 0; i < s_fp.count; i++) {
     const FrameTileRun& r = sc.runs[i];
@@ -416,6 +425,12 @@ inline void emitRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int dste
     } else {
       copyAny(d, dstep, f.b.px + ly * f.b.stride + x0, n, f.b.swap, f.dim);
     }
+    return;
+  }
+  if (f.fade) {  // both pages in place, B's share follows the offset
+    const int full = f.kind == KIND_VSTRIP ? f.h : f.w;
+    const uint32_t a5 = ((uint32_t)f.off * 32 + full / 2) / full;
+    mixAny(d, dstep, f.a.px + ly * f.a.stride + x0, f.a.swap, f.b.px + ly * f.b.stride + x0, f.b.swap, n, a5);
     return;
   }
   if (f.kind == KIND_VSTRIP) {
@@ -646,6 +661,7 @@ bool decide(Frame& f) {
       f.kind = s.kind;
       f.a = s.a;
       f.b = s.b;
+      f.fade = s.fade && s.kind != KIND_PANEL;
       const uint16_t* cur = s_fb[s.lvLatest];
       if (!f.a.px) f.a = {cur, (uint16_t)w, true, (uint16_t)h};
       if (!f.b.px) f.b = {cur, (uint16_t)w, true, (uint16_t)h};
@@ -947,6 +963,7 @@ bool compBeginDrag(const Src& a, const Src& b, int off, int pageA, bool vertical
   if (s.mode == COMP_NONE && s.lvLatest >= 0) {
     s.mode = COMP_DRAG;
     s.kind = vertical ? KIND_VSTRIP : KIND_HSTRIP;
+    s.fade = s_pageFade;
     s.dotsV = vertical;
     s.a = a;
     s.b = b;
@@ -960,6 +977,8 @@ bool compBeginDrag(const Src& a, const Src& b, int off, int pageA, bool vertical
   portEXIT_CRITICAL(&s_mux);
   return ok;
 }
+
+void panelSetPageFade(bool on) { s_pageFade = on; }
 
 bool compBeginPanel(const Src& panel, const Src& page, int off) {
   bool ok = false;

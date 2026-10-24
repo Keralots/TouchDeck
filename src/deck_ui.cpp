@@ -279,6 +279,7 @@ void addTilesPage(const PageDef& def) {
 }
 
 void buildPages() {
+  fxQuiet();  // tiles get their first state: no animations
   const int w = logicalW();
   if (s_theme == THEME_GLASS) wallLoad(w, logicalH(), dispSettings.glassBlur, dispSettings.glassDim);
   else wallFree();
@@ -840,7 +841,11 @@ void deckTick() {
     releaseSwipe();
   }
   // A swipe took the touch: make sure LVGL never turns it into a click.
-  if (touchTakeSwipeStarted()) lv_indev_reset(s_indev, nullptr);
+  if (touchTakeSwipeStarted()) {
+    lv_indev_reset(s_indev, nullptr);
+    fxCancelRipples();
+  }
+  panelSetPageFade(dispSettings.tileFx == 1);
 
   if (touchTakeActivity() && (displaySleepingForTouch() || frameActive())) {
     wakeDisplayFromTouch();

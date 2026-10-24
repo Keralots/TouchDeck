@@ -104,6 +104,8 @@ void compDrag(int off);
 // state (another page, panel open/closed): the last frame stays frozen until
 // LVGL shows that state (see compSetHoldGen). landing == 0 = back to start.
 void compRelease(int toOff, uint32_t durMs, int8_t landing);
+// Page strips crossfade A into B instead of sliding; read when a drag begins.
+void panelSetPageFade(bool on);
 CompMode compMode();
 // True while LVGL must not render (drag or animation in progress).
 bool compOwnsScreen();

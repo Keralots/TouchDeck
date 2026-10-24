@@ -110,6 +110,8 @@ struct TileRt {
   lv_obj_t* rows;         // HTTP sensor rows: one box per row (label, bar, value)
   int16_t rowH;           // height of one row box
   lv_obj_t* px[4];        // printer tiles: extra labels, swatches
+  lv_obj_t* fx;           // Calm: touch ring running on this tile
+  lv_obj_t* halo;         // Calm: glow over the icon after turning on
   // Clock tiles: hours in sub, then these two; the colon blinks.
   lv_obj_t* colon;
   lv_obj_t* mins;
@@ -412,6 +414,16 @@ uint32_t tileBg(const TileDef& d);
 int tileTint(const TileDef& d);
 uint32_t onTextColor(const TileDef& def, bool glass);
 void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, int w, int h);
+TileRt* tileOf(lv_obj_t* o);
+uint32_t tileOnFill(const TileDef& d);
+// Calm animations (deck_ui_fx.cpp).
+void fxQuiet();
+void fxPressed(lv_event_t* e);
+void fxCancelRipples();
+void fxTileOn(TileRt& r, bool wasOn);
+void fxCardOpen(lv_obj_t* card, int tileIdx);
+void fxCardClose(lv_obj_t* card, int tileIdx);
+void fxCardDrop();
 
 // deck_ui_glass.cpp
 std::vector<uint32_t> glassKey(Page& p);

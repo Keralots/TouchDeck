@@ -109,6 +109,7 @@ void deckToastShow(const char* text, uint32_t holdMs) {
 }
 
 void closeModal() {
+  fxCardDrop();
   if (s_modalSlider && s_modalTile >= 0 && s_modalTile < (int)s_tiles.size()) {
     if (Wish* w = findWish(s_tiles[s_modalTile].def->entity)) {
       if (w->holding) w->level = {};
@@ -136,7 +137,11 @@ void closeModal() {
   setModalOpen(false);
 }
 
-void onModalScrim(lv_event_t*) { closeModal(); }
+// Calm: the detail card shrinks back into its tile; confirm cards just close.
+void onModalScrim(lv_event_t*) {
+  if (s_confirmHold < 0) fxCardClose(s_modalCard, s_modalTile);
+  else closeModal();
+}
 
 void onModalPrimary(lv_event_t*) {
   if (s_modalTile < 0 || s_modalTile >= (int)s_tiles.size()) return;
@@ -362,6 +367,7 @@ void openModal(int tileIdx) {
 
   setModalOpen(true);
   refreshModal();
+  fxCardOpen(c, tileIdx);
 }
 
 void onConfirmOk(lv_event_t*) {
