@@ -207,28 +207,32 @@ lv_obj_t* visibleTile(int tileIdx) {
 void fxQuiet() { s_quietUntil = millis() + 800; }
 
 void fxPressed(lv_event_t* e) {
-  if (!calm()) return;
-  lv_obj_t* t = (lv_obj_t*)lv_event_get_current_target(e);
-  TileRt* r = tileOf(t);
+  TileRt* r = tileOf((lv_obj_t*)lv_event_get_current_target(e));
   lv_indev_t* in = lv_indev_active();
   if (!r || !in) return;
   lv_point_t p;
   lv_indev_get_point(in, &p);
+  fxRipple(*r, p);
+}
+
+void fxRipple(TileRt& r, lv_point_t p) {
+  if (!calm()) return;
+  lv_obj_t* t = r.obj;
   lv_area_t tc, cc;
   lv_obj_get_coords(t, &tc);
   lv_obj_get_content_coords(t, &cc);
   // Radius to the farthest corner: the ring just covers the tile.
   const int dx = LV_MAX(p.x - tc.x1, tc.x2 - p.x), dy = LV_MAX(p.y - tc.y1, tc.y2 - p.y);
   const int rad = (int)sqrtf((float)(dx * dx + dy * dy)) + 2;
-  if (r->fx) lv_obj_delete(r->fx);
-  lv_obj_t* o = r->fx = overlay(t);
+  if (r.fx) lv_obj_delete(r.fx);
+  lv_obj_t* o = r.fx = overlay(t);
   lv_obj_set_user_data(o, pack(p.x - cc.x1, p.y - cc.y1, rad));
   lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_border_width(o, 2, 0);
   const lv_color_t c = lv_obj_get_style_text_color(t, LV_PART_MAIN);
   lv_obj_set_style_border_color(o, c, 0);
   lv_obj_set_style_bg_color(o, c, 0);
-  clipSync(*r);
+  clipSync(r);
   startAnim(o, rippleStep, RIPPLE_MS, lv_anim_path_ease_out, rippleDone);
 }
 

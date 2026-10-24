@@ -419,6 +419,7 @@ uint32_t tileOnFill(const TileDef& d);
 // Calm animations (deck_ui_fx.cpp).
 void fxQuiet();
 void fxPressed(lv_event_t* e);
+void fxRipple(TileRt& r, lv_point_t p);  // p in screen coords
 void fxCancelRipples();
 void fxTileOn(TileRt& r, bool wasOn);
 void fxCardOpen(lv_obj_t* card, int tileIdx);
