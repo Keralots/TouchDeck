@@ -779,6 +779,11 @@ bool printerPowered(const String& id) {
   return false;
 }
 
+bool printersBusy() {
+  Lock lock;
+  return s_task != nullptr;
+}
+
 bool printerRead(const String& id, PrinterState& out) {
   Lock lock;
   for (const auto& slot : s_slots) {

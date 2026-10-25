@@ -1,5 +1,6 @@
 // Guition deck: daily wallpapers. See deck_daily.h.
 #include "deck_daily.h"
+#include "deck_bambu.h"
 #include "deck_wall.h"
 #include "deck_config.h"
 #include "deck_touch.h"
@@ -516,7 +517,8 @@ bool wants(int p) { return dispSettings.dailyOrient == 2 || dispSettings.dailyOr
 
 bool dailyStart() {
   if (!s_status) s_status = (Status*)heap_caps_calloc(1, sizeof(Status), MALLOC_CAP_SPIRAM);
-  if (!s_status || (!wallOnSd() && !deckFsReady()) || !WiFi.isConnected() ||
+  // A printer session leaves too little internal RAM for a second TLS session.
+  if (!s_status || (!wallOnSd() && !deckFsReady()) || !WiFi.isConnected() || printersBusy() ||
       (wallOnSd() && time(nullptr) < 1700000000)) return false;
   bool busy;
   portENTER_CRITICAL(&s_mux);
