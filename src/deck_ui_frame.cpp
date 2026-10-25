@@ -46,7 +46,7 @@ LoadState loadState() {
   return state;
 }
 
-void loadTask(void*) {
+void loadJob() {
   portENTER_CRITICAL(&s_loadMux);
   LoadJob job = s_load;
   portEXIT_CRITICAL(&s_loadMux);
@@ -63,7 +63,6 @@ void loadTask(void*) {
   }
   portEXIT_CRITICAL(&s_loadMux);
   if (cancelled) free(job.pixels);
-  vTaskDelete(nullptr);
 }
 
 bool requestPicture() {
@@ -97,8 +96,7 @@ bool requestPicture() {
   s_loadState = LOAD_RUNNING;
   s_loadCancelled = false;
   portEXIT_CRITICAL(&s_loadMux);
-  // Flash reads require an internal stack, as in wallTask.
-  if (xTaskCreatePinnedToCore(loadTask, "deck_frame", 6144, nullptr, 1, nullptr, 0) != pdPASS) {
+  if (!wallRunWorker(loadJob, wallOnSd(), "deck_frame")) {
     portENTER_CRITICAL(&s_loadMux);
     s_loadState = LOAD_IDLE;
     portEXIT_CRITICAL(&s_loadMux);
