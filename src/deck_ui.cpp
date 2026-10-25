@@ -863,17 +863,21 @@ void deckTick() {
     lv_indev_reset(s_indev, nullptr);
     fxCancelRipples();
   }
+  panelSetPageFx(fxPage());
+  // Cascade moves each page's grid columns; the header above moves as one.
   {
-    // Cascade moves the active page's grid columns; the header above moves as one.
-    const Page& pg = s_pages[sh.active];
-    int cols = 0, top = 0;
-    if (pg.grid && pg.def) {
-      lv_area_t a;
-      lv_obj_get_coords(pg.grid, &a);
-      cols = pg.def->cols[logicalW() > logicalH() ? ORIENT_LANDSCAPE : ORIENT_PORTRAIT];
-      top = a.y1 + 4;
+    const int orient = logicalW() > logicalH() ? ORIENT_LANDSCAPE : ORIENT_PORTRAIT;
+    uint8_t cols[MAX_PAGES] = {};
+    int16_t top[MAX_PAGES] = {};
+    for (int i = 0; i < s_count && i < MAX_PAGES; i++) {
+      const Page& pg = s_pages[i];
+      cols[i] = pg.grid && pg.def ? pg.def->cols[orient] : 0;
+      top[i] = pg.grid ? (int16_t)(lv_obj_get_y(pg.grid) + 4) : 0;
     }
-    panelSetPageFx(fxPage(), cols, top);
+    portENTER_CRITICAL(&s_mux);
+    memcpy(sh.gridCols, cols, sizeof(cols));
+    memcpy(sh.gridTop, top, sizeof(top));
+    portEXIT_CRITICAL(&s_mux);
   }
 
   if (touchTakeActivity() && (displaySleepingForTouch() || frameActive())) {
@@ -1289,14 +1293,19 @@ bool uiTryBeginSwipe(int dir, bool vertical, Src& a, Src& b, int& startOff, int&
     sh.owned = true;
     sh.gesture = Shared::GEST_PAGE;
     sh.target = target;
-    const Src live = {nullptr, 0, true};  // the live LVGL frame
+    // The live LVGL frame; both carry their page's grid for the cascade.
+    const Src live = {nullptr, 0, true, 0, sh.gridCols[cur], sh.gridTop[cur]};
     if (dir > 0) {
       a = live;
       b = sh.src[target];
+      b.cols = sh.gridCols[target];
+      b.top = sh.gridTop[target];
       startOff = 0;
       idxA = idxCur;
     } else {
       a = sh.src[target];
+      a.cols = sh.gridCols[target];
+      a.top = sh.gridTop[target];
       b = live;
       startOff = vertical ? logicalH() : logicalW();
       idxA = idxTarget;

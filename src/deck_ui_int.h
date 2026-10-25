@@ -139,6 +139,9 @@ struct Shared {
   bool valid[MAX_PAGES] = {};
   bool busy[MAX_PAGES] = {};
   Src src[MAX_PAGES] = {};
+  // Each page's grid columns and where its grid starts (cascade page fx).
+  uint8_t gridCols[MAX_PAGES] = {};
+  int16_t gridTop[MAX_PAGES] = {};
   // Columns: adjacent pages of one group. colCur is the page a column shows
   // when it is swiped to (the one it showed last).
   int nCols = 0;

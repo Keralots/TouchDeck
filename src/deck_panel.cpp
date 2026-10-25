@@ -101,7 +101,6 @@ struct State {
   uint32_t durUs = 1;
   int8_t landing = 0;
   PageFx pageFx = PAGE_SLIDE;  // of this strip
-  int cols = 0, top = 0;       // cascade: grid columns and top
   MorphScene morph = {};
   uint32_t morphHoldGen = 0;
   uint32_t holdGen = UINT32_MAX;
@@ -119,7 +118,6 @@ struct State {
 };
 State s;
 volatile PageFx s_pageFx = PAGE_SLIDE;
-volatile int s_pageCols = 0, s_pageTop = 0;
 
 // A frame to send, resolved under the lock so the build never reads shared
 // state: one LVGL framebuffer, a horizontal or vertical A|B strip, or a panel
@@ -138,7 +136,6 @@ struct Frame {
   int off;
   uint8_t dim;
   PageFx pageFx;
-  int cols, top;
   // Morph window this frame, the card picture's step per window pixel (16.16),
   // picture share over the ghost and window share over the base (both 0..32).
   // Reveal: the circle's radius in wr.
@@ -775,38 +772,50 @@ struct CascadeRun {
   int16_t shift;   // source column = x + shift
   int8_t src;      // 0 black, 1 A, 2 B
 };
-struct CascadePrep {
+struct CascadeSide {
   int n;
   int edge[MAX_BANDS + 1];
   int off[MAX_BANDS];  // each band's strip offset, like f.off
+};
+struct CascadePrep {
+  CascadeSide a, b;    // the leaving and the arriving page's columns (vertical: a's for both)
+  int top;             // rows above this are the header
   // Horizontal strip: the row below the header as runs, the same for every row.
   CascadeRun runs[4 * MAX_BANDS + 2];
   int nRuns;
 };
 CascadePrep s_cp;
 
+void cascadeSide(CascadeSide& c, int cols, int w, int full, float e) {
+  const int n = std::min(std::max(cols, 1), MAX_BANDS);
+  const float cw = (float)(w - 16 - 7 * (n - 1)) / n;  // grid: pad 8, gap 7
+  c.n = n;
+  c.edge[0] = 0;
+  for (int k = 1; k < n; k++) c.edge[k] = 8 + (int)lroundf(k * (cw + 7)) - 4;
+  c.edge[n] = w;
+  const float spread = .09f * (n - 1);
+  for (int k = 0; k < n; k++) {
+    const float q = std::min(1.0f, std::max(0.0f, (e - .09f * k) / (1 - spread)));
+    c.off[k] = (int)lroundf(q * full);
+  }
+}
+
 void prepCascade(const Frame& f) {
   const bool v = f.kind == KIND_VSTRIP;
   const int full = v ? f.h : f.w;
-  const int n = std::min(std::max(f.cols, 1), MAX_BANDS);
-  const float cw = (float)(f.w - 16 - 7 * (n - 1)) / n;  // grid: pad 8, gap 7
-  s_cp.n = n;
-  s_cp.edge[0] = 0;
-  for (int k = 1; k < n; k++) s_cp.edge[k] = 8 + (int)lroundf(k * (cw + 7)) - 4;
-  s_cp.edge[n] = f.w;
-  const float e = (float)f.off / (float)full, spread = .09f * (n - 1);
-  for (int k = 0; k < n; k++) {
-    const float q = std::min(1.0f, std::max(0.0f, (e - .09f * k) / (1 - spread)));
-    s_cp.off[k] = (int)lroundf(q * full);
-  }
+  const float e = (float)f.off / (float)full;
+  cascadeSide(s_cp.a, f.a.cols ? f.a.cols : f.b.cols, f.w, full, e);
+  cascadeSide(s_cp.b, f.b.cols ? f.b.cols : f.a.cols, f.w, full, e);
+  s_cp.top = f.a.top ? f.a.top : f.b.top;
   if (v) return;
   // Owner of each column: black, A's bands moved left, B's bands over them.
   static int16_t own[NATIVE_H], shift[NATIVE_H];
   for (int x = 0; x < f.w; x++) own[x] = 0;
   for (int pass = 1; pass <= 2; pass++)
-    for (int k = 0; k < n; k++) {
-      const int d = pass == 1 ? -s_cp.off[k] : f.w - s_cp.off[k];
-      for (int x = std::max(0, s_cp.edge[k] + d); x < std::min(f.w, s_cp.edge[k + 1] + d); x++) {
+    for (int k = 0; k < (pass == 1 ? s_cp.a.n : s_cp.b.n); k++) {
+      const CascadeSide& c = pass == 1 ? s_cp.a : s_cp.b;
+      const int d = pass == 1 ? -c.off[k] : f.w - c.off[k];
+      for (int x = std::max(0, c.edge[k] + d); x < std::min(f.w, c.edge[k + 1] + d); x++) {
         own[x] = (int16_t)(pass * 16 + k);
         shift[x] = (int16_t)-d;
       }
@@ -827,10 +836,11 @@ void emitCascadeRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step
   const int end = x0 + n;
   if (f.kind == KIND_VSTRIP) {
     // Each band slides on its own: rows of A, then of B below it.
-    for (int k = 0; k < s_cp.n; k++) {
-      const int lo = std::max(x0, s_cp.edge[k]), hi = std::min(end, s_cp.edge[k + 1]);
+    const CascadeSide& c = s_cp.a;
+    for (int k = 0; k < c.n; k++) {
+      const int lo = std::max(x0, c.edge[k]), hi = std::min(end, c.edge[k + 1]);
       if (hi <= lo) continue;
-      const int vy = ly + s_cp.off[k];
+      const int vy = ly + c.off[k];
       const Src& src = vy < f.h ? A : B;
       copyAny(d + (lo - x0) * step, step, src.px + (vy < f.h ? vy : vy - f.h) * src.stride + lo, hi - lo, src.swap, 0);
     }
@@ -838,7 +848,7 @@ void emitCascadeRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step
   }
   const uint16_t* ra = A.px + ly * A.stride;
   const uint16_t* rb = B.px + ly * B.stride;
-  if (ly < f.top) {  // the header moves as one, like a slide
+  if (ly < s_cp.top) {  // the header moves as one, like a slide
     const int cut = std::min(std::max(x0, f.w - f.off), end);
     if (cut > x0) copyAny(d, step, ra + x0 + f.off, cut - x0, A.swap, 0);
     if (end > cut) copyAny(d + (cut - x0) * step, step, rb + cut - (f.w - f.off), end - cut, B.swap, 0);
@@ -1232,11 +1242,9 @@ bool decide(Frame& f) {
       f.a = s.a;
       f.b = s.b;
       f.pageFx = s.kind != KIND_PANEL ? s.pageFx : PAGE_SLIDE;
-      f.cols = s.cols;
-      f.top = s.top;
       const uint16_t* cur = s_fb[s.lvLatest];
-      if (!f.a.px) f.a = {cur, (uint16_t)w, true, (uint16_t)h};
-      if (!f.b.px) f.b = {cur, (uint16_t)w, true, (uint16_t)h};
+      if (!f.a.px) f.a = {cur, (uint16_t)w, true, (uint16_t)h, f.a.cols, f.a.top};
+      if (!f.b.px) f.b = {cur, (uint16_t)w, true, (uint16_t)h, f.b.cols, f.b.top};
       if (s.kind == KIND_HSTRIP) {
         f.off = off < 0 ? 0 : (off > w ? w : off);
         f.dotActive = (uint8_t)(s.pageA + (f.off * 2 >= w ? 1 : 0));
@@ -1559,8 +1567,6 @@ bool compBeginDrag(const Src& a, const Src& b, int off, int pageA, bool vertical
     s.mode = COMP_DRAG;
     s.kind = vertical ? KIND_VSTRIP : KIND_HSTRIP;
     s.pageFx = s_pageFx;
-    s.cols = s_pageCols;
-    s.top = s_pageTop;
     s.dotsV = vertical;
     s.a = a;
     s.b = b;
@@ -1575,11 +1581,7 @@ bool compBeginDrag(const Src& a, const Src& b, int off, int pageA, bool vertical
   return ok;
 }
 
-void panelSetPageFx(PageFx fx, int cols, int top) {
-  s_pageFx = fx;
-  s_pageCols = cols;
-  s_pageTop = top;
-}
+void panelSetPageFx(PageFx fx) { s_pageFx = fx; }
 
 bool compBeginMorph(const MorphScene& m, uint32_t durMs, uint32_t holdGen) {
   if (!m.card.px || m.cw <= 0 || m.ch <= 0) return false;

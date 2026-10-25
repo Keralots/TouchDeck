@@ -29,6 +29,9 @@ struct Src {
   uint16_t stride;
   bool swap;
   uint16_t h = 0;  // rows; only needed for a panel image shorter than the screen
+  // Page images: grid columns and where the grid starts (cascade page fx).
+  uint8_t cols = 0;
+  int16_t top = 0;
 };
 
 // Bus, panel init, a black first frame, TE interrupt and the flush task.
@@ -111,11 +114,11 @@ void compDrag(int off);
 void compRelease(int toOff, uint32_t durMs, int8_t landing);
 // How page strips change: slide, crossfade A into B, a wavy water edge
 // sweeping over both pages, or depth (A sinks back and dims while B slides
-// over it), or cascade (the page's tile columns leave and arrive one after
-// another; cols = the active page's grid columns, top = where its grid
-// starts, the header above it moves as one). Read when a drag begins.
+// over it), or cascade (each page's tile columns leave and arrive one after
+// another, from Src cols and top; the header above the grid moves as one).
+// Read when a drag begins.
 enum PageFx : uint8_t { PAGE_SLIDE = 0, PAGE_FADE, PAGE_WATER, PAGE_DEPTH, PAGE_CASCADE };
-void panelSetPageFx(PageFx fx, int cols = 0, int top = 0);
+void panelSetPageFx(PageFx fx);
 
 // Card morph: a rounded window flies from `from` to `to` over `base`, showing
 // the card picture scaled into it. Opening fades the picture in from `ghost`;
