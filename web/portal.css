@@ -546,6 +546,9 @@ a {
   grid-template-columns: 1fr 1fr;
   gap: 16px;
 }
+.grid-2 > .grid-wide {
+  grid-column: 1 / -1;
+}
 .subcard {
   margin-top: 16px;
   padding: 16px 18px;
