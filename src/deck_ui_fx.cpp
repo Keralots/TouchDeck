@@ -619,6 +619,28 @@ void distortStep(void* var, int32_t v) {
   lv_obj_invalidate(lv_obj_get_child(box, 0));
 }
 
+struct DistortSetup {
+  Distort* q;
+  int fx, fy;  // the finger, in src coords
+};
+
+// Distance and direction from the finger for rows lo..hi (both cores).
+void distortRows(void* ctx, int lo, int hi) {
+  const DistortSetup& s = *(const DistortSetup*)ctx;
+  Distort* q = s.q;
+  const int w = q->w, h = q->h;
+  for (int y = lo; y < hi; y++)
+    for (int x = 0; x < w; x++) {
+      const int i = y * w + x, dx = x - s.fx, dy = y - s.fy;
+      const float d = sqrtf((float)(dx * dx + dy * dy));
+      // Still at the edges, so the tile's outline stays where it is.
+      const float k = d > 0 ? 127 * clamp01((float)LV_MIN(LV_MIN(x, w - 1 - x), LV_MIN(y, h - 1 - y)) / 10) / d : 0;
+      q->dist[i] = (uint16_t)d;
+      q->dir[2 * i] = (int8_t)(dx * k);
+      q->dir[2 * i + 1] = (int8_t)(dy * k);
+    }
+}
+
 void touchDistort(TileRt& r, lv_point_t p) {
   lv_area_t tc;
   lv_obj_get_coords(r.obj, &tc);
@@ -642,21 +664,17 @@ void touchDistort(TileRt& r, lv_point_t p) {
   q->x0 = x0;
   q->y0 = y0;
   distortTake(q);
-  const int fx = p.x - x0, fy = p.y - y0;
-  for (int y = 0; y < h; y++)
-    for (int x = 0; x < w; x++) {
-      const int i = y * w + x, dx = x - fx, dy = y - fy;
-      const float d = sqrtf((float)(dx * dx + dy * dy));
-      // Still at the edges, so the tile's outline stays where it is.
-      const float k = d > 0 ? 127 * clamp01((float)LV_MIN(LV_MIN(x, w - 1 - x), LV_MIN(y, h - 1 - y)) / 10) / d : 0;
-      q->dist[i] = (uint16_t)d;
-      q->dir[2 * i] = (int8_t)(dx * k);
-      q->dir[2 * i + 1] = (int8_t)(dy * k);
-    }
+  DistortSetup ds = {q, p.x - x0, p.y - y0};
+  panelShare(distortRows, &ds, h, 16);
   lv_obj_t* box = r.fx = tileBox(r);
   lv_obj_set_user_data(box, q);
   lv_obj_add_event_cb(box, distortDelete, LV_EVENT_DELETE, q);
+  // src holds the corners as shown and the edges stay still: no clip needed,
+  // and an opaque image lets LVGL skip the tile under it.
+  lv_obj_set_style_clip_corner(box, false, 0);
+  lv_obj_set_style_radius(box, 0, 0);
   lv_obj_t* img = lv_image_create(box);
+  lv_obj_set_style_bg_opa(img, LV_OPA_COVER, 0);
   lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_pos(img, x0 - tc.x1, y0 - tc.y1);
   lv_image_set_src(img, q->out);
