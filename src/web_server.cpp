@@ -563,7 +563,7 @@ static void handleConfigImport() {
   if (!display["glassOn"].isNull()) READ_INT(display, "glassOn", 20, 100, nextDisplay.glassOn, uint8_t);
   if (!display["glassAutoText"].isNull()) READ_BOOL(display, "glassAutoText", nextDisplay.glassAutoText);
   if (!display["smoothCharts"].isNull()) READ_BOOL(display, "smoothCharts", nextDisplay.smoothCharts);
-  if (!display["tileFx"].isNull()) READ_INT(display, "tileFx", 0, 3, nextDisplay.tileFx, uint8_t);
+  if (!display["tileFx"].isNull()) READ_INT(display, "tileFx", 0, 4, nextDisplay.tileFx, uint8_t);
 
   READ_BOOL(backlight, "nightEnabled", nextBacklight.nightEnabled);
   READ_INT(backlight, "nightBrightness", 0, 255, nextBacklight.nightBrightness, uint8_t);
@@ -961,7 +961,7 @@ static void handleSaveDisplay() {
   dispSettings.warnThresholdPct =
     (uint8_t)clampedArg("warnThreshold", dispSettings.warnThresholdPct, 0, 100);
   dispSettings.smoothCharts = server.hasArg("smoothCharts");
-  dispSettings.tileFx = (uint8_t)clampedArg("tileFx", dispSettings.tileFx, 0, 3);
+  dispSettings.tileFx = (uint8_t)clampedArg("tileFx", dispSettings.tileFx, 0, 4);
 
   saveSettings();
   if (oldSd != dispSettings.sdCard) {

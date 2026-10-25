@@ -274,8 +274,15 @@ void refreshModal() {
 // Detail card for a tile (hold action "more-info"): name, entity, state, a
 // level slider (light brightness, cover position...), and the tap action as a
 // button.
+// Touch effects stop, and LVGL draws the page once without them: the card's
+// background and animation take their picture of the page from that frame.
+void cleanPage() {
+  if (fxCancelRipples()) lv_refr_now(s_disp);
+}
+
 void openModal(int tileIdx) {
   closeModal();
+  cleanPage();
   const TileRt& r = s_tiles[tileIdx];
   const TileDef& d = *r.def;
   const int w = logicalW(), h = logicalH();
@@ -427,6 +434,7 @@ void onConfirmTimeout(lv_timer_t*) {
 // timeout or a state change close it without running anything.
 void openConfirm(int tileIdx, bool hold) {
   closeModal();
+  cleanPage();
   const TileRt& r = s_tiles[tileIdx];
   const TileDef& d = *r.def;
   const TileAction& a = hold ? d.hold : d.tap;

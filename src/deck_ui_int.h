@@ -428,7 +428,7 @@ int tileOnOpa(const TileDef& d);
 void fxQuiet();
 void fxPressed(lv_event_t* e);
 void fxRipple(TileRt& r, lv_point_t p);  // the touch effect, p in screen coords
-void fxCancelRipples();
+bool fxCancelRipples();  // true when one was running
 void fxBeforeTileOn(TileRt& r, bool on);  // before the CHECKED state changes
 void fxTileOn(TileRt& r, bool wasOn);
 void fxCardOpen(lv_obj_t* card, int tileIdx);
