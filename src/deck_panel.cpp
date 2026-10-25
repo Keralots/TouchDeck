@@ -1487,7 +1487,9 @@ bool compBeginMorph(const MorphScene& m, uint32_t durMs, uint32_t holdGen) {
     // Pinned now: LVGL may draw one more frame into the other buffer.
     int w, h;
     logicalSize(s_rot, w, h);
-    if (!s.morph.base.px) s.morph.base = {s_fb[s.lvLatest], (uint16_t)w, true, (uint16_t)h};
+    // The newest complete frame, also one posted but not yet taken.
+    const int latest = s.lvPending ? s.lvIdx : s.lvLatest;
+    if (!s.morph.base.px) s.morph.base = {s_fb[latest], (uint16_t)w, true, (uint16_t)h};
     s.morphHoldGen = holdGen;
     s.t0 = esp_timer_get_time();
     s.durUs = durMs ? durMs * 1000u : 1u;

@@ -418,11 +418,12 @@ void springStep(void* var, int32_t v) {  // 0 -> +3 px -> -1 -> 0
   lv_obj_set_style_transform_height((lv_obj_t*)var, (int32_t)lroundf(s), 0);
 }
 
-void springDone(lv_anim_t* a) {
-  lv_obj_t* t = (lv_obj_t*)a->var;
+void springReset(lv_obj_t* t) {
   lv_obj_remove_local_style_prop(t, LV_STYLE_TRANSFORM_WIDTH, 0);
   lv_obj_remove_local_style_prop(t, LV_STYLE_TRANSFORM_HEIGHT, 0);
 }
+
+void springDone(lv_anim_t* a) { springReset((lv_obj_t*)a->var); }
 
 void touchPress(TileRt& r, lv_point_t p) {
   if (!lightImage(s_spot, SPOT, SPOT, spotAlpha)) return;
@@ -579,12 +580,19 @@ void fxRipple(TileRt& r, lv_point_t p) {
   else touchRing(r, p, farCorner(tc, p));
 }
 
-void fxCancelRipples() {
+bool fxCancelRipples() {
+  bool any = false;
   for (TileRt& r : s_tiles) {
+    if (lv_anim_delete(r.obj, springStep)) {
+      springReset(r.obj);
+      any = true;
+    }
     if (!r.fx) continue;
     lv_obj_delete(r.fx);
     r.fx = nullptr;
+    any = true;
   }
+  return any;
 }
 
 void fxBeforeTileOn(TileRt& r, bool on) {
