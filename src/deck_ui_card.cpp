@@ -23,6 +23,7 @@ int32_t* s_modalPoints = nullptr;
 uint32_t s_modalHistoryVersion = 0;
 uint8_t s_modalHours = 24;
 float s_modalMin = NAN, s_modalMax = NAN;
+bool s_modalBuilding = false;  // no history request before the open animation runs
 // Confirm dialog (shares the card slot): which action waits, the tile state it
 // was asked for, and the auto-cancel timer.
 int8_t s_confirmHold = -1;  // -1 = the card is a detail card
@@ -250,7 +251,7 @@ void refreshModal() {
     float value;
     const bool numeric = haKnown && e.known && haNumericState(e.state, value);
     if (numeric) {
-      haDetailHistory(r.def->entity, s_modalHours);
+      if (!s_modalBuilding) haDetailHistory(r.def->entity, s_modalHours);
       copyHistoryChart(*r.def, s_modalHours, s_modalHistoryVersion, s_modalChart,
                        s_modalPoints, s_modalMin, s_modalMax);
     }
@@ -413,8 +414,12 @@ void openModal(int tileIdx) {
   lv_obj_add_event_cb(close, onModalScrim, LV_EVENT_CLICKED, nullptr);
 
   setModalOpen(true);
+  s_modalBuilding = true;
   refreshModal();
+  s_modalBuilding = false;
   fxCardOpen(c, tileIdx);
+  // The history reply lands on core 0; HA waits for the animation started above.
+  if (s_modalChart) refreshModal();
 }
 
 void onConfirmOk(lv_event_t*) {
