@@ -5,6 +5,7 @@
 #include <driver/gpio.h>
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
+#include <atomic>
 // Only for axs15231b_180640_init_operations and its op-code enum; the
 // library's databus and panel classes are not used.
 #include <Arduino_GFX_Library.h>
@@ -532,20 +533,20 @@ void overlayDots(const Frame& f, uint16_t* dst, int ny0) {
 //   1: lx = ny,        ly = 319 - nx
 //   2: lx = 319 - nx,  ly = 479 - ny
 //   3: lx = 479 - ny,  ly = nx
-void buildChunk(const Frame& f, uint16_t* dst, int ny0) {
-  if (f.comp && f.kind == KIND_FRAME && ny0 == 0) prepFrame(f);
+// Part [lo, hi) of a chunk: logical rows in landscape, chunk rows in portrait.
+void buildPart(const Frame& f, uint16_t* dst, int ny0, int lo, int hi) {
   if (!f.comp && (f.rot & 1)) {
     // Plain landscape LVGL frame: the hot path, free of the per-run
     // bookkeeping emitRow() needs for composed frames.
     const uint16_t* lv = f.lv;
     if (f.rot == 1) {
-      for (int ly = 0; ly < NATIVE_W; ly++) {
+      for (int ly = lo; ly < hi; ly++) {
         const uint16_t* s = lv + ly * NATIVE_H + ny0;
         uint16_t* d = dst + (NATIVE_W - 1 - ly);
         for (int k = 0; k < ROWS; k++) d[k * NATIVE_W] = __builtin_bswap16(s[k]);
       }
     } else {
-      for (int ly = 0; ly < NATIVE_W; ly++) {
+      for (int ly = lo; ly < hi; ly++) {
         const uint16_t* s = lv + ly * NATIVE_H + (NATIVE_H - ROWS - ny0);
         uint16_t* d = dst + (ROWS - 1) * NATIVE_W + ly;
         for (int k = 0; k < ROWS; k++) d[-k * NATIVE_W] = __builtin_bswap16(s[k]);
@@ -554,25 +555,70 @@ void buildChunk(const Frame& f, uint16_t* dst, int ny0) {
   } else {
     switch (f.rot) {
       case 1:
-        for (int ly = 0; ly < NATIVE_W; ly++)
+        for (int ly = lo; ly < hi; ly++)
           emitRow(f, ly, ny0, ROWS, dst + (NATIVE_W - 1 - ly), NATIVE_W);
         break;
       case 3:
-        for (int ly = 0; ly < NATIVE_W; ly++)
+        for (int ly = lo; ly < hi; ly++)
           emitRow(f, ly, NATIVE_H - ROWS - ny0, ROWS,
                   dst + (ROWS - 1) * NATIVE_W + ly, -NATIVE_W);
         break;
       case 2:
-        for (int k = 0; k < ROWS; k++)
+        for (int k = lo; k < hi; k++)
           emitRow(f, NATIVE_H - 1 - (ny0 + k), 0, NATIVE_W,
                   dst + k * NATIVE_W + (NATIVE_W - 1), -1);
         break;
       default:
-        for (int k = 0; k < ROWS; k++)
+        for (int k = lo; k < hi; k++)
           emitRow(f, ny0 + k, 0, NATIVE_W, dst + k * NATIVE_W, 1);
         break;
     }
   }
+}
+
+// A helper on core 0 takes batches of the same job (panelShare). The caller
+// never waits for a helper that has not started (WiFi can hold core 0).
+struct SharedJob {
+  void (*fn)(void*, int, int);
+  void* ctx;
+  int n, batch;
+};
+SharedJob s_job;
+// 0 idle, 4 being posted, 1 posted, 2 helper in, 3 helper out
+std::atomic<int> s_jobNext{0}, s_jobState{0};
+TaskHandle_t s_helper = nullptr;
+
+void runBatches(const SharedJob& j) {
+  for (int lo; (lo = s_jobNext.fetch_add(j.batch)) < j.n;) j.fn(j.ctx, lo, std::min(lo + j.batch, j.n));
+}
+
+void helperTask(void*) {
+  for (;;) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    int posted = 1;
+    if (!s_jobState.compare_exchange_strong(posted, 2)) continue;  // stale wake-up
+    runBatches(s_job);
+    s_jobState.store(3);
+  }
+}
+
+struct ChunkJob {
+  const Frame* f;
+  uint16_t* dst;
+  int ny0;
+};
+
+void buildBatch(void* ctx, int lo, int hi) {
+  const ChunkJob& c = *(const ChunkJob*)ctx;
+  buildPart(*c.f, c.dst, c.ny0, lo, hi);
+}
+
+void buildChunk(const Frame& f, uint16_t* dst, int ny0) {
+  if (f.comp && f.kind == KIND_FRAME && ny0 == 0) prepFrame(f);
+  const int n = (f.rot & 1) ? NATIVE_W : ROWS;
+  ChunkJob c = {&f, dst, ny0};
+  if (f.comp) panelShare(buildBatch, &c, n, 16);
+  else buildPart(f, dst, ny0, 0, n);
   overlayDots(f, dst, ny0);
 }
 
@@ -849,6 +895,26 @@ void flushTask(void*) {
 }  // namespace
 
 // --- Public API -------------------------------------------------------------------
+// LVGL and the flush task both post here (same core): a busy helper means alone.
+void panelShare(void (*fn)(void* ctx, int lo, int hi), void* ctx, int n, int batch) {
+  int idle = 0;
+  if (!s_helper || n <= batch || !s_jobState.compare_exchange_strong(idle, 4)) {
+    fn(ctx, 0, n);
+    return;
+  }
+  s_job = {fn, ctx, n, batch};
+  s_jobNext.store(0);
+  s_jobState.store(1);
+  xTaskNotifyGive(s_helper);
+  runBatches(s_job);
+  int posted = 1;
+  if (!s_jobState.compare_exchange_strong(posted, 0)) {
+    while (s_jobState.load() != 3) {
+    }
+    s_jobState.store(0);
+  }
+}
+
 bool panelBegin(uint8_t rotation) {
   s_rot = rotation & 3;
   gpio_reset_pin((gpio_num_t)PIN_CS);
@@ -917,6 +983,7 @@ bool panelBegin(uint8_t rotation) {
 
   // Core 1 at high priority: on core 0 the flush loses to WiFi/lwIP under
   // network load (measured: ~30 fps slides instead of 60).
+  xTaskCreatePinnedToCore(helperTask, "deck_build", 3072, nullptr, 15, &s_helper, 0);
   xTaskCreatePinnedToCore(flushTask, "deck_flush", 4096, nullptr, 20, &s_task, 1);
   Serial.printf("Deck panel: up, rotation %u, internal free %u, largest %u\n",
                 (unsigned)s_rot,

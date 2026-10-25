@@ -35,6 +35,10 @@ struct Src {
 // Backlight is left alone. Returns false if a buffer could not be allocated.
 bool panelBegin(uint8_t rotation);
 
+// fn(ctx, lo, hi) over 0..n in batches, shared with a helper on core 0 when it
+// is free. Returns when all batches are done.
+void panelShare(void (*fn)(void* ctx, int lo, int hi), void* ctx, int n, int batch);
+
 // User rotation 0..3, 0 = native portrait (1 = landscape with USB-C on the
 // right).
 void panelSetRotation(uint8_t rotation);
