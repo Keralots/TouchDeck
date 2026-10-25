@@ -29,9 +29,11 @@ struct Src {
   uint16_t stride;
   bool swap;
   uint16_t h = 0;  // rows; only needed for a panel image shorter than the screen
-  // Page images: grid columns and where the grid starts (cascade page fx).
+  // Page images: grid columns, where the grid starts, and the column edges
+  // no tile crosses (bit k: edge k; 0 = all), for the cascade page fx.
   uint8_t cols = 0;
   int16_t top = 0;
+  uint16_t cuts = 0;
 };
 
 // Bus, panel init, a black first frame, TE interrupt and the flush task.

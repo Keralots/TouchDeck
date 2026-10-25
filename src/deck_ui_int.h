@@ -142,6 +142,7 @@ struct Shared {
   // Each page's grid columns and where its grid starts (cascade page fx).
   uint8_t gridCols[MAX_PAGES] = {};
   int16_t gridTop[MAX_PAGES] = {};
+  uint16_t gridCuts[MAX_PAGES] = {};  // column edges no tile crosses, bit k = edge k
   // Columns: adjacent pages of one group. colCur is the page a column shows
   // when it is swiped to (the one it showed last).
   int nCols = 0;

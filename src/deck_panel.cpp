@@ -786,13 +786,17 @@ struct CascadePrep {
 };
 CascadePrep s_cp;
 
-void cascadeSide(CascadeSide& c, int cols, int w, int full, float e) {
-  const int n = std::min(std::max(cols, 1), MAX_BANDS);
-  const float cw = (float)(w - 16 - 7 * (n - 1)) / n;  // grid: pad 8, gap 7
-  c.n = n;
-  c.edge[0] = 0;
-  for (int k = 1; k < n; k++) c.edge[k] = 8 + (int)lroundf(k * (cw + 7)) - 4;
+// Bands between the column edges no tile crosses: a tile two columns wide
+// moves as one.
+void cascadeSide(CascadeSide& c, int cols, uint16_t cuts, int w, int full, float e) {
+  cols = std::min(std::max(cols, 1), MAX_BANDS);
+  const float cw = (float)(w - 16 - 7 * (cols - 1)) / cols;  // grid: pad 8, gap 7
+  int n = 0;
+  c.edge[n++] = 0;
+  for (int k = 1; k < cols; k++)
+    if (!cuts || (cuts >> k & 1)) c.edge[n++] = 8 + (int)lroundf(k * (cw + 7)) - 4;
   c.edge[n] = w;
+  c.n = n;
   const float spread = .09f * (n - 1);
   for (int k = 0; k < n; k++) {
     const float q = std::min(1.0f, std::max(0.0f, (e - .09f * k) / (1 - spread)));
@@ -804,8 +808,8 @@ void prepCascade(const Frame& f) {
   const bool v = f.kind == KIND_VSTRIP;
   const int full = v ? f.h : f.w;
   const float e = (float)f.off / (float)full;
-  cascadeSide(s_cp.a, f.a.cols ? f.a.cols : f.b.cols, f.w, full, e);
-  cascadeSide(s_cp.b, f.b.cols ? f.b.cols : f.a.cols, f.w, full, e);
+  cascadeSide(s_cp.a, f.a.cols ? f.a.cols : f.b.cols, f.a.cols ? f.a.cuts : f.b.cuts, f.w, full, e);
+  cascadeSide(s_cp.b, f.b.cols ? f.b.cols : f.a.cols, f.b.cols ? f.b.cuts : f.a.cuts, f.w, full, e);
   s_cp.top = f.a.top ? f.a.top : f.b.top;
   if (v) return;
   // Owner of each column: black, A's bands moved left, B's bands over them.
@@ -1243,8 +1247,8 @@ bool decide(Frame& f) {
       f.b = s.b;
       f.pageFx = s.kind != KIND_PANEL ? s.pageFx : PAGE_SLIDE;
       const uint16_t* cur = s_fb[s.lvLatest];
-      if (!f.a.px) f.a = {cur, (uint16_t)w, true, (uint16_t)h, f.a.cols, f.a.top};
-      if (!f.b.px) f.b = {cur, (uint16_t)w, true, (uint16_t)h, f.b.cols, f.b.top};
+      if (!f.a.px) f.a = {cur, (uint16_t)w, true, (uint16_t)h, f.a.cols, f.a.top, f.a.cuts};
+      if (!f.b.px) f.b = {cur, (uint16_t)w, true, (uint16_t)h, f.b.cols, f.b.top, f.b.cuts};
       if (s.kind == KIND_HSTRIP) {
         f.off = off < 0 ? 0 : (off > w ? w : off);
         f.dotActive = (uint8_t)(s.pageA + (f.off * 2 >= w ? 1 : 0));
