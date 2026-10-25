@@ -504,10 +504,31 @@ void emitRevealRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step)
   if (end > r) shadeAny(d + (r - x0) * step, step, base + r, end - r, m.base.swap, f.base8);
 }
 
+// Sheet: the card at `to` with its top moved to wy.
+void emitSheetRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) {
+  const MorphScene& m = f.morph;
+  const FrameRect c = {m.to.x, f.wy, m.to.w, m.to.h};
+  const uint16_t* base = m.base.px + ly * m.base.stride;
+  const int end = x0 + n;
+  int l = end, r = end;
+  if (ly >= c.y && ly < c.y + c.h) {
+    const int inset = cornerInset(c, m.r1, ly);
+    l = std::min(std::max(x0, c.x + inset), end);
+    r = std::min(std::max(l, c.x + c.w - inset), end);
+  }
+  if (l > x0) shadeAny(d, step, base + x0, l - x0, m.base.swap, f.base8);
+  if (r > l) copyAny(d + (l - x0) * step, step, m.card.px + (ly - c.y) * m.card.stride + (l - c.x), r - l, m.card.swap, 0);
+  if (end > r) shadeAny(d + (r - x0) * step, step, base + r, end - r, m.base.swap, f.base8);
+}
+
 void emitMorphRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) {
   const MorphScene& m = f.morph;
   if (m.reveal) {
     emitRevealRow(f, ly, x0, n, d, step);
+    return;
+  }
+  if (m.sheet) {
+    emitSheetRow(f, ly, x0, n, d, step);
     return;
   }
   const uint16_t* base = m.base.px + ly * m.base.stride;
@@ -667,6 +688,81 @@ void emitWaterRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) 
   waterRunB(f, rb, r, end, d + (r - x0) * step, step);
 }
 
+// Depth: A sinks back (shrinks around the centre, dims, black around it)
+// while B slides over it from the side or from below. Per-frame values, set
+// before chunk 0 (flush task only).
+struct DepthPrep {
+  int32_t inv;  // A's source step per screen pixel, 16.16
+  uint32_t l8;  // A's brightness in eighths, 8 .. 4
+  int edge;     // B starts at this x (horizontal strip) or y (vertical)
+};
+DepthPrep s_dp;
+
+void prepDepth(const Frame& f) {
+  const int full = f.kind == KIND_VSTRIP ? f.h : f.w;
+  const float e = (float)f.off / (float)full;
+  s_dp.inv = (int32_t)(65536.0f / (1 - .1f * e));
+  s_dp.l8 = 8 - (uint32_t)lroundf(4 * e);  // half as bright at the end
+  s_dp.edge = full - f.off;
+}
+
+template <bool SWAP, uint32_t L>
+void depthRun(uint16_t* d, int step, const uint16_t* row, int32_t sx, int32_t inv, int n) {
+  for (int k = 0; k < n; k++, sx += inv, d += step) {
+    const uint16_t c = row[sx >> 16];
+    *d = __builtin_bswap16(shade8(SWAP ? c : __builtin_bswap16(c), L));
+  }
+}
+
+template <bool SWAP>
+void depthRunL(uint16_t* d, int step, const uint16_t* row, int32_t sx, int32_t inv, int n, uint32_t l) {
+  switch (l) {
+    case 8: return depthRun<SWAP, 8>(d, step, row, sx, inv, n);
+    case 7: return depthRun<SWAP, 7>(d, step, row, sx, inv, n);
+    case 6: return depthRun<SWAP, 6>(d, step, row, sx, inv, n);
+    case 5: return depthRun<SWAP, 5>(d, step, row, sx, inv, n);
+    default: return depthRun<SWAP, 4>(d, step, row, sx, inv, n);
+  }
+}
+
+// A for logical x in [x0, x1) of row ly: black where the shrunk page does
+// not reach, the columns it covers worked out once per row.
+void depthRunA(const Frame& f, int ly, int x0, int x1, uint16_t* d, int step) {
+  const int cx = f.w / 2, cy = f.h / 2;
+  const int32_t inv = s_dp.inv;
+  const int sy = cy + (int)(((int64_t)(ly - cy) * inv) >> 16);
+  int lo = x1, hi = x1;
+  if (sy >= 0 && sy < f.h) {
+    auto src = [&](int x) { return (cx << 16) + (x - cx) * inv; };
+    lo = std::max(x0, cx - (int)(((int64_t)cx << 16) / inv));
+    while (lo < x1 && src(lo) < 0) lo++;
+    hi = std::max(lo, std::min(x1, cx + (int)(((int64_t)(f.w - cx) << 16) / inv) + 1));
+    while (hi > lo && src(hi - 1) >= (f.w << 16)) hi--;
+  }
+  for (int x = x0; x < lo; x++) d[(x - x0) * step] = 0;
+  if (hi > lo) {
+    const uint16_t* row = f.a.px + sy * f.a.stride;
+    uint16_t* o = d + (lo - x0) * step;
+    const int32_t sx = (cx << 16) + (lo - cx) * inv;
+    if (f.a.swap) depthRunL<true>(o, step, row, sx, inv, hi - lo, s_dp.l8);
+    else depthRunL<false>(o, step, row, sx, inv, hi - lo, s_dp.l8);
+  }
+  for (int x = std::max(lo, hi); x < x1; x++) d[(x - x0) * step] = 0;
+}
+
+void emitDepthRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) {
+  const Src& B = f.b;
+  const int end = x0 + n;
+  if (f.kind == KIND_VSTRIP) {
+    if (ly >= s_dp.edge) copyAny(d, step, B.px + (ly - s_dp.edge) * B.stride + x0, n, B.swap, 0);
+    else depthRunA(f, ly, x0, end, d, step);
+    return;
+  }
+  const int l = std::min(std::max(x0, s_dp.edge), end);
+  depthRunA(f, ly, x0, l, d, step);
+  if (end > l) copyAny(d + (l - x0) * step, step, B.px + ly * B.stride + (l - s_dp.edge), end - l, B.swap, 0);
+}
+
 // Emit n pixels of logical row ly starting at logical x0 (ascending). PSRAM
 // is always read forward; mirrored rotations walk the destination backwards.
 inline void emitRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int dstep) {
@@ -689,6 +785,10 @@ inline void emitRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int dste
     } else {
       copyAny(d, dstep, f.b.px + ly * f.b.stride + x0, n, f.b.swap, f.dim);
     }
+    return;
+  }
+  if (f.pageFx == PAGE_DEPTH) {
+    emitDepthRow(f, ly, x0, n, d, dstep);
     return;
   }
   if (f.pageFx == PAGE_WATER) {
@@ -882,7 +982,10 @@ void buildBatch(void* ctx, int lo, int hi) {
 
 void buildChunk(const Frame& f, uint16_t* dst, int ny0) {
   if (f.comp && f.kind == KIND_FRAME && ny0 == 0) prepFrame(f);
-  if (f.comp && (f.kind == KIND_HSTRIP || f.kind == KIND_VSTRIP) && f.pageFx == PAGE_WATER && ny0 == 0) prepWater(f);
+  if (f.comp && (f.kind == KIND_HSTRIP || f.kind == KIND_VSTRIP) && ny0 == 0) {
+    if (f.pageFx == PAGE_WATER) prepWater(f);
+    if (f.pageFx == PAGE_DEPTH) prepDepth(f);
+  }
   const int n = (f.rot & 1) ? NATIVE_W : ROWS;
   ChunkJob c = {&f, dst, ny0};
   if (f.comp) panelShare(buildBatch, &c, n, 16);
@@ -992,6 +1095,15 @@ bool decide(Frame& f) {
       const float u = last ? 1.0f : t <= 0 ? 0.0f : (float)t / (float)s.durUs;
       const float q = f.morph.open ? p : 1 - u * u * u;
       f.wr = (int16_t)lroundf((sqrtf(dx * dx + dy * dy) + 1) * q);
+    }
+    if (f.morph.sheet) {
+      // Up from below the screen with a small overshoot; down again with an ease in.
+      const float u = last ? 1.0f : t <= 0 ? 0.0f : (float)t / (float)s.durUs;
+      const float y0 = (float)(h - b.y);
+      const float y = !f.morph.open ? y0 * u * u
+                    : u < .72f     ? y0 + (-7 - y0) * easeOutCubic(u / .72f)
+                                   : -7 + 7 * ((u - .72f) / .28f) * ((u - .72f) / .28f) * (3 - 2 * (u - .72f) / .28f);
+      f.wy = (int16_t)(b.y + lroundf(y));
     }
     have = true;
   }

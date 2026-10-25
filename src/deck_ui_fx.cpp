@@ -2,17 +2,18 @@
 // for each moment: touch, on/off change, page change, card. Calm: a ring, a
 // pop and halo, crossfade, the card growing out of its tile. Water: drop
 // rings, on colour flooding out of the finger, a water edge between pages,
-// the card revealed in a circle. Page changes and cards are drawn by the
-// compositor (deck_panel.cpp).
+// the card revealed in a circle. Glass: a highlight and a springy release,
+// a sheen, pages in depth, the card rising as a sheet. Page changes and
+// cards are drawn by the compositor (deck_panel.cpp).
 #include "deck_ui_int.h"
 
 namespace deckui {
 
 namespace {
 
-enum FxTouch : uint8_t { TOUCH_NONE, TOUCH_RING, TOUCH_DROP };
-enum FxToggle : uint8_t { TOGGLE_NONE, TOGGLE_BLOOM, TOGGLE_LIQUID };
-enum FxCard : uint8_t { CARD_NONE, CARD_MORPH, CARD_REVEAL };
+enum FxTouch : uint8_t { TOUCH_NONE, TOUCH_RING, TOUCH_DROP, TOUCH_PRESS };
+enum FxToggle : uint8_t { TOGGLE_NONE, TOGGLE_BLOOM, TOGGLE_LIQUID, TOGGLE_SHEEN };
+enum FxCard : uint8_t { CARD_NONE, CARD_MORPH, CARD_REVEAL, CARD_SHEET };
 struct FxSet {
   FxTouch touch;
   FxToggle toggle;
@@ -24,6 +25,7 @@ constexpr FxSet kSets[] = {
     {TOUCH_NONE, TOGGLE_NONE, PAGE_SLIDE, CARD_NONE},      // Classic
     {TOUCH_RING, TOGGLE_BLOOM, PAGE_FADE, CARD_MORPH},     // Calm
     {TOUCH_DROP, TOGGLE_LIQUID, PAGE_WATER, CARD_REVEAL},  // Water
+    {TOUCH_PRESS, TOGGLE_SHEEN, PAGE_DEPTH, CARD_SHEET},   // Glass
 };
 
 const FxSet& fx() { return kSets[dispSettings.tileFx < sizeof(kSets) / sizeof(kSets[0]) ? dispSettings.tileFx : 0]; }
@@ -32,6 +34,7 @@ constexpr uint32_t RIPPLE_MS = 600, POP_MS = 560, SQUISH_MS = 300, HALO_MS = 700
 constexpr uint32_t DROP_MS = 1280, DROP_RING_MS = 1000, DROP_GAP_MS = 140, SPLASH_MS = 320;
 constexpr uint32_t LIQUID_ON_MS = 460, LIQUID_OFF_MS = 380;
 constexpr uint32_t MORPH_MS = 300, MORPH_BACK_MS = 240, REVEAL_MS = 460, REVEAL_BACK_MS = 320;
+constexpr uint32_t SHEET_MS = 460, SHEET_BACK_MS = 260;
 constexpr uint32_t PRESS_FRESH_MS = 3000;  // a touch this recent places on/off and card effects
 constexpr int32_t P = 1024;  // animation progress range
 
@@ -257,9 +260,12 @@ struct Held {
   lv_style_value_t v;
   bool had, used;
 };
-struct Liquid {
-  Held fill, pressedFill, edge, text;  // the "on" fill (also pressed) and outline, the text's new colour
+// What an on/off effect held back on its tile (liquid, sheen).
+struct OnOff {
+  Held fill, pressedFill, edge, text;  // the new fill (also pressed) and outline, the text's new colour
   bool on;
+  lv_style_value_t from, to;  // sheen: the fill fades between these
+  bool color;                 // ... as colours, else as opacities
 };
 
 Held hold(lv_obj_t* o, lv_style_prop_t prop, lv_style_selector_t sel, lv_style_value_t to) {
@@ -276,14 +282,14 @@ void putBack(lv_obj_t* o, Held& h) {
   h.used = false;
 }
 
-void liquidDelete(lv_event_t* e) { delete (Liquid*)lv_event_get_user_data(e); }
+void onOffDelete(lv_event_t* e) { delete (OnOff*)lv_event_get_user_data(e); }
 
-Liquid* liquidOf(lv_obj_t* box) { return (Liquid*)lv_obj_get_user_data(box); }
+OnOff* onOffOf(lv_obj_t* box) { return (OnOff*)lv_obj_get_user_data(box); }
 
-// Ends the running liquid at once: the tile shows its state as it is.
-void liquidStop(TileRt& r) {
+// Ends the running on/off effect at once: the tile shows its state as it is.
+void onOffStop(TileRt& r) {
   if (!r.halo) return;
-  if (Liquid* q = liquidOf(r.halo)) {
+  if (OnOff* q = onOffOf(r.halo)) {
     putBack(r.obj, q->fill);
     putBack(r.obj, q->pressedFill);
     putBack(r.obj, q->edge);
@@ -296,7 +302,7 @@ void liquidStop(TileRt& r) {
 // Box children: the fill, the ring on its edge.
 void liquidStep(void* var, int32_t v) {
   lv_obj_t* box = (lv_obj_t*)var;
-  Liquid* q = liquidOf(box);
+  OnOff* q = onOffOf(box);
   TileRt* r = tileOf(lv_obj_get_parent(box));
   if (!q || !r) return;
   const float t = (float)v / P;
@@ -315,14 +321,14 @@ void liquidStep(void* var, int32_t v) {
 void liquidDone(lv_anim_t* a) {
   lv_obj_t* box = (lv_obj_t*)a->var;
   TileRt* r = tileOf(lv_obj_get_parent(box));
-  if (r && r->halo == box) liquidStop(*r);  // the tile's own fill takes over in the same frame
+  if (r && r->halo == box) onOffStop(*r);  // the tile's own fill takes over in the same frame
 }
 
 // Before the tile changes state: hold back what the change would show at once.
 void startLiquid(TileRt& r, bool on) {
-  liquidStop(r);
+  onOffStop(r);
   const bool glass = s_theme == THEME_GLASS && wallBlur();
-  Liquid* q = new Liquid();
+  OnOff* q = new OnOff();
   q->on = on;
   // Still in the old state, so the current values are the ones to keep.
   // Turning on: the CHECKED fill (bg_opa on Glass, bg_color else) waits for
@@ -350,7 +356,7 @@ void startLiquid(TileRt& r, bool on) {
   lv_obj_t* box = r.halo = tileBox(r);
   lv_obj_move_to_index(box, 0);  // under the tile's content
   lv_obj_set_user_data(box, q);
-  lv_obj_add_event_cb(box, liquidDelete, LV_EVENT_DELETE, q);
+  lv_obj_add_event_cb(box, onOffDelete, LV_EVENT_DELETE, q);
   const TileDef& d = *r.def;
   lv_obj_t* fill = circle(box, p.x - tc.x1, p.y - tc.y1, rad);
   lv_obj_set_style_bg_color(fill, lv_color_hex(tileOnFill(d)), 0);
@@ -360,6 +366,140 @@ void startLiquid(TileRt& r, bool on) {
   lv_obj_set_style_border_color(ring, lv_color_white(), 0);
   lv_obj_set_style_border_opa(ring, LV_OPA_TRANSP, 0);
   startAnim(box, liquidStep, on ? LIQUID_ON_MS : LIQUID_OFF_MS, lv_anim_path_linear, liquidDone);
+}
+
+// --- Glass: light images ---------------------------------------------------------------------
+// White with alpha, made once (radial gradients are off in lv_conf): a round
+// highlight for the press, a slanted glossy band for the sheen.
+constexpr int SPOT = 128, BAND_W = 120, BAND_H = 200;
+
+lv_draw_buf_t* lightImage(lv_draw_buf_t*& buf, int w, int h, uint8_t (*alpha)(float x, float y)) {
+  if (buf) return buf;
+  buf = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_ARGB8888, 0);
+  if (!buf) return nullptr;
+  for (int y = 0; y < h; y++) {
+    uint32_t* row = (uint32_t*)(buf->data + y * buf->header.stride);
+    for (int x = 0; x < w; x++) row[x] = (uint32_t)alpha((x + .5f) / w, (y + .5f) / h) << 24 | 0xFFFFFF;
+  }
+  return buf;
+}
+
+uint8_t spotAlpha(float x, float y) {
+  const float r = sqrtf((2 * x - 1) * (2 * x - 1) + (2 * y - 1) * (2 * y - 1));
+  return (uint8_t)(107 * smooth(clamp01(1 - r)));
+}
+
+// A soft band 48 px wide, leaning 18 degrees.
+uint8_t bandAlpha(float x, float y) {
+  const float u = x * BAND_W - (1 - y) * BAND_H * .325f - 24;
+  return (uint8_t)(153 * smooth(clamp01(1 - fabsf(u) / 24)));
+}
+
+lv_draw_buf_t* s_spot = nullptr;
+lv_draw_buf_t* s_band = nullptr;
+
+// --- Touch: glass press (Glass) ---------------------------------------------------------------
+// r.fx is a box with the highlight at the finger, faded in while pressed,
+// out after the release; the tile springs back with a small overshoot.
+constexpr uint32_t PRESS_IN_MS = 130, PRESS_OUT_MS = 360, SPRING_MS = 480;
+
+void spotIn(void* var, int32_t v) {
+  lv_obj_set_style_image_opa(lv_obj_get_child((lv_obj_t*)var, 0), (lv_opa_t)(255 * v / P), 0);
+}
+
+void spotOut(void* var, int32_t v) {
+  lv_obj_set_style_image_opa(lv_obj_get_child((lv_obj_t*)var, 0), (lv_opa_t)(255 * (P - v) / P), 0);
+}
+
+void springStep(void* var, int32_t v) {  // 0 -> +3 px -> -1 -> 0
+  const float t = (float)v / P;
+  const float s = t < .45f ? 3 * smooth(t / .45f) : t < .75f ? 3 - 4 * smooth((t - .45f) / .3f) : -1 + smooth((t - .75f) / .25f);
+  lv_obj_set_style_transform_width((lv_obj_t*)var, (int32_t)lroundf(s), 0);
+  lv_obj_set_style_transform_height((lv_obj_t*)var, (int32_t)lroundf(s), 0);
+}
+
+void springDone(lv_anim_t* a) {
+  lv_obj_t* t = (lv_obj_t*)a->var;
+  lv_obj_remove_local_style_prop(t, LV_STYLE_TRANSFORM_WIDTH, 0);
+  lv_obj_remove_local_style_prop(t, LV_STYLE_TRANSFORM_HEIGHT, 0);
+}
+
+void touchPress(TileRt& r, lv_point_t p) {
+  if (!lightImage(s_spot, SPOT, SPOT, spotAlpha)) return;
+  lv_area_t tc;
+  lv_obj_get_coords(r.obj, &tc);
+  lv_obj_t* box = r.fx = tileBox(r);
+  lv_obj_t* img = lv_image_create(box);
+  lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
+  lv_image_set_src(img, s_spot);
+  lv_obj_set_pos(img, p.x - tc.x1 - SPOT / 2, p.y - tc.y1 - SPOT / 2);
+  lv_obj_set_style_image_opa(img, LV_OPA_TRANSP, 0);
+  startAnim(box, spotIn, PRESS_IN_MS, lv_anim_path_ease_out, nullptr);
+}
+
+void pressRelease(TileRt& r) {
+  lv_anim_delete(r.obj, springStep);
+  startAnim(r.obj, springStep, SPRING_MS, lv_anim_path_linear, springDone);
+  if (!r.fx || lv_anim_get(r.fx, spotOut)) return;
+  lv_anim_delete(r.fx, spotIn);
+  startAnim(r.fx, spotOut, PRESS_OUT_MS, lv_anim_path_ease_out, touchDone);
+}
+
+// --- On/off: glass sheen (Glass) -----------------------------------------------------------
+// The fill fades in (or out) instead of switching, and a glossy band sweeps
+// across the tile once. Box children: the band.
+constexpr uint32_t SHEEN_FILL_MS = 280, SHEEN_ON_MS = 700, SHEEN_OFF_MS = 500;
+
+void sheenStep(void* var, int32_t v) {
+  lv_obj_t* box = (lv_obj_t*)var;
+  OnOff* q = onOffOf(box);
+  TileRt* r = tileOf(lv_obj_get_parent(box));
+  if (!q || !r) return;
+  const uint32_t ms = (q->on ? SHEEN_ON_MS : SHEEN_OFF_MS) * v / P;
+  const float k = clamp01((float)ms / SHEEN_FILL_MS);
+  if (k < 1 || ms < SHEEN_FILL_MS + 40) {
+    lv_style_value_t c;
+    if (q->color) c.color = lv_color_mix(q->to.color, q->from.color, (uint8_t)(255 * k));
+    else c.num = q->from.num + (int32_t)lroundf((q->to.num - q->from.num) * k);
+    lv_obj_set_local_style_prop(r->obj, q->fill.prop, c, q->fill.sel);
+    lv_obj_set_local_style_prop(r->obj, q->pressedFill.prop, c, q->pressedFill.sel);
+  }
+  // The band crosses from one side to the other, slow at both ends.
+  const float t = smooth((float)v / P);
+  const int w = lv_obj_get_width(box), x0 = q->on ? -BAND_W : w, x1 = q->on ? w : -BAND_W;
+  lv_obj_set_x(lv_obj_get_child(box, 0), x0 + (int)lroundf((x1 - x0) * t));
+}
+
+void sheenDone(lv_anim_t* a) {
+  lv_obj_t* box = (lv_obj_t*)a->var;
+  TileRt* r = tileOf(lv_obj_get_parent(box));
+  if (r && r->halo == box) onOffStop(*r);
+}
+
+// Before the tile changes state, like the liquid.
+void startSheen(TileRt& r, bool on) {
+  onOffStop(r);
+  if (!lightImage(s_band, BAND_W, BAND_H, bandAlpha)) return;
+  const bool glass = s_theme == THEME_GLASS && wallBlur();
+  const lv_style_prop_t prop = glass ? LV_STYLE_BG_OPA : LV_STYLE_BG_COLOR;
+  OnOff* q = new OnOff();
+  q->on = on;
+  q->color = !glass;
+  // From what the tile shows now to the new state's own value.
+  q->from = lv_obj_get_style_prop(r.obj, LV_PART_MAIN, prop);
+  const lv_style_selector_t sel = on ? LV_STATE_CHECKED : LV_STATE_DEFAULT;
+  if (lv_obj_get_local_style_prop(r.obj, prop, &q->to, sel) != LV_STYLE_RES_FOUND) q->to = q->from;
+  q->fill = hold(r.obj, prop, sel, q->from);
+  q->pressedFill = hold(r.obj, prop, sel | LV_STATE_PRESSED, q->from);
+  lv_obj_t* box = r.halo = tileBox(r);
+  lv_obj_set_user_data(box, q);
+  lv_obj_add_event_cb(box, onOffDelete, LV_EVENT_DELETE, q);
+  lv_obj_t* band = lv_image_create(box);
+  lv_obj_remove_flag(band, LV_OBJ_FLAG_CLICKABLE);
+  lv_image_set_src(band, s_band);
+  lv_obj_set_pos(band, on ? -BAND_W : lv_obj_get_width(r.obj), (lv_obj_get_height(r.obj) - BAND_H) / 2);
+  lv_obj_set_style_image_opa(band, on ? LV_OPA_COVER : (lv_opa_t)107, 0);
+  startAnim(box, sheenStep, on ? SHEEN_ON_MS : SHEEN_OFF_MS, lv_anim_path_linear, sheenDone);
 }
 
 // Only changes the user can see: not while pages are built, not under the
@@ -416,6 +556,10 @@ void fxPressed(lv_event_t* e) {
   TileRt* r = tileOf((lv_obj_t*)lv_event_get_current_target(e));
   lv_indev_t* in = lv_indev_active();
   if (!r || !in) return;
+  if (lv_event_get_code(e) != LV_EVENT_PRESSED) {  // released or lost
+    if (fx().touch == TOUCH_PRESS) pressRelease(*r);
+    return;
+  }
   lv_point_t p;
   lv_indev_get_point(in, &p);
   r->press = p;
@@ -431,6 +575,7 @@ void fxRipple(TileRt& r, lv_point_t p) {
   if (r.fx) lv_obj_delete(r.fx);
   r.fx = nullptr;
   if (t == TOUCH_DROP) touchDrop(r, p, farCorner(tc, p));
+  else if (t == TOUCH_PRESS) touchPress(r, p);
   else touchRing(r, p, farCorner(tc, p));
 }
 
@@ -443,12 +588,14 @@ void fxCancelRipples() {
 }
 
 void fxBeforeTileOn(TileRt& r, bool on) {
-  if (fx().toggle != TOGGLE_LIQUID) {
-    if (r.halo && liquidOf(r.halo)) liquidStop(r);  // started under an earlier preset
+  const FxToggle t = fx().toggle;
+  if (t != TOGGLE_LIQUID && t != TOGGLE_SHEEN) {
+    if (r.halo && onOffOf(r.halo)) onOffStop(r);  // started under an earlier preset
     return;
   }
-  if (live(r)) startLiquid(r, on);
-  else liquidStop(r);
+  if (!live(r)) onOffStop(r);
+  else if (t == TOGGLE_SHEEN) startSheen(r, on);
+  else startLiquid(r, on);
 }
 
 void fxTileOn(TileRt& r, bool wasOn) {
@@ -477,7 +624,8 @@ void fxCardOpen(lv_obj_t* card, int tileIdx) {
     m.cx = (int16_t)s_revealAt.x;
     m.cy = (int16_t)s_revealAt.y;
   }
-  compBeginMorph(m, kind == CARD_REVEAL ? REVEAL_MS : MORPH_MS, ++s_gen);
+  m.sheet = kind == CARD_SHEET;
+  compBeginMorph(m, kind == CARD_REVEAL ? REVEAL_MS : kind == CARD_SHEET ? SHEET_MS : MORPH_MS, ++s_gen);
 }
 
 void fxCardClose(lv_obj_t* card, int tileIdx) {
@@ -493,16 +641,17 @@ void fxCardClose(lv_obj_t* card, int tileIdx) {
     m.r0 = (int16_t)lv_obj_get_style_radius(card, LV_PART_MAIN);
     m.r1 = (int16_t)lv_obj_get_style_radius(t, LV_PART_MAIN);
     m.dim = 2;  // the scrim fades out with the card
-    if (kind == CARD_REVEAL) {
+    if (kind == CARD_REVEAL || kind == CARD_SHEET) {  // the card stays where it is
       m.to = m.from;
       m.r1 = m.r0;
-      m.reveal = true;
+      m.reveal = kind == CARD_REVEAL;
+      m.sheet = kind == CARD_SHEET;
       m.cx = (int16_t)s_revealAt.x;
       m.cy = (int16_t)s_revealAt.y;
     }
   }
   closeModal();
-  if (morph) compBeginMorph(m, kind == CARD_REVEAL ? REVEAL_BACK_MS : MORPH_BACK_MS, ++s_gen);
+  if (morph) compBeginMorph(m, kind == CARD_REVEAL ? REVEAL_BACK_MS : kind == CARD_SHEET ? SHEET_BACK_MS : MORPH_BACK_MS, ++s_gen);
 }
 
 }  // namespace deckui
