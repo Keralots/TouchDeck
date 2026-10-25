@@ -1,6 +1,7 @@
 // Deck UI: toast, detail card, confirm card and the PC pairing card.
 #include "deck_ui_int.h"
 #include "deck_daily.h"
+#include <src/misc/cache/instance/lv_image_cache.h>
 
 namespace deckui {
 
@@ -32,6 +33,50 @@ constexpr uint32_t CONFIRM_TIMEOUT_MS = 8000;
 constexpr uint32_t CONFIRM_ARM_MS = 400;  // a stray second tap must not confirm
 
 bool modalShown() { return s_modalCard != nullptr; }
+
+// The page under a card, dimmed like the scrim, as an opaque picture on top of
+// the screen: LVGL skips the page under it while the card is open.
+lv_obj_t* s_modalUnder = nullptr;
+lv_draw_buf_t* s_underBuf = nullptr;  // kept once used
+
+bool coverPage() {
+  const int w = logicalW(), h = logicalH();
+  if (s_underBuf && (s_underBuf->header.w != w || s_underBuf->header.h != h)) {
+    lv_draw_buf_destroy(s_underBuf);
+    s_underBuf = nullptr;
+  }
+  if (!s_underBuf) s_underBuf = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
+  if (!s_underBuf) return false;
+  lv_image_cache_drop(s_underBuf);
+  const uint16_t* fb = lastFrame();
+  for (int y = 0; y < h; y++) {
+    uint16_t* d = (uint16_t*)(s_underBuf->data + y * s_underBuf->header.stride);
+    const uint16_t* s = fb + y * w;
+    for (int x = 0; x < w; x++) d[x] = (s[x] >> 1) & 0x7BEF;  // half, as the compositor dims
+  }
+  s_modalUnder = lv_image_create(lv_screen_active());
+  lv_obj_add_flag(s_modalUnder, (lv_obj_flag_t)(LV_OBJ_FLAG_IGNORE_LAYOUT | LV_OBJ_FLAG_FLOATING));
+  lv_obj_remove_flag(s_modalUnder, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+  lv_obj_set_pos(s_modalUnder, 0, 0);
+  lv_image_set_src(s_modalUnder, s_underBuf);
+  // An image alone never reports "covers": the opaque background does.
+  lv_obj_set_style_bg_color(s_modalUnder, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(s_modalUnder, LV_OPA_COVER, 0);
+  return true;
+}
+
+void onModalScrim(lv_event_t*);
+
+// The scrim for a card: transparent over the covered page, else half black.
+lv_obj_t* makeScrim() {
+  lv_obj_t* s = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s);
+  lv_obj_set_size(s, logicalW(), logicalH());
+  lv_obj_set_style_bg_color(s, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(s, coverPage() ? LV_OPA_TRANSP : LV_OPA_50, 0);
+  lv_obj_add_event_cb(s, onModalScrim, LV_EVENT_CLICKED, nullptr);
+  return s;
+}
 
 // Thin line on the top edge while daily pictures download: swipes may hitch then.
 lv_obj_t* s_dailyBar = nullptr;
@@ -118,7 +163,8 @@ void closeModal() {
   }
   if (s_modalCard) lv_obj_delete(s_modalCard);
   if (s_modalScrim) lv_obj_delete(s_modalScrim);
-  s_modalCard = s_modalScrim = nullptr;
+  if (s_modalUnder) lv_obj_delete(s_modalUnder);
+  s_modalCard = s_modalScrim = s_modalUnder = nullptr;
   if (s_modalGlass) lv_draw_buf_destroy(s_modalGlass);
   s_modalGlass = nullptr;
   s_modalSlider = nullptr;
@@ -242,12 +288,7 @@ void openModal(int tileIdx) {
   const bool haKnown = d.entity.length() && haGetEntity(d.entity, he);
   const bool graph = d.type == TILE_SENSOR && haKnown && he.known && haNumericState(he.state, hv);
 
-  s_modalScrim = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_modalScrim);
-  lv_obj_set_size(s_modalScrim, w, h);
-  lv_obj_set_style_bg_color(s_modalScrim, lv_color_black(), 0);
-  lv_obj_set_style_bg_opa(s_modalScrim, LV_OPA_50, 0);
-  lv_obj_add_event_cb(s_modalScrim, onModalScrim, LV_EVENT_CLICKED, nullptr);
+  s_modalScrim = makeScrim();
 
   const int cw = w - 40 < 380 ? w - 40 : 380;
   const int ch = graph ? (light ? 304 : 284) : light ? 236 : 196;
@@ -398,12 +439,7 @@ void openConfirm(int tileIdx, bool hold) {
   s_confirmOn = r.on;
   s_confirmMs = millis();
 
-  s_modalScrim = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_modalScrim);
-  lv_obj_set_size(s_modalScrim, w, h);
-  lv_obj_set_style_bg_color(s_modalScrim, lv_color_black(), 0);
-  lv_obj_set_style_bg_opa(s_modalScrim, LV_OPA_50, 0);
-  lv_obj_add_event_cb(s_modalScrim, onModalScrim, LV_EVENT_CLICKED, nullptr);
+  s_modalScrim = makeScrim();
 
   const int cw = w - 40 < 360 ? w - 40 : 360;
   const int ch = 188;

@@ -332,6 +332,7 @@ uint8_t& screenLevelRef();
 void qpSyncValues();
 void qpUpdateStatus(bool force);
 lv_obj_t* qpButton(lv_obj_t* parent, int x, int y, int w, const char* text, bool checkable);
+const uint16_t* lastFrame();
 lv_draw_buf_t* frostedCopy(int x, int y, int w, int h, int rad);
 void frostStyle(lv_obj_t* o, lv_draw_buf_t* glass);
 void buildQuickPanel();
