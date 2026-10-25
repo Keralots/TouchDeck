@@ -477,6 +477,29 @@ void morphRun(uint16_t* out, int step, const uint16_t* row, uint32_t sx, uint32_
   }
 }
 
+// Closing, the card all ghost and fading out: the ghost colour over the
+// shaded page (gw = the ghost's share, spread565(ghost) * wo5).
+template <uint32_t L>
+void ghostFadeRun(uint16_t* out, int step, const uint16_t* base, bool swap, int n, uint32_t gw, uint32_t wo5) {
+  for (int k = 0; k < n; k++, out += step) {
+    const uint16_t b = shade8(swap ? base[k] : __builtin_bswap16(base[k]), L);
+    const uint32_t x = ((spread565(b) * (32 - wo5) + gw) >> 5) & 0x07E0F81F;
+    *out = __builtin_bswap16((uint16_t)(x | x >> 16));
+  }
+}
+
+void ghostFade(uint16_t* out, int step, const uint16_t* base, bool swap, int n, uint16_t ghost, uint32_t wo5,
+               uint32_t base8) {
+  const uint32_t gw = spread565(ghost) * wo5;
+  switch (base8) {
+    case 8: ghostFadeRun<8>(out, step, base, swap, n, gw, wo5); break;
+    case 7: ghostFadeRun<7>(out, step, base, swap, n, gw, wo5); break;
+    case 6: ghostFadeRun<6>(out, step, base, swap, n, gw, wo5); break;
+    case 5: ghostFadeRun<5>(out, step, base, swap, n, gw, wo5); break;
+    default: ghostFadeRun<4>(out, step, base, swap, n, gw, wo5); break;
+  }
+}
+
 // Pixels a rounded rect (radius rad) leaves out at each end of its row ly.
 inline int cornerInset(const FrameRect& a, int rad, int ly) {
   const int top = ly - a.y, bottom = a.y + a.h - 1 - ly;
@@ -547,7 +570,9 @@ void emitMorphRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) 
     r = std::min(std::max(l, f.wx + f.ww - inset), end);
   }
   if (l > x0) shadeAny(d, step, base + x0, l - x0, m.base.swap, b8);
-  if (r > l && m.card.swap && m.base.swap) {
+  if (r > l && f.wa5 == 0 && f.wo5 < 32) {
+    ghostFade(d + (l - x0) * step, step, base + l, m.base.swap, r - l, m.ghost, f.wo5, b8);
+  } else if (r > l && m.card.swap && m.base.swap) {
     const uint16_t* row = m.card.px + ((uint32_t)(ly - f.wy) * f.wdy >> 16) * m.card.stride;
     const uint32_t sx = (uint32_t)(l - f.wx) * f.wdx;
     uint16_t* out = d + (l - x0) * step;
