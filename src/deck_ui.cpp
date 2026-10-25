@@ -863,17 +863,38 @@ void deckTick() {
     lv_indev_reset(s_indev, nullptr);
     fxCancelRipples();
   }
+  panelSetPageFx(fxPage());
+  // Cascade moves each page's grid columns; the header above moves as one.
   {
-    // Cascade moves the active page's grid columns; the header above moves as one.
-    const Page& pg = s_pages[sh.active];
-    int cols = 0, top = 0;
-    if (pg.grid && pg.def) {
-      lv_area_t a;
-      lv_obj_get_coords(pg.grid, &a);
-      cols = pg.def->cols[logicalW() > logicalH() ? ORIENT_LANDSCAPE : ORIENT_PORTRAIT];
-      top = a.y1 + 4;
+    const int orient = logicalW() > logicalH() ? ORIENT_LANDSCAPE : ORIENT_PORTRAIT;
+    uint8_t cols[MAX_PAGES] = {};
+    int16_t top[MAX_PAGES] = {};
+    uint16_t cuts[MAX_PAGES] = {};
+    const int w = logicalW();
+    for (int i = 0; i < s_count && i < MAX_PAGES; i++) {
+      const Page& pg = s_pages[i];
+      cols[i] = pg.grid && pg.def ? pg.def->cols[orient] : 0;
+      top[i] = pg.grid ? (int16_t)(lv_obj_get_y(pg.grid) + 4) : 0;
+      cuts[i] = cols[i] > 1 ? (uint16_t)(((1u << cols[i]) - 1) & ~1u) : 0;  // edges 1 .. cols-1
     }
-    panelSetPageFx(fxPage(), cols, top);
+    // Same edge formula as the compositor; a tile across one drops that cut.
+    for (const TileRt& r : s_tiles) {
+      if (r.page < 0 || r.page >= MAX_PAGES || cols[r.page] < 2) continue;
+      const int n = cols[r.page], x1 = lv_obj_get_x(r.obj), x2 = x1 + lv_obj_get_width(r.obj);
+      const float cw = (float)(w - 16 - 7 * (n - 1)) / n;
+      for (int k = 1; k < n; k++) {
+        const int e = 8 + (int)lroundf(k * (cw + 7)) - 4;
+        if (x1 < e && e < x2) cuts[r.page] &= (uint16_t)~(1u << k);
+      }
+    }
+    // No usable cut at all would mean "all" to the compositor: one band then.
+    for (int i = 0; i < MAX_PAGES; i++)
+      if (cols[i] > 1 && !cuts[i]) cols[i] = 1;
+    portENTER_CRITICAL(&s_mux);
+    memcpy(sh.gridCols, cols, sizeof(cols));
+    memcpy(sh.gridTop, top, sizeof(top));
+    memcpy(sh.gridCuts, cuts, sizeof(cuts));
+    portEXIT_CRITICAL(&s_mux);
   }
 
   if (touchTakeActivity() && (displaySleepingForTouch() || frameActive())) {
@@ -1289,14 +1310,21 @@ bool uiTryBeginSwipe(int dir, bool vertical, Src& a, Src& b, int& startOff, int&
     sh.owned = true;
     sh.gesture = Shared::GEST_PAGE;
     sh.target = target;
-    const Src live = {nullptr, 0, true};  // the live LVGL frame
+    // The live LVGL frame; both carry their page's grid for the cascade.
+    const Src live = {nullptr, 0, true, 0, sh.gridCols[cur], sh.gridTop[cur], sh.gridCuts[cur]};
     if (dir > 0) {
       a = live;
       b = sh.src[target];
+      b.cols = sh.gridCols[target];
+      b.top = sh.gridTop[target];
+      b.cuts = sh.gridCuts[target];
       startOff = 0;
       idxA = idxCur;
     } else {
       a = sh.src[target];
+      a.cols = sh.gridCols[target];
+      a.top = sh.gridTop[target];
+      a.cuts = sh.gridCuts[target];
       b = live;
       startOff = vertical ? logicalH() : logicalW();
       idxA = idxTarget;
