@@ -154,7 +154,6 @@ void deckToastShow(const char* text, uint32_t holdMs) {
 }
 
 void closeModal() {
-  fxCardDrop();
   if (s_modalSlider && s_modalTile >= 0 && s_modalTile < (int)s_tiles.size()) {
     if (Wish* w = findWish(s_tiles[s_modalTile].def->entity)) {
       if (w->holding) w->level = {};

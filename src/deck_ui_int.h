@@ -411,6 +411,9 @@ uint32_t showIcon(lv_obj_t* label, const TileDef& d, const HaEntity* e, bool on,
 String tileLabel(const TileDef& t);
 String tileSub(const TileRt& r);
 void markPageStale(int page);
+// Fresh image of a page into its swipe buffer (sh.src); false while a gesture owns them.
+bool snapPage(int page);
+extern uint32_t s_gen;  // UI generation, see compSetHoldGen
 uint32_t tileBg(const TileDef& d);
 int tileTint(const TileDef& d);
 uint32_t onTextColor(const TileDef& def, bool glass);
@@ -425,7 +428,6 @@ void fxCancelRipples();
 void fxTileOn(TileRt& r, bool wasOn);
 void fxCardOpen(lv_obj_t* card, int tileIdx);
 void fxCardClose(lv_obj_t* card, int tileIdx);
-void fxCardDrop();
 
 // deck_ui_glass.cpp
 std::vector<uint32_t> glassKey(Page& p);

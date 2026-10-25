@@ -520,14 +520,18 @@ void refreshOneSnapshot() {
     refreshPanelSnapshot();
     return;
   }
+  snapPage(pick);
+}
+
+bool snapPage(int pick) {
   Page& pg = s_pages[pick];
-  if (!pg.snap) return;
+  if (!pg.snap) return false;
 
   portENTER_CRITICAL(&s_mux);
   const bool owned = sh.owned;
   if (!owned) sh.busy[pick] = true;
   portEXIT_CRITICAL(&s_mux);
-  if (owned) return;
+  if (owned) return false;
 
   const uint32_t t0 = micros();
   lv_snapshot_reshape_draw_buf(pg.root, pg.snap);
@@ -542,6 +546,7 @@ void refreshOneSnapshot() {
   portEXIT_CRITICAL(&s_mux);
   pg.stale = !ok;
   pg.snapMs = s_lastSnapMs = millis();
+  return ok;
 }
 
 void bakeWallpaperPage(int index) {

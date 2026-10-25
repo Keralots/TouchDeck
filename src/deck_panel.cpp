@@ -68,7 +68,7 @@ SemaphoreHandle_t s_quiet = nullptr;
 bool s_quiescing = false;
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
-enum Kind : uint8_t { KIND_HSTRIP = 0, KIND_VSTRIP, KIND_PANEL, KIND_FRAME };
+enum Kind : uint8_t { KIND_HSTRIP = 0, KIND_VSTRIP, KIND_PANEL, KIND_FRAME, KIND_MORPH };
 
 // Page dots: shown while a page slide owns the screen, then held and faded
 // out over LVGL frames by this task (LVGL never draws them). Horizontal dots
@@ -101,6 +101,8 @@ struct State {
   uint32_t durUs = 1;
   int8_t landing = 0;
   bool fade = false;  // this strip crossfades
+  MorphScene morph = {};
+  uint32_t morphHoldGen = 0;
   uint32_t holdGen = UINT32_MAX;
   bool landedPending = false;
   int8_t landed = 0;
@@ -134,6 +136,11 @@ struct Frame {
   int off;
   uint8_t dim;
   bool fade;
+  // Morph window this frame, the card picture's step per window pixel (16.16),
+  // picture share over the ghost and window share over the base (both 0..32).
+  MorphScene morph;
+  int16_t wx, wy, ww, wh, wr;
+  uint32_t wdx, wdy, wa5, wo5;
   uint8_t dotCount, dotActive, dotAlpha;
   bool dotsV;
 };
@@ -408,6 +415,77 @@ void emitFrameRow(const Frame& f, int y, int x0, int n, uint16_t* d, int step) {
   }
 }
 
+// Card window pixels (both sources little-endian): nearest-scaled card, optional
+// ghost tint, optional fade over the dimmed page.
+template <bool GHOST, bool OVER>
+void morphRun(uint16_t* out, int step, const uint16_t* row, uint32_t sx, uint32_t dx, int n,
+              const uint16_t* base, uint16_t ghost, uint32_t wa5, uint32_t wo5, bool dim2) {
+  const uint32_t gs = spread565(ghost) * (32 - wa5);  // the ghost's share, the same for every pixel
+  for (int k = 0; k < n; k++, sx += dx, out += step) {
+    uint16_t px = row[sx >> 16];
+    if (GHOST) {
+      const uint32_t x = ((spread565(px) * wa5 + gs) >> 5) & 0x07E0F81F;
+      px = (uint16_t)(x | x >> 16);
+    }
+    if (OVER) {
+      uint16_t b = base[k];
+      if (dim2) b = dimLE<2>(b);
+      px = mix565(b, px, wo5);
+    }
+    *out = __builtin_bswap16(px);
+  }
+}
+
+void emitMorphRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) {
+  const MorphScene& m = f.morph;
+  const uint16_t* base = m.base.px + ly * m.base.stride;
+  const int end = x0 + n;
+  const uint8_t dim = m.dim;
+  int l = end, r = end;  // window span on this row
+  if (ly >= f.wy && ly < f.wy + f.wh) {
+    const int top = ly - f.wy, bottom = f.wy + f.wh - 1 - ly;
+    const int e = top < f.wr ? top : bottom < f.wr ? bottom : -1;
+    int inset = 0;
+    if (e >= 0) {
+      const float dy = f.wr - e - 0.5f;
+      inset = f.wr - (int)sqrtf((float)(f.wr * f.wr) - dy * dy);
+    }
+    l = std::min(std::max(x0, f.wx + inset), end);
+    r = std::min(std::max(l, f.wx + f.ww - inset), end);
+  }
+  if (l > x0) copyAny(d, step, base + x0, l - x0, m.base.swap, dim);
+  if (r > l && m.card.swap && m.base.swap) {
+    const uint16_t* row = m.card.px + ((uint32_t)(ly - f.wy) * f.wdy >> 16) * m.card.stride;
+    const uint32_t sx = (uint32_t)(l - f.wx) * f.wdx;
+    uint16_t* out = d + (l - x0) * step;
+    const bool ghost = f.wa5 < 32, over = f.wo5 < 32;
+    const bool dim2 = dim == 2;
+    if (ghost && !over && f.wa5 == 0) {  // still all ghost
+      const uint16_t g = __builtin_bswap16(m.ghost);
+      for (int k = l; k < r; k++, out += step) *out = g;
+    } else if (ghost && over) morphRun<true, true>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, dim2);
+    else if (ghost) morphRun<true, false>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, dim2);
+    else if (over) morphRun<false, true>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, dim2);
+    else morphRun<false, false>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, dim2);
+  } else if (r > l) {
+    const uint16_t* row = m.card.px + ((uint32_t)(ly - f.wy) * f.wdy >> 16) * m.card.stride;
+    uint32_t sx = (uint32_t)(l - f.wx) * f.wdx;
+    uint16_t* out = d + (l - x0) * step;
+    for (int x = l; x < r; x++, sx += f.wdx, out += step) {
+      const uint16_t c = row[sx >> 16];
+      uint16_t px = m.card.swap ? c : __builtin_bswap16(c);
+      if (f.wa5 < 32) px = mix565(m.ghost, px, f.wa5);
+      if (f.wo5 < 32) {
+        uint16_t b = m.base.swap ? base[x] : __builtin_bswap16(base[x]);
+        if (m.dim == 2) b = dimLE<2>(b);
+        px = mix565(b, px, f.wo5);
+      }
+      *out = __builtin_bswap16(px);
+    }
+  }
+  if (end > r) copyAny(d + (r - x0) * step, step, base + r, end - r, m.base.swap, dim);
+}
+
 // Emit n pixels of logical row ly starting at logical x0 (ascending). PSRAM
 // is always read forward; mirrored rotations walk the destination backwards.
 inline void emitRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int dstep) {
@@ -417,6 +495,10 @@ inline void emitRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int dste
   }
   if (f.kind == KIND_FRAME) {
     emitFrameRow(f, ly, x0, n, d, dstep);
+    return;
+  }
+  if (f.kind == KIND_MORPH) {
+    emitMorphRow(f, ly, x0, n, d, dstep);
     return;
   }
   if (f.kind == KIND_PANEL) {
@@ -678,6 +760,41 @@ bool decide(Frame& f) {
     f.elapsedMs = elapsed > 0 ? elapsed / 1000 : 0;
     f.frameLast = elapsed >= s.durUs;
     if (f.frameLast) s.mode = COMP_FRAME_HOLD;
+    have = true;
+  }
+  if (!have && s.kind == KIND_MORPH && s.mode == COMP_HOLD && !s.lvPending && s.lvGen >= s.holdGen) {
+    // The frame LVGL drew while the morph ran already shows the end state.
+    s.mode = COMP_NONE;
+    f.comp = false;
+    f.lv = s_fb[s.lvLatest];
+    have = true;
+  }
+  if (!have && s.mode == COMP_ANIM && s.kind == KIND_MORPH) {
+    const int64_t t = now + ANIM_LEAD_US - s.t0;
+    const bool last = t >= (int64_t)s.durUs;
+    const float p = last ? 1.0f : t <= 0 ? 0.0f : easeOutCubic((float)t / (float)s.durUs);
+    if (last) {
+      s.mode = COMP_HOLD;
+      s.holdGen = s.morphHoldGen;
+    }
+    f.comp = true;
+    f.kind = KIND_MORPH;
+    f.morph = s.morph;
+    if (!f.morph.base.px) f.morph.base = {s_fb[s.lvLatest], (uint16_t)w, true, (uint16_t)h};
+    const FrameRect& a = f.morph.from;
+    const FrameRect& b = f.morph.to;
+    auto mix = [p](int x, int y) { return (int16_t)(x + (int)lroundf((y - x) * p)); };
+    f.wx = mix(a.x, b.x);
+    f.wy = mix(a.y, b.y);
+    f.ww = std::max<int16_t>(1, mix(a.w, b.w));
+    f.wh = std::max<int16_t>(1, mix(a.h, b.h));
+    f.wr = std::min<int16_t>(mix(f.morph.r0, f.morph.r1), std::min(f.ww, f.wh) / 2);
+    f.wdx = ((uint32_t)f.morph.cw << 16) / f.ww;
+    f.wdy = ((uint32_t)f.morph.ch << 16) / f.wh;
+    const float in = f.morph.open ? clamp01((p - 0.35f) / 0.65f) : 1 - clamp01(p / 0.6f);
+    const float shown = f.morph.open ? 1 : 1 - clamp01((p - 0.6f) / 0.4f);
+    f.wa5 = (uint32_t)lroundf(in * 32);
+    f.wo5 = (uint32_t)lroundf(shown * 32);
     have = true;
   }
   if (!have && (s.mode == COMP_DRAG || s.mode == COMP_ANIM)) {
@@ -1048,6 +1165,30 @@ bool compBeginDrag(const Src& a, const Src& b, int off, int pageA, bool vertical
 }
 
 void panelSetPageFade(bool on) { s_pageFade = on; }
+
+bool compBeginMorph(const MorphScene& m, uint32_t durMs, uint32_t holdGen) {
+  if (!m.card.px || m.cw <= 0 || m.ch <= 0) return false;
+  bool ok = false;
+  portENTER_CRITICAL(&s_mux);
+  if (s.mode == COMP_NONE && s.lvLatest >= 0) {
+    s.mode = COMP_ANIM;
+    s.kind = KIND_MORPH;
+    s.morph = m;
+    // Pinned now: LVGL may draw one more frame into the other buffer.
+    int w, h;
+    logicalSize(s_rot, w, h);
+    if (!s.morph.base.px) s.morph.base = {s_fb[s.lvLatest], (uint16_t)w, true, (uint16_t)h};
+    s.morphHoldGen = holdGen;
+    s.t0 = esp_timer_get_time();
+    s.durUs = durMs ? durMs * 1000u : 1u;
+    s.landing = 0;
+    s.landedPending = false;
+    ok = true;
+  }
+  portEXIT_CRITICAL(&s_mux);
+  if (ok && s_task) xTaskNotifyGive(s_task);
+  return ok;
+}
 
 bool compBeginPanel(const Src& panel, const Src& page, int off) {
   bool ok = false;
