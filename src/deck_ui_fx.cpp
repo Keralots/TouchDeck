@@ -20,7 +20,7 @@ struct FxSet {
   PageFx page;
   FxCard card;
 };
-// Indexed by dispSettings.tileFx.
+// Indexed by dispSettings.tileFx; 5 = custom, from the four settings.
 constexpr FxSet kSets[] = {
     {TOUCH_NONE, TOGGLE_NONE, PAGE_SLIDE, CARD_NONE},      // Classic
     {TOUCH_RING, TOGGLE_BLOOM, PAGE_FADE, CARD_MORPH},     // Calm
@@ -29,7 +29,12 @@ constexpr FxSet kSets[] = {
     {TOUCH_DISTORT, TOGGLE_AURORA, PAGE_CASCADE, CARD_MORPH},  // Heavy
 };
 
-const FxSet& fx() { return kSets[dispSettings.tileFx < sizeof(kSets) / sizeof(kSets[0]) ? dispSettings.tileFx : 0]; }
+FxSet fx() {
+  const DisplaySettings& d = dispSettings;
+  if (d.tileFx < sizeof(kSets) / sizeof(kSets[0])) return kSets[d.tileFx];
+  return {(FxTouch)LV_MIN(d.fxTouch, TOUCH_DISTORT), (FxToggle)LV_MIN(d.fxToggle, TOGGLE_AURORA),
+          (PageFx)LV_MIN(d.fxPage, PAGE_CASCADE), (FxCard)LV_MIN(d.fxCard, CARD_SHEET)};
+}
 
 constexpr uint32_t RIPPLE_MS = 600, POP_MS = 560, SQUISH_MS = 300, HALO_MS = 700;
 constexpr uint32_t DROP_MS = 1280, DROP_RING_MS = 1000, DROP_GAP_MS = 140, SPLASH_MS = 320;

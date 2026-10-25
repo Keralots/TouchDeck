@@ -181,6 +181,18 @@
     $("glassWall").classList.toggle("hidden", !g);
   }
   $("theme").addEventListener("change", updateGlassFields);
+  // Animations: the presets as touch, on/off, page, card (as on the deck);
+  // switching to Custom starts from the preset that was chosen.
+  const FX_SETS = [[0, 0, 0, 0], [1, 1, 1, 1], [2, 2, 2, 2], [3, 3, 3, 3], [4, 4, 4, 1]];
+  const FX_IDS = ["fxTouch", "fxToggle", "fxPage", "fxCard"];
+  let fxPreset = 0;
+  function updateFxFields() {
+    const v = Number($("tileFx").value);
+    if (v === 5 && !populating) FX_SETS[fxPreset].forEach((x, i) => setVal(FX_IDS[i], x));
+    if (v < 5) fxPreset = v;
+    $("fxCustom").classList.toggle("hidden", v !== 5);
+  }
+  $("tileFx").addEventListener("change", updateFxFields);
   for (let h = 0; h < 24; h++) $("dailyHour").add(new Option(String(h).padStart(2, "0") + ":00", h));
   function updateDailyFields() {
     $("dailyFields").classList.toggle("hidden", $("wallSource").value === "0");
@@ -299,6 +311,7 @@
     setVal("rotation", c.display.rotation);
     setVal("theme", c.display.theme || 0);
     setVal("tileFx", c.display.tileFx || 0);
+    FX_IDS.forEach((id) => setVal(id, c.display[id] || 0));
     setVal("brightness", c.display.brightness);
     setVal("tempScale", c.display.tempScale);
     setVal("powerScale", c.display.powerScale);
@@ -320,6 +333,7 @@
     setVal("glassOn", c.display.glassOn || 80);
     setCheck("glassAutoText", c.display.glassAutoText === true);
     updateGlassFields();
+    updateFxFields();
     setCheck("smoothCharts", c.display.smoothCharts !== false);
     {
       const nd = $("navDeck");

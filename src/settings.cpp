@@ -108,6 +108,7 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.glassAutoText    = false;
   ds.smoothCharts     = true;
   ds.tileFx           = 0;
+  ds.fxTouch = ds.fxToggle = ds.fxPage = ds.fxCard = 0;
 }
 
 void defaultBacklightSettings(BacklightSettings& bs) {
@@ -180,7 +181,11 @@ void loadSettings() {
   dispSettings.dailyCount = constrain(prefs.getUChar("dcount", 12), 1, DAILY_MAX_COUNT);
   dispSettings.glassAutoText = prefs.getBool("gauto", false);
   dispSettings.smoothCharts = prefs.getBool("smooth", true);
-  dispSettings.tileFx = min<uint8_t>(prefs.getUChar("tilefx", 0), 4);
+  dispSettings.tileFx = min<uint8_t>(prefs.getUChar("tilefx", 0), 5);
+  dispSettings.fxTouch = min<uint8_t>(prefs.getUChar("fxtouch", 0), 4);
+  dispSettings.fxToggle = min<uint8_t>(prefs.getUChar("fxtoggle", 0), 4);
+  dispSettings.fxPage = min<uint8_t>(prefs.getUChar("fxpage", 0), 4);
+  dispSettings.fxCard = min<uint8_t>(prefs.getUChar("fxcard", 0), 3);
   advSettings.printers = prefs.getBool("prn", false);
   if (prefs.getBytesLength("net") == sizeof(NetworkSettings))
     prefs.getBytes("net", &netSettings, sizeof(NetworkSettings));
@@ -268,6 +273,10 @@ void saveSettings() {
   prefs.putBool("gauto", dispSettings.glassAutoText);
   prefs.putBool("smooth", dispSettings.smoothCharts);
   prefs.putUChar("tilefx", dispSettings.tileFx);
+  prefs.putUChar("fxtouch", dispSettings.fxTouch);
+  prefs.putUChar("fxtoggle", dispSettings.fxToggle);
+  prefs.putUChar("fxpage", dispSettings.fxPage);
+  prefs.putUChar("fxcard", dispSettings.fxCard);
   prefs.putBool("prn", advSettings.printers);
   prefs.putBytes("net", &netSettings, sizeof(NetworkSettings));
   prefs.putBytes("backlight", &backlightSettings, sizeof(BacklightSettings));
