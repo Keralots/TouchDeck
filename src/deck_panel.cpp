@@ -100,7 +100,7 @@ struct State {
   int64_t t0 = 0;
   uint32_t durUs = 1;
   int8_t landing = 0;
-  bool fade = false;  // this strip crossfades
+  PageFx pageFx = PAGE_SLIDE;  // of this strip
   MorphScene morph = {};
   uint32_t morphHoldGen = 0;
   uint32_t holdGen = UINT32_MAX;
@@ -117,7 +117,7 @@ struct State {
   uint8_t lastSentDots = 0;
 };
 State s;
-volatile bool s_pageFade = false;
+volatile PageFx s_pageFx = PAGE_SLIDE;
 
 // A frame to send, resolved under the lock so the build never reads shared
 // state: one LVGL framebuffer, a horizontal or vertical A|B strip, or a panel
@@ -135,12 +135,14 @@ struct Frame {
   Src a, b;
   int off;
   uint8_t dim;
-  bool fade;
+  PageFx pageFx;
   // Morph window this frame, the card picture's step per window pixel (16.16),
   // picture share over the ghost and window share over the base (both 0..32).
+  // Reveal: the circle's radius in wr.
   MorphScene morph;
   int16_t wx, wy, ww, wh, wr;
   uint32_t wdx, wdy, wa5, wo5;
+  uint32_t base8;  // the base's brightness this frame in eighths, 4 (the scrim) .. 8
   uint8_t dotCount, dotActive, dotAlpha;
   bool dotsV;
 };
@@ -334,6 +336,47 @@ inline void mixAny(uint16_t* d, int step, const uint16_t* a, bool sa, const uint
   else blendRun<false, false>(d, step, a, b, n, a5);
 }
 
+inline uint16_t scale565(uint16_t c, uint32_t a5) {
+  const uint32_t x = (spread565(c) * a5 >> 5) & 0x07E0F81F;
+  return (uint16_t)(x | x >> 16);
+}
+
+// n pixels of s scaled by a5 (0..32), panel byte order out.
+template <bool SWAP>
+void scaleRun(uint16_t* d, int step, const uint16_t* s, int n, uint32_t a5) {
+  for (int k = 0; k < n; k++, d += step) *d = __builtin_bswap16(scale565(SWAP ? s[k] : __builtin_bswap16(s[k]), a5));
+}
+
+inline void scaleAny(uint16_t* d, int step, const uint16_t* s, int n, bool swap, uint32_t a5) {
+  if (n <= 0) return;
+  if (a5 >= 32) copyAny(d, step, s, n, swap, 0);
+  else if (swap) scaleRun<true>(d, step, s, n, a5);
+  else scaleRun<false>(d, step, s, n, a5);
+}
+
+// c at l/8 brightness (l = 4..8), shifts only: the scrim's fade steps.
+inline uint16_t shade8(uint16_t c, uint32_t l) {
+  switch (l) {
+    case 8: return c;
+    case 7: return (uint16_t)(c - ((c >> 3) & 0x18E3));
+    case 6: return dimLE<1>(c);
+    case 5: return (uint16_t)(((c >> 1) & 0x7BEF) + ((c >> 3) & 0x18E3));
+    default: return dimLE<2>(c);
+  }
+}
+
+template <bool SWAP, uint32_t L>
+void shadeRun(uint16_t* d, int step, const uint16_t* s, int n) {
+  for (int k = 0; k < n; k++, d += step) *d = __builtin_bswap16(shade8(SWAP ? s[k] : __builtin_bswap16(s[k]), L));
+}
+
+inline void shadeAny(uint16_t* d, int step, const uint16_t* s, int n, bool swap, uint32_t l) {
+  if (n <= 0) return;
+  if (l == 7) swap ? shadeRun<true, 7>(d, step, s, n) : shadeRun<false, 7>(d, step, s, n);
+  else if (l == 5) swap ? shadeRun<true, 5>(d, step, s, n) : shadeRun<false, 5>(d, step, s, n);
+  else copyAny(d, step, s, n, swap, l >= 8 ? 0 : l == 6 ? 1 : 2);
+}
+
 // Per-frame values of a frame scene, set before chunk 0 (flush task only).
 struct FramePrep {
   uint32_t photo5, clock8;
@@ -419,7 +462,7 @@ void emitFrameRow(const Frame& f, int y, int x0, int n, uint16_t* d, int step) {
 // ghost tint, optional fade over the dimmed page.
 template <bool GHOST, bool OVER>
 void morphRun(uint16_t* out, int step, const uint16_t* row, uint32_t sx, uint32_t dx, int n,
-              const uint16_t* base, uint16_t ghost, uint32_t wa5, uint32_t wo5, bool dim2) {
+              const uint16_t* base, uint16_t ghost, uint32_t wa5, uint32_t wo5, uint32_t base8) {
   const uint32_t gs = spread565(ghost) * (32 - wa5);  // the ghost's share, the same for every pixel
   for (int k = 0; k < n; k++, sx += dx, out += step) {
     uint16_t px = row[sx >> 16];
@@ -428,19 +471,48 @@ void morphRun(uint16_t* out, int step, const uint16_t* row, uint32_t sx, uint32_
       px = (uint16_t)(x | x >> 16);
     }
     if (OVER) {
-      uint16_t b = base[k];
-      if (dim2) b = dimLE<2>(b);
-      px = mix565(b, px, wo5);
+      px = mix565(shade8(base[k], base8), px, wo5);
     }
     *out = __builtin_bswap16(px);
   }
 }
 
+// Pixels a rounded rect (radius rad) leaves out at each end of its row ly.
+inline int cornerInset(const FrameRect& a, int rad, int ly) {
+  const int top = ly - a.y, bottom = a.y + a.h - 1 - ly;
+  const int e = top < rad ? top : bottom < rad ? bottom : -1;
+  if (e < 0) return 0;
+  const float dy = rad - e - 0.5f;
+  return rad - (int)sqrtf((float)(rad * rad) - dy * dy);
+}
+
+// Reveal: the card in place inside a circle of radius wr around (cx, cy).
+void emitRevealRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) {
+  const MorphScene& m = f.morph;
+  const FrameRect& c = m.to;
+  const uint16_t* base = m.base.px + ly * m.base.stride;
+  const int end = x0 + n, dy = ly - m.cy;
+  int l = end, r = end;
+  if (ly >= c.y && ly < c.y + c.h && dy > -f.wr && dy < f.wr) {
+    const int half = (int)sqrtf((float)(f.wr * f.wr - dy * dy));
+    const int inset = cornerInset(c, m.r1, ly);
+    l = std::min(std::max({x0, c.x + inset, m.cx - half}), end);
+    r = std::min(std::max(l, std::min(c.x + c.w - inset, m.cx + half + 1)), end);
+  }
+  if (l > x0) shadeAny(d, step, base + x0, l - x0, m.base.swap, f.base8);
+  if (r > l) copyAny(d + (l - x0) * step, step, m.card.px + (ly - c.y) * m.card.stride + (l - c.x), r - l, m.card.swap, 0);
+  if (end > r) shadeAny(d + (r - x0) * step, step, base + r, end - r, m.base.swap, f.base8);
+}
+
 void emitMorphRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) {
   const MorphScene& m = f.morph;
+  if (m.reveal) {
+    emitRevealRow(f, ly, x0, n, d, step);
+    return;
+  }
   const uint16_t* base = m.base.px + ly * m.base.stride;
   const int end = x0 + n;
-  const uint8_t dim = m.dim;
+  const uint32_t b8 = f.base8;
   int l = end, r = end;  // window span on this row
   if (ly >= f.wy && ly < f.wy + f.wh) {
     const int top = ly - f.wy, bottom = f.wy + f.wh - 1 - ly;
@@ -453,20 +525,19 @@ void emitMorphRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) 
     l = std::min(std::max(x0, f.wx + inset), end);
     r = std::min(std::max(l, f.wx + f.ww - inset), end);
   }
-  if (l > x0) copyAny(d, step, base + x0, l - x0, m.base.swap, dim);
+  if (l > x0) shadeAny(d, step, base + x0, l - x0, m.base.swap, b8);
   if (r > l && m.card.swap && m.base.swap) {
     const uint16_t* row = m.card.px + ((uint32_t)(ly - f.wy) * f.wdy >> 16) * m.card.stride;
     const uint32_t sx = (uint32_t)(l - f.wx) * f.wdx;
     uint16_t* out = d + (l - x0) * step;
     const bool ghost = f.wa5 < 32, over = f.wo5 < 32;
-    const bool dim2 = dim == 2;
     if (ghost && !over && f.wa5 == 0) {  // still all ghost
       const uint16_t g = __builtin_bswap16(m.ghost);
       for (int k = l; k < r; k++, out += step) *out = g;
-    } else if (ghost && over) morphRun<true, true>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, dim2);
-    else if (ghost) morphRun<true, false>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, dim2);
-    else if (over) morphRun<false, true>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, dim2);
-    else morphRun<false, false>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, dim2);
+    } else if (ghost && over) morphRun<true, true>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, b8);
+    else if (ghost) morphRun<true, false>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, b8);
+    else if (over) morphRun<false, true>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, b8);
+    else morphRun<false, false>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, b8);
   } else if (r > l) {
     const uint16_t* row = m.card.px + ((uint32_t)(ly - f.wy) * f.wdy >> 16) * m.card.stride;
     uint32_t sx = (uint32_t)(l - f.wx) * f.wdx;
@@ -477,13 +548,123 @@ void emitMorphRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) 
       if (f.wa5 < 32) px = mix565(m.ghost, px, f.wa5);
       if (f.wo5 < 32) {
         uint16_t b = m.base.swap ? base[x] : __builtin_bswap16(base[x]);
-        if (m.dim == 2) b = dimLE<2>(b);
-        px = mix565(b, px, f.wo5);
+        px = mix565(shade8(b, b8), px, f.wo5);
       }
       *out = __builtin_bswap16(px);
     }
   }
-  if (end > r) copyAny(d + (r - x0) * step, step, base + r, end - r, m.base.swap, dim);
+  if (end > r) shadeAny(d + (r - x0) * step, step, base + r, end - r, m.base.swap, b8);
+}
+
+// Water edge: both pages nearly in place (A drifts away and dims, B drifts
+// in), split along a wavy edge with a light line on it. Per-frame values and
+// the edge per row (horizontal strip) or per column (vertical strip) are set
+// before chunk 0 (flush task only).
+struct WaterPrep {
+  int16_t edge[NATIVE_H];
+  int16_t lo, hi;  // vertical strip: the edge's range over all columns
+  int sa, sb;      // A's and B's drift in px
+  uint32_t a5;     // A's brightness, 0..32
+  uint32_t line5;  // light line strength, 0..32
+};
+WaterPrep s_wp;
+
+void prepWater(const Frame& f) {
+  const bool v = f.kind == KIND_VSTRIP;
+  const int full = v ? f.h : f.w, len = v ? f.w : f.h;
+  const float e = (float)f.off / (float)full, wave = sinf((float)M_PI * e);
+  const float amp = 24 * wave, ph = 7 * e;
+  // sin(i * k + p) for i = 0, 1, ...: a vector turned by k each step. This
+  // runs before chunk 0, in the short gap before the next TE; sinf per
+  // column did not fit.
+  struct Osc {
+    float c, s, dc, ds;
+    float next() {
+      const float v = s, c2 = c * dc - s * ds;
+      s = s * dc + c * ds;
+      c = c2;
+      return v;
+    }
+  };
+  Osc w1 = {cosf(ph), sinf(ph), cosf(.021f), sinf(.021f)};
+  Osc w2 = {cosf(-1.6f * ph), sinf(-1.6f * ph), cosf(.053f), sinf(.053f)};
+  s_wp.lo = INT16_MAX;
+  s_wp.hi = INT16_MIN;
+  for (int i = 0; i < len; i++) {
+    const int16_t e1 = (int16_t)lroundf((float)(full - f.off) + amp * (w1.next() + .45f * w2.next()));
+    s_wp.edge[i] = e1;
+    s_wp.lo = std::min(s_wp.lo, e1);
+    s_wp.hi = std::max(s_wp.hi, e1);
+  }
+  s_wp.sa = (int)lroundf(26 * e);
+  s_wp.sb = (int)lroundf(26 * (1 - e));
+  s_wp.a5 = 32 - (uint32_t)lroundf(11.2f * e);  // 35 % darker at the end
+  s_wp.line5 = (uint32_t)lroundf(29 * wave);
+}
+
+// One pixel at `dist` from the edge: A dimmed before it (only that page is
+// read), B after it, the light line across it.
+inline uint16_t waterPx(const Src& A, const uint16_t* pa, const Src& B, const uint16_t* pb, int dist) {
+  uint16_t c;
+  if (dist < 0) c = scale565(A.swap ? *pa : __builtin_bswap16(*pa), s_wp.a5);
+  else c = B.swap ? *pb : __builtin_bswap16(*pb);
+  if (s_wp.line5 && dist >= -2 && dist <= 1)
+    c = mix565(c, 0xFFFF, dist == -1 || dist == 0 ? s_wp.line5 : s_wp.line5 / 2);
+  return __builtin_bswap16(c);
+}
+
+// Runs of A (dimmed, drifted by sa) for logical x in [x0, x1) of row ra; the
+// drift runs past the right edge, where the last column repeats.
+void waterRunA(const Frame& f, const uint16_t* ra, int x0, int x1, uint16_t* d, int step) {
+  const int inside = std::min(x1, f.w - s_wp.sa);
+  if (inside > x0) scaleAny(d, step, ra + x0 + s_wp.sa, inside - x0, f.a.swap, s_wp.a5);
+  for (int x = std::max(x0, inside); x < x1; x++)
+    scaleAny(d + (x - x0) * step, step, ra + f.w - 1, 1, f.a.swap, s_wp.a5);
+}
+
+// B drifted by sb for [x0, x1): the first column repeats where it is short.
+void waterRunB(const Frame& f, const uint16_t* rb, int x0, int x1, uint16_t* d, int step) {
+  const int from = std::max(x0, s_wp.sb);
+  for (int x = x0; x < std::min(from, x1); x++) copyAny(d + (x - x0) * step, step, rb, 1, f.b.swap, 0);
+  if (x1 > from) copyAny(d + (from - x0) * step, step, rb + from - s_wp.sb, x1 - from, f.b.swap, 0);
+}
+
+void emitWaterRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) {
+  const Src& A = f.a;
+  const Src& B = f.b;
+  const int end = x0 + n;
+  if (f.kind == KIND_VSTRIP) {
+    const uint16_t* ra = A.px + std::min(ly + s_wp.sa, f.h - 1) * A.stride;
+    const uint16_t* rb = B.px + std::max(ly - s_wp.sb, 0) * B.stride;
+    // Runs of A, of B, and line pixels one by one; rows clear of the wave
+    // are a single run.
+    if (ly < s_wp.lo - 2) return scaleAny(d, step, ra + x0, n, A.swap, s_wp.a5);
+    if (ly > s_wp.hi + 1) return copyAny(d, step, rb + x0, n, B.swap, 0);
+    for (int x = x0; x < end;) {
+      const int dist = ly - s_wp.edge[x];
+      int e = x + 1;
+      if (dist < -2) {
+        while (e < end && ly - s_wp.edge[e] < -2) e++;
+        scaleAny(d + (x - x0) * step, step, ra + x, e - x, A.swap, s_wp.a5);
+      } else if (dist > 1) {
+        while (e < end && ly - s_wp.edge[e] > 1) e++;
+        copyAny(d + (x - x0) * step, step, rb + x, e - x, B.swap, 0);
+      } else {
+        d[(x - x0) * step] = waterPx(A, ra + x, B, rb + x, dist);
+      }
+      x = e;
+    }
+    return;
+  }
+  // A up to the line, the line's four pixels, B after it.
+  const int edge = s_wp.edge[ly];
+  const uint16_t* ra = A.px + ly * A.stride;
+  const uint16_t* rb = B.px + ly * B.stride;
+  const int l = std::min(std::max(x0, edge - 2), end), r = std::min(std::max(l, edge + 2), end);
+  waterRunA(f, ra, x0, l, d, step);
+  for (int x = l; x < r; x++)
+    d[(x - x0) * step] = waterPx(A, ra + std::min(x + s_wp.sa, f.w - 1), B, rb + std::max(x - s_wp.sb, 0), x - edge);
+  waterRunB(f, rb, r, end, d + (r - x0) * step, step);
 }
 
 // Emit n pixels of logical row ly starting at logical x0 (ascending). PSRAM
@@ -510,7 +691,11 @@ inline void emitRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int dste
     }
     return;
   }
-  if (f.fade) {  // both pages in place, B's share follows the offset
+  if (f.pageFx == PAGE_WATER) {
+    emitWaterRow(f, ly, x0, n, d, dstep);
+    return;
+  }
+  if (f.pageFx == PAGE_FADE) {  // both pages in place, B's share follows the offset
     const int full = f.kind == KIND_VSTRIP ? f.h : f.w;
     const uint32_t a5 = ((uint32_t)f.off * 32 + full / 2) / full;
     mixAny(d, dstep, f.a.px + ly * f.a.stride + x0, f.a.swap, f.b.px + ly * f.b.stride + x0, f.b.swap, n, a5);
@@ -697,6 +882,7 @@ void buildBatch(void* ctx, int lo, int hi) {
 
 void buildChunk(const Frame& f, uint16_t* dst, int ny0) {
   if (f.comp && f.kind == KIND_FRAME && ny0 == 0) prepFrame(f);
+  if (f.comp && (f.kind == KIND_HSTRIP || f.kind == KIND_VSTRIP) && f.pageFx == PAGE_WATER && ny0 == 0) prepWater(f);
   const int n = (f.rot & 1) ? NATIVE_W : ROWS;
   ChunkJob c = {&f, dst, ny0};
   if (f.comp) panelShare(buildBatch, &c, n, 16);
@@ -795,6 +981,18 @@ bool decide(Frame& f) {
     const float shown = f.morph.open ? 1 : 1 - clamp01((p - 0.6f) / 0.4f);
     f.wa5 = (uint32_t)lroundf(in * 32);
     f.wo5 = (uint32_t)lroundf(shown * 32);
+    // The scrim comes in with the card and goes with it, while the card is
+    // small: the steps in between shade every base pixel.
+    const float scrim = f.morph.dim != 2 ? 0 : f.morph.open ? clamp01(p / .5f) : 1 - clamp01((p - .5f) / .5f);
+    f.base8 = 8 - (uint32_t)lroundf(4 * scrim);
+    if (f.morph.reveal) {
+      // Out to the card's farthest corner; closing starts slowly (ease in).
+      const float dx = (float)std::max(std::abs(f.morph.cx - b.x), std::abs(b.x + b.w - f.morph.cx));
+      const float dy = (float)std::max(std::abs(f.morph.cy - b.y), std::abs(b.y + b.h - f.morph.cy));
+      const float u = last ? 1.0f : t <= 0 ? 0.0f : (float)t / (float)s.durUs;
+      const float q = f.morph.open ? p : 1 - u * u * u;
+      f.wr = (int16_t)lroundf((sqrtf(dx * dx + dy * dy) + 1) * q);
+    }
     have = true;
   }
   if (!have && (s.mode == COMP_DRAG || s.mode == COMP_ANIM)) {
@@ -824,7 +1022,7 @@ bool decide(Frame& f) {
       f.kind = s.kind;
       f.a = s.a;
       f.b = s.b;
-      f.fade = s.fade && s.kind != KIND_PANEL;
+      f.pageFx = s.kind != KIND_PANEL ? s.pageFx : PAGE_SLIDE;
       const uint16_t* cur = s_fb[s.lvLatest];
       if (!f.a.px) f.a = {cur, (uint16_t)w, true, (uint16_t)h};
       if (!f.b.px) f.b = {cur, (uint16_t)w, true, (uint16_t)h};
@@ -1149,7 +1347,7 @@ bool compBeginDrag(const Src& a, const Src& b, int off, int pageA, bool vertical
   if (s.mode == COMP_NONE && s.lvLatest >= 0) {
     s.mode = COMP_DRAG;
     s.kind = vertical ? KIND_VSTRIP : KIND_HSTRIP;
-    s.fade = s_pageFade;
+    s.pageFx = s_pageFx;
     s.dotsV = vertical;
     s.a = a;
     s.b = b;
@@ -1164,7 +1362,7 @@ bool compBeginDrag(const Src& a, const Src& b, int off, int pageA, bool vertical
   return ok;
 }
 
-void panelSetPageFade(bool on) { s_pageFade = on; }
+void panelSetPageFx(PageFx fx) { s_pageFx = fx; }
 
 bool compBeginMorph(const MorphScene& m, uint32_t durMs, uint32_t holdGen) {
   if (!m.card.px || m.cw <= 0 || m.ch <= 0) return false;

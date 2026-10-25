@@ -110,8 +110,10 @@ struct TileRt {
   lv_obj_t* rows;         // HTTP sensor rows: one box per row (label, bar, value)
   int16_t rowH;           // height of one row box
   lv_obj_t* px[4];        // printer tiles: extra labels, swatches
-  lv_obj_t* fx;           // Calm: touch ring running on this tile
-  lv_obj_t* halo;         // Calm: glow over the icon after turning on
+  lv_obj_t* fx;           // touch effect running on this tile
+  lv_obj_t* halo;         // on/off effect running on this tile
+  lv_point_t press;       // last touch on the tile (screen coords), for effects
+  uint32_t pressMs;
   // Clock tiles: hours in sub, then these two; the colon blinks.
   lv_obj_t* colon;
   lv_obj_t* mins;
@@ -420,11 +422,14 @@ uint32_t onTextColor(const TileDef& def, bool glass);
 void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, int w, int h);
 TileRt* tileOf(lv_obj_t* o);
 uint32_t tileOnFill(const TileDef& d);
-// Calm animations (deck_ui_fx.cpp).
+// Tile animations (deck_ui_fx.cpp).
+PageFx fxPage();
+int tileOnOpa(const TileDef& d);
 void fxQuiet();
 void fxPressed(lv_event_t* e);
-void fxRipple(TileRt& r, lv_point_t p);  // p in screen coords
+void fxRipple(TileRt& r, lv_point_t p);  // the touch effect, p in screen coords
 void fxCancelRipples();
+void fxBeforeTileOn(TileRt& r, bool on);  // before the CHECKED state changes
 void fxTileOn(TileRt& r, bool wasOn);
 void fxCardOpen(lv_obj_t* card, int tileIdx);
 void fxCardClose(lv_obj_t* card, int tileIdx);
