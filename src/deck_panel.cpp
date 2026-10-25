@@ -904,7 +904,7 @@ bool panelBegin(uint8_t rotation) {
   csHigh();
 
   s_teSem = xSemaphoreCreateBinary();
-  s_lvReady = xSemaphoreCreateBinary();
+  s_lvReady = xSemaphoreCreateCounting(2, 0);  // up to two LVGL frames in flight
   s_quiet = xSemaphoreCreateBinary();
   gpio_config_t g = {};
   g.pin_bit_mask = 1ULL << PIN_TE;
@@ -946,10 +946,12 @@ const uint16_t* panelLatestLvFrame() {
 
 void panelPostLv(int idx, uint32_t gen) {
   portENTER_CRITICAL(&s_mux);
+  const bool superseded = s.lvPending;  // never read: its buffer is free again
   s.lvPending = true;
   s.lvIdx = idx & 1;
   s.lvGen = gen;
   portEXIT_CRITICAL(&s_mux);
+  if (superseded) xSemaphoreGive(s_lvReady);
   if (s_task) xTaskNotifyGive(s_task);
 }
 

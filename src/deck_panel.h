@@ -52,7 +52,8 @@ const uint16_t* panelLatestLvFrame();
 // LVGL side. panelPostLv() is called from the flush callback on the last
 // area of a frame; gen is the UI generation the frame was rendered under.
 // panelWaitLvReady() blocks the LVGL task until the flush task has copied
-// every pixel out of that framebuffer (or dropped the frame).
+// every pixel out of a posted framebuffer (or dropped the frame): one token
+// per posted frame, up to two frames in flight.
 void panelPostLv(int idx, uint32_t gen);
 bool panelWaitLvReady(uint32_t timeoutMs);
 

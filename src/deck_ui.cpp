@@ -89,6 +89,9 @@ bool s_zonesDirty = true;  // tiles rebuilt or moved: take them again
 // --- LVGL glue ---------------------------------------------------------------------
 uint32_t tickCb() { return millis(); }
 
+// Posted LVGL frames whose framebuffer the flush task has not released yet.
+int s_lvOut = 0;
+
 void flushCb(lv_display_t* d, const lv_area_t*, uint8_t* px) {
   if (!lv_display_flush_is_last(d)) {
     lv_display_flush_ready(d);
@@ -97,13 +100,23 @@ void flushCb(lv_display_t* d, const lv_area_t*, uint8_t* px) {
   const uint8_t* fb1 = (const uint8_t*)panelLvBuffer(1);
   const int idx = (px >= fb1 && px < fb1 + FRAME_BYTES) ? 1 : 0;
   panelPostLv(idx, s_gen);
+  s_lvOut++;
 }
 
 // Blocking wait instead of LVGL's default busy spin on `flushing`. The flush
 // task gives exactly one token per posted frame, and never calls
-// lv_display_flush_ready() itself, so tokens and waits stay paired.
+// lv_display_flush_ready() itself. LVGL draws next into the other buffer, so
+// only the older frame must be released: the panel writes frame N while
+// LVGL renders N+1 (waiting for N itself halved LVGL animations to 30 fps).
 void flushWaitCb(lv_display_t*) {
-  if (!panelWaitLvReady(250)) s_waitTimeouts++;
+  while (s_lvOut > 1) {
+    if (!panelWaitLvReady(250)) {
+      s_waitTimeouts++;
+      s_lvOut = 1;
+      break;
+    }
+    s_lvOut--;
+  }
 }
 
 void indevRead(lv_indev_t*, lv_indev_data_t* data) {
@@ -921,6 +934,9 @@ void deckApplyRotation(uint8_t rotation) {
   if (rotation == panelRotation()) return;
   stopGestures();
   destroyPages();
+  // set_buffers restarts LVGL on buffer 0: no frame of ours may be in flight.
+  while (s_lvOut > 0 && panelWaitLvReady(250)) s_lvOut--;
+  s_lvOut = 0;
   panelSetRotation(rotation);
   lv_display_set_resolution(s_disp, logicalW(), logicalH());
   lv_display_set_buffers(s_disp, panelLvBuffer(0), panelLvBuffer(1), FRAME_BYTES,
