@@ -981,7 +981,10 @@ bool decide(Frame& f) {
     const float shown = f.morph.open ? 1 : 1 - clamp01((p - 0.6f) / 0.4f);
     f.wa5 = (uint32_t)lroundf(in * 32);
     f.wo5 = (uint32_t)lroundf(shown * 32);
-    f.base8 = f.morph.dim == 2 ? 4 : 8;  // the scrim
+    // The scrim comes in with the card and goes with it, while the card is
+    // small: the steps in between shade every base pixel.
+    const float scrim = f.morph.dim != 2 ? 0 : f.morph.open ? clamp01(p / .5f) : 1 - clamp01((p - .5f) / .5f);
+    f.base8 = 8 - (uint32_t)lroundf(4 * scrim);
     if (f.morph.reveal) {
       // Out to the card's farthest corner; closing starts slowly (ease in).
       const float dx = (float)std::max(std::abs(f.morph.cx - b.x), std::abs(b.x + b.w - f.morph.cx));

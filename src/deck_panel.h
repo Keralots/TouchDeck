@@ -125,7 +125,7 @@ struct MorphScene {
   FrameRect from, to;
   int16_t r0, r1;      // corner radius at the start and the end
   uint16_t ghost;      // RGB565, little-endian
-  uint8_t dim;         // base dim level: 0, or 2 = the 50 % scrim
+  uint8_t dim;         // 2: the 50 % scrim fades in (open) or out (close); 0: none
   bool open;
   bool reveal;         // circle reveal of the card at `to`
   int16_t cx, cy;

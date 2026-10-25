@@ -470,7 +470,7 @@ void fxCardOpen(lv_obj_t* card, int tileIdx) {
   m.to = rectOf(card);
   m.r0 = (int16_t)lv_obj_get_style_radius(t, LV_PART_MAIN);
   m.r1 = (int16_t)lv_obj_get_style_radius(card, LV_PART_MAIN);
-  m.dim = 2;  // as the scrim
+  m.dim = 2;  // the scrim fades in with the card
   m.open = true;
   if (kind == CARD_REVEAL) {
     m.reveal = true;
@@ -492,6 +492,7 @@ void fxCardClose(lv_obj_t* card, int tileIdx) {
     m.to = rectOf(t);
     m.r0 = (int16_t)lv_obj_get_style_radius(card, LV_PART_MAIN);
     m.r1 = (int16_t)lv_obj_get_style_radius(t, LV_PART_MAIN);
+    m.dim = 2;  // the scrim fades out with the card
     if (kind == CARD_REVEAL) {
       m.to = m.from;
       m.r1 = m.r0;
