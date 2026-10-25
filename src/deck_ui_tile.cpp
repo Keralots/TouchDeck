@@ -202,6 +202,8 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_transition(t, &s_pressTrans, 0);
   lv_obj_set_style_transition(t, &s_pressTrans, LV_STATE_PRESSED);
   lv_obj_add_event_cb(t, fxPressed, LV_EVENT_PRESSED, nullptr);
+  lv_obj_add_event_cb(t, fxPressed, LV_EVENT_RELEASED, nullptr);
+  lv_obj_add_event_cb(t, fxPressed, LV_EVENT_PRESS_LOST, nullptr);
   if (glass) glassStyle(t, def);
 
   if (def.type == TILE_PRINTER) {

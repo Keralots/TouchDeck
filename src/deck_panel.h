@@ -109,15 +109,17 @@ void compDrag(int off);
 // state (another page, panel open/closed): the last frame stays frozen until
 // LVGL shows that state (see compSetHoldGen). landing == 0 = back to start.
 void compRelease(int toOff, uint32_t durMs, int8_t landing);
-// How page strips change: slide, crossfade A into B, or a wavy water edge
-// sweeping over both pages. Read when a drag begins.
-enum PageFx : uint8_t { PAGE_SLIDE = 0, PAGE_FADE, PAGE_WATER };
+// How page strips change: slide, crossfade A into B, a wavy water edge
+// sweeping over both pages, or depth (A sinks back and dims while B slides
+// over it). Read when a drag begins.
+enum PageFx : uint8_t { PAGE_SLIDE = 0, PAGE_FADE, PAGE_WATER, PAGE_DEPTH };
 void panelSetPageFx(PageFx fx);
 
 // Card morph: a rounded window flies from `from` to `to` over `base`, showing
 // the card picture scaled into it. Opening fades the picture in from `ghost`;
 // closing fades it out and then the window itself. Reveal instead shows the
-// card in place through a circle growing from (cx, cy), or shrinking back.
+// card in place through a circle growing from (cx, cy), or shrinking back;
+// sheet slides the card up from below the screen, or back down.
 struct MorphScene {
   Src base;            // px null: the latest LVGL frame
   Src card;            // the card picture, cw x ch
@@ -129,6 +131,7 @@ struct MorphScene {
   bool open;
   bool reveal;         // circle reveal of the card at `to`
   int16_t cx, cy;
+  bool sheet;          // the card at `to` slides up from below
 };
 // After the last frame the screen holds until LVGL has a frame of generation
 // >= holdGen (one already posted counts).
