@@ -863,7 +863,7 @@ void deckTick() {
     lv_indev_reset(s_indev, nullptr);
     fxCancelRipples();
   }
-  panelSetPageFade(dispSettings.tileFx == 1);
+  panelSetPageFx(fxPage());
 
   if (touchTakeActivity() && (displaySleepingForTouch() || frameActive())) {
     wakeDisplayFromTouch();

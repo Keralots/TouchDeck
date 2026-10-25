@@ -164,6 +164,7 @@ bool defaultActionService(const String& domain, String& svc) {
 void setTileOn(TileRt& r, bool on) {
   const bool was = lv_obj_has_state(r.obj, LV_STATE_CHECKED);
   r.on = on;
+  if (was != on) fxBeforeTileOn(r, on);
   if (on) lv_obj_add_state(r.obj, LV_STATE_CHECKED);
   else lv_obj_remove_state(r.obj, LV_STATE_CHECKED);
   fxTileOn(r, was);
