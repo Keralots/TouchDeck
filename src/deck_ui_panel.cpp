@@ -190,74 +190,114 @@ const uint16_t* lastFrame() {
   return act && act->data == (const uint8_t*)b0 ? panelLvBuffer(1) : b0;
 }
 
-// The last frame under (x, y, w, h), blurred and tinted, with corners of
-// radius rad cut by alpha (a background image ignores the radius). Pixels off
-// the screen repeat its edge. RGB565A8; nullptr when PSRAM is short.
-lv_draw_buf_t* frostedCopy(int x, int y, int w, int h, int rad) {
-  const int sw = logicalW(), shgt = logicalH();
-  const int hw = (w + 1) / 2, hh = (h + 1) / 2;
-  const size_t hn = (size_t)hw * hh;
-  uint8_t* pl = (uint8_t*)heap_caps_malloc(hn * 4, MALLOC_CAP_SPIRAM);
-  lv_draw_buf_t* out = pl ? lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565A8, 0) : nullptr;
-  if (!out) {
-    heap_caps_free(pl);
-    return nullptr;
-  }
-  uint8_t* plane[3] = {pl, pl + hn, pl + 2 * hn};
-  uint8_t* tmp = pl + 3 * hn;
-  const uint16_t* fb = lastFrame();
-  // Half resolution: cheaper, and the same blur radius reaches twice as far.
-  for (int j = 0; j < hh; j++)
-    for (int i = 0; i < hw; i++) {
-      int sum[3] = {0, 0, 0};
-      for (int k = 0; k < 4; k++) {
-        const int px = constrain(x + 2 * i + (k & 1), 0, sw - 1);
-        const int py = constrain(y + 2 * j + (k >> 1), 0, shgt - 1);
-        const uint16_t c = fb[py * sw + px];
-        sum[0] += c >> 11;
-        sum[1] += c >> 5 & 63;
-        sum[2] += c & 31;
-      }
-      const size_t o = (size_t)j * hw + i;
-      plane[0][o] = (uint8_t)(sum[0] * 255 / 124);
-      plane[1][o] = (uint8_t)(sum[1] * 255 / 252);
-      plane[2][o] = (uint8_t)(sum[2] * 255 / 124);
+// One frosted copy, worked on by both cores (panelShare) in three steps.
+struct Frost {
+  const uint16_t* fb;
+  int sw, shgt, x, y, w, h, rad, hw, hh;
+  uint8_t* plane[3];
+  uint8_t* scratch[3];  // per blur plane, then per half of the upscale
+  lv_draw_buf_t* out;
+};
+
+// Half resolution: cheaper, and the same blur radius reaches twice as far.
+void frostDown(void* ctx, int lo, int hi) {
+  const Frost& f = *(const Frost*)ctx;
+  for (int j = lo; j < hi; j++) {
+    const uint16_t* r0 = f.fb + constrain(f.y + 2 * j, 0, f.shgt - 1) * f.sw;
+    const uint16_t* r1 = f.fb + constrain(f.y + 2 * j + 1, 0, f.shgt - 1) * f.sw;
+    const size_t o = (size_t)j * f.hw;
+    for (int i = 0; i < f.hw; i++) {
+      const int p0 = constrain(f.x + 2 * i, 0, f.sw - 1), p1 = constrain(f.x + 2 * i + 1, 0, f.sw - 1);
+      const uint16_t a = r0[p0], b = r0[p1], c = r1[p0], d = r1[p1];
+      f.plane[0][o + i] = (uint8_t)(((a >> 11) + (b >> 11) + (c >> 11) + (d >> 11)) * 255 / 124);
+      f.plane[1][o + i] = (uint8_t)(((a >> 5 & 63) + (b >> 5 & 63) + (c >> 5 & 63) + (d >> 5 & 63)) * 255 / 252);
+      f.plane[2][o + i] = (uint8_t)(((a & 31) + (b & 31) + (c & 31) + (d & 31)) * 255 / 124);
     }
-  for (uint8_t* p : plane) wallBlurPlane(p, tmp, hw, hh, FROST_BLUR);
-  const int tint[3] = {(int)(C_PANEL >> 16 & 0xFF), (int)(C_PANEL >> 8 & 0xFF), (int)(C_PANEL & 0xFF)};
-  const uint32_t stride = out->header.stride;
-  uint8_t* alpha = out->data + stride * h;  // RGB565A8: the A8 plane follows, half the stride
-  for (int yy = 0; yy < h; yy++) {
-    uint16_t* row = (uint16_t*)(out->data + yy * stride);
+  }
+}
+
+void frostBlur(void* ctx, int lo, int hi) {
+  const Frost& f = *(const Frost*)ctx;
+  for (int k = lo; k < hi; k++) wallBlurPlane(f.plane[k], f.scratch[k], f.hw, f.hh, FROST_BLUR);
+}
+
+// Rows lo..hi: tinted, dithered, corners cut by alpha.
+void frostUp(void* ctx, int lo, int hi) {
+  const Frost& f = *(const Frost*)ctx;
+  const int w = f.w, h = f.h, hw = f.hw, hh = f.hh, rad = f.rad;
+  // Tint and blur in 1/1600: the bilinear sum is in 16ths.
+  const int tint[3] = {(int)(C_PANEL >> 16 & 0xFF) * FROST_TINT * 16, (int)(C_PANEL >> 8 & 0xFF) * FROST_TINT * 16,
+                       (int)(C_PANEL & 0xFF) * FROST_TINT * 16};
+  const uint32_t stride = f.out->header.stride;
+  uint8_t* alpha = f.out->data + stride * h;  // RGB565A8: the A8 plane follows, half the stride
+  // Bilinear between the half-resolution samples (centres at 2i + 0.5), in
+  // quarters. A plane row interpolated across serves four output rows.
+  uint16_t* scratch = (uint16_t*)f.scratch[lo ? 1 : 0];
+  uint16_t* across[2] = {scratch, scratch + 3 * w};
+  int rowOf[2] = {-1, -1};
+  auto fill = [&](uint16_t* d, int j) {
+    for (int k = 0; k < 3; k++) {
+      const uint8_t* q = f.plane[k] + (size_t)j * hw;
+      for (int xx = 0; xx < w; xx++) {
+        const int fx = constrain(2 * xx - 1, 0, 4 * (hw - 1));
+        const int i0 = fx >> 2, wx = fx & 3;
+        d[k * w + xx] = (uint16_t)(q[i0] * (4 - wx) + q[std::min(i0 + 1, hw - 1)] * wx);
+      }
+    }
+  };
+  for (int yy = lo; yy < hi; yy++) {
+    uint16_t* row = (uint16_t*)(f.out->data + yy * stride);
     uint8_t* arow = alpha + yy * (stride / 2);
-    // Bilinear between the half-resolution samples (centres at 2i + 0.5).
-    const float fy = std::min((float)(hh - 1), std::max(0.0f, ((float)yy - 0.5f) / 2));
-    const int j0 = (int)fy, j1 = std::min(j0 + 1, hh - 1);
-    const float ty = fy - (float)j0;
-    const float cy = std::max(0.0f, std::max((float)rad - ((float)yy + 0.5f), (float)yy + 0.5f - (float)(h - rad)));
+    const int fy = constrain(2 * yy - 1, 0, 4 * (hh - 1));
+    const int j0 = fy >> 2, j1 = std::min(j0 + 1, hh - 1), wy = fy & 3;
+    if (rowOf[0] != j0 && rowOf[1] == j0) {
+      std::swap(across[0], across[1]);
+      std::swap(rowOf[0], rowOf[1]);
+    }
+    if (rowOf[0] != j0) fill(across[0], rowOf[0] = j0);
+    if (rowOf[1] != j1) fill(across[1], rowOf[1] = j1);
+    const uint16_t* a0 = across[0];
+    const uint16_t* a1 = across[1];
     for (int xx = 0; xx < w; xx++) {
-      const float fx = std::min((float)(hw - 1), std::max(0.0f, ((float)xx - 0.5f) / 2));
-      const int i0 = (int)fx, i1 = std::min(i0 + 1, hw - 1);
-      const float tx = fx - (float)i0;
       int c[3];
-      for (int k = 0; k < 3; k++) {
-        const uint8_t* q = plane[k];
-        const float v = ((float)q[j0 * hw + i0] * (1 - tx) + (float)q[j0 * hw + i1] * tx) * (1 - ty) +
-                        ((float)q[j1 * hw + i0] * (1 - tx) + (float)q[j1 * hw + i1] * tx) * ty;
-        c[k] = (int)(v * (100 - FROST_TINT) / 100) + tint[k] * FROST_TINT / 100;
-      }
-      row[xx] = wallDither565(c[0], c[1], c[2], x + xx, y + yy);
+      for (int k = 0; k < 3; k++)
+        c[k] = ((a0[k * w + xx] * (4 - wy) + a1[k * w + xx] * wy) * (100 - FROST_TINT) + tint[k]) / 1600;
+      row[xx] = wallDither565(c[0], c[1], c[2], f.x + xx, f.y + yy);
+    }
+    memset(arow, 255, w);
+    const float cy = std::max(0.0f, std::max((float)rad - ((float)yy + 0.5f), (float)yy + 0.5f - (float)(h - rad)));
+    if (cy <= 0) continue;
+    for (int xx = 0; xx < w; xx++) {
+      if (xx == rad && w - rad > xx) xx = w - rad;  // only the corners
       const float cx = std::max(0.0f, std::max((float)rad - ((float)xx + 0.5f), (float)xx + 0.5f - (float)(w - rad)));
-      if (cx <= 0 || cy <= 0) {
-        arow[xx] = 255;
-        continue;
-      }
+      if (cx <= 0) continue;
       const float cov = (float)rad + 0.5f - sqrtf(cx * cx + cy * cy);
       arow[xx] = cov >= 1 ? 255 : cov <= 0 ? 0 : (uint8_t)(cov * 255);
     }
   }
+}
+
+// The last frame under (x, y, w, h), blurred and tinted, with corners of
+// radius rad cut by alpha (a background image ignores the radius). Pixels off
+// the screen repeat its edge. RGB565A8; nullptr when PSRAM is short.
+lv_draw_buf_t* frostedCopy(int x, int y, int w, int h, int rad) {
+  Frost f = {lastFrame(), logicalW(), logicalH(), x, y, w, h, rad, (w + 1) / 2, (h + 1) / 2};
+  const size_t hn = (size_t)f.hw * f.hh, sn = std::max(hn, (size_t)w * 12);
+  uint8_t* pl = (uint8_t*)heap_caps_malloc(hn * 3 + sn * 3, MALLOC_CAP_SPIRAM);
+  f.out = pl ? lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565A8, 0) : nullptr;
+  if (!f.out) {
+    heap_caps_free(pl);
+    return nullptr;
+  }
+  for (int k = 0; k < 3; k++) {
+    f.plane[k] = pl + k * hn;
+    f.scratch[k] = pl + 3 * hn + k * sn;
+  }
+  panelShare(frostDown, &f, f.hh, 16);
+  panelShare(frostBlur, &f, 3, 1);
+  panelShare(frostUp, &f, h, (h + 1) / 2);
   heap_caps_free(pl);
-  return out;
+  return f.out;
 }
 
 void frostStyle(lv_obj_t* o, lv_draw_buf_t* glass) {

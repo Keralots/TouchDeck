@@ -54,6 +54,7 @@ struct DisplaySettings {
   uint8_t  dailyCount;        // Daily pictures per orientation, 1..DAILY_MAX_COUNT
   bool     glassAutoText;     // Glass: text colour and tint follow the picture per tile
   bool     smoothCharts;      // PC metric charts glide between packets
+  uint8_t  tileFx;            // Tile animations: 0 = classic, 1 = calm
 };
 
 // Screen sleep (portal Screen & light page); NVS scalars. Present = an entity

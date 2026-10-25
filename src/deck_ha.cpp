@@ -1,6 +1,7 @@
 // Guition deck: Home Assistant client. See deck_ha.h.
 #include "deck_ha.h"
 #include "deck_config.h"
+#include "deck_panel.h"
 #include <LittleFS.h>
 #include <time.h>
 #include <ArduinoJson.h>
@@ -1095,6 +1096,9 @@ void historyTask(void*) {
       }
     }
     if (!id) { vTaskDelay(pdMS_TO_TICKS(250)); continue; }
+    // The reply lands on core 0, where the compositor's helper builds frames.
+    for (int i = 0; i < 100 && (compMode() == COMP_ANIM || compMode() == COMP_DRAG); i++)
+      vTaskDelay(pdMS_TO_TICKS(20));
     HistoryData* result = (HistoryData*)heap_caps_malloc(sizeof(HistoryData), MALLOC_CAP_SPIRAM);
     String err;
     bool slow = false;

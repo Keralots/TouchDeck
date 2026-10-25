@@ -298,6 +298,7 @@
     $("diagBoard").textContent = c.board;
     setVal("rotation", c.display.rotation);
     setVal("theme", c.display.theme || 0);
+    setVal("tileFx", c.display.tileFx || 0);
     setVal("brightness", c.display.brightness);
     setVal("tempScale", c.display.tempScale);
     setVal("powerScale", c.display.powerScale);

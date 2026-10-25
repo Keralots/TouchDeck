@@ -200,6 +200,7 @@ static void handleApiConfig() {
   display["glassOn"] = dispSettings.glassOn;
   display["glassAutoText"] = dispSettings.glassAutoText;
   display["smoothCharts"] = dispSettings.smoothCharts;
+  display["tileFx"] = dispSettings.tileFx;
 
   JsonObject backlight = doc["backlight"].to<JsonObject>();
   backlight["nightEnabled"] = backlightSettings.nightEnabled != 0;
@@ -326,6 +327,7 @@ static void handleConfigExport() {
   display["glassOn"] = dispSettings.glassOn;
   display["glassAutoText"] = dispSettings.glassAutoText;
   display["smoothCharts"] = dispSettings.smoothCharts;
+  display["tileFx"] = dispSettings.tileFx;
 
   JsonObject backlight = doc["backlight"].to<JsonObject>();
   backlight["nightEnabled"] = backlightSettings.nightEnabled != 0;
@@ -531,6 +533,7 @@ static void handleConfigImport() {
   nextDisplay.glassOn = displayDefaults.glassOn;
   nextDisplay.glassAutoText = displayDefaults.glassAutoText;
   nextDisplay.smoothCharts = displayDefaults.smoothCharts;
+  nextDisplay.tileFx = displayDefaults.tileFx;
   if (!display["glassTint"].isNull()) READ_INT(display, "glassTint", 0, 90, nextDisplay.glassTint, uint8_t);
   if (!display["glassBlur"].isNull()) READ_INT(display, "glassBlur", 0, 24, nextDisplay.glassBlur, uint8_t);
   if (!display["glassDim"].isNull()) READ_INT(display, "glassDim", 0, 60, nextDisplay.glassDim, uint8_t);
@@ -560,6 +563,7 @@ static void handleConfigImport() {
   if (!display["glassOn"].isNull()) READ_INT(display, "glassOn", 20, 100, nextDisplay.glassOn, uint8_t);
   if (!display["glassAutoText"].isNull()) READ_BOOL(display, "glassAutoText", nextDisplay.glassAutoText);
   if (!display["smoothCharts"].isNull()) READ_BOOL(display, "smoothCharts", nextDisplay.smoothCharts);
+  if (!display["tileFx"].isNull()) READ_INT(display, "tileFx", 0, 1, nextDisplay.tileFx, uint8_t);
 
   READ_BOOL(backlight, "nightEnabled", nextBacklight.nightEnabled);
   READ_INT(backlight, "nightBrightness", 0, 255, nextBacklight.nightBrightness, uint8_t);
@@ -957,6 +961,7 @@ static void handleSaveDisplay() {
   dispSettings.warnThresholdPct =
     (uint8_t)clampedArg("warnThreshold", dispSettings.warnThresholdPct, 0, 100);
   dispSettings.smoothCharts = server.hasArg("smoothCharts");
+  dispSettings.tileFx = (uint8_t)clampedArg("tileFx", dispSettings.tileFx, 0, 1);
 
   saveSettings();
   if (oldSd != dispSettings.sdCard) {

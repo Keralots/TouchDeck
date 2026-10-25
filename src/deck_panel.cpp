@@ -5,6 +5,7 @@
 #include <driver/gpio.h>
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
+#include <atomic>
 // Only for axs15231b_180640_init_operations and its op-code enum; the
 // library's databus and panel classes are not used.
 #include <Arduino_GFX_Library.h>
@@ -67,7 +68,7 @@ SemaphoreHandle_t s_quiet = nullptr;
 bool s_quiescing = false;
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
-enum Kind : uint8_t { KIND_HSTRIP = 0, KIND_VSTRIP, KIND_PANEL, KIND_FRAME };
+enum Kind : uint8_t { KIND_HSTRIP = 0, KIND_VSTRIP, KIND_PANEL, KIND_FRAME, KIND_MORPH };
 
 // Page dots: shown while a page slide owns the screen, then held and faded
 // out over LVGL frames by this task (LVGL never draws them). Horizontal dots
@@ -99,6 +100,9 @@ struct State {
   int64_t t0 = 0;
   uint32_t durUs = 1;
   int8_t landing = 0;
+  bool fade = false;  // this strip crossfades
+  MorphScene morph = {};
+  uint32_t morphHoldGen = 0;
   uint32_t holdGen = UINT32_MAX;
   bool landedPending = false;
   int8_t landed = 0;
@@ -113,6 +117,7 @@ struct State {
   uint8_t lastSentDots = 0;
 };
 State s;
+volatile bool s_pageFade = false;
 
 // A frame to send, resolved under the lock so the build never reads shared
 // state: one LVGL framebuffer, a horizontal or vertical A|B strip, or a panel
@@ -130,6 +135,12 @@ struct Frame {
   Src a, b;
   int off;
   uint8_t dim;
+  bool fade;
+  // Morph window this frame, the card picture's step per window pixel (16.16),
+  // picture share over the ghost and window share over the base (both 0..32).
+  MorphScene morph;
+  int16_t wx, wy, ww, wh, wr;
+  uint32_t wdx, wdy, wa5, wo5;
   uint8_t dotCount, dotActive, dotAlpha;
   bool dotsV;
 };
@@ -312,6 +323,17 @@ void blendRun(uint16_t* d, int step, const uint16_t* a, const uint16_t* b, int n
   }
 }
 
+// a5 = 0 is all A, 32 all B.
+inline void mixAny(uint16_t* d, int step, const uint16_t* a, bool sa, const uint16_t* b, bool sb, int n,
+                   uint32_t a5) {
+  if (a5 == 0) copyAny(d, step, a, n, sa, 0);
+  else if (a5 >= 32) copyAny(d, step, b, n, sb, 0);
+  else if (sa && sb) blendRun<true, true>(d, step, a, b, n, a5);
+  else if (sa) blendRun<true, false>(d, step, a, b, n, a5);
+  else if (sb) blendRun<false, true>(d, step, a, b, n, a5);
+  else blendRun<false, false>(d, step, a, b, n, a5);
+}
+
 // Per-frame values of a frame scene, set before chunk 0 (flush task only).
 struct FramePrep {
   uint32_t photo5, clock8;
@@ -361,12 +383,7 @@ void emitFrameRow(const Frame& f, int y, int x0, int n, uint16_t* d, int step) {
   const Src& pic = sc.picture;
   const uint16_t* pa = base.px + y * base.stride + x0;
   const uint16_t* pb = pic.px + y * pic.stride + x0;
-  if (a5 == 0) copyAny(d, step, pa, n, base.swap, 0);
-  else if (a5 == 32) copyAny(d, step, pb, n, pic.swap, 0);
-  else if (base.swap && pic.swap) blendRun<true, true>(d, step, pa, pb, n, a5);
-  else if (base.swap) blendRun<true, false>(d, step, pa, pb, n, a5);
-  else if (pic.swap) blendRun<false, true>(d, step, pa, pb, n, a5);
-  else blendRun<false, false>(d, step, pa, pb, n, a5);
+  mixAny(d, step, pa, base.swap, pb, pic.swap, n, a5);
   const Src& page = sc.page;
   for (int i = 0; i < s_fp.count; i++) {
     const FrameTileRun& r = sc.runs[i];
@@ -398,6 +415,77 @@ void emitFrameRow(const Frame& f, int y, int x0, int n, uint16_t* d, int step) {
   }
 }
 
+// Card window pixels (both sources little-endian): nearest-scaled card, optional
+// ghost tint, optional fade over the dimmed page.
+template <bool GHOST, bool OVER>
+void morphRun(uint16_t* out, int step, const uint16_t* row, uint32_t sx, uint32_t dx, int n,
+              const uint16_t* base, uint16_t ghost, uint32_t wa5, uint32_t wo5, bool dim2) {
+  const uint32_t gs = spread565(ghost) * (32 - wa5);  // the ghost's share, the same for every pixel
+  for (int k = 0; k < n; k++, sx += dx, out += step) {
+    uint16_t px = row[sx >> 16];
+    if (GHOST) {
+      const uint32_t x = ((spread565(px) * wa5 + gs) >> 5) & 0x07E0F81F;
+      px = (uint16_t)(x | x >> 16);
+    }
+    if (OVER) {
+      uint16_t b = base[k];
+      if (dim2) b = dimLE<2>(b);
+      px = mix565(b, px, wo5);
+    }
+    *out = __builtin_bswap16(px);
+  }
+}
+
+void emitMorphRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) {
+  const MorphScene& m = f.morph;
+  const uint16_t* base = m.base.px + ly * m.base.stride;
+  const int end = x0 + n;
+  const uint8_t dim = m.dim;
+  int l = end, r = end;  // window span on this row
+  if (ly >= f.wy && ly < f.wy + f.wh) {
+    const int top = ly - f.wy, bottom = f.wy + f.wh - 1 - ly;
+    const int e = top < f.wr ? top : bottom < f.wr ? bottom : -1;
+    int inset = 0;
+    if (e >= 0) {
+      const float dy = f.wr - e - 0.5f;
+      inset = f.wr - (int)sqrtf((float)(f.wr * f.wr) - dy * dy);
+    }
+    l = std::min(std::max(x0, f.wx + inset), end);
+    r = std::min(std::max(l, f.wx + f.ww - inset), end);
+  }
+  if (l > x0) copyAny(d, step, base + x0, l - x0, m.base.swap, dim);
+  if (r > l && m.card.swap && m.base.swap) {
+    const uint16_t* row = m.card.px + ((uint32_t)(ly - f.wy) * f.wdy >> 16) * m.card.stride;
+    const uint32_t sx = (uint32_t)(l - f.wx) * f.wdx;
+    uint16_t* out = d + (l - x0) * step;
+    const bool ghost = f.wa5 < 32, over = f.wo5 < 32;
+    const bool dim2 = dim == 2;
+    if (ghost && !over && f.wa5 == 0) {  // still all ghost
+      const uint16_t g = __builtin_bswap16(m.ghost);
+      for (int k = l; k < r; k++, out += step) *out = g;
+    } else if (ghost && over) morphRun<true, true>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, dim2);
+    else if (ghost) morphRun<true, false>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, dim2);
+    else if (over) morphRun<false, true>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, dim2);
+    else morphRun<false, false>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, dim2);
+  } else if (r > l) {
+    const uint16_t* row = m.card.px + ((uint32_t)(ly - f.wy) * f.wdy >> 16) * m.card.stride;
+    uint32_t sx = (uint32_t)(l - f.wx) * f.wdx;
+    uint16_t* out = d + (l - x0) * step;
+    for (int x = l; x < r; x++, sx += f.wdx, out += step) {
+      const uint16_t c = row[sx >> 16];
+      uint16_t px = m.card.swap ? c : __builtin_bswap16(c);
+      if (f.wa5 < 32) px = mix565(m.ghost, px, f.wa5);
+      if (f.wo5 < 32) {
+        uint16_t b = m.base.swap ? base[x] : __builtin_bswap16(base[x]);
+        if (m.dim == 2) b = dimLE<2>(b);
+        px = mix565(b, px, f.wo5);
+      }
+      *out = __builtin_bswap16(px);
+    }
+  }
+  if (end > r) copyAny(d + (r - x0) * step, step, base + r, end - r, m.base.swap, dim);
+}
+
 // Emit n pixels of logical row ly starting at logical x0 (ascending). PSRAM
 // is always read forward; mirrored rotations walk the destination backwards.
 inline void emitRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int dstep) {
@@ -409,6 +497,10 @@ inline void emitRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int dste
     emitFrameRow(f, ly, x0, n, d, dstep);
     return;
   }
+  if (f.kind == KIND_MORPH) {
+    emitMorphRow(f, ly, x0, n, d, dstep);
+    return;
+  }
   if (f.kind == KIND_PANEL) {
     if (ly < f.off) {
       const int py = ly + f.a.h - f.off;
@@ -416,6 +508,12 @@ inline void emitRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int dste
     } else {
       copyAny(d, dstep, f.b.px + ly * f.b.stride + x0, n, f.b.swap, f.dim);
     }
+    return;
+  }
+  if (f.fade) {  // both pages in place, B's share follows the offset
+    const int full = f.kind == KIND_VSTRIP ? f.h : f.w;
+    const uint32_t a5 = ((uint32_t)f.off * 32 + full / 2) / full;
+    mixAny(d, dstep, f.a.px + ly * f.a.stride + x0, f.a.swap, f.b.px + ly * f.b.stride + x0, f.b.swap, n, a5);
     return;
   }
   if (f.kind == KIND_VSTRIP) {
@@ -517,20 +615,20 @@ void overlayDots(const Frame& f, uint16_t* dst, int ny0) {
 //   1: lx = ny,        ly = 319 - nx
 //   2: lx = 319 - nx,  ly = 479 - ny
 //   3: lx = 479 - ny,  ly = nx
-void buildChunk(const Frame& f, uint16_t* dst, int ny0) {
-  if (f.comp && f.kind == KIND_FRAME && ny0 == 0) prepFrame(f);
+// Part [lo, hi) of a chunk: logical rows in landscape, chunk rows in portrait.
+void buildPart(const Frame& f, uint16_t* dst, int ny0, int lo, int hi) {
   if (!f.comp && (f.rot & 1)) {
     // Plain landscape LVGL frame: the hot path, free of the per-run
     // bookkeeping emitRow() needs for composed frames.
     const uint16_t* lv = f.lv;
     if (f.rot == 1) {
-      for (int ly = 0; ly < NATIVE_W; ly++) {
+      for (int ly = lo; ly < hi; ly++) {
         const uint16_t* s = lv + ly * NATIVE_H + ny0;
         uint16_t* d = dst + (NATIVE_W - 1 - ly);
         for (int k = 0; k < ROWS; k++) d[k * NATIVE_W] = __builtin_bswap16(s[k]);
       }
     } else {
-      for (int ly = 0; ly < NATIVE_W; ly++) {
+      for (int ly = lo; ly < hi; ly++) {
         const uint16_t* s = lv + ly * NATIVE_H + (NATIVE_H - ROWS - ny0);
         uint16_t* d = dst + (ROWS - 1) * NATIVE_W + ly;
         for (int k = 0; k < ROWS; k++) d[-k * NATIVE_W] = __builtin_bswap16(s[k]);
@@ -539,25 +637,70 @@ void buildChunk(const Frame& f, uint16_t* dst, int ny0) {
   } else {
     switch (f.rot) {
       case 1:
-        for (int ly = 0; ly < NATIVE_W; ly++)
+        for (int ly = lo; ly < hi; ly++)
           emitRow(f, ly, ny0, ROWS, dst + (NATIVE_W - 1 - ly), NATIVE_W);
         break;
       case 3:
-        for (int ly = 0; ly < NATIVE_W; ly++)
+        for (int ly = lo; ly < hi; ly++)
           emitRow(f, ly, NATIVE_H - ROWS - ny0, ROWS,
                   dst + (ROWS - 1) * NATIVE_W + ly, -NATIVE_W);
         break;
       case 2:
-        for (int k = 0; k < ROWS; k++)
+        for (int k = lo; k < hi; k++)
           emitRow(f, NATIVE_H - 1 - (ny0 + k), 0, NATIVE_W,
                   dst + k * NATIVE_W + (NATIVE_W - 1), -1);
         break;
       default:
-        for (int k = 0; k < ROWS; k++)
+        for (int k = lo; k < hi; k++)
           emitRow(f, ny0 + k, 0, NATIVE_W, dst + k * NATIVE_W, 1);
         break;
     }
   }
+}
+
+// A helper on core 0 takes batches of the same job (panelShare). The caller
+// never waits for a helper that has not started (WiFi can hold core 0).
+struct SharedJob {
+  void (*fn)(void*, int, int);
+  void* ctx;
+  int n, batch;
+};
+SharedJob s_job;
+// 0 idle, 4 being posted, 1 posted, 2 helper in, 3 helper out
+std::atomic<int> s_jobNext{0}, s_jobState{0};
+TaskHandle_t s_helper = nullptr;
+
+void runBatches(const SharedJob& j) {
+  for (int lo; (lo = s_jobNext.fetch_add(j.batch)) < j.n;) j.fn(j.ctx, lo, std::min(lo + j.batch, j.n));
+}
+
+void helperTask(void*) {
+  for (;;) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    int posted = 1;
+    if (!s_jobState.compare_exchange_strong(posted, 2)) continue;  // stale wake-up
+    runBatches(s_job);
+    s_jobState.store(3);
+  }
+}
+
+struct ChunkJob {
+  const Frame* f;
+  uint16_t* dst;
+  int ny0;
+};
+
+void buildBatch(void* ctx, int lo, int hi) {
+  const ChunkJob& c = *(const ChunkJob*)ctx;
+  buildPart(*c.f, c.dst, c.ny0, lo, hi);
+}
+
+void buildChunk(const Frame& f, uint16_t* dst, int ny0) {
+  if (f.comp && f.kind == KIND_FRAME && ny0 == 0) prepFrame(f);
+  const int n = (f.rot & 1) ? NATIVE_W : ROWS;
+  ChunkJob c = {&f, dst, ny0};
+  if (f.comp) panelShare(buildBatch, &c, n, 16);
+  else buildPart(f, dst, ny0, 0, n);
   overlayDots(f, dst, ny0);
 }
 
@@ -619,6 +762,41 @@ bool decide(Frame& f) {
     if (f.frameLast) s.mode = COMP_FRAME_HOLD;
     have = true;
   }
+  if (!have && s.kind == KIND_MORPH && s.mode == COMP_HOLD && !s.lvPending && s.lvGen >= s.holdGen) {
+    // The frame LVGL drew while the morph ran already shows the end state.
+    s.mode = COMP_NONE;
+    f.comp = false;
+    f.lv = s_fb[s.lvLatest];
+    have = true;
+  }
+  if (!have && s.mode == COMP_ANIM && s.kind == KIND_MORPH) {
+    const int64_t t = now + ANIM_LEAD_US - s.t0;
+    const bool last = t >= (int64_t)s.durUs;
+    const float p = last ? 1.0f : t <= 0 ? 0.0f : easeOutCubic((float)t / (float)s.durUs);
+    if (last) {
+      s.mode = COMP_HOLD;
+      s.holdGen = s.morphHoldGen;
+    }
+    f.comp = true;
+    f.kind = KIND_MORPH;
+    f.morph = s.morph;
+    if (!f.morph.base.px) f.morph.base = {s_fb[s.lvLatest], (uint16_t)w, true, (uint16_t)h};
+    const FrameRect& a = f.morph.from;
+    const FrameRect& b = f.morph.to;
+    auto mix = [p](int x, int y) { return (int16_t)(x + (int)lroundf((y - x) * p)); };
+    f.wx = mix(a.x, b.x);
+    f.wy = mix(a.y, b.y);
+    f.ww = std::max<int16_t>(1, mix(a.w, b.w));
+    f.wh = std::max<int16_t>(1, mix(a.h, b.h));
+    f.wr = std::min<int16_t>(mix(f.morph.r0, f.morph.r1), std::min(f.ww, f.wh) / 2);
+    f.wdx = ((uint32_t)f.morph.cw << 16) / f.ww;
+    f.wdy = ((uint32_t)f.morph.ch << 16) / f.wh;
+    const float in = f.morph.open ? clamp01((p - 0.35f) / 0.65f) : 1 - clamp01(p / 0.6f);
+    const float shown = f.morph.open ? 1 : 1 - clamp01((p - 0.6f) / 0.4f);
+    f.wa5 = (uint32_t)lroundf(in * 32);
+    f.wo5 = (uint32_t)lroundf(shown * 32);
+    have = true;
+  }
   if (!have && (s.mode == COMP_DRAG || s.mode == COMP_ANIM)) {
     int off = s.off;
     if (s.mode == COMP_ANIM) {
@@ -646,6 +824,7 @@ bool decide(Frame& f) {
       f.kind = s.kind;
       f.a = s.a;
       f.b = s.b;
+      f.fade = s.fade && s.kind != KIND_PANEL;
       const uint16_t* cur = s_fb[s.lvLatest];
       if (!f.a.px) f.a = {cur, (uint16_t)w, true, (uint16_t)h};
       if (!f.b.px) f.b = {cur, (uint16_t)w, true, (uint16_t)h};
@@ -833,6 +1012,26 @@ void flushTask(void*) {
 }  // namespace
 
 // --- Public API -------------------------------------------------------------------
+// LVGL and the flush task both post here (same core): a busy helper means alone.
+void panelShare(void (*fn)(void* ctx, int lo, int hi), void* ctx, int n, int batch) {
+  int idle = 0;
+  if (!s_helper || n <= batch || !s_jobState.compare_exchange_strong(idle, 4)) {
+    fn(ctx, 0, n);
+    return;
+  }
+  s_job = {fn, ctx, n, batch};
+  s_jobNext.store(0);
+  s_jobState.store(1);
+  xTaskNotifyGive(s_helper);
+  runBatches(s_job);
+  int posted = 1;
+  if (!s_jobState.compare_exchange_strong(posted, 0)) {
+    while (s_jobState.load() != 3) {
+    }
+    s_jobState.store(0);
+  }
+}
+
 bool panelBegin(uint8_t rotation) {
   s_rot = rotation & 3;
   gpio_reset_pin((gpio_num_t)PIN_CS);
@@ -888,7 +1087,7 @@ bool panelBegin(uint8_t rotation) {
   csHigh();
 
   s_teSem = xSemaphoreCreateBinary();
-  s_lvReady = xSemaphoreCreateBinary();
+  s_lvReady = xSemaphoreCreateCounting(2, 0);  // up to two LVGL frames in flight
   s_quiet = xSemaphoreCreateBinary();
   gpio_config_t g = {};
   g.pin_bit_mask = 1ULL << PIN_TE;
@@ -901,6 +1100,7 @@ bool panelBegin(uint8_t rotation) {
 
   // Core 1 at high priority: on core 0 the flush loses to WiFi/lwIP under
   // network load (measured: ~30 fps slides instead of 60).
+  xTaskCreatePinnedToCore(helperTask, "deck_build", 3072, nullptr, 15, &s_helper, 0);
   xTaskCreatePinnedToCore(flushTask, "deck_flush", 4096, nullptr, 20, &s_task, 1);
   Serial.printf("Deck panel: up, rotation %u, internal free %u, largest %u\n",
                 (unsigned)s_rot,
@@ -930,10 +1130,12 @@ const uint16_t* panelLatestLvFrame() {
 
 void panelPostLv(int idx, uint32_t gen) {
   portENTER_CRITICAL(&s_mux);
+  const bool superseded = s.lvPending;  // never read: its buffer is free again
   s.lvPending = true;
   s.lvIdx = idx & 1;
   s.lvGen = gen;
   portEXIT_CRITICAL(&s_mux);
+  if (superseded) xSemaphoreGive(s_lvReady);
   if (s_task) xTaskNotifyGive(s_task);
 }
 
@@ -947,6 +1149,7 @@ bool compBeginDrag(const Src& a, const Src& b, int off, int pageA, bool vertical
   if (s.mode == COMP_NONE && s.lvLatest >= 0) {
     s.mode = COMP_DRAG;
     s.kind = vertical ? KIND_VSTRIP : KIND_HSTRIP;
+    s.fade = s_pageFade;
     s.dotsV = vertical;
     s.a = a;
     s.b = b;
@@ -958,6 +1161,32 @@ bool compBeginDrag(const Src& a, const Src& b, int off, int pageA, bool vertical
     ok = true;
   }
   portEXIT_CRITICAL(&s_mux);
+  return ok;
+}
+
+void panelSetPageFade(bool on) { s_pageFade = on; }
+
+bool compBeginMorph(const MorphScene& m, uint32_t durMs, uint32_t holdGen) {
+  if (!m.card.px || m.cw <= 0 || m.ch <= 0) return false;
+  bool ok = false;
+  portENTER_CRITICAL(&s_mux);
+  if (s.mode == COMP_NONE && s.lvLatest >= 0) {
+    s.mode = COMP_ANIM;
+    s.kind = KIND_MORPH;
+    s.morph = m;
+    // Pinned now: LVGL may draw one more frame into the other buffer.
+    int w, h;
+    logicalSize(s_rot, w, h);
+    if (!s.morph.base.px) s.morph.base = {s_fb[s.lvLatest], (uint16_t)w, true, (uint16_t)h};
+    s.morphHoldGen = holdGen;
+    s.t0 = esp_timer_get_time();
+    s.durUs = durMs ? durMs * 1000u : 1u;
+    s.landing = 0;
+    s.landedPending = false;
+    ok = true;
+  }
+  portEXIT_CRITICAL(&s_mux);
+  if (ok && s_task) xTaskNotifyGive(s_task);
   return ok;
 }
 

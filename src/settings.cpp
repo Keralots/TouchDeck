@@ -107,6 +107,7 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.dailyCount       = 12;
   ds.glassAutoText    = false;
   ds.smoothCharts     = true;
+  ds.tileFx           = 0;
 }
 
 void defaultBacklightSettings(BacklightSettings& bs) {
@@ -179,6 +180,7 @@ void loadSettings() {
   dispSettings.dailyCount = constrain(prefs.getUChar("dcount", 12), 1, DAILY_MAX_COUNT);
   dispSettings.glassAutoText = prefs.getBool("gauto", false);
   dispSettings.smoothCharts = prefs.getBool("smooth", true);
+  dispSettings.tileFx = min<uint8_t>(prefs.getUChar("tilefx", 0), 1);
   advSettings.printers = prefs.getBool("prn", false);
   if (prefs.getBytesLength("net") == sizeof(NetworkSettings))
     prefs.getBytes("net", &netSettings, sizeof(NetworkSettings));
@@ -265,6 +267,7 @@ void saveSettings() {
   prefs.putUChar("dcount", dispSettings.dailyCount);
   prefs.putBool("gauto", dispSettings.glassAutoText);
   prefs.putBool("smooth", dispSettings.smoothCharts);
+  prefs.putUChar("tilefx", dispSettings.tileFx);
   prefs.putBool("prn", advSettings.printers);
   prefs.putBytes("net", &netSettings, sizeof(NetworkSettings));
   prefs.putBytes("backlight", &backlightSettings, sizeof(BacklightSettings));

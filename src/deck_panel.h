@@ -35,6 +35,10 @@ struct Src {
 // Backlight is left alone. Returns false if a buffer could not be allocated.
 bool panelBegin(uint8_t rotation);
 
+// fn(ctx, lo, hi) over 0..n in batches, shared with a helper on core 0 when it
+// is free. Returns when all batches are done.
+void panelShare(void (*fn)(void* ctx, int lo, int hi), void* ctx, int n, int batch);
+
 // User rotation 0..3, 0 = native portrait (1 = landscape with USB-C on the
 // right).
 void panelSetRotation(uint8_t rotation);
@@ -52,7 +56,8 @@ const uint16_t* panelLatestLvFrame();
 // LVGL side. panelPostLv() is called from the flush callback on the last
 // area of a frame; gen is the UI generation the frame was rendered under.
 // panelWaitLvReady() blocks the LVGL task until the flush task has copied
-// every pixel out of that framebuffer (or dropped the frame).
+// every pixel out of a posted framebuffer (or dropped the frame): one token
+// per posted frame, up to two frames in flight.
 void panelPostLv(int idx, uint32_t gen);
 bool panelWaitLvReady(uint32_t timeoutMs);
 
@@ -104,6 +109,25 @@ void compDrag(int off);
 // state (another page, panel open/closed): the last frame stays frozen until
 // LVGL shows that state (see compSetHoldGen). landing == 0 = back to start.
 void compRelease(int toOff, uint32_t durMs, int8_t landing);
+// Page strips crossfade A into B instead of sliding; read when a drag begins.
+void panelSetPageFade(bool on);
+
+// Card morph: a rounded window flies from `from` to `to` over `base`, showing
+// the card picture scaled into it. Opening fades the picture in from `ghost`;
+// closing fades it out and then the window itself.
+struct MorphScene {
+  Src base;            // px null: the latest LVGL frame
+  Src card;            // the card picture, cw x ch
+  int16_t cw, ch;
+  FrameRect from, to;
+  int16_t r0, r1;      // corner radius at the start and the end
+  uint16_t ghost;      // RGB565, little-endian
+  uint8_t dim;         // base dim level: 0, or 2 = the 50 % scrim
+  bool open;
+};
+// After the last frame the screen holds until LVGL has a frame of generation
+// >= holdGen (one already posted counts).
+bool compBeginMorph(const MorphScene& m, uint32_t durMs, uint32_t holdGen);
 CompMode compMode();
 // True while LVGL must not render (drag or animation in progress).
 bool compOwnsScreen();
