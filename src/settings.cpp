@@ -180,7 +180,7 @@ void loadSettings() {
   dispSettings.dailyCount = constrain(prefs.getUChar("dcount", 12), 1, DAILY_MAX_COUNT);
   dispSettings.glassAutoText = prefs.getBool("gauto", false);
   dispSettings.smoothCharts = prefs.getBool("smooth", true);
-  dispSettings.tileFx = min<uint8_t>(prefs.getUChar("tilefx", 0), 3);
+  dispSettings.tileFx = min<uint8_t>(prefs.getUChar("tilefx", 0), 4);
   advSettings.printers = prefs.getBool("prn", false);
   if (prefs.getBytesLength("net") == sizeof(NetworkSettings))
     prefs.getBytes("net", &netSettings, sizeof(NetworkSettings));

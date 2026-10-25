@@ -863,7 +863,18 @@ void deckTick() {
     lv_indev_reset(s_indev, nullptr);
     fxCancelRipples();
   }
-  panelSetPageFx(fxPage());
+  {
+    // Cascade moves the active page's grid columns; the header above moves as one.
+    const Page& pg = s_pages[sh.active];
+    int cols = 0, top = 0;
+    if (pg.grid && pg.def) {
+      lv_area_t a;
+      lv_obj_get_coords(pg.grid, &a);
+      cols = pg.def->cols[logicalW() > logicalH() ? ORIENT_LANDSCAPE : ORIENT_PORTRAIT];
+      top = a.y1 + 4;
+    }
+    panelSetPageFx(fxPage(), cols, top);
+  }
 
   if (touchTakeActivity() && (displaySleepingForTouch() || frameActive())) {
     wakeDisplayFromTouch();

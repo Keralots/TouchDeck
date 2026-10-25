@@ -11,8 +11,8 @@ namespace deckui {
 
 namespace {
 
-enum FxTouch : uint8_t { TOUCH_NONE, TOUCH_RING, TOUCH_DROP, TOUCH_PRESS };
-enum FxToggle : uint8_t { TOGGLE_NONE, TOGGLE_BLOOM, TOGGLE_LIQUID, TOGGLE_SHEEN };
+enum FxTouch : uint8_t { TOUCH_NONE, TOUCH_RING, TOUCH_DROP, TOUCH_PRESS, TOUCH_DISTORT };
+enum FxToggle : uint8_t { TOGGLE_NONE, TOGGLE_BLOOM, TOGGLE_LIQUID, TOGGLE_SHEEN, TOGGLE_AURORA };
 enum FxCard : uint8_t { CARD_NONE, CARD_MORPH, CARD_REVEAL, CARD_SHEET };
 struct FxSet {
   FxTouch touch;
@@ -26,6 +26,7 @@ constexpr FxSet kSets[] = {
     {TOUCH_RING, TOGGLE_BLOOM, PAGE_FADE, CARD_MORPH},     // Calm
     {TOUCH_DROP, TOGGLE_LIQUID, PAGE_WATER, CARD_REVEAL},  // Water
     {TOUCH_PRESS, TOGGLE_SHEEN, PAGE_DEPTH, CARD_SHEET},   // Glass
+    {TOUCH_DISTORT, TOGGLE_AURORA, PAGE_CASCADE, CARD_MORPH},  // Heavy
 };
 
 const FxSet& fx() { return kSets[dispSettings.tileFx < sizeof(kSets) / sizeof(kSets[0]) ? dispSettings.tileFx : 0]; }
@@ -503,6 +504,161 @@ void startSheen(TileRt& r, bool on) {
   startAnim(box, sheenStep, on ? SHEEN_ON_MS : SHEEN_OFF_MS, lv_anim_path_linear, sheenDone);
 }
 
+// --- On/off: aurora (Heavy) --------------------------------------------------------------
+// For 2 s after turning on, the fill drifts through aurora colours (a
+// horizontal gradient), then settles on the on colour. Only then: an
+// always moving fill would keep the deck from ever going idle.
+constexpr uint32_t AURORA_MS = 2000;
+constexpr uint32_t kAurora[] = {0x2DD4BF, 0x4ADE80, 0xA78BFA, 0x60A5FA};
+
+lv_color_t auroraAt(float u) {
+  u = (u - floorf(u)) * 4;
+  const int i = (int)u;
+  return lv_color_mix(lv_color_hex(kAurora[(i + 1) % 4]), lv_color_hex(kAurora[i % 4]), (uint8_t)(255 * (u - i)));
+}
+
+// OnOff slots here: fill = CHECKED bg_color, pressedFill = its gradient colour, edge = the gradient direction.
+void auroraStep(void* var, int32_t v) {
+  lv_obj_t* box = (lv_obj_t*)var;
+  OnOff* q = onOffOf(box);
+  TileRt* r = tileOf(lv_obj_get_parent(box));
+  if (!q || !r) return;
+  const float t = (float)v / P, keep = 1 - smooth(clamp01((t - .75f) / .25f));
+  lv_style_value_t c;
+  c.color = lv_color_mix(auroraAt(t * 1.5f), q->to.color, (uint8_t)(255 * keep));
+  lv_obj_set_local_style_prop(r->obj, LV_STYLE_BG_COLOR, c, LV_STATE_CHECKED);
+  c.color = lv_color_mix(auroraAt(t * 1.5f + .35f), q->to.color, (uint8_t)(255 * keep));
+  lv_obj_set_local_style_prop(r->obj, LV_STYLE_BG_GRAD_COLOR, c, LV_STATE_CHECKED);
+}
+
+void startAurora(TileRt& r, bool on) {
+  onOffStop(r);
+  if (!on) return;
+  OnOff* q = new OnOff();
+  q->on = true;
+  q->color = true;
+  if (lv_obj_get_local_style_prop(r.obj, LV_STYLE_BG_COLOR, &q->to, LV_STATE_CHECKED) != LV_STYLE_RES_FOUND)
+    q->to.color = lv_color_hex(tileOnFill(*r.def));
+  lv_style_value_t v;
+  v.color = auroraAt(0);
+  q->fill = hold(r.obj, LV_STYLE_BG_COLOR, LV_STATE_CHECKED, v);
+  v.color = auroraAt(.35f);
+  q->pressedFill = hold(r.obj, LV_STYLE_BG_GRAD_COLOR, LV_STATE_CHECKED, v);
+  v.num = LV_GRAD_DIR_HOR;
+  q->edge = hold(r.obj, LV_STYLE_BG_GRAD_DIR, LV_STATE_CHECKED, v);
+  lv_obj_t* box = r.halo = tileBox(r);  // carries the animation and the record
+  lv_obj_set_user_data(box, q);
+  lv_obj_add_event_cb(box, onOffDelete, LV_EVENT_DELETE, q);
+  startAnim(box, auroraStep, AURORA_MS, lv_anim_path_linear, sheenDone);
+}
+
+// --- Touch: water distortion (Heavy) ------------------------------------------------------
+// The tile as last shown (wallpaper and glass included) bends in rings from
+// the finger and settles. Per pixel: the distance and direction from the
+// finger, worked out once; per frame: the offset for each distance.
+constexpr uint32_t DISTORT_MS = 900;
+
+struct Distort {
+  uint16_t* src;    // the tile as shown, w x h
+  uint16_t* dist;   // per pixel: distance from the finger
+  int8_t* dir;      // per pixel: unit direction (x, y), x127
+  int16_t* lut;     // per distance: offset along the direction, px x16
+  int w, h, maxd;
+  int x0, y0;       // where src sits on the screen
+  int retake;       // steps until src is taken again from a frame without the effect
+  lv_draw_buf_t* out;
+};
+
+void distortTake(Distort* q) {
+  const uint16_t* fb = lastFrame();
+  const int sw = logicalW();
+  for (int y = 0; y < q->h; y++) memcpy(q->src + y * q->w, fb + (q->y0 + y) * sw + q->x0, (size_t)q->w * 2);
+}
+
+void distortFree(Distort* q) {
+  heap_caps_free(q->src);
+  heap_caps_free(q->dist);
+  heap_caps_free(q->dir);
+  heap_caps_free(q->lut);
+  if (q->out) lv_draw_buf_destroy(q->out);
+  delete q;
+}
+
+void distortDelete(lv_event_t* e) { distortFree((Distort*)lv_event_get_user_data(e)); }
+
+void distortStep(void* var, int32_t v) {
+  lv_obj_t* box = (lv_obj_t*)var;
+  Distort* q = (Distort*)lv_obj_get_user_data(box);
+  if (!q) return;
+  // The tile changed under the effect: it was hidden for a frame, now it is
+  // drawn in its new look and taken again.
+  if (q->retake && --q->retake) return;
+  if (lv_obj_has_flag(box, LV_OBJ_FLAG_HIDDEN)) {
+    distortTake(q);
+    lv_obj_remove_flag(box, LV_OBJ_FLAG_HIDDEN);
+  }
+  const float t = (float)v / P, amp = 16 * 5 * (1 - t) * (1 - t);  // in 1/16 px
+  for (int d = 0; d <= q->maxd; d++)
+    q->lut[d] = (int16_t)(amp * sinf(d * .16f - t * 22) * expf(-d / 70.0f));
+  const int w = q->w, h = q->h;
+  const uint32_t stride = q->out->header.stride / 2;
+  for (int y = 0; y < h; y++) {
+    uint16_t* o = (uint16_t*)q->out->data + y * stride;
+    for (int x = 0; x < w; x++) {
+      const int i = y * w + x, off = q->lut[q->dist[i]];
+      const int sx = constrain(x - (q->dir[2 * i] * off >> 11), 0, w - 1);
+      const int sy = constrain(y - (q->dir[2 * i + 1] * off >> 11), 0, h - 1);
+      o[x] = q->src[sy * w + sx];
+    }
+  }
+  lv_obj_invalidate(lv_obj_get_child(box, 0));
+}
+
+void touchDistort(TileRt& r, lv_point_t p) {
+  lv_area_t tc;
+  lv_obj_get_coords(r.obj, &tc);
+  const int sw = logicalW(), sh2 = logicalH();
+  const int x0 = LV_MAX(0, tc.x1), y0 = LV_MAX(0, tc.y1);
+  const int w = LV_MIN(sw, tc.x2 + 1) - x0, h = LV_MIN(sh2, tc.y2 + 1) - y0;
+  if (w <= 0 || h <= 0) return;
+  Distort* q = new Distort();
+  q->w = w;
+  q->h = h;
+  q->maxd = (int)sqrtf((float)(w * w + h * h)) + 1;
+  q->src = (uint16_t*)heap_caps_malloc((size_t)w * h * 2, MALLOC_CAP_SPIRAM);
+  q->dist = (uint16_t*)heap_caps_malloc((size_t)w * h * 2, MALLOC_CAP_SPIRAM);
+  q->dir = (int8_t*)heap_caps_malloc((size_t)w * h * 2, MALLOC_CAP_SPIRAM);
+  q->lut = (int16_t*)heap_caps_malloc((size_t)(q->maxd + 1) * 2, MALLOC_CAP_SPIRAM);
+  q->out = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
+  if (!q->src || !q->dist || !q->dir || !q->lut || !q->out) {
+    distortFree(q);
+    return;
+  }
+  q->x0 = x0;
+  q->y0 = y0;
+  distortTake(q);
+  const int fx = p.x - x0, fy = p.y - y0;
+  for (int y = 0; y < h; y++)
+    for (int x = 0; x < w; x++) {
+      const int i = y * w + x, dx = x - fx, dy = y - fy;
+      const float d = sqrtf((float)(dx * dx + dy * dy));
+      // Still at the edges, so the tile's outline stays where it is.
+      const float k = d > 0 ? 127 * clamp01((float)LV_MIN(LV_MIN(x, w - 1 - x), LV_MIN(y, h - 1 - y)) / 10) / d : 0;
+      q->dist[i] = (uint16_t)d;
+      q->dir[2 * i] = (int8_t)(dx * k);
+      q->dir[2 * i + 1] = (int8_t)(dy * k);
+    }
+  lv_obj_t* box = r.fx = tileBox(r);
+  lv_obj_set_user_data(box, q);
+  lv_obj_add_event_cb(box, distortDelete, LV_EVENT_DELETE, q);
+  lv_obj_t* img = lv_image_create(box);
+  lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_pos(img, x0 - tc.x1, y0 - tc.y1);
+  lv_image_set_src(img, q->out);
+  distortStep(box, 0);
+  startAnim(box, distortStep, DISTORT_MS, lv_anim_path_linear, touchDone);
+}
+
 // Only changes the user can see: not while pages are built, not under the
 // card or the photo frame, not on pages off screen.
 bool live(const TileRt& r) {
@@ -577,6 +733,7 @@ void fxRipple(TileRt& r, lv_point_t p) {
   r.fx = nullptr;
   if (t == TOUCH_DROP) touchDrop(r, p, farCorner(tc, p));
   else if (t == TOUCH_PRESS) touchPress(r, p);
+  else if (t == TOUCH_DISTORT) touchDistort(r, p);
   else touchRing(r, p, farCorner(tc, p));
 }
 
@@ -597,17 +754,22 @@ bool fxCancelRipples() {
 
 void fxBeforeTileOn(TileRt& r, bool on) {
   const FxToggle t = fx().toggle;
-  if (t != TOGGLE_LIQUID && t != TOGGLE_SHEEN) {
+  if (t != TOGGLE_LIQUID && t != TOGGLE_SHEEN && t != TOGGLE_AURORA) {
     if (r.halo && onOffOf(r.halo)) onOffStop(r);  // started under an earlier preset
     return;
   }
   if (!live(r)) onOffStop(r);
   else if (t == TOGGLE_SHEEN) startSheen(r, on);
+  else if (t == TOGGLE_AURORA) startAurora(r, on);
   else startLiquid(r, on);
 }
 
 void fxTileOn(TileRt& r, bool wasOn) {
   const bool on = lv_obj_has_state(r.obj, LV_STATE_CHECKED);
+  if (wasOn != on && r.fx && lv_anim_get(r.fx, distortStep)) {
+    lv_obj_add_flag(r.fx, LV_OBJ_FLAG_HIDDEN);
+    ((Distort*)lv_obj_get_user_data(r.fx))->retake = 2;
+  }
   if (fx().toggle == TOGGLE_BLOOM && wasOn != on && live(r)) toggleBloom(r, on);
 }
 
