@@ -2,6 +2,7 @@
 #include "deck_printers.h"
 #include <Preferences.h>
 #include "deck_bambu.h"
+#include "deck_bambu_ha.h"
 #include "deck_ha.h"
 #include "settings.h"
 
@@ -31,21 +32,32 @@ void readSecret(const String& id, String& serial, String& code) {
 
 void printersApply(const DeckConfig& cfg) {
   std::vector<PrinterConn> list;
+  std::vector<PrinterHaDef> haList;
+  std::vector<String> ids;  // both sources, in config order
   if (advSettings.printers) {  // else switched off on the Advanced page
     for (const PrinterDef& d : cfg.printers) {
+      if (d.ha) {
+        haList.push_back({d.id, d.serial});
+        ids.push_back(d.id);
+        continue;
+      }
       PrinterConn c;
       c.id = d.id;
       c.ip = d.ip;
       readSecret(d.id, c.serial, c.code);
-      if (c.serial.length() && c.code.length()) list.push_back(c);
+      if (c.serial.length() && c.code.length()) {
+        list.push_back(c);
+        ids.push_back(c.id);
+      }
     }
   }
   printersSet(list);
+  printersHaSet(haList);
   std::vector<Power> next;
-  for (const PrinterConn& c : list) {
-    Power p{c.id, false};
+  for (const String& id : ids) {
+    Power p{id, false};
     for (const Power& old : s_power)
-      if (old.id == c.id) p.on = old.on && printerPowered(c.id);
+      if (old.id == id) p.on = old.on && printerPowered(id);
     next.push_back(p);
   }
   s_power = next;
@@ -62,6 +74,7 @@ bool printerSecretSet(const String& id, const String& serial, const String& code
 }
 
 bool printerHasSecret(const String& id) {
+  if (printerHaKnown(id)) return true;  // HA source needs none
   String serial, code;
   readSecret(id, serial, code);
   return serial.length() && code.length();
@@ -83,10 +96,12 @@ bool printersPowerSync(const DeckConfig& cfg) {
     else if (!haUp && millis() > HA_GRACE_MS) on = true;
     if (on != pw->on) {
       pw->on = on;
-      printerPower(d.id, on);
+      if (d.ha) printerHaPower(d.id, on);
+      else printerPower(d.id, on);
       changed = true;
     }
   }
+  printersHaTick();
   return changed;
 }
 

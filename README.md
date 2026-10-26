@@ -207,11 +207,14 @@ The portal keeps `rows` when a tile is edited but has no editor for them yet; ad
 
 Up to two Bambu Lab printers report to the deck over the LAN (MQTT over TLS, port 8883), so the printer needs LAN mode or LAN access turned on. Printers are off by default: turn them on under **Advanced**. Turned off again, the deck drops the printer connections and hides printer pages and tiles, but keeps their setup. In **Pages & tiles**, "Printers": add the printer's IP address, then store its serial number and LAN access code (both stay on the device and are never shown again). "Create printer page" adds a page with progress and time left on top, the nozzle, bed and chamber temperatures, the filament in use, the layer and the chamber light. An AMS page is stacked below it, with one tile per unit and an all-slots strip when a row is free.
 
+A printer that is already in Home Assistant through the [Bambu Lab integration](https://github.com/greghesp/ha-bambulab) can be read from there instead: set its source to "Home Assistant" and pick it from the list. No IP, serial or access code is needed, the printer does not need LAN mode, and the deck opens no connection to the printer (less RAM in use). The deck finds the printer's entities by their registry ids, so renamed entities and non-English installations work. Through Home Assistant the deck cannot tell which filaments a job uses in slicer order (only the slots from the integration's print weight) or which nozzle of a dual nozzle printer is active (it is inferred from the temperatures).
+
 A printer can have a plug: a Home Assistant switch that powers it. The printer then connects only while the plug is on, and pages set to "Only while ... is on" appear with it; with the plug off the deck holds no connection, buffers or pages for it. Without a plug the printer is always tried.
 
 ```json
 "printers": [{ "id": "h2c", "name": "H2C", "ip": "192.168.0.54",
-               "plug": "switch.printer_plug" }]
+               "plug": "switch.printer_plug" },
+             { "id": "p1s", "name": "P1S", "source": "ha", "serial": "01P00A000000000" }]
 ```
 
 A page with `"printer": "h2c"` follows that printer. A printer tile is `{ "type": "printer", "printer": "h2c", "show": "hero" }`; `show` is `hero`, `nozzle` (with `"nozzle": "left"` on dual nozzle printers), `bed`, `chamber`, `filament`, `layer` or `light` (a tap switches the chamber light). The tiles sit on the page grid like any other tile. Three more views are available:

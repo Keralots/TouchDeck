@@ -45,7 +45,9 @@
 // Bambu printers: "printers": [{ "id": "h2c", "name": "H2C",
 //   "ip": "192.168.0.54", "plug": "switch.printer_plug" }] (plug optional:
 //   its HA state powers the printer's connection and pages; serial and access
-//   code live in NVS, never in deck.json). A page with "printer": "h2c" exists
+//   code live in NVS, never in deck.json). "source": "ha" with "serial" reads
+//   the printer from Home Assistant's Bambu Lab integration instead (no ip,
+//   no access code). A page with "printer": "h2c" exists
 //   only while that printer is powered. A printer tile:
 // { "type": "printer", "printer": "h2c", "show": "hero" | "nozzle" | "bed" |
 //   "chamber" | "filament" | "layer" | "light" | "ams" | "slots" | "summary",
@@ -205,6 +207,8 @@ struct TileDef {
 struct PrinterDef {
   String id, name, ip;
   String plug;  // HA switch that powers the printer, "" = always powered
+  bool ha = false;  // "source": "ha": state from the Bambu Lab integration in HA
+  String serial;    // HA source: the printer's serial number
 };
 
 struct PageDef {

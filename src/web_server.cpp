@@ -12,6 +12,7 @@
 #include "web_assets.h"
 #include "deck_ui.h"
 #include "deck_printers.h"
+#include "deck_bambu_ha.h"
 #include "deck_config.h"
 #include "deck_ha.h"
 #include "deck_http.h"
@@ -1259,6 +1260,16 @@ static void handleDeckPost() {
 // GET /api/printers - printer config and live status, never the secrets.
 static void handlePrintersGet() { server.send(200, "application/json", deckPrintersJson()); }
 
+// GET /api/printers/ha - Bambu printers in Home Assistant's integration.
+static void handlePrintersHa() {
+  String json, err;
+  if (!deck::printersHaFind(json, err)) {
+    sendJsonMessage(502, false, ("Home Assistant: " + err).c_str());
+    return;
+  }
+  server.send(200, "application/json", json);
+}
+
 // POST /api/printers/secret (id, serial, code) - an empty field keeps the stored one.
 static void handlePrinterSecret() {
   const String id = server.arg("id");
@@ -2128,6 +2139,7 @@ void initWebServer() {
   server.on("/api/deck", HTTP_POST, handleDeckPost);
   server.on("/api/ha/status", HTTP_GET, handleHaStatus);
   server.on("/api/printers", HTTP_GET, handlePrintersGet);
+  server.on("/api/printers/ha", HTTP_GET, handlePrintersHa);
   server.on("/api/printers/secret", HTTP_POST, handlePrinterSecret);
   server.on("/api/ha/config", HTTP_POST, handleHaConfig);
   server.on("/api/ha/forget", HTTP_POST, handleHaForget);

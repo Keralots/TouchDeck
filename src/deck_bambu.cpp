@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <new>
+#include "deck_bambu_ha.h"
 #include "tls_psram.h"
 
 namespace deck {
@@ -774,6 +775,7 @@ void printerPower(const String& id, bool on) {
 }
 
 bool printerPowered(const String& id) {
+  if (printerHaKnown(id)) return printerHaPowered(id);
   Lock lock;
   for (const auto& slot : s_slots) if (id.length() && slot.conn.id == id) return slot.powered;
   return false;
@@ -785,6 +787,7 @@ bool printersBusy() {
 }
 
 bool printerRead(const String& id, PrinterState& out) {
+  if (printerHaKnown(id)) return printerHaRead(id, out);
   Lock lock;
   for (const auto& slot : s_slots) {
     if (!id.length() || slot.conn.id != id || !slot.powered) continue;
@@ -799,11 +802,16 @@ bool printerRead(const String& id, PrinterState& out) {
   return false;
 }
 
-uint32_t printersVersion() { Lock lock; return s_version; }
+uint32_t printersVersion() {
+  const uint32_t ha = printersHaVersion();
+  Lock lock;
+  return s_version + ha;
+}
 
 uint32_t printersStackFree() { return s_stackFree; }
 
 bool printerLight(const String& id, bool on) {
+  if (printerHaKnown(id)) return printerHaLight(id, on);
   Lock lock;
   for (auto& slot : s_slots) {
     if (!id.length() || slot.conn.id != id || !slot.powered || !slot.state || slot.state->link != PRN_ONLINE) continue;
