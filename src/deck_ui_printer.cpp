@@ -419,9 +419,24 @@ void prnHeroFill(TileRt& r) {
   lv_obj_set_size(r.icon, 2, LV_MAX(1, h - 2 * rad));
 }
 
+// A dropped link usually comes back within seconds (internal RAM runs short
+// during portal loads), so tiles keep the last state for a while first.
+constexpr uint32_t PRN_GRACE_MS = 15000;
+uint32_t s_prnGraceAt = 0;  // printerSync re-applies then: the grace ran out
+
+bool prnShown(const PrinterState* s) {
+  if (!s || !s->lastReportMs) return false;
+  if (s->link == PRN_ONLINE) return true;
+  const uint32_t age = millis() - s->lastReportMs;
+  if (age >= PRN_GRACE_MS) return false;
+  const uint32_t at = millis() + (PRN_GRACE_MS - age);
+  if (!s_prnGraceAt || (int32_t)(at - s_prnGraceAt) > 0) s_prnGraceAt = at;
+  return true;
+}
+
 // Printing for real: not paused, preparing or changing filament.
 bool prnPrinting(const PrinterState* s) {
-  return s && s->link == PRN_ONLINE && !strcmp(s->gcodeState, "RUNNING") && (s->layer || s->progress) &&
+  return prnShown(s) && !strcmp(s->gcodeState, "RUNNING") && (s->layer || s->progress) &&
          !printerStageName(s->stage);
 }
 
@@ -681,7 +696,7 @@ void applyPrinterToTile(TileRt& r) {
   const TileDef& d = *r.def;
   if (d.type != TILE_PRINTER) return;
   const PrinterState* s = printerFor(d);
-  const bool online = s && s->link == PRN_ONLINE && s->lastReportMs;
+  const bool online = prnShown(s);
   const uint32_t key = prnTileKey(r, s, online);
   if (key == r.prnKey) return;
   r.prnKey = key;
