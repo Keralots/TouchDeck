@@ -171,7 +171,7 @@ static bool validEntityId(const String& id) {
 }
 
 static void handleApiConfig() {
-  JsonDocument doc;
+  JsonDocument doc(psramJson());
   doc["product"] = PRODUCT_NAME;
   doc["version"] = FW_VERSION;
   doc["board"] = BOARD_VARIANT;
@@ -1307,6 +1307,7 @@ static void handleHaEntities() {
     // Straight from flash: loading 160 KB into a String first took seconds.
     File f = LittleFS.open(deck::haEntityListPath(), "r");
     if (f) {
+      f.setBufferSize(8192);  // over 4 KB: malloc puts it in PSRAM
       server.streamFile(f, "application/json");
       f.close();
       return;
