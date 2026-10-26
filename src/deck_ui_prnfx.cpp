@@ -1,7 +1,8 @@
 // Deck UI: printer tile animations. Temperatures count one degree at a time
 // and (printerFx) glow while heating, frost over while cooling; the filament
 // tile turns a spool and runs a print head extruding the active filament.
-// The effects are ARGB pictures painted by the CPU, drawn by the tile.
+// The effects are ARGB pictures painted by the CPU, drawn by the tile: what
+// does not move is painted once, each frame only adds the moving parts.
 #include "deck_ui_int.h"
 #include <climits>
 #include <new>
@@ -24,6 +25,7 @@ struct PrnFx {
   lv_draw_buf_t* buf;
   uint8_t* tables;         // per pixel: glow alpha, then frost alpha
   int tw, th;              // size the tables were made for
+  int glowRow, frostRow;   // first row with glow, last row with frost
   float goal, target, scale;
   int shown;               // counted reading, INT_MIN = none
   uint32_t color;
@@ -36,6 +38,12 @@ struct PrnFx {
   lv_obj_t* head;
   lv_draw_buf_t* sbuf;
   lv_draw_buf_t* hbuf;
+  uint32_t* sbase;         // spool without its turning parts
+  uint32_t* hbase;         // the head alone
+  int sbaseN, hbaseH;
+  uint32_t sbaseRgb;
+  bool sbaseFine;
+  float sbaseLevel;
   bool has, clear, feeding, printing, dirty, nameDirty;
   int nameW;               // material label width its font was picked for
   uint32_t rgb, oldRgb, swapMs;
@@ -76,7 +84,9 @@ lv_draw_buf_t* fxBuf(lv_draw_buf_t*& b, int w, int h) {
   return b;
 }
 
-// Premultiplied colour, composed back to front.
+// --- Pixels -------------------------------------------------------------------------------
+// Pixels are B, G, R, A with straight alpha. Float composing (Acc) is for the
+// parts painted once; per frame work uses blendPx.
 struct Acc {
   float r = 0, g = 0, b = 0, a = 0;
 };
@@ -90,17 +100,13 @@ inline void over(Acc& d, uint32_t rgb, float a) {
   d.b = (float)(rgb & 0xFF) * a + d.b * k;
   d.a = a + d.a * k;
 }
-inline void store(uint8_t* p, const Acc& c, float cover) {
+inline uint32_t accPx(const Acc& c, float cover) {
   const float a = c.a * cover;
-  if (a < 0.004f) {
-    *(uint32_t*)p = 0;
-    return;
-  }
+  if (a < 0.004f) return 0;
   const float inv = 1 / c.a;
-  p[0] = (uint8_t)LV_MIN(255.0f, c.b * inv);
-  p[1] = (uint8_t)LV_MIN(255.0f, c.g * inv);
-  p[2] = (uint8_t)LV_MIN(255.0f, c.r * inv);
-  p[3] = (uint8_t)(LV_MIN(1.0f, a) * 255 + 0.5f);
+  const uint32_t r = (uint32_t)LV_MIN(255.0f, c.r * inv), g = (uint32_t)LV_MIN(255.0f, c.g * inv);
+  const uint32_t b = (uint32_t)LV_MIN(255.0f, c.b * inv), al = (uint32_t)(LV_MIN(1.0f, a) * 255 + 0.5f);
+  return al << 24 | r << 16 | g << 8 | b;
 }
 uint32_t mixRgb(uint32_t a, uint32_t b, float k) {
   uint32_t out = 0;
@@ -109,6 +115,28 @@ uint32_t mixRgb(uint32_t a, uint32_t b, float k) {
     out |= (uint32_t)(x + (y - x) * k + 0.5f) << s;
   }
   return out;
+}
+inline int div255(int x) { return (x + 128) * 257 >> 16; }
+// Colour rgb at alpha a (0..255) over the pixel.
+inline void blendPx(uint8_t* p, uint32_t rgb, int a) {
+  if (a <= 0) return;
+  if (a >= 255 || !p[3]) {
+    p[0] = rgb & 0xFF;
+    p[1] = (rgb >> 8) & 0xFF;
+    p[2] = (rgb >> 16) & 0xFF;
+    p[3] = (uint8_t)LV_MIN(a, 255);
+    return;
+  }
+  const int wd = div255(p[3] * (255 - a)), oa = a + wd;
+  p[0] = (uint8_t)(((int)(rgb & 0xFF) * a + p[0] * wd) / oa);
+  p[1] = (uint8_t)(((int)((rgb >> 8) & 0xFF) * a + p[1] * wd) / oa);
+  p[2] = (uint8_t)(((int)((rgb >> 16) & 0xFF) * a + p[2] * wd) / oa);
+  p[3] = (uint8_t)oa;
+}
+inline int cov255(float c) { return c <= 0 ? 0 : c >= 1 ? 255 : (int)(c * 255 + 0.5f); }
+
+void copyBase(lv_draw_buf_t* b, const uint32_t* base, int w, int h) {
+  for (int y = 0; y < h; y++) memcpy(b->data + y * b->header.stride, base + y * w, w * 4);
 }
 
 // Coverage of a pixel inside a rounded rect w x h with radius rad.
@@ -161,6 +189,8 @@ void prnFxFree(PrnFx* f) {
   if (f->sbuf) lv_draw_buf_destroy(f->sbuf);
   if (f->hbuf) lv_draw_buf_destroy(f->hbuf);
   if (f->tables) lv_free(f->tables);
+  if (f->sbase) lv_free(f->sbase);
+  if (f->hbase) lv_free(f->hbase);
   lv_free(f);
 }
 
@@ -171,8 +201,7 @@ void tempShow(TileRt& r, const PrnFx& f) {
   else snprintf(b, sizeof(b), "%d\xC2\xB0", f.shown);
   if (strcmp(lv_label_get_text(r.sub), b)) lv_label_set_text(r.sub, b);
   const bool cold = dispSettings.printerFx && f.state == TS_COOL && f.over;
-  const uint32_t c = cold ? 0xBFE3FF : f.color;
-  lv_obj_set_style_text_color(r.sub, lv_color_hex(c), 0);
+  lv_obj_set_style_text_color(r.sub, lv_color_hex(cold ? 0xBFE3FF : f.color), 0);
   lv_obj_set_style_bg_color(r.viz, lv_color_hex(cold ? 0x8CC8FF : f.color), LV_PART_INDICATOR);
   const int v = f.shown == INT_MIN ? 0 : (int)constrain(f.shown * 100.0f / f.scale, 0.0f, 100.0f);
   lv_bar_set_value(r.viz, v, LV_ANIM_OFF);
@@ -214,25 +243,34 @@ void tempTables(PrnFx& f, int w, int h) {
   auto grad = [](float d, float a0, float a1) {
     return d < 0.55f ? a0 + (a1 - a0) * d / 0.55f : d < 0.75f ? a1 * (1 - (d - 0.55f) / 0.2f) : 0.0f;
   };
+  f.glowRow = h;
+  f.frostRow = -1;
   for (int y = 0; y < h; y++)
     for (int x = 0; x < w; x++) {
       const float px = x + 0.5f - w / 2.0f, py = y + 0.5f;
       const float dg = sqrtf(px * px / (0.81f * w * w) + (py - 1.12f * h) * (py - 1.12f * h) / (0.5625f * h * h));
       const float df = sqrtf(px * px / (1.21f * w * w) + (py + 0.15f * h) * (py + 0.15f * h) / (0.64f * h * h));
-      f.tables[y * w + x] = (uint8_t)(255 * grad(dg, 0.6f, 0.18f));
-      f.tables[w * h + y * w + x] = (uint8_t)(255 * grad(df, 0.42f, 0.10f));
+      const uint8_t g = (uint8_t)(255 * grad(dg, 0.72f, 0.24f)), fr = (uint8_t)(255 * grad(df, 0.42f, 0.10f));
+      f.tables[y * w + x] = g;
+      f.tables[w * h + y * w + x] = fr;
+      if (g && y < f.glowRow) f.glowRow = y;
+      if (fr && y > f.frostRow) f.frostRow = y;
     }
 }
 
+// Heat (glow and haze share one warm colour) or frost, then the sheen; the
+// two states never overlap, so a pixel is one colour at the combined alpha.
 void tempPaint(TileRt& r, PrnFx& f, uint32_t now) {
   lv_draw_buf_t* b = f.buf;
   const int w = b->header.w, h = b->header.h;
   const float rad = (float)lv_obj_get_style_radius(r.obj, LV_PART_MAIN);
+  const int irad = (int)rad;
   const uint8_t* G = f.tables;
   const uint8_t* F = f.tables + w * h;
   const float pulse = f.state == TS_HEAT ? 0.875f + 0.125f * sinf(now * (6.2832f / 1800)) : 1;
-  const float gl = f.glow * pulse, hz = f.haze * 0.11f, fr = f.frost;
-  const float hph = fmodf(now * (16.0f / 1400), 16.0f);
+  const int gk = cov255(f.glow * pulse), fk = cov255(f.frost);
+  const float hz = f.haze * 0.14f;
+  const float hph = fmodf(now * (16.0f / 2000), 16.0f);
   float sw = -9, swA = 0;
   if (f.reachMs) {
     const float t = (float)(now - f.reachMs) / REACH_MS;
@@ -240,54 +278,66 @@ void tempPaint(TileRt& r, PrnFx& f, uint32_t now) {
     sw = 1.3f - 1.6f * e;
     swA = 0.42f * (1 - t);
   }
-  // Frost sparkles twinkle in turn (mockup spots on a 110 x 95 tile).
-  static const float kSpark[5][2] = {{18, 20}, {70, 14}, {44, 30}, {88, 36}, {28, 44}};
-  float sx[5], sy[5], sa[5];
-  for (int i = 0; i < 5; i++) {
-    sx[i] = kSpark[i][0] * w / 110;
-    sy[i] = kSpark[i][1] * h / 95;
-    const float ph = fmodf(now / 2200.0f + i * 0.45f / 2.2f, 1.0f);
-    const float s = sinf(ph * 3.1416f);
-    sa[i] = fr * 0.95f * s * s;
-  }
+  const float du = 0.966f / w;
   for (int y = 0; y < h; y++) {
     uint8_t* row = b->data + y * b->header.stride;
     const float yb = (h - y - 0.5f) / h;  // 0 at the bottom
     const float mask = yb < 0.45f ? 1 - yb / 0.45f * 0.4f : yb < 0.85f ? 0.6f * (1 - (yb - 0.45f) / 0.4f) : 0;
     const float v = fmodf(y + hph, 16.0f);
-    const float haze = hz * mask * clamp1(1 - fabsf(v - 8) / 1.6f);
-    for (int x = 0; x < w; x++) {
-      Acc c;
-      const int i = y * w + x;
-      if (gl > 0 && G[i]) over(c, 0xFF8C32, G[i] / 255.0f * gl);
-      if (haze > 0) over(c, 0xFFBE6E, haze);
-      if (fr > 0 && F[i]) over(c, 0x8CC8FF, F[i] / 255.0f * fr);
-      for (int k = 0; k < 5; k++) {
-        if (sa[k] <= 0.01f) continue;
-        const float dx = x + 0.5f - sx[k], dy = y + 0.5f - sy[k];
-        const float d2 = dx * dx + dy * dy;
-        if (d2 > 16) continue;
-        const float d = sqrtf(d2);
-        over(c, 0x9FD3FF, sa[k] * 0.5f * (1 - d / 4));
-        over(c, 0xDDF1FF, sa[k] * clamp1(1.5f + 0.5f - d));
-      }
-      if (swA > 0) {
-        const float u = ((x - w / 2.0f) * 0.966f + (y - h / 2.0f) * 0.259f) / w + 0.5f;
-        over(c, 0xFFECBE, swA * clamp1(1 - fabsf(u - sw) / 0.18f));
-      }
-      store(row + x * 4, c, cornerCover(x, y, w, h, rad));
+    const int ha = cov255(hz * mask * clamp1(1 - fabsf(v - 8) / 1.6f));
+    const bool glow = gk && y >= f.glowRow, frost = fk && y <= f.frostRow;
+    if (!glow && !ha && !frost && swA <= 0) {
+      memset(row, 0, w * 4);
+      continue;
     }
+    const bool edgeRow = y < irad || y >= h - irad;
+    float u = (-w / 2.0f * 0.966f + (y - h / 2.0f) * 0.259f) / w + 0.5f;
+    const int i0 = y * w;
+    for (int x = 0; x < w; x++, u += du) {
+      uint8_t* p = row + x * 4;
+      const int ga = glow ? (G[i0 + x] * gk) >> 8 : 0;
+      const int wa = ga + ha - ((ga * ha) >> 8);
+      const int fa = frost ? (F[i0 + x] * fk) >> 8 : 0;
+      int a = wa > fa ? wa : fa;
+      uint32_t c = wa > fa ? 0xFF9440 : 0x8CC8FF;
+      if (a && edgeRow && (x < irad || x >= w - irad)) a = (a * cov255(cornerCover(x, y, w, h, rad))) >> 8;
+      p[0] = c & 0xFF;
+      p[1] = (c >> 8) & 0xFF;
+      p[2] = (c >> 16) & 0xFF;
+      p[3] = (uint8_t)a;
+      if (swA > 0) {
+        const float s = 1 - fabsf(u - sw) / 0.18f;
+        if (s > 0) blendPx(p, 0xFFECBE, cov255(swA * s));
+      }
+    }
+  }
+  // Frost sparkles twinkle in turn (mockup spots on a 110 x 95 tile).
+  if (fk <= 0) return;
+  static const float kSpark[5][2] = {{18, 20}, {70, 14}, {44, 30}, {88, 36}, {28, 44}};
+  for (int i = 0; i < 5; i++) {
+    const float ph = fmodf(now / 2200.0f + i * 0.45f / 2.2f, 1.0f);
+    const float s = sinf(ph * 3.1416f);
+    const float sa = f.frost * 0.95f * s * s;
+    if (sa <= 0.01f) continue;
+    const float sx = kSpark[i][0] * w / 110, sy = kSpark[i][1] * h / 95;
+    for (int y = LV_MAX(0, (int)sy - 4); y <= LV_MIN(h - 1, (int)sy + 4); y++)
+      for (int x = LV_MAX(0, (int)sx - 4); x <= LV_MIN(w - 1, (int)sx + 4); x++) {
+        const float dx = x + 0.5f - sx, dy = y + 0.5f - sy, d = sqrtf(dx * dx + dy * dy);
+        if (d >= 4) continue;
+        uint8_t* p = b->data + y * b->header.stride + x * 4;
+        blendPx(p, 0x9FD3FF, cov255(sa * 0.5f * (1 - d / 4)));
+        blendPx(p, 0xDDF1FF, cov255(sa * clamp1(2 - d)));
+      }
   }
 }
 
 // Effect levels ease to the state's over about a second.
 float easeLevel(float v, float to, float dt) {
-  const float step = dt;
-  if (fabsf(to - v) <= step) return to;
-  return v + (to > v ? step : -step);
+  if (fabsf(to - v) <= dt) return to;
+  return v + (to > v ? dt : -dt);
 }
 
-bool tempTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool frame) {
+bool tempTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool frame, bool light) {
   bool drew = false;
   const float dt = LV_MIN(0.1f, (now - f.lastMs) / 1000.0f);
   f.lastMs = now;
@@ -318,7 +368,7 @@ bool tempTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool frame
   // The bar's light runs over the filled part only.
   const bool heat = shown && f.state == TS_HEAT;
   setShown(f.shine, heat);
-  if (heat) {
+  if (heat && light) {
     const int bw = lv_obj_get_width(r.viz), bh = lv_obj_get_height(r.viz);
     const int fill = bw * lv_bar_get_value(r.viz) / 100, sw = LV_MAX(6, bw / 8);
     const float u = fmodf(now / 1100.0f, 1.0f);
@@ -348,122 +398,231 @@ bool tempTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool frame
 }
 
 // --- Filament -----------------------------------------------------------------------------
-// A printed spool seen face on: winding in the filament's colour, three spokes,
-// the hub; the spokes, the hub holes and the strand end turn with angle.
+// A printed spool seen face on, 64 units across scaled to n px: winding in
+// the filament's colour, three spokes, the hub. The base holds what does not
+// turn; spokes, hub holes and the strand end are added per frame.
+struct SpoolGeo {
+  float k, half, R, hub, outer, ro;
+};
+SpoolGeo spoolGeo(int n, float level) {
+  SpoolGeo g;
+  g.k = n / 64.0f;
+  g.half = n / 2.0f;
+  g.R = 30 * g.k;
+  g.hub = 11 * g.k;
+  g.outer = g.hub + (26 * g.k - g.hub) * level;
+  g.ro = g.outer - 0.6f * g.k;
+  return g;
+}
+
+// One sample of the still spool at (dx, dy) from its centre, premultiplied,
+// with the disc edge applied.
+struct SpoolSample {
+  SpoolGeo g;
+  float step, rimIn, wa, cr, cg, cb;
+  bool wound;
+  float noise[40];
+};
+Acc spoolAt(const SpoolSample& s, float dx, float dy) {
+  const SpoolGeo& g = s.g;
+  const float k = g.k, r = sqrtf(dx * dx + dy * dy);
+  Acc c;
+  if (r > g.R + 0.5f) return c;
+  over(c, 0x181C22, 0.82f);
+  if (s.wound && r >= g.hub && r < g.outer + 0.5f) {
+    const float nz = s.noise[LV_MIN(39, (int)((r - g.hub) / s.step))];
+    // Per turn shade, then light from the top left.
+    const float t = fabsf(nz) * 0.16f, to = nz > 0 ? 255.0f : 0.0f;
+    float br = s.cr + (to - s.cr) * t, bg = s.cg + (to - s.cg) * t, bb = s.cb + (to - s.cb) * t;
+    const float lx = dx + 9 * k, ly = dy + 9 * k, dl = sqrtf(lx * lx + ly * ly) / g.outer;
+    const float lk = dl < 0.6f ? 0.22f * (1 - dl / 0.6f) : LV_MIN(0.28f, 0.28f * (dl - 0.6f) / 0.4f);
+    const float lt = dl < 0.6f ? 255.0f : 0.0f;
+    br += (lt - br) * lk;
+    bg += (lt - bg) * lk;
+    bb += (lt - bb) * lk;
+    over(c, (uint32_t)br << 16 | (uint32_t)bg << 8 | (uint32_t)bb, clamp1(g.outer + 0.5f - r) * s.wa);
+  }
+  // The rim runs to the disc edge, so its outside fades to clear, not to the flange.
+  if (r > s.rimIn - 0.5f) over(c, 0xD2DAE4, 0.9f * clamp1(r - s.rimIn + 0.5f));
+  if (r < g.hub + 0.5f) {
+    over(c, 0x2B313B, clamp1(g.hub + 0.5f - r));
+    over(c, 0xFFFFFF, 0.35f * clamp1(1 - fabsf(r - g.hub + 0.5f)));
+    if (r < 4.5f * k + 0.5f) over(c, 0x080A0E, 0.9f * clamp1(4.5f * k + 0.5f - r));
+  }
+  const float cover = clamp1(g.R + 0.5f - r);
+  c.r *= cover;
+  c.g *= cover;
+  c.b *= cover;
+  c.a *= cover;
+  return c;
+}
+
+// The still spool, 2 x 2 samples a pixel; one while the winding animates.
+void spoolBase(PrnFx& f, int n, uint32_t rgb, bool fine) {
+  if (f.sbaseN != n) {
+    if (f.sbase) lv_free(f.sbase);
+    f.sbase = (uint32_t*)lv_malloc((size_t)n * n * 4);
+    f.sbaseN = f.sbase ? n : 0;
+  }
+  if (!f.sbase) return;
+  f.sbaseRgb = rgb;
+  f.sbaseLevel = f.level;
+  f.sbaseFine = fine;
+  SpoolSample s;
+  s.g = spoolGeo(n, f.level);
+  s.step = LV_MAX(1.15f * s.g.k, 1.4f);
+  s.rimIn = s.g.R - LV_MAX(2.2f * s.g.k, 1.8f);
+  s.wa = f.clear ? 0.6f : 1;
+  s.wound = f.has && f.level > 0.01f;
+  s.cr = (float)((rgb >> 16) & 0xFF);
+  s.cg = (float)((rgb >> 8) & 0xFF);
+  s.cb = (float)(rgb & 0xFF);
+  for (int i = 0; i < 40; i++) s.noise[i] = fmodf(fabsf(sinf(i * 12.9898f) * 43758.547f), 1.0f) * 2 - 1;
+  const int ss = fine ? 2 : 1;
+  const float inv = 1.0f / (ss * ss);
+  for (int y = 0; y < n; y++)
+    for (int x = 0; x < n; x++) {
+      Acc sum;
+      for (int j = 0; j < ss; j++)
+        for (int i = 0; i < ss; i++) {
+          const Acc c = spoolAt(s, x + (i + 0.5f) / ss - s.g.half, y + (j + 0.5f) / ss - s.g.half);
+          sum.r += c.r;
+          sum.g += c.g;
+          sum.b += c.b;
+          sum.a += c.a;
+        }
+      sum.r *= inv;
+      sum.g *= inv;
+      sum.b *= inv;
+      sum.a *= inv;
+      f.sbase[y * n + x] = accPx(sum, 1);
+    }
+}
+
 void spoolPaint(PrnFx& f, uint32_t rgb) {
   lv_draw_buf_t* b = f.sbuf;
   const int n = b->header.w;
-  const float k = n / 64.0f, half = n / 2.0f;
-  const float R = 30 * k, hub = 11 * k, outer = hub + (26 * k - hub) * f.level, step = 1.15f * k;
-  const float ro = outer - 0.6f * k, rimR = R - 1.1f * k, rimW = 1.1f * k;
+  // Fine samples once the winding stands still.
+  const bool fine = f.level == 0 || f.level == 1;
+  if (f.sbaseN != n || f.sbaseRgb != rgb || f.sbaseLevel != f.level || f.sbaseFine != fine || f.dirty)
+    spoolBase(f, n, rgb, fine);
+  if (!f.sbase) return;
+  copyBase(b, f.sbase, n, n);
+  const SpoolGeo g = spoolGeo(n, f.level);
+  const float k = g.k;
   const uint32_t lit = mixRgb(rgb, 0xFFFFFF, 0.35f), dark = mixRgb(rgb, 0, 0.5f);
-  const float wa = f.clear ? 0.6f : 1;
-  float sc[3], ss[3], hx[3], hy[3];
-  for (int i = 0; i < 3; i++) {
-    const float a = f.angle + i * 2.0944f;
-    sc[i] = cosf(a);
-    ss[i] = sinf(a);
-    hx[i] = cosf(a + 1.0472f) * 7.6f * k;
-    hy[i] = sinf(a + 1.0472f) * 7.6f * k;
+  auto px = [&](int x, int y) { return b->data + y * b->header.stride + x * 4; };
+  // Strand end on the winding, under the spokes.
+  if (f.has && f.level > 0.15f) {
+    const float band = 0.8f * k + 0.5f, lo = g.ro - band, hi = g.ro + band;
+    for (int y = 0; y < n; y++)
+      for (int x = 0; x < n; x++) {
+        const float dx = x + 0.5f - g.half, dy = y + 0.5f - g.half, r2 = dx * dx + dy * dy;
+        if (r2 < lo * lo || r2 > hi * hi) continue;
+        float rel = atan2f(dy, dx) - f.angle;
+        rel = fmodf(rel + 3 * 3.1416f, 2 * 3.1416f) - 3.1416f;
+        if (rel > -0.2f && rel < 0.9f) blendPx(px(x, y), lit, cov255(band - fabsf(sqrtf(r2) - g.ro)));
+      }
+    const float ex = g.half + cosf(f.angle + 0.9f) * g.ro, ey = g.half + sinf(f.angle + 0.9f) * g.ro, er = 1.2f * k + 0.5f;
+    for (int y = LV_MAX(0, (int)(ey - er)); y <= LV_MIN(n - 1, (int)(ey + er)); y++)
+      for (int x = LV_MAX(0, (int)(ex - er)); x <= LV_MIN(n - 1, (int)(ex + er)); x++) {
+        const float dx = x + 0.5f - ex, dy = y + 0.5f - ey;
+        blendPx(px(x, y), dark, cov255(er - sqrtf(dx * dx + dy * dy)));
+      }
   }
-  const float ex = cosf(f.angle + 0.9f) * ro, ey = sinf(f.angle + 0.9f) * ro;
-  const bool wound = f.has && f.level > 0.01f;
-  for (int y = 0; y < n; y++) {
-    uint8_t* row = b->data + y * b->header.stride;
+  // Spokes from the hub to the rim.
+  float sc[3], ss[3];
+  for (int i = 0; i < 3; i++) {
+    sc[i] = cosf(f.angle + i * 2.0944f);
+    ss[i] = sinf(f.angle + i * 2.0944f);
+  }
+  const float hw = 3.2f * k + 0.5f, a0 = g.hub, a1 = g.R - LV_MAX(2.2f * k, 1.8f) - 0.5f;
+  for (int y = 0; y < n; y++)
     for (int x = 0; x < n; x++) {
-      const float dx = x + 0.5f - half, dy = y + 0.5f - half;
-      const float r = sqrtf(dx * dx + dy * dy);
-      if (r > R + 0.5f) {
-        *(uint32_t*)(row + x * 4) = 0;
-        continue;
-      }
-      Acc c;
-      over(c, 0x181C22, 0.82f);
-      if (wound && r >= hub && r < outer + 0.5f) {
-        const int ring = (int)((r - hub) / step);
-        const float noise = fmodf(fabsf(sinf(ring * 12.9898f) * 43758.547f), 1.0f) * 2 - 1;
-        uint32_t base = mixRgb(rgb, noise > 0 ? 0xFFFFFF : 0, fabsf(noise) * 0.16f);
-        const float lx = dx + 9 * k, ly = dy + 9 * k;
-        const float dl = sqrtf(lx * lx + ly * ly) / outer;
-        base = dl < 0.6f ? mixRgb(base, 0xFFFFFF, 0.22f * (1 - dl / 0.6f))
-                         : mixRgb(base, 0, LV_MIN(0.28f, 0.28f * (dl - 0.6f) / 0.4f));
-        over(c, base, clamp1(outer + 0.5f - r) * wa);
-        if (f.level > 0.15f && fabsf(r - ro) < 0.8f * k + 0.5f) {
-          float rel = atan2f(dy, dx) - f.angle;
-          rel = fmodf(rel + 3 * 3.1416f, 2 * 3.1416f) - 3.1416f;
-          if (rel > -0.2f && rel < 0.9f) over(c, lit, clamp1(0.8f * k + 0.5f - fabsf(r - ro)));
-        }
-        const float de = sqrtf((dx - ex) * (dx - ex) + (dy - ey) * (dy - ey));
-        if (f.level > 0.15f && de < 1.2f * k + 0.5f) over(c, dark, clamp1(1.2f * k + 0.5f - de));
-      }
+      const float dx = x + 0.5f - g.half, dy = y + 0.5f - g.half, r2 = dx * dx + dy * dy;
+      if (r2 < (a0 - 1) * (a0 - 1) || r2 > g.R * g.R) continue;
       for (int i = 0; i < 3; i++) {
         const float along = dx * sc[i] + dy * ss[i];
-        if (along < hub - 2 * k || along > R - k) continue;
+        if (along < a0 - 0.5f || along > a1 + 0.5f) continue;
         const float across = fabsf(-dx * ss[i] + dy * sc[i]);
-        over(c, 0x1E222A, 0.72f * clamp1(3.2f * k + 0.5f - across));
+        if (across >= hw) continue;
+        const float ends = clamp1(along - a0 + 0.5f) * clamp1(a1 + 0.5f - along);
+        blendPx(px(x, y), 0x1E222A, cov255(0.72f * clamp1(hw - across) * ends));
       }
-      const float dr = fabsf(r - rimR);
-      if (dr < rimW + 0.5f) over(c, 0xD2DAE4, 0.85f * clamp1(rimW + 0.5f - dr));
-      if (r < hub + 0.5f) {
-        over(c, 0x2B313B, clamp1(hub + 0.5f - r));
-        over(c, 0xFFFFFF, 0.35f * clamp1(1 - fabsf(r - hub + 0.5f)));
-        if (r < 4.5f * k + 0.5f) over(c, 0x080A0E, 0.9f * clamp1(4.5f * k + 0.5f - r));
-        for (int i = 0; i < 3; i++) {
-          const float dh = sqrtf((dx - hx[i]) * (dx - hx[i]) + (dy - hy[i]) * (dy - hy[i]));
-          if (dh < 1.4f * k + 0.5f) over(c, 0x080A0E, 0.9f * clamp1(1.4f * k + 0.5f - dh));
-        }
-      }
-      store(row + x * 4, c, clamp1(R + 0.5f - r));
     }
+  // Three holes in the hub.
+  const float hr = 1.4f * k + 0.5f;
+  for (int i = 0; i < 3; i++) {
+    const float a = f.angle + 1.0472f + i * 2.0944f;
+    const float hx = g.half + cosf(a) * 7.6f * k, hy = g.half + sinf(a) * 7.6f * k;
+    for (int y = LV_MAX(0, (int)(hy - hr)); y <= LV_MIN(n - 1, (int)(hy + hr)); y++)
+      for (int x = LV_MAX(0, (int)(hx - hr)); x <= LV_MIN(n - 1, (int)(hx + hr)); x++) {
+        const float dx = x + 0.5f - hx, dy = y + 0.5f - hy;
+        blendPx(px(x, y), 0x080A0E, cov255(0.9f * clamp1(hr - sqrtf(dx * dx + dy * dy))));
+      }
   }
 }
 
-// Print head (fins, heater block, brass nozzle) and the strand waving down
-// out of it; the wave travels down while extruding, up while retracting.
-void headPaint(PrnFx& f, uint32_t rgb, bool glow) {
-  lv_draw_buf_t* b = f.hbuf;
-  const int w = b->header.w, h = b->header.h;
-  const float cx = w / 2.0f, tip = HEAD_TIP, end = tip + (h - 2 - tip) * f.flow;
-  const uint32_t lit = mixRgb(rgb, 0xFFFFFF, 0.45f), dark = mixRgb(rgb, 0, 0.5f);
-  for (int y = 0; y < h; y++) {
-    uint8_t* row = b->data + y * b->header.stride;
-    const float yy = y + 0.5f;
-    const bool strand = f.flow > 0.01f && yy >= tip && yy <= end + 0.5f;
-    float xc = cx, sc = 1, capA = 1;
-    if (strand) {
-      const float amp = 2.6f * LV_MIN(1.0f, (yy - tip) / 14);
-      const float arg = (yy - f.phase) * 0.42f;
-      xc = cx + amp * sinf(arg);
-      const float slope = amp * 0.42f * cosf(arg);
-      sc = 1 / sqrtf(1 + slope * slope);
-      capA = clamp1(end + 0.5f - yy);
-    }
+// The head (fins, heater block, brass nozzle) on its own; the strand and the
+// nozzle glow are added per frame.
+void headBase(PrnFx& f, int w, int h) {
+  if (f.hbaseH != h) {
+    if (f.hbase) lv_free(f.hbase);
+    f.hbase = (uint32_t*)lv_malloc((size_t)w * h * 4);
+    f.hbaseH = f.hbase ? h : 0;
+  }
+  if (!f.hbase) return;
+  const float cx = w / 2.0f;
+  for (int y = 0; y < h; y++)
     for (int x = 0; x < w; x++) {
       Acc c;
-      const float xx = x + 0.5f;
-      if (glow) {
-        const float d = sqrtf((xx - cx) * (xx - cx) + (yy - tip) * (yy - tip)) / 6;
-        if (d < 1) over(c, 0xFFB46E, 0.85f * (1 - d));
-      }
-      if (strand) {
-        const float d = fabsf(xx - xc) * sc;
-        over(c, 0x000000, 0.5f * capA * clamp1(2.2f + 0.5f - d));
-        over(c, dark, capA * clamp1(1.7f + 0.5f - d));
-        over(c, rgb, capA * clamp1(1.15f + 0.5f - d));
-        over(c, lit, 0.9f * capA * clamp1(0.4f + 0.5f - fabsf(xx - xc + 0.5f) * sc));
-      }
-      const float ax = fabsf(xx - cx);
+      const float xx = x + 0.5f, yy = y + 0.5f, ax = fabsf(xx - cx);
       if (yy >= 1 && yy < 6 && ax < 6) {
         over(c, 0x5C6470, clamp1(6.5f - ax));
         for (float i = -4; i <= 4.1f; i += 2.6f)
           if (fabsf(xx - cx - i) < 0.5f && yy > 1.6f && yy < 5.4f) over(c, 0x2E343D, 1);
       } else if (yy >= 6 && yy < 12 && ax < 8) {
         over(c, mixRgb(0xA7AFBB, 0x4A515C, (yy - 6) / 6), clamp1(8.5f - ax));
-      } else if (yy >= 12 && yy < tip) {
-        const float hw = 3.5f - 2.3f * (yy - 12) / (tip - 12);
+      } else if (yy >= 12 && yy < HEAD_TIP) {
+        const float hw = 3.5f - 2.3f * (yy - 12) / (HEAD_TIP - 12);
         if (ax < hw + 0.5f) over(c, mixRgb(0xF0D27C, 0x9C7A2C, clamp1((xx - cx + hw) / (2 * hw))), clamp1(hw + 0.5f - ax));
       }
-      store(row + x * 4, c, 1);
+      f.hbase[y * w + x] = accPx(c, 1);
+    }
+}
+
+// The strand waves down out of the nozzle while extruding, up while retracting.
+void headPaint(PrnFx& f, uint32_t rgb, bool glow) {
+  lv_draw_buf_t* b = f.hbuf;
+  const int w = b->header.w, h = b->header.h;
+  if (f.hbaseH != h) headBase(f, w, h);
+  if (!f.hbase) return;
+  copyBase(b, f.hbase, w, h);
+  const float cx = w / 2.0f, tip = HEAD_TIP, end = tip + (h - 2 - tip) * f.flow;
+  const uint32_t lit = mixRgb(rgb, 0xFFFFFF, 0.45f), dark = mixRgb(rgb, 0, 0.5f);
+  if (glow)  // around the tip, never over the opaque nozzle
+    for (int y = LV_MAX(0, HEAD_TIP - 6); y < LV_MIN(h, HEAD_TIP + 6); y++)
+      for (int x = 0; x < w; x++) {
+        uint8_t* p = b->data + y * b->header.stride + x * 4;
+        if (p[3] == 255) continue;
+        const float dx = x + 0.5f - cx, dy = y + 0.5f - tip, d = sqrtf(dx * dx + dy * dy) / 6;
+        if (d < 1) blendPx(p, 0xFFB46E, cov255(0.85f * (1 - d)));
+      }
+  if (f.flow <= 0.01f) return;
+  for (int y = HEAD_TIP; y < h; y++) {
+    const float yy = y + 0.5f;
+    if (yy > end + 0.5f) break;
+    const float amp = 2.6f * LV_MIN(1.0f, (yy - tip) / 14);
+    const float arg = (yy - f.phase) * 0.42f;
+    const float xc = cx + amp * sinf(arg), slope = amp * 0.42f * cosf(arg);
+    const float sc = 1 / sqrtf(1 + slope * slope), cap = clamp1(end + 0.5f - yy);
+    for (int x = LV_MAX(0, (int)(xc - 3)); x <= LV_MIN(w - 1, (int)(xc + 3)); x++) {
+      uint8_t* p = b->data + y * b->header.stride + x * 4;
+      const float xx = x + 0.5f, d = fabsf(xx - xc) * sc;
+      blendPx(p, 0x000000, cov255(0.5f * cap * clamp1(2.7f - d)));
+      blendPx(p, dark, cov255(cap * clamp1(2.2f - d)));
+      blendPx(p, rgb, cov255(cap * clamp1(1.65f - d)));
+      blendPx(p, lit, cov255(0.9f * cap * clamp1(0.9f - fabsf(xx - xc + 0.5f) * sc)));
     }
   }
 }
@@ -493,9 +652,7 @@ void prnFxFit(TileRt& r, int size) {
   r.pfx->dirty = true;
 }
 
-bool filamentTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on) {
-  const float dt = LV_MIN(0.1f, (now - f.lastMs) / 1000.0f);
-  f.lastMs = now;
+bool filamentTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool frame, bool spoolFrame) {
   // The material drops to the small font when the head column leaves too little room.
   const int nw = lv_obj_get_width(r.sub);
   if (nw > 0 && (nw != f.nameW || f.nameDirty)) {
@@ -516,11 +673,15 @@ bool filamentTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on) {
   if (!on) return false;
   if (!shown) {
     f.swapMs = 0;
-    f.level = 1;
+    f.level = f.has ? 1 : 0;
     f.flow = f.feeding ? 1 : 0;
     f.dirty = true;
     return false;
   }
+  // About 15 fps, every frame during a filament change.
+  if (!frame && !f.swapMs && !f.dirty) return false;
+  const float dt = LV_MIN(0.1f, (now - f.lastMs) / 1000.0f);
+  f.lastMs = now;
   float spin = f.printing ? 0.55f : 0, levelTo = f.has ? 1 : 0, flowTo = f.feeding ? 1 : 0;
   bool retract = false;
   uint32_t col = f.rgb;
@@ -548,7 +709,8 @@ bool filamentTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on) {
   f.phase = fmodf(f.phase + wave * dt, 1000.0f);
   bool drew = false;
   const int n = lv_obj_get_width(f.spool);
-  if ((spin != 0 || f.level != lv || f.dirty) && fxBuf(f.sbuf, n, n)) {
+  // The spool turns slowly: half the head's rate, unless the winding moves.
+  if (((spin != 0 && (spoolFrame || f.swapMs)) || f.level != lv || f.dirty) && fxBuf(f.sbuf, n, n)) {
     spoolPaint(f, col);
     lv_obj_invalidate(f.spool);
     drew = true;
@@ -563,12 +725,14 @@ bool filamentTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on) {
 }
 
 // Steps every printer effect on the shown page; true when something was drawn.
-// Temperature effects step every other frame (about 15 fps).
+// Temperature tiles paint in turn, each at about 4 fps (their bar light at 15);
+// the print head at about 15 fps, the spool at 7.5.
 bool prnFxTick(uint32_t now, bool lit) {
   static bool s_on = true;
   static uint32_t s_frame = 0;
   const bool on = dispSettings.printerFx;
-  const bool frame = (s_frame++ & 1) == 0;
+  const uint32_t n = s_frame++;
+  int slot = 0;  // temperature tiles take turns, one a frame
   bool drew = false;
   for (TileRt& r : s_tiles) {
     if (r.def->type != TILE_PRINTER || !r.pfx) continue;
@@ -576,8 +740,9 @@ bool prnFxTick(uint32_t now, bool lit) {
     const bool shown = lit && r.page == sh.active;
     if (isTempTile(*r.def)) {
       if (on != s_on) tempShow(r, f);  // cooling colours follow the switch
-      drew |= tempTick(r, f, now, shown, on, frame);
-    } else drew |= filamentTick(r, f, now, shown, on);
+      drew |= tempTick(r, f, now, shown, on, (int)(n % 8) == slot * 2, n % 2 == 0);
+      if (f.over) slot = (slot + 1) % 3;
+    } else drew |= filamentTick(r, f, now, shown, on, n % 2 == 1, n % 4 == 1);
   }
   s_on = on;
   return drew;
