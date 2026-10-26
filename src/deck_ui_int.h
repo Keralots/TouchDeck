@@ -94,7 +94,7 @@ struct TileRt {
   const lv_font_t* unitFont;  // unit font picked by fitTile
   bool besideName;           // chart or row: the value shares the line with the name
   uint8_t row;               // metric row: 1 = name and value, 2 = chart or bar between them
-  uint8_t rowChars;          // longest value seen on a wide row, its chart only shrinks
+  char rowMax[7];            // widest number seen on a wide row as zeros ("0000.0"), its chart only shrinks
   int16_t chipRoom;          // sensor: icon width the reading may take over
   const lv_font_t* nameFont;  // largest name font, null = fixed one-line name
   int16_t nameArea, nameW;    // room for the name
