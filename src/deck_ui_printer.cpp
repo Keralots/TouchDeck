@@ -271,8 +271,8 @@ void makePrinterContent(TileRt& r, lv_obj_t* t) {
       lv_obj_set_flex_align(mid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
       lv_obj_set_style_pad_column(mid, 10, 0);
       r.px[0] = prnLabel(mid, &deck_font_28, LV_OPA_COVER);  // time left
-      r.px[1] = prnLabel(mid, &deck_font_12, LV_OPA_70);     // "left - done 17:28"
-      lv_obj_set_style_pad_bottom(r.px[1], 4, 0);
+      r.px[1] = prnLabel(mid, &deck_font_20, LV_OPA_70);     // "ETA 17:28", on the time's baseline
+      lv_obj_set_style_pad_bottom(r.px[1], deck_font_28.base_line - deck_font_20.base_line, 0);
       lv_label_set_long_mode(r.px[1], LV_LABEL_LONG_MODE_DOTS);
       lv_obj_set_flex_grow(r.px[1], 1);
       r.px[2] = prnLabel(mid, &deck_font_20, LV_OPA_COVER);  // percent
@@ -926,17 +926,16 @@ void applyPrinterToTile(TileRt& r) {
         prnBadge(r, paused ? "PAUSED" : st == "RUNNING" ? "PRINTING" : "PREPARING", paused ? C_PRN_HEAT : C_PRN_OK);
         lv_label_set_text(r.sub, s->job);
         lv_label_set_text(r.px[0], prnDuration(s->remainingMin).c_str());
-        String sub = "left";
         const time_t now = time(nullptr);
+        b[0] = 0;
         if (now > 1609459200) {
           const time_t eta = now + (time_t)s->remainingMin * 60;
           struct tm lt;
           localtime_r(&eta, &lt);
-          if (netSettings.use24h) snprintf(b, sizeof(b), " - done %02d:%02d", lt.tm_hour, lt.tm_min);
-          else snprintf(b, sizeof(b), " - done %d:%02d %s", (lt.tm_hour + 11) % 12 + 1, lt.tm_min, lt.tm_hour < 12 ? "AM" : "PM");
-          sub += b;
+          if (netSettings.use24h) snprintf(b, sizeof(b), "ETA %02d:%02d", lt.tm_hour, lt.tm_min);
+          else snprintf(b, sizeof(b), "ETA %d:%02d %s", (lt.tm_hour + 11) % 12 + 1, lt.tm_min, lt.tm_hour < 12 ? "AM" : "PM");
         }
-        lv_label_set_text(r.px[1], sub.c_str());
+        lv_label_set_text(r.px[1], b);
         snprintf(b, sizeof(b), "%u%%", s->progress);
         lv_label_set_text(r.px[2], b);
         prnHeroSet(r, s->progress, paused ? C_PRN_HEAT : C_PRN_OK);

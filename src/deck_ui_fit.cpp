@@ -372,13 +372,23 @@ int rowNameW(const TileRt& r) {
   return LV_MIN(t, r.valW * 2 / 5);
 }
 
-// Chart or bar width between the name and the longest value seen (at least two
+// Chart or bar width between the name and the widest number seen (at least two
 // digits): it shrinks once when the value grows and never widens back.
 int rowVizW(const TileRt& r, const lv_font_t* f, int unitW) {
-  static const char kZeros[] = "000000";
-  const int n = LV_MIN(LV_MAX(r.rowChars, 2), (int)sizeof(kZeros) - 1);
-  const int valueW = LV_MAX(textW(lv_label_get_text(r.sub), f), textW(kZeros + sizeof(kZeros) - 1 - n, f)) + unitW;
+  const int most = textW(r.rowMax[0] ? r.rowMax : "00", f);
+  const int valueW = LV_MAX(textW(lv_label_get_text(r.sub), f), most) + unitW;
   return r.valW - rowNameW(r) - valueW - 16;
+}
+
+// Remembers the widest number with its digits as zeros. State words
+// ("Unavailable" before HA answers) do not count.
+void noteRowValue(TileRt& r, const char* text, const lv_font_t* f) {
+  if (!isdigit((unsigned char)text[*text == '-'])) return;
+  char z[sizeof(r.rowMax)];
+  size_t n = 0;
+  for (; text[n] && n < sizeof(z) - 1; n++) z[n] = isdigit((unsigned char)text[n]) ? '0' : text[n];
+  z[n] = 0;
+  if (!r.rowMax[0] || textW(z, f) > textW(r.rowMax, f)) memcpy(r.rowMax, z, n + 1);
 }
 
 // Row: the name gets what the value leaves, or on a wide row shares it with
@@ -424,7 +434,7 @@ void fitValue(TileRt& r) {
     f = valueFont(r.valFont, text, room);
   }
   if (!f) f = &deck_font_12;
-  if (r.row == 2) r.rowChars = LV_MAX(r.rowChars, (int)LV_MIN(strlen(text), 255u));
+  if (r.row == 2) noteRowValue(r, text, f);
   // A wide row gives up the largest value font for its chart or bar.
   if (r.row == 2 && f == &deck_font_28 && rowVizW(r, f, unit ? unitW : 0) < ROW_VIZ_MIN) f = &deck_font_20;
   setFont(r.sub, f);
