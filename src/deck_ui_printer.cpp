@@ -10,6 +10,8 @@ constexpr uint32_t C_PRN_OK = 0x4ADE80;    // printing
 constexpr uint32_t C_PRN_BLUE = 0x7DB5FF;  // progress, idle
 
 constexpr uint32_t C_PRN_BADGE_TEXT = 0x0B0F1C;
+constexpr int HERO_HEAD = 10;              // glowing nozzle on the hero fill's edge
+constexpr uint32_t HERO_HEAD_MS = 1600;    // one run along the edge
 
 PrinterState* s_prn[MAX_PRINTERS] = {};  // last copy per s_cfg.printers index (PSRAM)
 bool s_prnHave[MAX_PRINTERS] = {};
@@ -117,35 +119,38 @@ void makePrinterContent(TileRt& r, lv_obj_t* t) {
       r.detail = prnBox(t, LV_FLEX_FLOW_ROW);
       lv_obj_set_width(r.detail, lv_pct(100));
       lv_obj_set_flex_grow(r.detail, 1);
-      lv_obj_set_style_pad_column(r.detail, 3, 0);
-      // Each column owns its ring (and colour disc), type and remaining label.
+      lv_obj_set_style_pad_column(r.detail, 4, 0);
+      lv_obj_set_style_pad_top(r.detail, 2, 0);
+      // Each slot is a card tinted with its filament; the level fills it from the
+      // bottom. Children: level, job dot, text box (type, remaining).
       for (int i = 0; i < PRN_AMS_SLOTS; i++) {
-        lv_obj_t* col = prnBox(r.detail, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_size(col, 0, lv_pct(100));
-        lv_obj_set_flex_grow(col, 1);
-        lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        lv_obj_t* arc = lv_arc_create(col);
-        lv_obj_remove_style_all(arc);
-        lv_obj_remove_flag(arc, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-        lv_obj_set_size(arc, 36, 36);
-        lv_arc_set_range(arc, 0, 100);
-        lv_arc_set_bg_angles(arc, 0, 360);
-        lv_arc_set_rotation(arc, 270);
-        lv_obj_set_style_arc_width(arc, 4, LV_PART_MAIN);
-        lv_obj_set_style_arc_width(arc, 4, LV_PART_INDICATOR);
-        lv_obj_set_style_arc_color(arc, lv_color_white(), LV_PART_MAIN);
-        lv_obj_set_style_arc_opa(arc, LV_OPA_10, LV_PART_MAIN);
-        lv_obj_t* disc = prnSwatch(arc, LV_RADIUS_CIRCLE);
-        lv_obj_set_size(disc, 27, 27);
-        lv_obj_set_style_border_opa(disc, (lv_opa_t)(255 * 35 / 100), 0);
-        lv_obj_center(disc);
-        lv_obj_t* type = prnLabel(col, &deck_font_12, LV_OPA_COVER);
+        lv_obj_t* card = prnBox(r.detail, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_size(card, 0, lv_pct(100));
+        lv_obj_set_flex_grow(card, 1);
+        lv_obj_set_flex_align(card, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+        lv_obj_set_style_radius(card, 8, 0);
+        // The active slot's ring is drawn inside, over the level: an outline
+        // would be clipped by the row on three sides.
+        lv_obj_set_style_border_post(card, true, 0);
+        lv_obj_t* level = prnBox(card, LV_FLEX_FLOW_ROW);
+        lv_obj_add_flag(level, LV_OBJ_FLAG_FLOATING);
+        lv_obj_set_style_radius(level, 8, 0);
+        lv_obj_align(level, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+        lv_obj_t* dot = prnBox(card, LV_FLEX_FLOW_ROW);
+        lv_obj_add_flag(dot, LV_OBJ_FLAG_FLOATING);
+        lv_obj_set_size(dot, 5, 5);
+        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+        lv_obj_align(dot, LV_ALIGN_TOP_RIGHT, -5, 5);
+        lv_obj_t* text = prnBox(card, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_size(text, lv_pct(100), LV_SIZE_CONTENT);
+        lv_obj_set_style_pad_hor(text, 4, 0);
+        lv_obj_set_style_pad_bottom(text, 3, 0);
+        lv_obj_t* type = prnLabel(text, &deck_font_12, LV_OPA_COVER);
         lv_obj_set_width(type, lv_pct(100));
         lv_label_set_long_mode(type, LV_LABEL_LONG_MODE_DOTS);
-        lv_obj_set_style_text_align(type, LV_TEXT_ALIGN_CENTER, 0);
-        // Tighten the font's spare leading so two lines fit below the spool.
-        lv_obj_set_style_margin_top(type, -4, 0);
-        lv_obj_t* remain = prnLabel(col, &deck_font_12, LV_OPA_60);
+        // Tighten the font's spare leading so both lines fit low in the card.
+        lv_obj_t* remain = prnLabel(text, &deck_font_12, (lv_opa_t)(255 * 85 / 100));
         lv_obj_set_style_margin_top(remain, -4, 0);
       }
       break;
@@ -219,6 +224,31 @@ void makePrinterContent(TileRt& r, lv_obj_t* t) {
       break;
     }
     case PS_HERO: {
+      // Progress fills the whole tile from its edge (r.chip), like a slider
+      // fill, with a lit front edge (r.icon). While printing, heroTick runs
+      // a nozzle in the filament's colour (r.detail) up and down that edge.
+      r.chip = prnBox(t, LV_FLEX_FLOW_ROW);
+      lv_obj_add_flag(r.chip, (lv_obj_flag_t)(LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_HIDDEN));
+      lv_obj_set_style_radius(r.chip, lv_obj_get_style_radius(t, LV_PART_MAIN), 0);
+      lv_obj_set_style_bg_opa(r.chip, s_theme == THEME_DAYLIGHT ? LV_OPA_40 : LV_OPA_50, 0);
+      r.icon = prnBox(t, LV_FLEX_FLOW_ROW);
+      lv_obj_add_flag(r.icon, (lv_obj_flag_t)(LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_HIDDEN));
+      lv_obj_set_style_radius(r.icon, 1, 0);
+      lv_obj_set_style_bg_opa(r.icon, LV_OPA_COVER, 0);
+      lv_obj_set_style_shadow_width(r.icon, 12, 0);
+      lv_obj_set_style_shadow_spread(r.icon, 1, 0);
+      lv_obj_set_style_shadow_opa(r.icon, LV_OPA_60, 0);
+      r.detail = prnBox(t, LV_FLEX_FLOW_ROW);
+      lv_obj_add_flag(r.detail, (lv_obj_flag_t)(LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_HIDDEN));
+      lv_obj_set_size(r.detail, HERO_HEAD, HERO_HEAD);
+      lv_obj_set_style_radius(r.detail, LV_RADIUS_CIRCLE, 0);
+      lv_obj_set_style_bg_opa(r.detail, LV_OPA_COVER, 0);
+      lv_obj_set_style_border_width(r.detail, 1, 0);
+      lv_obj_set_style_border_color(r.detail, lv_color_white(), 0);
+      lv_obj_set_style_border_opa(r.detail, LV_OPA_70, 0);
+      lv_obj_set_style_shadow_width(r.detail, 12, 0);
+      lv_obj_set_style_shadow_spread(r.detail, 2, 0);
+      lv_obj_set_style_shadow_opa(r.detail, LV_OPA_80, 0);
       lv_obj_t* top = prnBox(t, LV_FLEX_FLOW_ROW);
       lv_obj_set_size(top, lv_pct(100), LV_SIZE_CONTENT);
       lv_obj_set_flex_align(top, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -247,7 +277,6 @@ void makePrinterContent(TileRt& r, lv_obj_t* t) {
       lv_obj_set_flex_grow(r.px[1], 1);
       r.px[2] = prnLabel(mid, &deck_font_20, LV_OPA_COVER);  // percent
       lv_obj_set_style_text_color(r.px[2], lv_color_hex(C_PRN_BLUE), 0);
-      r.viz = prnBar(t, 8);
       break;
     }
     case PS_NOZZLE:
@@ -366,6 +395,29 @@ void prnOneLine(lv_obj_t* l) {
   if (l) lv_obj_set_height(l, lineH(lv_obj_get_style_text_font(l, LV_PART_MAIN)));
 }
 
+// Hero fill geometry for r.frac; it starts at the tile edge, outside the padding.
+void prnHeroFill(TileRt& r) {
+  const int w = lv_obj_get_width(r.obj), h = lv_obj_get_height(r.obj);
+  if (w <= 0) return;  // not laid out yet: SIZE_CHANGED comes back here
+  const int pad = lv_obj_get_style_pad_left(r.obj, LV_PART_MAIN);
+  const int rad = lv_obj_get_style_radius(r.obj, LV_PART_MAIN);
+  const int fw = (int)lroundf(w * r.frac);
+  showObj(r.chip, fw > 0);
+  showObj(r.icon, fw > rad && fw < w && h > 2 * rad);
+  if (fw <= 0) return;
+  lv_obj_set_pos(r.chip, -pad, -pad);
+  lv_obj_set_size(r.chip, fw, h);
+  lv_obj_set_pos(r.detail, fw - pad - 1 - HERO_HEAD / 2, -pad);
+  lv_obj_set_pos(r.icon, fw - pad - 2, rad - pad);
+  lv_obj_set_size(r.icon, 2, LV_MAX(1, h - 2 * rad));
+}
+
+// Printing for real: not paused, preparing or changing filament.
+bool prnPrinting(const PrinterState* s) {
+  return s && s->link == PRN_ONLINE && !strcmp(s->gcodeState, "RUNNING") && (s->layer || s->progress) &&
+         !printerStageName(s->stage);
+}
+
 // Fonts by room; parts that cannot fit are hidden.
 void fitPrinter(TileRt& r, int cw, int ch) {
   const TileDef& d = *r.def;
@@ -379,19 +431,14 @@ void fitPrinter(TileRt& r, int cw, int ch) {
       prnOneLine(r.name);
       const PrinterState* s = printerFor(d);
       const int slots = s && d.amsUnit <= s->amsCount ? constrain(s->ams[d.amsUnit - 1].slots, 1, PRN_AMS_SLOTS) : 4;
-      const int colw = LV_MAX(1, (cw - 3 * (slots - 1)) / slots);
+      const int colw = LV_MAX(1, (cw - 4 * (slots - 1)) / slots);
       const int header = LV_MAX(lineH(&deck_font_12), lineH(lv_obj_get_style_text_font(r.icon, LV_PART_MAIN))) + (narrow ? lineH(&deck_font_12) : 0);
-      const int room = LV_MAX(1, ch - header - 2), lines = 2 * (lineH(&deck_font_12) - 4);
-      const bool labels = room >= 28 + lines && colw >= 32;
-      const int size = LV_MAX(8, LV_MIN(36, LV_MIN(colw, room - (labels ? lines : 0))));
+      const int room = LV_MAX(1, ch - header - 4), lines = 2 * lineH(&deck_font_12) - 4 + 3;
+      const bool labels = room >= lines + 6 && colw >= 30;
       for (int i = 0; i < PRN_AMS_SLOTS; i++) {
-        lv_obj_t* col = lv_obj_get_child(r.detail, i);
-        lv_obj_t* arc = lv_obj_get_child(col, 0);
-        lv_obj_set_size(arc, size, size);
-        lv_obj_set_size(lv_obj_get_child(arc, 0), LV_MAX(2, size - 9), LV_MAX(2, size - 9));
-        showObj(lv_obj_get_child(col, 1), labels);
-        showObj(lv_obj_get_child(col, 2), labels);
-        prnOneLine(lv_obj_get_child(col, 1));
+        lv_obj_t* text = lv_obj_get_child(lv_obj_get_child(r.detail, i), 2);
+        showObj(text, labels);
+        prnOneLine(lv_obj_get_child(text, 0));
       }
       break;
     }
@@ -426,9 +473,9 @@ void fitPrinter(TileRt& r, int cw, int ch) {
       showObj(r.px[1], wide);
       setFont(r.px[0], ch >= 70 && cw >= 200 ? &deck_font_28 : &deck_font_20);
       setFont(r.px[2], ch >= 70 ? &deck_font_20 : &deck_font_14);
-      lv_obj_set_height(r.viz, ch >= 70 ? 8 : 5);
       prnOneLine(r.sub);
       prnOneLine(r.px[1]);
+      prnHeroFill(r);
       break;
     }
     case PS_NOZZLE:
@@ -508,9 +555,120 @@ const PrinterTray* prnTray(const PrinterState& s, uint8_t unit, uint8_t slot) {
   return &s.ams[unit].tray[slot];
 }
 
+// The running job feeds from this AMS slot (print.mapping).
+bool prnInJob(const PrinterState& s, uint8_t unit, uint8_t slot) {
+  if (unit >= s.amsCount || (strcmp(s.gcodeState, "RUNNING") && strcmp(s.gcodeState, "PAUSE") &&
+                             strcmp(s.gcodeState, "PREPARE"))) return false;
+  for (int i = 0; i < s.mapCount; i++)
+    if ((s.map[i] >> 8) == s.ams[unit].id && (s.map[i] & 0xFF) == slot) return true;
+  return false;
+}
+
+// Hero fill level and colour; the percent label takes the same colour.
+void prnHeroSet(TileRt& r, int pct, uint32_t color) {
+  const float frac = constrain(pct, 0, 100) / 100.0f;
+  const lv_color_t c = lv_color_hex(color);
+  if (frac == r.frac && lv_color_eq(lv_obj_get_style_bg_color(r.chip, LV_PART_MAIN), c)) return;
+  r.frac = frac;
+  lv_obj_set_style_bg_color(r.chip, c, 0);
+  lv_obj_set_style_bg_color(r.icon, lv_color_lighten(c, LV_OPA_50), 0);
+  lv_obj_set_style_shadow_color(r.icon, c, 0);
+  lv_obj_set_style_text_color(r.px[2], c, 0);
+  prnHeroFill(r);
+}
+
 void prnBadge(TileRt& r, const char* text, uint32_t bg) {
   lv_label_set_text(r.name, text);
   lv_obj_set_style_bg_color(r.name, lv_color_hex(bg), 0);
+}
+
+// FNV-1a over what a printer tile shows.
+struct PrnKey {
+  uint32_t h = 2166136261u;
+  void add(const void* p, size_t n) {
+    for (size_t i = 0; i < n; i++) h = (h ^ ((const uint8_t*)p)[i]) * 16777619u;
+  }
+  void add(int32_t v) { add(&v, sizeof(v)); }
+  void add(const char* s) { add(s, strlen(s) + 1); }
+  void add(float v) { add(isfinite(v) ? (int32_t)lroundf(v) : INT32_MIN); }
+  void add(const PrinterTray& t) {
+    add((int32_t)t.present);
+    add((int32_t)t.rgb);
+    add((int32_t)t.alpha);
+    add(t.type);
+    add((int32_t)t.remain);
+  }
+  void add(const PrinterAmsUnit& u) {
+    add((int32_t)u.present);
+    add((int32_t)u.id);
+    add((int32_t)u.slots);
+    add((int32_t)u.humidity);
+    add(u.temp);
+    for (const PrinterTray& t : u.tray) add(t);
+  }
+};
+
+// Reports arrive about once a second and mostly repeat what a tile shows;
+// re-applying them anyway repaints the whole page and stalls the hero's nozzle.
+uint32_t prnTileKey(const TileRt& r, const PrinterState* s, bool online) {
+  const TileDef& d = *r.def;
+  PrnKey k;
+  k.add((int32_t)online);
+  k.add((int32_t)lv_obj_get_width(r.obj));
+  k.add((int32_t)lv_obj_get_height(r.obj));
+  if (d.show == PS_SUMMARY) k.add((int32_t)printerPowered(d.printer));
+  if (!s) return k.h ? k.h : 1;
+  k.add((int32_t)s->link);
+  k.add(s->err);
+  if (!online) return k.h ? k.h : 1;
+  k.add(s->gcodeState);
+  k.add((int32_t)s->activeUnit);
+  k.add((int32_t)s->activeSlot);
+  if (const PrinterTray* t = prnTray(*s, s->activeUnit, s->activeSlot)) k.add(*t);
+  switch (d.show) {
+    case PS_HERO:
+    case PS_SUMMARY: {
+      k.add(s->job);
+      k.add((int32_t)s->progress);
+      k.add((int32_t)s->remainingMin);
+      k.add((int32_t)s->stage);
+      k.add((int32_t)s->layer);
+      k.add((int32_t)(time(nullptr) / 60));  // "done 16:23"
+      k.add((int32_t)netSettings.use24h);
+      break;
+    }
+    case PS_NOZZLE:
+    case PS_BED:
+    case PS_CHAMBER:
+      k.add((int32_t)s->dualNozzle);
+      k.add((int32_t)s->activeNozzle);
+      for (int i = 0; i < 2; i++) {
+        k.add(s->nozzle[i]);
+        k.add(s->nozzleTarget[i]);
+      }
+      k.add(s->bed);
+      k.add(s->bedTarget);
+      k.add(s->chamber);
+      break;
+    case PS_LAYER:
+      k.add((int32_t)s->layer);
+      k.add((int32_t)s->totalLayers);
+      k.add((int32_t)s->speedLevel);
+      break;
+    case PS_LIGHT:
+      k.add((int32_t)s->light);
+      break;
+    case PS_AMS:
+    case PS_SLOTS:
+    case PS_FILAMENT:
+      k.add((int32_t)s->amsCount);
+      for (int u = 0; u < s->amsCount && u < PRN_AMS_UNITS; u++) k.add(s->ams[u]);
+      k.add((int32_t)s->mapCount);
+      k.add(s->map, s->mapCount * sizeof(s->map[0]));
+      if (d.show == PS_AMS) k.add((int32_t)lv_obj_get_height(r.detail));
+      break;
+  }
+  return k.h ? k.h : 1;
 }
 
 void applyPrinterToTile(TileRt& r) {
@@ -518,6 +676,9 @@ void applyPrinterToTile(TileRt& r) {
   if (d.type != TILE_PRINTER) return;
   const PrinterState* s = printerFor(d);
   const bool online = s && s->link == PRN_ONLINE && s->lastReportMs;
+  const uint32_t key = prnTileKey(r, s, online);
+  if (key == r.prnKey) return;
+  r.prnKey = key;
   lv_opa_t opa = online || d.show == PS_HERO ? LV_OPA_COVER : LV_OPA_50;
   char b[48];
   switch (d.show) {
@@ -543,33 +704,52 @@ void applyPrinterToTile(TileRt& r) {
       if (isfinite(ams->temp)) snprintf(b, sizeof(b), "%.0f\xC2\xB0", ams->temp);
       else strcpy(b, "--");
       lv_label_set_text(r.unit, b);
+      // Card height before the first layout: the tile's room under the header.
+      int cardH = lv_obj_get_height(r.detail);
+      if (cardH <= 0) cardH = lv_obj_get_content_height(r.obj) - lineH(&deck_font_12) - 4;
+      const int textH = 2 * lineH(&deck_font_12) - 4 + 3;
       for (int i = 0; i < PRN_AMS_SLOTS; i++) {
-        lv_obj_t* col = lv_obj_get_child(r.detail, i);
-        showObj(col, i < ams->slots);
-        lv_obj_t* arc = lv_obj_get_child(col, 0);
-        lv_obj_t* disc = lv_obj_get_child(arc, 0);
-        lv_obj_t* remain = lv_obj_get_child(col, 2);
+        lv_obj_t* card = lv_obj_get_child(r.detail, i);
+        showObj(card, i < ams->slots);
+        lv_obj_t* level = lv_obj_get_child(card, 0);
+        lv_obj_t* dot = lv_obj_get_child(card, 1);
+        lv_obj_t* text = lv_obj_get_child(card, 2);
+        lv_obj_t* type = lv_obj_get_child(text, 0);
+        lv_obj_t* remain = lv_obj_get_child(text, 1);
         const PrinterTray& tray = ams->tray[i];
         const bool low = tray.present && tray.remain >= 0 && tray.remain <= 10;
         const bool active = tray.present && s->activeUnit == u && s->activeSlot == i;
-        lv_arc_set_value(arc, tray.present && tray.remain >= 0 ? tray.remain : 100);
-        lv_obj_set_style_arc_color(arc, lv_color_hex(low ? C_CRIT : C_TEXT), LV_PART_INDICATOR);
-        lv_obj_set_style_arc_opa(arc, !tray.present ? LV_OPA_10 : tray.remain < 0 ? LV_OPA_30 : LV_OPA_COVER, LV_PART_INDICATOR);
-        showObj(disc, tray.present);
-        lv_obj_set_style_bg_color(disc, lv_color_hex(tray.rgb), 0);
-        lv_obj_set_style_bg_opa(disc, tray.alpha < 128 ? LV_OPA_50 : LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(disc, active ? 2 : 1, 0);
-        lv_obj_set_style_border_opa(disc, active ? LV_OPA_COVER : (lv_opa_t)(255 * 35 / 100), 0);
-        lv_obj_t* type = lv_obj_get_child(col, 1);
-        const int colw = lv_obj_get_width(col);
-        const bool fits = colw > 0 && textW(tray.type, lv_obj_get_style_text_font(type, LV_PART_MAIN)) <= colw;
-        lv_label_set_text(type, !tray.present ? "Empty" : fits ? tray.type : prnShortType(tray.type).c_str());
+        // Unknown level (no RFID): the whole card, at a lighter fill.
+        const int pct = !tray.present ? 0 : tray.remain < 0 ? 100 : tray.remain;
+        const lv_color_t c = lv_color_hex(tray.rgb);
+        lv_obj_set_style_bg_color(card, tray.present ? c : lv_color_hex(C_TEXT), 0);
+        lv_obj_set_style_bg_opa(card, tray.present ? LV_OPA_30 : LV_OPA_10, 0);
+        // Daylight keeps a hairline, or a white filament vanishes on the white tile.
+        lv_obj_set_style_border_width(card, active ? 2 : s_theme == THEME_DAYLIGHT ? 1 : 0, 0);
+        lv_obj_set_style_border_color(card, lv_color_hex(active ? C_TEXT : C_TILE_LINE), 0);
+        showObj(level, pct > 0);
+        lv_obj_set_size(level, lv_pct(100), lv_pct(pct));
+        lv_obj_set_style_bg_color(level, c, 0);
+        lv_obj_set_style_bg_opa(level, tray.remain < 0 || tray.alpha < 128 ? LV_OPA_60 : LV_OPA_COVER, 0);
+        // Text on the level takes the filament's contrast, else the theme's.
+        const uint32_t lum = ((tray.rgb >> 16 & 0xFF) * 299 + (tray.rgb >> 8 & 0xFF) * 587 + (tray.rgb & 0xFF) * 114) / 1000;
+        const uint32_t onFill = lum > 150 ? 0x1A1A1A : 0xFFFFFF;
+        const uint32_t ink = pct > 0 && cardH * pct / 100 >= textH ? onFill : C_TEXT;
+        lv_obj_set_style_text_color(text, lv_color_hex(ink), 0);
+        showObj(dot, tray.present && prnInJob(*s, u, i));
+        lv_obj_set_style_bg_color(dot, lv_color_hex(pct >= 90 ? onFill : C_TEXT), 0);
+        const int room = lv_obj_get_width(text) - 8;
+        const lv_font_t* tf = lv_obj_get_style_text_font(type, LV_PART_MAIN);
+        String name = tray.type;
+        if (room > 0 && textW(name.c_str(), tf) > room) name = prnShortType(tray.type);
+        if (room > 0 && textW(name.c_str(), tf) > room && name.indexOf(' ') > 0) name = name.substring(0, name.indexOf(' '));
+        lv_label_set_text(type, !tray.present ? "Empty" : name.c_str());
+        lv_obj_set_style_text_opa(type, tray.present ? LV_OPA_COVER : LV_OPA_70, 0);
         if (!tray.present) b[0] = 0;
         else if (tray.remain < 0) strcpy(b, "?");
         else snprintf(b, sizeof(b), "%d%%", tray.remain);
         lv_label_set_text(remain, b);
-        lv_obj_set_style_text_color(remain, lv_color_hex(low ? C_CRIT : C_TEXT), 0);
-        lv_obj_set_style_text_opa(remain, low ? LV_OPA_COVER : LV_OPA_60, 0);
+        lv_obj_set_style_text_color(remain, lv_color_hex(low && ink == C_TEXT ? C_CRIT : ink), 0);
       }
       break;
     }
@@ -646,6 +826,16 @@ void applyPrinterToTile(TileRt& r) {
       break;
     }
     case PS_HERO: {
+      {
+        // The nozzle carries the filament being printed; a light ring and glow
+        // keep a black one visible.
+        const PrinterTray* tray = online ? prnTray(*s, s->activeUnit, s->activeSlot) : nullptr;
+        const lv_color_t fc = lv_color_hex(tray ? tray->rgb : 0xFFE2B0);
+        if (!lv_color_eq(lv_obj_get_style_bg_color(r.detail, LV_PART_MAIN), fc)) {
+          lv_obj_set_style_bg_color(r.detail, fc, 0);
+          lv_obj_set_style_shadow_color(r.detail, lv_color_lighten(fc, LV_OPA_40), 0);
+        }
+      }
       const String st = online ? String(s->gcodeState) : "";
       const bool running = st == "RUNNING" || st == "PREPARE" || st == "SLICING";
       const bool paused = st == "PAUSE";
@@ -655,7 +845,7 @@ void applyPrinterToTile(TileRt& r) {
         lv_label_set_text(r.px[0], "--");
         lv_label_set_text(r.px[1], "");
         lv_label_set_text(r.px[2], "");
-        lv_bar_set_value(r.viz, 0, LV_ANIM_OFF);
+        prnHeroSet(r, 0, C_PRN_BLUE);
         break;
       }
       // RUNNING also covers the start-up stages (leveling, heating) and filament swaps.
@@ -668,7 +858,7 @@ void applyPrinterToTile(TileRt& r) {
         lv_label_set_text(r.px[1], "");
         snprintf(b, sizeof(b), "%u%%", s->progress);
         lv_label_set_text(r.px[2], starting ? "" : b);
-        lv_bar_set_value(r.viz, s->progress, LV_ANIM_OFF);
+        prnHeroSet(r, s->progress, C_PRN_OK);
       } else if (running || paused) {
         prnBadge(r, paused ? "PAUSED" : st == "RUNNING" ? "PRINTING" : "PREPARING", paused ? C_PRN_HEAT : C_PRN_OK);
         lv_label_set_text(r.sub, s->job);
@@ -686,7 +876,7 @@ void applyPrinterToTile(TileRt& r) {
         lv_label_set_text(r.px[1], sub.c_str());
         snprintf(b, sizeof(b), "%u%%", s->progress);
         lv_label_set_text(r.px[2], b);
-        lv_bar_set_value(r.viz, s->progress, LV_ANIM_OFF);
+        prnHeroSet(r, s->progress, paused ? C_PRN_HEAT : C_PRN_OK);
       } else {
         const bool done = st == "FINISH", failed = st == "FAILED";
         prnBadge(r, done ? "DONE" : failed ? "FAILED" : "READY", done ? C_PRN_BLUE : failed ? C_CRIT : 0x9AA3B2);
@@ -694,7 +884,7 @@ void applyPrinterToTile(TileRt& r) {
         lv_label_set_text(r.px[0], done ? "Finished" : failed ? "Stopped" : "Ready");
         lv_label_set_text(r.px[1], "");
         lv_label_set_text(r.px[2], done ? "100%" : "");
-        lv_bar_set_value(r.viz, done ? 100 : 0, LV_ANIM_OFF);
+        prnHeroSet(r, done ? 100 : 0, C_PRN_BLUE);
       }
       break;
     }
@@ -796,6 +986,7 @@ void applyPrinterToTile(TileRt& r) {
 
 void printerTap(TileRt& r) {
   const TileDef& d = *r.def;
+  r.prnKey = 0;  // the optimistic state below must not hide the next report
   if (d.show == PS_SUMMARY) {
     for (int i = 0; i < s_count; i++) {
       if (!s_pages[i].def || s_pages[i].def->printer != d.printer) continue;
@@ -813,6 +1004,39 @@ void printerTap(TileRt& r) {
   setTileOn(r, s->light != 1);  // optimistic; the next report confirms it
   lv_label_set_text(r.sub, s->light != 1 ? "On" : "Off");
   markPageStale(r.page);
+}
+
+// The shown page's hero runs its nozzle along the fill's edge while
+// printing; otherwise the nozzle is hidden.
+uint32_t s_heroMs = 0;
+
+void heroTick() {
+  const uint32_t now = millis();
+  if (now - s_heroMs < SPARK_FRAME_MS) return;
+  // Steps on a fixed grid, so the time a redraw takes does not stretch them.
+  s_heroMs = now - s_heroMs < 2 * SPARK_FRAME_MS ? s_heroMs + SPARK_FRAME_MS : now;
+  const bool lit = !manualDisplayOff() && currentBacklightLevel() && !s_qp.open && !s_modalCard && !s_ed.root;
+  bool moved = false;
+  for (TileRt& r : s_tiles) {
+    if (r.def->type != TILE_PRINTER || r.def->show != PS_HERO || !r.detail) continue;
+    const int h = lv_obj_get_height(r.obj);
+    const bool run = lit && r.page == sh.active && h > 3 * HERO_HEAD &&
+                     !lv_obj_has_flag(r.icon, LV_OBJ_FLAG_HIDDEN) && prnPrinting(printerFor(*r.def));
+    if (run == lv_obj_has_flag(r.detail, LV_OBJ_FLAG_HIDDEN)) showObj(r.detail, run);
+    if (!run) continue;
+    // Up and down, easing at both ends like a print head.
+    const uint32_t ph = now % (2 * HERO_HEAD_MS);
+    const float u = ph < HERO_HEAD_MS ? (float)ph / HERO_HEAD_MS : 2.0f - (float)ph / HERO_HEAD_MS;
+    const float eased = u * u * (3 - 2 * u);
+    const int y = 8 + (int)lroundf(eased * (h - 16 - HERO_HEAD));
+    // translate_y moves it without a layout pass over the tile.
+    if (lv_obj_get_style_translate_y(r.detail, LV_PART_MAIN) == y) continue;
+    lv_obj_set_style_translate_y(r.detail, y, 0);
+    moved = true;
+    s_sparkPaintMs = now;  // like a chart glide: other pages snapshot rarely meanwhile
+  }
+  // Draw the step now, on its grid, not at LVGL's next refresh.
+  if (moved) lv_refr_now(nullptr);
 }
 
 }  // namespace deckui

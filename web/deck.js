@@ -868,10 +868,17 @@
     const ams = [],
       count = Math.max(1, Math.min(6, Math.floor(+s.ams) || 2));
     for (let i = 0; i < count; i++) ams.push(t("ams", (i % 2) * 2, Math.floor(i / 2), 2, { unit: i + 1 }));
-    if (count <= 4) ams.push(t("slots", 0, 2, 4));
+    const amsRows = Math.ceil(count / 2);
     return [
       { id: pid, name: d.name || id, group: pid, printer: id, tiles: tiles },
-      { id: pid + "_ams", name: (d.name || id) + " AMS", group: pid, printer: id, tiles: ams },
+      {
+        id: pid + "_ams",
+        name: (d.name || id) + " AMS",
+        group: pid,
+        printer: id,
+        layouts: { landscape: { cols: 4, rows: amsRows } },
+        tiles: ams,
+      },
     ];
   }
   function clockRow(t, i) {
