@@ -66,11 +66,14 @@ void discardJob() {
   portEXIT_CRITICAL(&s_jobMux);
 }
 
-// The worker has an internal-RAM stack: flash reads disable the PSRAM cache.
+// LittleFS reads disable the PSRAM cache, so they need an internal stack (wallRunWorker).
 class WallReader {
  public:
   explicit WallReader(const char* path, bool legacy = false)
-      : file_((legacy ? LittleFS : wallFs()).open(path, "r")) {}
+      : file_((legacy ? LittleFS : wallFs()).open(path, "r")) {
+    // Over 4 KB, so malloc puts the stdio buffer in PSRAM instead of internal RAM.
+    if (file_) file_.setBufferSize(8192);
+  }
   explicit operator bool() const { return (bool)file_; }
   size_t size() { return file_.size(); }
   size_t position() { return file_.position(); }
@@ -332,8 +335,7 @@ bool prepareImage(WallJob& job) {
   return true;
 }
 
-// One task per job, so its internal stack is only held while a picture loads.
-void wallTask(void*) {
+void wallJob() {
   portENTER_CRITICAL(&s_jobMux);
   WallJob job = s_job;
   portEXIT_CRITICAL(&s_jobMux);
@@ -342,8 +344,38 @@ void wallTask(void*) {
   s_job = job;
   s_jobState = JOB_READY;
   portEXIT_CRITICAL(&s_jobMux);
+}
+
+QueueHandle_t s_sdJobs = nullptr;
+
+void sdWorker(void*) {
+  void (*job)();
+  for (;;)
+    if (xQueueReceive(s_sdJobs, &job, portMAX_DELAY) == pdTRUE) job();
+}
+
+void flashWorker(void* job) {
+  ((void (*)())job)();
   vTaskDelete(nullptr);
 }
+
+}  // namespace
+
+bool wallRunWorker(void (*job)(), bool onSd, const char* name) {
+  if (!onSd) return xTaskCreatePinnedToCore(flashWorker, name, 6144, (void*)job, 1, nullptr, 0) == pdPASS;
+  if (!s_sdJobs) {
+    s_sdJobs = xQueueCreate(4, sizeof(job));
+    if (!s_sdJobs) return false;
+    if (xTaskCreatePinnedToCoreWithCaps(sdWorker, "deck_pics", 6144, nullptr, 1, nullptr, 0, MALLOC_CAP_SPIRAM) != pdPASS) {
+      vQueueDelete(s_sdJobs);
+      s_sdJobs = nullptr;
+      return false;
+    }
+  }
+  return xQueueSend(s_sdJobs, &job, 0) == pdTRUE;
+}
+
+namespace {
 
 void installImage(WallJob& job) {
   lv_image_cache_drop(&s_sharpDsc);
@@ -645,7 +677,7 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch) {
   s_job = job;
   s_jobState = JOB_RUNNING;
   portEXIT_CRITICAL(&s_jobMux);
-  if (xTaskCreatePinnedToCore(wallTask, "deck_wall", 6144, nullptr, 1, nullptr, 0) != pdPASS) {
+  if (!wallRunWorker(wallJob, wallOnSd() && job.name[0], "deck_wall")) {
     portENTER_CRITICAL(&s_jobMux);
     s_jobState = JOB_IDLE;
     portEXIT_CRITICAL(&s_jobMux);

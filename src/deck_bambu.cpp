@@ -5,7 +5,9 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
+#include <mbedtls/ssl.h>
 #include <algorithm>
+#include <cerrno>
 #include <new>
 #include "tls_psram.h"
 
@@ -50,12 +52,51 @@ bool current(int index, uint32_t generation) {
   return s_slots[index].powered && s_slots[index].generation == generation;
 }
 
+// Keeps the mbedTLS code (or errno for a failed write) that the library only
+// logs when it drops a session. available() mirrors the library's own check.
+class TlsClient : public WiFiClientSecure {
+ public:
+  int code = 0, sockErr = 0;
+  int available() override {
+    if (!_connected) return WiFiClientSecure::available();
+    const int peeked = sslclient->peek_buf >= 0;
+    const int ret = mbedtls_ssl_read(&sslclient->ssl_ctx, nullptr, 0);
+    if (ret < 0 && ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+      note(ret);
+      stop();
+      return peeked;
+    }
+    return (int)mbedtls_ssl_get_bytes_avail(&sslclient->ssl_ctx) + peeked;
+  }
+  int read(uint8_t* buf, size_t size) override {
+    const int res = WiFiClientSecure::read(buf, size);
+    if (res < 0 && res != -1) note(res);
+    return res;
+  }
+  size_t write(const uint8_t* buf, size_t size) override {
+    errno = 0;
+    const size_t sent = WiFiClientSecure::write(buf, size);
+    if (size && !sent && !_connected && !code) sockErr = errno;
+    return sent;
+  }
+  int read() override { return WiFiClientSecure::read(); }
+  size_t write(uint8_t b) override { return write(&b, 1); }
+  void clear() { code = sockErr = 0; }
+
+ private:
+  void note(int ret) {
+    if (code) return;
+    code = ret;
+    sockErr = errno;
+  }
+};
+
 // Assemble large reports without making PubSubClient wait for their next fragment.
 // Only small control packets pass through its internal buffer.
 class MqttRxClient : public Client {
  public:
   using Handler = void (*)(void*, const char*, const uint8_t*, size_t);
-  MqttRxClient(WiFiClientSecure& tls, int index, uint32_t generation)
+  MqttRxClient(TlsClient& tls, int index, uint32_t generation)
       : _tls(tls), _index(index), _generation(generation) {}
   ~MqttRxClient() { heap_caps_free(_packet); }
   bool begin(Handler handler, void* context) {
@@ -67,11 +108,13 @@ class MqttRxClient : public Client {
   int connect(IPAddress ip, uint16_t port) override {
     reset();
     error = nullptr;
+    _tls.clear();
     return current(_index, _generation) ? _tls.connect(ip, port, 3000) : 0;
   }
   int connect(const char* host, uint16_t port) override {
     reset();
     error = nullptr;
+    _tls.clear();
     return current(_index, _generation) ? _tls.connect(host, port, 3000) : 0;
   }
   size_t write(uint8_t b) override { return write(&b, 1); }
@@ -175,7 +218,7 @@ class MqttRxClient : public Client {
     _headerLen = 0;
     _body = false;
   }
-  WiFiClientSecure& _tls;
+  TlsClient& _tls;
   int _index;
   uint32_t _generation;
   Handler _handler = nullptr;
@@ -195,7 +238,7 @@ struct Session {
   PrinterConn conn;
   int index;
   uint32_t generation;
-  WiFiClientSecure tls;
+  TlsClient tls;
   MqttRxClient io;
   PubSubClient mqtt;
   PrinterState state{}, snapshot{};
@@ -499,7 +542,13 @@ bool sendLight(Session& c, const char* node, bool on) {
 }
 
 void failed(Session& c, const char* error) {
+  char text[sizeof(c.state.err)];
+  if (c.tls.code) snprintf(text, sizeof(text), "%s (TLS -0x%04X)", error, -c.tls.code);
+  else if (c.tls.sockErr) snprintf(text, sizeof(text), "%s (errno %d)", error, c.tls.sockErr);
+  else strlcpy(text, error, sizeof(text));
+  error = text;
   c.io.stop();
+  c.tls.clear();
   c.connected = false;
   c.nextTry = millis() + c.backoff;
   c.backoff = std::min(c.backoff * 2, (uint32_t)60000);
@@ -728,6 +777,11 @@ bool printerPowered(const String& id) {
   Lock lock;
   for (const auto& slot : s_slots) if (id.length() && slot.conn.id == id) return slot.powered;
   return false;
+}
+
+bool printersBusy() {
+  Lock lock;
+  return s_task != nullptr;
 }
 
 bool printerRead(const String& id, PrinterState& out) {

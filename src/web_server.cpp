@@ -1690,7 +1690,7 @@ static void handleWallsShow() {
 }
 
 static void handleDailyRun() {
-  if (!deck::dailyStart()) sendJsonMessage(409, false, "already fetching, offline, or waiting for clock sync");
+  if (!deck::dailyStart()) sendJsonMessage(409, false, "already fetching, offline, a printer is on, or waiting for clock sync");
   else sendJsonMessage(200, true, "Fetching daily pictures.");
 }
 

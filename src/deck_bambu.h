@@ -90,6 +90,8 @@ void printersSet(const std::vector<PrinterConn>& list);
 // every buffer and the state of that printer.
 void printerPower(const String& id, bool on);
 bool printerPowered(const String& id);
+// True while any printer session (and its internal RAM) may be open.
+bool printersBusy();
 // Copy of a printer's state; false when the id is unknown or not powered.
 bool printerRead(const String& id, PrinterState& out);
 // Moves whenever any printer's state or link changes.
