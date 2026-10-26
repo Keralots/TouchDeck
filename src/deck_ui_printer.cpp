@@ -402,6 +402,13 @@ void prnHeroFill(TileRt& r) {
   const int pad = lv_obj_get_style_pad_left(r.obj, LV_PART_MAIN);
   const int rad = lv_obj_get_style_radius(r.obj, LV_PART_MAIN);
   const int fw = (int)lroundf(w * r.frac);
+  // The percent takes the fill's colour until the fill reaches under it.
+  lv_area_t tile, pct;
+  lv_obj_get_coords(r.obj, &tile);
+  lv_obj_get_coords(r.px[2], &pct);
+  const bool under = pct.x2 > pct.x1 && tile.x1 + fw >= pct.x1 - 4;
+  const lv_color_t ink = under ? lv_color_hex(C_TEXT) : lv_obj_get_style_bg_color(r.chip, LV_PART_MAIN);
+  if (!lv_color_eq(lv_obj_get_style_text_color(r.px[2], LV_PART_MAIN), ink)) lv_obj_set_style_text_color(r.px[2], ink, 0);
   showObj(r.chip, fw > 0);
   showObj(r.icon, fw > rad && fw < w && h > 2 * rad);
   if (fw <= 0) return;
@@ -564,7 +571,7 @@ bool prnInJob(const PrinterState& s, uint8_t unit, uint8_t slot) {
   return false;
 }
 
-// Hero fill level and colour; the percent label takes the same colour.
+// Hero fill level and colour.
 void prnHeroSet(TileRt& r, int pct, uint32_t color) {
   const float frac = constrain(pct, 0, 100) / 100.0f;
   const lv_color_t c = lv_color_hex(color);
@@ -573,7 +580,6 @@ void prnHeroSet(TileRt& r, int pct, uint32_t color) {
   lv_obj_set_style_bg_color(r.chip, c, 0);
   lv_obj_set_style_bg_color(r.icon, lv_color_lighten(c, LV_OPA_50), 0);
   lv_obj_set_style_shadow_color(r.icon, c, 0);
-  lv_obj_set_style_text_color(r.px[2], c, 0);
   prnHeroFill(r);
 }
 
