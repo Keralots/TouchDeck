@@ -279,6 +279,7 @@ struct PickRow {
 
 // deck_ui_bind.cpp
 extern uint32_t s_prnSeen;
+extern uint32_t s_prnGraceAt;
 extern bool s_prnRebuild;
 extern String s_keepPage;
 extern std::vector<std::pair<String, String>> s_whenStates;

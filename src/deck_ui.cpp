@@ -670,7 +670,9 @@ void printerSync() {
     }
   }
   const uint32_t v = printersVersion();
-  if (v == s_prnSeen) return;
+  const bool graceOver = s_prnGraceAt && (int32_t)(millis() - s_prnGraceAt) >= 0;
+  if (v == s_prnSeen && !graceOver) return;
+  if (graceOver) s_prnGraceAt = 0;
   s_prnSeen = v;
   readPrinters();
   for (TileRt& r : s_tiles) applyPrinterToTile(r);

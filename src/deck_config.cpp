@@ -511,10 +511,13 @@ void deckConfigText(String& out) {
   if (mountFs() && LittleFS.exists(CONFIG_PATH)) {
     File f = LittleFS.open(CONFIG_PATH, "r");
     if (f) {
+      f.setBufferSize(8192);  // over 4 KB: malloc puts it in PSRAM
       out = f.readString();
       f.close();
-      DeckConfig probe;
-      if (deckConfigParse(out.c_str(), out.length(), probe, nullptr)) return;
+      // Stored files passed deckConfigParse already; only catch a damaged one.
+      // A full parse here took ~14 KB of internal RAM in small Strings.
+      JsonDocument doc(psramJson());
+      if (!deserializeJson(doc, out) && doc["pages"].is<JsonArrayConst>()) return;
     }
   }
   out = FPSTR(kDefaultDeck);
