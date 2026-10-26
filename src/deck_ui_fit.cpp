@@ -391,8 +391,9 @@ void layoutRow(TileRt& r, const lv_font_t* f, int unitW) {
     setWidth(r.name, LV_MAX(0, r.valW - textW(lv_label_get_text(r.sub), f) - unitW - 8));
     return;
   }
-  const int x = rowNameW(r) + 10;
-  setWidth(r.name, x - 10);
+  const int nameW = rowNameW(r);
+  const int x = nameW ? nameW + 10 : 0;
+  setWidth(r.name, nameW);
   setWidth(r.viz, w);
   if (lv_obj_get_style_x(r.viz, LV_PART_MAIN) != x) lv_obj_align(r.viz, LV_ALIGN_LEFT_MID, x, 0);
 }

@@ -362,7 +362,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
 
   // Fonts and places come from fitTile once the tile has its size.
   lv_obj_t* name = lv_label_create(t);
-  lv_label_set_text(name, tileLabel(def).c_str());
+  lv_label_set_text(name, def.noName ? "" : tileLabel(def).c_str());
   lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
   lv_obj_t* sub = lv_label_create(t);
   lv_label_set_long_mode(sub, LV_LABEL_LONG_MODE_DOTS);

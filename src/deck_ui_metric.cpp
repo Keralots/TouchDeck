@@ -331,7 +331,7 @@ void makeMetricContent(TileRt& r, lv_obj_t* t) {
   if (!sensor) lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);  // read-only
 
   r.name = lv_label_create(t);
-  lv_label_set_text(r.name, d.label.length() ? d.label.c_str() : sensor ? tileLabel(d).c_str() : "");
+  lv_label_set_text(r.name, d.label.length() ? d.label.c_str() : sensor && !d.noName ? tileLabel(d).c_str() : "");
   // On glass the accent alone is hard to read: lift it toward white.
   const lv_color_t nameCol = lv_color_hex(accent);
   lv_obj_set_style_text_color(r.name, s_theme == THEME_GLASS ? lv_color_mix(lv_color_white(), nameCol, 110) : nameCol, 0);

@@ -484,7 +484,7 @@ void applyHaToTile(TileRt& r, bool force) {
   if (d.type == TILE_TOGGLE) setTileOn(r, on);
   if (r.icon) r.iconCp = showIcon(r.icon, d, &e, on, r.iconPx, r.iconCp);
   lv_obj_set_style_opa(r.obj, avail ? LV_OPA_COVER : LV_OPA_50, 0);
-  if (!d.label.length() && e.name.length() && strcmp(lv_label_get_text(r.name), e.name.c_str())) {
+  if (!d.label.length() && !d.noName && e.name.length() && strcmp(lv_label_get_text(r.name), e.name.c_str())) {
     lv_label_set_text(r.name, e.name.c_str());
     fitNameText(r);
   }
