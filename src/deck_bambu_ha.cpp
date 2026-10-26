@@ -14,7 +14,7 @@ constexpr uint32_t RETRY_MS = 30000;  // a failed lookup is tried again after th
 enum Field : uint8_t {
   F_STATUS, F_STAGE, F_PROGRESS, F_REMAIN, F_LAYER, F_LAYERS, F_TASK, F_SPEED,
   F_NOZZLE, F_NOZZLE_T, F_LNOZ, F_LNOZ_T, F_RNOZ, F_RNOZ_T, F_BED, F_BED_T, F_CHAMBER,
-  F_ONLINE, F_LIGHT, F_WEIGHT,
+  F_ONLINE, F_LIGHT, F_WEIGHT, F_SIDE,
   F_HUM, F_ATEMP, F_DRY, F_TRAY,  // per AMS unit
   F_EXT,
 };
@@ -35,6 +35,7 @@ const KeyField kPrinterKeys[] = {
     {"bed_temp", "sensor", F_BED},              {"target_bed_temp", "sensor", F_BED_T},
     {"chamber_temp", "sensor", F_CHAMBER},      {"online", "binary_sensor", F_ONLINE},
     {"chamber_light", "light", F_LIGHT},        {"print_weight", "sensor", F_WEIGHT},
+    {"active_nozzle", "sensor", F_SIDE},
 };
 const KeyField kAmsKeys[] = {
     {"humidity", "sensor", F_HUM},
@@ -105,6 +106,10 @@ struct Printer {
   bool extActive = false;
   bool online = false;
   float actTemp = NAN, actTarget = NAN;
+  int8_t side = -1;  // active_nozzle entity, -1 = absent or unknown
+  bool jobMap = false;  // subtask_name's ams_mapping fills s.map, else print_weight does
+  uint8_t weightCount = 0;
+  uint16_t weight[PRN_MAP_MAX];
 };
 
 Printer s_prn[PRN_MAX];
@@ -147,6 +152,9 @@ void resetState(Printer& p) {
   p.extActive = false;
   p.online = false;
   p.actTemp = p.actTarget = NAN;
+  p.side = -1;
+  p.jobMap = false;
+  p.weightCount = 0;
 }
 
 void freeState(Printer& p) {
@@ -347,7 +355,7 @@ void activeTray(Printer& p) {
       if (p.trayActive[u][t]) { s.activeUnit = u; s.activeSlot = t; return; }
 }
 
-// The integration has no active-nozzle entity: the active nozzle is the one
+// Integrations without the active_nozzle entity: the active nozzle is the one
 // whose target (else temperature) the plain nozzle sensors repeat.
 void activeNozzle(Printer& p) {
   PrinterState& s = *p.st;
@@ -356,6 +364,7 @@ void activeNozzle(Printer& p) {
     s.nozzleTarget[0] = p.actTarget;
     return;
   }
+  if (p.side >= 0) { s.activeNozzle = p.side; return; }
   auto same = [](float a, float b) { return isfinite(a) && isfinite(b) && fabsf(a - b) < 0.5f; };
   const bool l = same(p.actTarget, s.nozzleTarget[1]), r = same(p.actTarget, s.nozzleTarget[0]);
   if (l != r) { s.activeNozzle = l ? 1 : 0; return; }
@@ -363,8 +372,15 @@ void activeNozzle(Printer& p) {
   if (lt != rt) s.activeNozzle = lt ? 1 : 0;
 }
 
+void showWeightMap(Printer& p) {
+  if (p.jobMap) return;
+  p.st->mapCount = p.weightCount;
+  memcpy(p.st->map, p.weight, p.weightCount * sizeof(p.weight[0]));
+}
+
 // print_weight attributes name the AMS slots the job uses ("AMS 1 Tray 2").
-void weightMap(PrinterState& s, JsonObjectConst a, bool full, JsonArrayConst removed) {
+// Fallback for integrations without subtask_name's ams_mapping.
+void weightMap(Printer& p, JsonObjectConst a, bool full, JsonArrayConst removed) {
   auto code = [](const char* k, uint16_t& out) {
     int unit, tray;
     if (sscanf(k, "AMS %d Tray %d", &unit, &tray) != 2 || unit < 1 || tray < 1) return false;
@@ -372,10 +388,10 @@ void weightMap(PrinterState& s, JsonObjectConst a, bool full, JsonArrayConst rem
     return true;
   };
   auto drop = [&](uint16_t c) {
-    for (uint8_t i = 0; i < s.mapCount; i++)
-      if (s.map[i] == c) { memmove(&s.map[i], &s.map[i + 1], (s.mapCount - i - 1) * sizeof(s.map[0])); s.mapCount--; return; }
+    for (uint8_t i = 0; i < p.weightCount; i++)
+      if (p.weight[i] == c) { memmove(&p.weight[i], &p.weight[i + 1], (p.weightCount - i - 1) * sizeof(p.weight[0])); p.weightCount--; return; }
   };
-  if (full) s.mapCount = 0;
+  if (full) p.weightCount = 0;
   for (JsonVariantConst k : removed) {
     uint16_t c;
     if (code(k | "", c)) drop(c);
@@ -384,8 +400,31 @@ void weightMap(PrinterState& s, JsonObjectConst a, bool full, JsonArrayConst rem
     uint16_t c;
     if (!code(kv.key().c_str(), c)) continue;
     drop(c);
-    if (kv.value().as<float>() > 0 && s.mapCount < PRN_MAP_MAX) s.map[s.mapCount++] = c;
+    if (kv.value().as<float>() > 0 && p.weightCount < PRN_MAP_MAX) p.weight[p.weightCount++] = c;
   }
+  showWeightMap(p);
+}
+
+// ams_mapping: slicer order, {"ams": unit id, "tray": 0-3} or null. External
+// spools (ams 254/255) have no AMS slot to mark and are skipped.
+void jobMap(Printer& p, JsonObjectConst a, bool full, JsonArrayConst removed) {
+  PrinterState& s = *p.st;
+  JsonVariantConst m = a.isNull() ? JsonVariantConst() : a["ams_mapping"];
+  if (m.is<JsonArrayConst>()) {
+    s.mapCount = 0;
+    for (JsonVariantConst e : m.as<JsonArrayConst>()) {
+      const int unit = e["ams"] | -1, tray = e["tray"] | -1;
+      if (!((unit >= 0 && unit <= 3) || (unit >= 128 && unit <= 135)) || tray < 0 || tray >= PRN_AMS_SLOTS) continue;
+      if (s.mapCount < PRN_MAP_MAX) s.map[s.mapCount++] = (uint16_t)((unit << 8) | tray);
+    }
+    p.jobMap = s.mapCount > 0;  // [] = not known
+  } else {
+    bool gone = full;
+    for (JsonVariantConst k : removed) gone |= !strcmp(k | "", "ams_mapping");
+    if (!gone) return;
+    p.jobMap = false;
+  }
+  showWeightMap(p);
 }
 
 void apply(Printer& p, Bind& b, JsonObjectConst ev, bool full) {
@@ -429,7 +468,10 @@ void apply(Printer& p, Bind& b, JsonObjectConst ev, bool full) {
     case F_REMAIN: if (st) s.remainingMin = isfinite(v) && v > 0 ? (uint16_t)lroundf(v * b.scale) : 0; break;
     case F_LAYER: if (st) s.layer = isfinite(v) && v > 0 ? (uint16_t)v : 0; break;
     case F_LAYERS: if (st) s.totalLayers = isfinite(v) && v > 0 ? (uint16_t)v : 0; break;
-    case F_TASK: if (st) strlcpy(s.job, unusable(st) ? "" : st, sizeof(s.job)); break;
+    case F_TASK:
+      if (st) strlcpy(s.job, unusable(st) ? "" : st, sizeof(s.job));
+      jobMap(p, a, full, removed);
+      break;
     case F_SPEED:
       if (!st) break;
       s.speedLevel = !strcmp(st, "silent") ? 1 : !strcmp(st, "standard") ? 2 : !strcmp(st, "sport") ? 3
@@ -451,7 +493,12 @@ void apply(Printer& p, Bind& b, JsonObjectConst ev, bool full) {
       strlcpy(s.err, p.online ? "" : "Printer offline", sizeof(s.err));
       break;
     case F_LIGHT: if (st) s.light = !strcmp(st, "on") ? 1 : !strcmp(st, "off") ? 0 : -1; break;
-    case F_WEIGHT: weightMap(s, a, full, removed); break;
+    case F_WEIGHT: weightMap(p, a, full, removed); break;
+    case F_SIDE:
+      if (!st) break;
+      p.side = !strcmp(st, "left") ? 1 : !strcmp(st, "right") ? 0 : -1;
+      activeNozzle(p);
+      break;
     case F_HUM: if (st) s.ams[b.unit].humidity = isfinite(v) && v >= 0 && v <= 100 ? (uint8_t)v : 255; break;
     case F_ATEMP: if (st) s.ams[b.unit].temp = v; break;
     case F_DRY: if (st) s.ams[b.unit].dryRemainMin = isfinite(v) && v > 0 ? (uint16_t)lroundf(v * b.scale) : 0; break;
