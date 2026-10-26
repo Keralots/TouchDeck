@@ -652,7 +652,7 @@ void prnFxFit(TileRt& r, int size) {
   r.pfx->dirty = true;
 }
 
-bool filamentTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool frame, bool spoolFrame) {
+bool filamentTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool frame) {
   // The material drops to the small font when the head column leaves too little room.
   const int nw = lv_obj_get_width(r.sub);
   if (nw > 0 && (nw != f.nameW || f.nameDirty)) {
@@ -709,8 +709,7 @@ bool filamentTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool f
   f.phase = fmodf(f.phase + wave * dt, 1000.0f);
   bool drew = false;
   const int n = lv_obj_get_width(f.spool);
-  // The spool turns slowly: half the head's rate, unless the winding moves.
-  if (((spin != 0 && (spoolFrame || f.swapMs)) || f.level != lv || f.dirty) && fxBuf(f.sbuf, n, n)) {
+  if ((spin != 0 || f.level != lv || f.dirty) && fxBuf(f.sbuf, n, n)) {
     spoolPaint(f, col);
     lv_obj_invalidate(f.spool);
     drew = true;
@@ -726,7 +725,7 @@ bool filamentTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool f
 
 // Steps every printer effect on the shown page; true when something was drawn.
 // Temperature tiles paint in turn, each at about 4 fps (their bar light at 15);
-// the print head at about 15 fps, the spool at 7.5.
+// the spool and print head at about 15 fps.
 bool prnFxTick(uint32_t now, bool lit) {
   static bool s_on = true;
   static uint32_t s_frame = 0;
@@ -742,7 +741,7 @@ bool prnFxTick(uint32_t now, bool lit) {
       if (on != s_on) tempShow(r, f);  // cooling colours follow the switch
       drew |= tempTick(r, f, now, shown, on, (int)(n % 8) == slot * 2, n % 2 == 0);
       if (f.over) slot = (slot + 1) % 3;
-    } else drew |= filamentTick(r, f, now, shown, on, n % 2 == 1, n % 4 == 1);
+    } else drew |= filamentTick(r, f, now, shown, on, n % 2 == 1);
   }
   s_on = on;
   return drew;
