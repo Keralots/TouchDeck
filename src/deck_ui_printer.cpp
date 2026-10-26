@@ -731,6 +731,7 @@ uint32_t prnTileKey(const TileRt& r, const PrinterState* s, bool online) {
       k.add((int32_t)s->mapCount);
       k.add(s->map, s->mapCount * sizeof(s->map[0]));
       if (d.show == PS_AMS) k.add((int32_t)lv_obj_get_height(r.detail));
+      if (d.show == PS_FILAMENT) k.add((int32_t)prnPrinting(s));  // spool and head move only then
       break;
   }
   return k.h ? k.h : 1;
@@ -1024,7 +1025,8 @@ void applyPrinterToTile(TileRt& r) {
       }
       for (int i = shown; i < 3; i++) showObj(r.px[i], false);
       const bool feeding = t && (!strcmp(s->gcodeState, "RUNNING") || !strcmp(s->gcodeState, "PAUSE"));
-      prnFilamentSet(r, t, t ? t->rgb : 0, t && t->alpha < 128, feeding, t && prnPrinting(s));
+      prnFilamentSet(r, t, t ? t->rgb : 0, t && t->alpha < 128, feeding, t && prnPrinting(s),
+                     t ? t->type : online ? "Not feeding" : "--");
       break;
     }
     case PS_LAYER: {

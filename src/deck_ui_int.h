@@ -405,7 +405,8 @@ void prnFxMake(TileRt& r, lv_obj_t* t);
 void prnFxFree(PrnFx* f);
 void prnFxFit(TileRt& r, int size);
 void prnTempSet(TileRt& r, float now, float target, float scale, uint32_t color);
-void prnFilamentSet(TileRt& r, bool has, uint32_t rgb, bool clear, bool feeding, bool printing);
+void prnFilamentSet(TileRt& r, bool has, uint32_t rgb, bool clear, bool feeding, bool printing,
+                    const char* name);
 bool prnFxTick(uint32_t now, bool lit);
 
 // deck_ui_metric.cpp

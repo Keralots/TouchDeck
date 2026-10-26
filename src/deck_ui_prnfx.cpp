@@ -11,7 +11,9 @@ namespace deckui {
 
 enum : uint8_t { TS_IDLE, TS_HEAT, TS_HOLD, TS_COOL };
 
-constexpr int COUNT_FRAMES = 24;        // a jump counts out in about 0.8 s
+// Each counting step covers 1/24 of what is left, at least a degree: a few
+// degrees take a fraction of a second, a 200 degree jump about 2 s.
+constexpr int COUNT_FRAMES = 24;
 constexpr uint32_t REACH_MS = 900;      // sheen when a target is reached
 constexpr int HEAD_W = 16;              // print head column
 constexpr int HEAD_TIP = 17;            // nozzle tip, rows from the column top
@@ -30,7 +32,8 @@ struct PrnFx {
   int shown;               // counted reading, INT_MIN = none
   uint32_t color;
   uint8_t state;
-  uint32_t reachMs;
+  uint32_t reachMs;        // target reached at, while reach
+  bool reach;
   float glow, haze, frost;
   bool painted;
   // Filament
@@ -44,9 +47,10 @@ struct PrnFx {
   uint32_t sbaseRgb;
   bool sbaseFine;
   float sbaseLevel;
-  bool has, clear, feeding, printing, dirty, nameDirty;
+  bool has, clear, feeding, printing, dirty, nameDirty, swap;
   int nameW;               // material label width its font was picked for
-  uint32_t rgb, oldRgb, swapMs;
+  char name[32];           // material as set: the label holds it cut with dots
+  uint32_t rgb, oldRgb, swapMs;  // swapMs: the change started, while swap
   float angle, level, flow, phase;
   uint32_t lastMs;
 };
@@ -200,9 +204,12 @@ void tempShow(TileRt& r, const PrnFx& f) {
   if (f.shown == INT_MIN) strcpy(b, "--");
   else snprintf(b, sizeof(b), "%d\xC2\xB0", f.shown);
   if (strcmp(lv_label_get_text(r.sub), b)) lv_label_set_text(r.sub, b);
+  // Style setters redraw even when nothing changes; counting calls this every step.
   const bool cold = dispSettings.printerFx && f.state == TS_COOL && f.over;
-  lv_obj_set_style_text_color(r.sub, lv_color_hex(cold ? 0xBFE3FF : f.color), 0);
-  lv_obj_set_style_bg_color(r.viz, lv_color_hex(cold ? 0x8CC8FF : f.color), LV_PART_INDICATOR);
+  const lv_color_t ink = lv_color_hex(cold ? 0xBFE3FF : f.color), bar = lv_color_hex(cold ? 0x8CC8FF : f.color);
+  if (!lv_color_eq(lv_obj_get_style_text_color(r.sub, LV_PART_MAIN), ink)) lv_obj_set_style_text_color(r.sub, ink, 0);
+  if (!lv_color_eq(lv_obj_get_style_bg_color(r.viz, LV_PART_INDICATOR), bar))
+    lv_obj_set_style_bg_color(r.viz, bar, LV_PART_INDICATOR);
   const int v = f.shown == INT_MIN ? 0 : (int)constrain(f.shown * 100.0f / f.scale, 0.0f, 100.0f);
   lv_bar_set_value(r.viz, v, LV_ANIM_OFF);
 }
@@ -211,6 +218,8 @@ void tempShow(TileRt& r, const PrnFx& f) {
 void prnTempSet(TileRt& r, float now, float target, float scale, uint32_t color) {
   PrnFx* f = r.pfx;
   if (!f) return;
+  if (!(now > -100 && now < 1000)) now = NAN;  // garbage would overflow the counting
+  if (!(target > -100 && target < 1000)) target = NAN;
   f->goal = now;
   f->target = target;
   f->scale = scale;
@@ -226,7 +235,10 @@ void prnTempSet(TileRt& r, float now, float target, float scale, uint32_t color)
          : now > floor                  ? TS_COOL
                                         : TS_IDLE;
   }
-  if (f->state == TS_HEAT && st == TS_HOLD) f->reachMs = millis() | 1;
+  if (f->state == TS_HEAT && st == TS_HOLD) {
+    f->reachMs = millis();
+    f->reach = true;
+  }
   f->state = st;
   tempShow(r, *f);
 }
@@ -260,7 +272,15 @@ void tempTables(PrnFx& f, int w, int h) {
 
 // Heat (glow and haze share one warm colour) or frost, then the sheen; the
 // two states never overlap, so a pixel is one colour at the combined alpha.
-void tempPaint(TileRt& r, PrnFx& f, uint32_t now) {
+// Mockup sparkle spots on a 110 x 95 tile, scaled.
+void sparkAt(int i, int w, int h, float& sx, float& sy) {
+  static const float kSpark[5][2] = {{18, 20}, {70, 14}, {44, 30}, {88, 36}, {28, 44}};
+  sx = kSpark[i][0] * w / 110;
+  sy = kSpark[i][1] * h / 95;
+}
+
+// Paints the rect x0..x1, y0..y1 (exclusive ends) of the overlay.
+void tempPaint(TileRt& r, PrnFx& f, uint32_t now, int x0, int y0, int x1, int y1) {
   lv_draw_buf_t* b = f.buf;
   const int w = b->header.w, h = b->header.h;
   const float rad = (float)lv_obj_get_style_radius(r.obj, LV_PART_MAIN);
@@ -272,14 +292,14 @@ void tempPaint(TileRt& r, PrnFx& f, uint32_t now) {
   const float hz = f.haze * 0.14f;
   const float hph = fmodf(now * (16.0f / 2000), 16.0f);
   float sw = -9, swA = 0;
-  if (f.reachMs) {
-    const float t = (float)(now - f.reachMs) / REACH_MS;
+  if (f.reach) {
+    const float t = clamp1((float)(int32_t)(now - f.reachMs) / REACH_MS);
     const float e = 1 - (1 - t) * (1 - t) * (1 - t);
     sw = 1.3f - 1.6f * e;
     swA = 0.42f * (1 - t);
   }
   const float du = 0.966f / w;
-  for (int y = 0; y < h; y++) {
+  for (int y = y0; y < y1; y++) {
     uint8_t* row = b->data + y * b->header.stride;
     const float yb = (h - y - 0.5f) / h;  // 0 at the bottom
     const float mask = yb < 0.45f ? 1 - yb / 0.45f * 0.4f : yb < 0.85f ? 0.6f * (1 - (yb - 0.45f) / 0.4f) : 0;
@@ -287,13 +307,13 @@ void tempPaint(TileRt& r, PrnFx& f, uint32_t now) {
     const int ha = cov255(hz * mask * clamp1(1 - fabsf(v - 8) / 1.6f));
     const bool glow = gk && y >= f.glowRow, frost = fk && y <= f.frostRow;
     if (!glow && !ha && !frost && swA <= 0) {
-      memset(row, 0, w * 4);
+      memset(row + x0 * 4, 0, (x1 - x0) * 4);
       continue;
     }
     const bool edgeRow = y < irad || y >= h - irad;
-    float u = (-w / 2.0f * 0.966f + (y - h / 2.0f) * 0.259f) / w + 0.5f;
+    float u = ((x0 - w / 2.0f) * 0.966f + (y - h / 2.0f) * 0.259f) / w + 0.5f;
     const int i0 = y * w;
-    for (int x = 0; x < w; x++, u += du) {
+    for (int x = x0; x < x1; x++, u += du) {
       uint8_t* p = row + x * 4;
       const int ga = glow ? (G[i0 + x] * gk) >> 8 : 0;
       const int wa = ga + ha - ((ga * ha) >> 8);
@@ -311,17 +331,17 @@ void tempPaint(TileRt& r, PrnFx& f, uint32_t now) {
       }
     }
   }
-  // Frost sparkles twinkle in turn (mockup spots on a 110 x 95 tile).
+  // Frost sparkles twinkle in turn.
   if (fk <= 0) return;
-  static const float kSpark[5][2] = {{18, 20}, {70, 14}, {44, 30}, {88, 36}, {28, 44}};
   for (int i = 0; i < 5; i++) {
     const float ph = fmodf(now / 2200.0f + i * 0.45f / 2.2f, 1.0f);
     const float s = sinf(ph * 3.1416f);
     const float sa = f.frost * 0.95f * s * s;
     if (sa <= 0.01f) continue;
-    const float sx = kSpark[i][0] * w / 110, sy = kSpark[i][1] * h / 95;
-    for (int y = LV_MAX(0, (int)sy - 4); y <= LV_MIN(h - 1, (int)sy + 4); y++)
-      for (int x = LV_MAX(0, (int)sx - 4); x <= LV_MIN(w - 1, (int)sx + 4); x++) {
+    float sx, sy;
+    sparkAt(i, w, h, sx, sy);
+    for (int y = LV_MAX(y0, (int)sy - 4); y <= LV_MIN(y1 - 1, (int)sy + 4); y++)
+      for (int x = LV_MAX(x0, (int)sx - 4); x <= LV_MIN(x1 - 1, (int)sx + 4); x++) {
         const float dx = x + 0.5f - sx, dy = y + 0.5f - sy, d = sqrtf(dx * dx + dy * dy);
         if (d >= 4) continue;
         uint8_t* p = b->data + y * b->header.stride + x * 4;
@@ -337,7 +357,8 @@ float easeLevel(float v, float to, float dt) {
   return v + (to > v ? dt : -dt);
 }
 
-bool tempTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool frame, bool light) {
+// token: this frame's one temperature repaint, taken by the first tile that needs it.
+bool tempTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool& token, bool light) {
   bool drew = false;
   const float dt = LV_MIN(0.1f, (now - f.lastMs) / 1000.0f);
   f.lastMs = now;
@@ -362,8 +383,8 @@ bool tempTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool frame
   f.glow = easeLevel(f.glow, tg, dt);
   f.haze = easeLevel(f.haze, th, dt);
   f.frost = easeLevel(f.frost, tf, dt);
-  if (f.reachMs && now - f.reachMs >= REACH_MS) f.reachMs = 0;
-  const bool visible = f.glow > 0 || f.haze > 0 || f.frost > 0 || f.reachMs;
+  if (f.reach && (int32_t)(now - f.reachMs) >= (int32_t)REACH_MS) f.reach = false;
+  const bool visible = f.glow > 0 || f.haze > 0 || f.frost > 0 || f.reach;
   setShown(f.over, visible);
   // The bar's light runs over the filled part only.
   const bool heat = shown && f.state == TS_HEAT;
@@ -383,16 +404,34 @@ bool tempTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool frame
   if (!shown || !visible) return drew;
   const int w = lv_obj_get_width(r.obj), h = lv_obj_get_height(r.obj);
   if (!f.buf || (int)f.buf->header.w != w || (int)f.buf->header.h != h) f.painted = false;
-  const bool animate = moving || f.state == TS_HEAT || f.state == TS_COOL || f.reachMs || !f.painted;
-  if (!animate || (!frame && f.painted)) return drew;
+  const bool animate = moving || f.state == TS_HEAT || f.state == TS_COOL || f.reach || !f.painted;
+  if (!animate) return drew;
+  // Settled frost: only the sparkles change, repaint and redraw just their boxes.
+  if (f.state == TS_COOL && !moving && !f.reach && f.painted && f.glow == 0 && f.haze == 0) {
+    if (!light) return drew;
+    lv_area_t o;
+    lv_obj_get_coords(f.over, &o);
+    for (int i = 0; i < 5; i++) {
+      float sx, sy;
+      sparkAt(i, w, h, sx, sy);
+      const int bx0 = LV_MAX(0, (int)sx - 4), by0 = LV_MAX(0, (int)sy - 4);
+      const int bx1 = LV_MIN(w, (int)sx + 5), by1 = LV_MIN(h, (int)sy + 5);
+      tempPaint(r, f, now, bx0, by0, bx1, by1);
+      const lv_area_t a = {o.x1 + bx0, o.y1 + by0, o.x1 + bx1 - 1, o.y1 + by1 - 1};
+      lv_obj_invalidate_area(f.over, &a);
+    }
+    return true;
+  }
+  if (!token && f.painted) return drew;
   if (!fxBuf(f.buf, w, h)) return drew;
   tempTables(f, w, h);
   if (!f.tables) return drew;
   const int pad = lv_obj_get_style_pad_left(r.obj, LV_PART_MAIN);
   lv_obj_set_pos(f.over, -pad, -pad);
   lv_obj_set_size(f.over, w, h);
-  tempPaint(r, f, now);
+  tempPaint(r, f, now, 0, 0, w, h);
   f.painted = true;
+  token = false;
   lv_obj_invalidate(f.over);
   return true;
 }
@@ -629,16 +668,20 @@ void headPaint(PrnFx& f, uint32_t rgb, bool glow) {
 
 // From applyPrinterToTile: the active tray (has), whether a job feeds from it
 // (feeding) and moves (printing). A new colour mid-print plays the change.
-void prnFilamentSet(TileRt& r, bool has, uint32_t rgb, bool clear, bool feeding, bool printing) {
+void prnFilamentSet(TileRt& r, bool has, uint32_t rgb, bool clear, bool feeding, bool printing, const char* name) {
   PrnFx* f = r.pfx;
   if (!f) return;
   const bool change = f->has && has && rgb != f->rgb && feeding && dispSettings.printerFx && r.page == sh.active;
   if (change) {
     f->oldRgb = f->rgb;
-    f->swapMs = millis() | 1;
+    f->swapMs = millis();
+    f->swap = true;
   }
   if (has != f->has || rgb != f->rgb || clear != f->clear) f->dirty = true;
-  f->nameDirty = true;
+  if (strcmp(f->name, name)) {
+    strlcpy(f->name, name, sizeof(f->name));
+    f->nameDirty = true;
+  }
   f->has = has;
   f->rgb = rgb;
   f->clear = clear;
@@ -659,12 +702,12 @@ bool filamentTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool f
     f.nameW = nw;
     f.nameDirty = false;
     const bool tall = lv_obj_get_content_height(r.obj) >= 64;
-    setFont(r.sub, tall && textW(lv_label_get_text(r.sub), &deck_font_20) <= nw ? &deck_font_20 : &deck_font_14);
+    setFont(r.sub, tall && textW(f.name, &deck_font_20) <= nw ? &deck_font_20 : &deck_font_14);
     lv_obj_set_height(r.sub, lineH(lv_obj_get_style_text_font(r.sub, LV_PART_MAIN)));
   }
   setShown(r.chip, !on);
   setShown(f.spool, on);
-  const bool headOn = on && f.has && (f.feeding || f.swapMs);
+  const bool headOn = on && f.has && (f.feeding || f.swap);
   if (headOn == lv_obj_has_flag(f.head, LV_OBJ_FLAG_HIDDEN)) {
     setShown(f.head, headOn);
     lv_obj_set_style_pad_column(r.obj, headOn ? 8 : 12, 0);
@@ -672,21 +715,21 @@ bool filamentTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool f
   }
   if (!on) return false;
   if (!shown) {
-    f.swapMs = 0;
+    f.swap = false;
     f.level = f.has ? 1 : 0;
     f.flow = f.feeding ? 1 : 0;
     f.dirty = true;
     return false;
   }
   // About 15 fps, every frame during a filament change.
-  if (!frame && !f.swapMs && !f.dirty) return false;
+  if (!frame && !f.swap && !f.dirty) return false;
   const float dt = LV_MIN(0.1f, (now - f.lastMs) / 1000.0f);
   f.lastMs = now;
   float spin = f.printing ? 0.55f : 0, levelTo = f.has ? 1 : 0, flowTo = f.feeding ? 1 : 0;
   bool retract = false;
   uint32_t col = f.rgb;
-  if (f.swapMs) {
-    const uint32_t t = now - f.swapMs;
+  if (f.swap) {
+    const uint32_t t = (int32_t)(now - f.swapMs) < 0 ? 0 : now - f.swapMs;
     if (t < SWAP_UNWIND) {
       col = f.oldRgb;
       spin = -2.6f;
@@ -697,7 +740,7 @@ bool filamentTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool f
       spin = 0;
       levelTo = 0;
       flowTo = 0;
-    } else if (t >= SWAP_END) f.swapMs = 0;
+    } else if (t >= SWAP_END) f.swap = false;
   }
   const float lv = f.level, fl = f.flow;
   f.angle = fmodf(f.angle + spin * dt, 6.2832f);
@@ -724,23 +767,29 @@ bool filamentTick(TileRt& r, PrnFx& f, uint32_t now, bool shown, bool on, bool f
 }
 
 // Steps every printer effect on the shown page; true when something was drawn.
-// Temperature tiles paint in turn, each at about 4 fps (their bar light at 15);
-// the spool and print head at about 15 fps.
+// Every other frame one temperature tile repaints, the tiles that need it take
+// turns (one heating tile gets about 15 fps, three about 5 each); the frames
+// between are the spool and print head's (about 15 fps).
 bool prnFxTick(uint32_t now, bool lit) {
   static bool s_on = true;
   static uint32_t s_frame = 0;
+  static size_t s_turn = 0;  // tile index the next temperature turn starts at
   const bool on = dispSettings.printerFx;
   const uint32_t n = s_frame++;
-  int slot = 0;  // temperature tiles take turns, one a frame
+  bool token = n % 2 == 0;
   bool drew = false;
-  for (TileRt& r : s_tiles) {
+  const size_t count = s_tiles.size();
+  for (size_t k = 0; k < count; k++) {
+    const size_t i = (s_turn + k) % count;
+    TileRt& r = s_tiles[i];
     if (r.def->type != TILE_PRINTER || !r.pfx) continue;
     PrnFx& f = *r.pfx;
     const bool shown = lit && r.page == sh.active;
     if (isTempTile(*r.def)) {
       if (on != s_on) tempShow(r, f);  // cooling colours follow the switch
-      drew |= tempTick(r, f, now, shown, on, (int)(n % 8) == slot * 2, n % 2 == 0);
-      if (f.over) slot = (slot + 1) % 3;
+      const bool had = token;
+      drew |= tempTick(r, f, now, shown, on, token, n % 2 == 0);
+      if (had && !token) s_turn = i + 1;
     } else drew |= filamentTick(r, f, now, shown, on, n % 2 == 1);
   }
   s_on = on;
