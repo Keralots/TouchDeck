@@ -107,6 +107,7 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.dailyCount       = 12;
   ds.glassAutoText    = false;
   ds.smoothCharts     = true;
+  ds.printerFx        = true;
   ds.tileFx           = 0;
   ds.fxTouch = ds.fxToggle = ds.fxPage = ds.fxCard = 0;
 }
@@ -181,6 +182,7 @@ void loadSettings() {
   dispSettings.dailyCount = constrain(prefs.getUChar("dcount", 12), 1, DAILY_MAX_COUNT);
   dispSettings.glassAutoText = prefs.getBool("gauto", false);
   dispSettings.smoothCharts = prefs.getBool("smooth", true);
+  dispSettings.printerFx = prefs.getBool("prnfx", true);
   dispSettings.tileFx = min<uint8_t>(prefs.getUChar("tilefx", 0), 5);
   dispSettings.fxTouch = min<uint8_t>(prefs.getUChar("fxtouch", 0), 4);
   dispSettings.fxToggle = min<uint8_t>(prefs.getUChar("fxtoggle", 0), 4);
@@ -272,6 +274,7 @@ void saveSettings() {
   prefs.putUChar("dcount", dispSettings.dailyCount);
   prefs.putBool("gauto", dispSettings.glassAutoText);
   prefs.putBool("smooth", dispSettings.smoothCharts);
+  prefs.putBool("prnfx", dispSettings.printerFx);
   prefs.putUChar("tilefx", dispSettings.tileFx);
   prefs.putUChar("fxtouch", dispSettings.fxTouch);
   prefs.putUChar("fxtoggle", dispSettings.fxToggle);

@@ -405,6 +405,7 @@ void destroyPages(bool keepGlass = false) {
     r.art.reset();
     if (r.pts) lv_free(r.pts);
     sparkFree(r.spark);
+    prnFxFree(r.pfx);
   }
   s_tiles.clear();
   portENTER_CRITICAL(&s_mux);

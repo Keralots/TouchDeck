@@ -111,6 +111,7 @@ struct TileRt {
   int16_t rowH;           // height of one row box
   lv_obj_t* px[4];        // printer tiles: extra labels, swatches
   uint32_t prnKey;        // printer tiles: what the last apply showed, 0 = redraw
+  struct PrnFx* pfx;      // printer tiles: counted reading and animations
   lv_obj_t* fx;           // touch effect running on this tile
   lv_obj_t* halo;         // on/off effect running on this tile
   lv_point_t press;       // last touch on the tile (screen coords), for effects
@@ -398,6 +399,15 @@ void fitPrinter(TileRt& r, int cw, int ch);
 void applyPrinterToTile(TileRt& r);
 void printerTap(TileRt& r);
 void heroTick();
+
+// deck_ui_prnfx.cpp
+void prnFxMake(TileRt& r, lv_obj_t* t);
+void prnFxFree(PrnFx* f);
+void prnFxFit(TileRt& r, int size);
+void prnTempSet(TileRt& r, float now, float target, float scale, uint32_t color);
+void prnFilamentSet(TileRt& r, bool has, uint32_t rgb, bool clear, bool feeding, bool printing,
+                    const char* name);
+bool prnFxTick(uint32_t now, bool lit);
 
 // deck_ui_metric.cpp
 extern uint32_t s_sparkPaintMs;

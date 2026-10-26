@@ -335,6 +335,7 @@
     updateGlassFields();
     updateFxFields();
     setCheck("smoothCharts", c.display.smoothCharts !== false);
+    setCheck("printerFx", c.display.printerFx !== false);
     {
       const nd = $("navDeck");
       if (nd) nd.classList.toggle("hidden", !c.deck);

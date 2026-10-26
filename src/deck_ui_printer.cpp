@@ -388,6 +388,7 @@ void makePrinterContent(TileRt& r, lv_obj_t* t) {
       break;
     }
   }
+  prnFxMake(r, t);
 }
 
 // A label cut with dots must have a fixed height, or it wraps instead.
@@ -527,6 +528,7 @@ void fitPrinter(TileRt& r, int cw, int ch) {
     case PS_FILAMENT: {
       const int c = LV_MIN(44, ch - 8);
       lv_obj_set_size(r.chip, c, c);
+      prnFxFit(r, c);
       showObj(r.px[3], cw >= 180);
       setFont(r.sub, ch >= 64 ? &deck_font_20 : &deck_font_14);
       showObj(r.name, ch >= 56);
@@ -729,6 +731,7 @@ uint32_t prnTileKey(const TileRt& r, const PrinterState* s, bool online) {
       k.add((int32_t)s->mapCount);
       k.add(s->map, s->mapCount * sizeof(s->map[0]));
       if (d.show == PS_AMS) k.add((int32_t)lv_obj_get_height(r.detail));
+      if (d.show == PS_FILAMENT) k.add((int32_t)prnPrinting(s));  // spool and head move only then
       break;
   }
   return k.h ? k.h : 1;
@@ -971,16 +974,20 @@ void applyPrinterToTile(TileRt& r) {
       lv_label_set_text(r.name, label);
       showObj(r.px[0], active);
       const bool heating = online && isfinite(target) && target > 0;
-      if (online && isfinite(now)) snprintf(b, sizeof(b), "%.0f\xC2\xB0", now);
-      else strcpy(b, "--");
-      lv_label_set_text(r.sub, b);
       if (heating) snprintf(b, sizeof(b), "/%.0f", target);
       else b[0] = 0;
       lv_label_set_text(r.unit, b);
       const uint32_t c = heating ? C_PRN_HEAT : C_TEXT;
+      const float scale = heating ? target : d.show == PS_NOZZLE ? 300 : d.show == PS_BED ? 110 : 65;
+      if (r.pfx) {
+        prnTempSet(r, online && isfinite(now) ? now : NAN, heating ? target : NAN, scale, c);
+        break;
+      }
+      if (online && isfinite(now)) snprintf(b, sizeof(b), "%.0f\xC2\xB0", now);
+      else strcpy(b, "--");
+      lv_label_set_text(r.sub, b);
       lv_obj_set_style_text_color(r.sub, lv_color_hex(c), 0);
       lv_obj_set_style_bg_color(r.viz, lv_color_hex(c), LV_PART_INDICATOR);
-      const float scale = heating ? target : d.show == PS_NOZZLE ? 300 : d.show == PS_BED ? 110 : 65;
       lv_bar_set_value(r.viz, online && isfinite(now) ? (int32_t)constrain(now * 100 / scale, 0.0f, 100.0f) : 0, LV_ANIM_OFF);
       break;
     }
@@ -1017,6 +1024,9 @@ void applyPrinterToTile(TileRt& r) {
         showObj(r.px[shown++], true);
       }
       for (int i = shown; i < 3; i++) showObj(r.px[i], false);
+      const bool feeding = t && (!strcmp(s->gcodeState, "RUNNING") || !strcmp(s->gcodeState, "PAUSE"));
+      prnFilamentSet(r, t, t ? t->rgb : 0, t && t->alpha < 128, feeding, t && prnPrinting(s),
+                     t ? t->type : online ? "Not feeding" : "--");
       break;
     }
     case PS_LAYER: {
@@ -1097,6 +1107,10 @@ void heroTick() {
     lv_obj_set_style_translate_y(r.detail, y, 0);
     moved = true;
     s_sparkPaintMs = now;  // like a chart glide: other pages snapshot rarely meanwhile
+  }
+  if (prnFxTick(now, lit)) {
+    moved = true;
+    s_sparkPaintMs = now;
   }
   // Draw the step now, on its grid, not at LVGL's next refresh.
   if (moved) lv_refr_now(nullptr);

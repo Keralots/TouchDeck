@@ -201,6 +201,7 @@ static void handleApiConfig() {
   display["glassOn"] = dispSettings.glassOn;
   display["glassAutoText"] = dispSettings.glassAutoText;
   display["smoothCharts"] = dispSettings.smoothCharts;
+  display["printerFx"] = dispSettings.printerFx;
   display["tileFx"] = dispSettings.tileFx;
   display["fxTouch"] = dispSettings.fxTouch;
   display["fxToggle"] = dispSettings.fxToggle;
@@ -332,6 +333,7 @@ static void handleConfigExport() {
   display["glassOn"] = dispSettings.glassOn;
   display["glassAutoText"] = dispSettings.glassAutoText;
   display["smoothCharts"] = dispSettings.smoothCharts;
+  display["printerFx"] = dispSettings.printerFx;
   display["tileFx"] = dispSettings.tileFx;
   display["fxTouch"] = dispSettings.fxTouch;
   display["fxToggle"] = dispSettings.fxToggle;
@@ -542,6 +544,7 @@ static void handleConfigImport() {
   nextDisplay.glassOn = displayDefaults.glassOn;
   nextDisplay.glassAutoText = displayDefaults.glassAutoText;
   nextDisplay.smoothCharts = displayDefaults.smoothCharts;
+  nextDisplay.printerFx = displayDefaults.printerFx;
   nextDisplay.tileFx = displayDefaults.tileFx;
   nextDisplay.fxTouch = displayDefaults.fxTouch;
   nextDisplay.fxToggle = displayDefaults.fxToggle;
@@ -576,6 +579,7 @@ static void handleConfigImport() {
   if (!display["glassOn"].isNull()) READ_INT(display, "glassOn", 20, 100, nextDisplay.glassOn, uint8_t);
   if (!display["glassAutoText"].isNull()) READ_BOOL(display, "glassAutoText", nextDisplay.glassAutoText);
   if (!display["smoothCharts"].isNull()) READ_BOOL(display, "smoothCharts", nextDisplay.smoothCharts);
+  if (!display["printerFx"].isNull()) READ_BOOL(display, "printerFx", nextDisplay.printerFx);
   if (!display["tileFx"].isNull()) READ_INT(display, "tileFx", 0, 5, nextDisplay.tileFx, uint8_t);
   if (!display["fxTouch"].isNull()) READ_INT(display, "fxTouch", 0, 4, nextDisplay.fxTouch, uint8_t);
   if (!display["fxToggle"].isNull()) READ_INT(display, "fxToggle", 0, 4, nextDisplay.fxToggle, uint8_t);
@@ -978,6 +982,7 @@ static void handleSaveDisplay() {
   dispSettings.warnThresholdPct =
     (uint8_t)clampedArg("warnThreshold", dispSettings.warnThresholdPct, 0, 100);
   dispSettings.smoothCharts = server.hasArg("smoothCharts");
+  dispSettings.printerFx = server.hasArg("printerFx");
   dispSettings.tileFx = (uint8_t)clampedArg("tileFx", dispSettings.tileFx, 0, 5);
   dispSettings.fxTouch = (uint8_t)clampedArg("fxTouch", dispSettings.fxTouch, 0, 4);
   dispSettings.fxToggle = (uint8_t)clampedArg("fxToggle", dispSettings.fxToggle, 0, 4);
