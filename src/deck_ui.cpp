@@ -949,7 +949,10 @@ void deckTick() {
   pcSync(false);
   mediaArtTick();
   pcVolumeTick();
-  if (!systemScreen) sparkTick();
+  if (!systemScreen) {
+    sparkTick();
+    heroTick();
+  }
   syncSwipeZones();
   lv_timer_handler();
   if (!systemScreen) refreshOneSnapshot();

@@ -110,6 +110,7 @@ struct TileRt {
   lv_obj_t* rows;         // HTTP sensor rows: one box per row (label, bar, value)
   int16_t rowH;           // height of one row box
   lv_obj_t* px[4];        // printer tiles: extra labels, swatches
+  uint32_t prnKey;        // printer tiles: what the last apply showed, 0 = redraw
   lv_obj_t* fx;           // touch effect running on this tile
   lv_obj_t* halo;         // on/off effect running on this tile
   lv_point_t press;       // last touch on the tile (screen coords), for effects
@@ -395,6 +396,7 @@ void makePrinterContent(TileRt& r, lv_obj_t* t);
 void fitPrinter(TileRt& r, int cw, int ch);
 void applyPrinterToTile(TileRt& r);
 void printerTap(TileRt& r);
+void heroTick();
 
 // deck_ui_metric.cpp
 extern uint32_t s_sparkPaintMs;
