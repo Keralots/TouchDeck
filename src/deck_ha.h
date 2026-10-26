@@ -15,6 +15,7 @@
 #define DECK_HA_H
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <vector>
 
 namespace deck {
@@ -57,6 +58,32 @@ String haServerVersion();
 
 // Entities the deck shows; (re)subscribed whenever the set changes.
 void haSetEntities(const std::vector<String>& ids);
+
+// Entities another module follows itself: their subscribe_entities events
+// skip the store and go to the hook on the HA task. full = {"s","a"} of a
+// first state, else the diff {"+":{"s","a"},"-":{"a":[...]}}; removed
+// entities arrive as full with an empty object.
+using HaRawHook = void (*)(const char* id, JsonObjectConst ev, bool full);
+constexpr size_t HA_RAW_ID = 72;  // longest entity id, with the terminator
+// Kept in PSRAM: dozens of short Strings would sit in internal RAM.
+void haSetRawEntities(const char* const* ids, size_t count, HaRawHook hook);
+
+// One entity found by haRegistryLookup.
+struct HaRegEntry {
+  char entity[HA_RAW_ID];
+  char extra[64];  // second template field
+  char uid[96];    // registry unique_id, "" when HA has none
+};
+// Done on the HA task; list is valid only during the call.
+using HaRegDone = void (*)(uint32_t tag, bool ok, const HaRegEntry* list, size_t count,
+                           const char* err);
+// Renders tmpl through /api/template (one "entity_id|extra" per line), then
+// reads each entity's unique_id from the entity registry. False when a
+// lookup is already queued.
+bool haRegistryLookup(const String& tmpl, uint32_t tag, HaRegDone done);
+
+// Renders a template through /api/template. Blocking, loop task only.
+bool haRenderTemplate(const String& tmpl, String& out, String& err);
 // Copy of one entity. False when the id is not in the subscribed set.
 bool haGetEntity(const String& id, HaEntity& out);
 // Bumps on any entity change or link change.

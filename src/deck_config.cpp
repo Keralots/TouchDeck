@@ -261,6 +261,8 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
     d.name = (const char*)(pv["name"] | "");
     d.ip = (const char*)(pv["ip"] | "");
     d.plug = (const char*)(pv["plug"] | "");
+    d.ha = !strcmp(pv["source"] | "lan", "ha");
+    d.serial = (const char*)(pv["serial"] | "");
     // The id names NVS keys ("s_<id>"): short and plain.
     bool plain = d.id.length() >= 1 && d.id.length() <= 12;
     for (size_t i = 0; plain && i < d.id.length(); i++)
@@ -269,8 +271,8 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       if (err) *err = "printer id '" + d.id + "' must be unique, 1-12 letters, digits or _";
       return false;
     }
-    if (!d.ip.length()) {
-      if (err) *err = "printer '" + d.id + "' needs an ip";
+    if (d.ha ? !d.serial.length() : !d.ip.length()) {
+      if (err) *err = "printer '" + d.id + "' needs " + (d.ha ? "a serial" : "an ip");
       return false;
     }
     if (d.plug.length() && !d.plug.startsWith("switch.") && !d.plug.startsWith("input_boolean.")) {

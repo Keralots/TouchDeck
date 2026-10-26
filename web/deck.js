@@ -65,8 +65,8 @@
 <p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; "Install" downloads it in this browser and sends it to the device. Without it the deck shows a few built-in symbols.</p>
 <div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
 <div class="dk-status"><span class="dk-dot" id="dkIcDot"></span><span id="dkIcState">checking...</span></div></div>
-<div class="card" id="dkPrnCard"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag" id="dkPrnTag">Bambu Lab, LAN</span><button type="button" class="btn" id="dkPrnTog" style="margin-left:auto;padding:5px 10px" aria-expanded="false">Show</button></div>
-<p class="field-hint">The printer must be in LAN mode or have LAN access on. Serial and access code are stored only on the device. With a plug (an HA switch), the printer connects and its pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
+<div class="card" id="dkPrnCard"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag" id="dkPrnTag">Bambu Lab</span><button type="button" class="btn" id="dkPrnTog" style="margin-left:auto;padding:5px 10px" aria-expanded="false">Show</button></div>
+<p class="field-hint">Source Printer LAN talks to the printer directly: it must be in LAN mode or have LAN access on, and its serial and access code are stored only on the device. Source Home Assistant reads a printer already added to the Bambu Lab integration (ha-bambulab) - nothing else to enter. With a plug (an HA switch), the printer's pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
 <div id="dkPrnBody" hidden>
 <div id="dkPrn"></div><div class="dk-row"><button type="button" class="btn" id="dkPrnAdd">+ Add printer</button></div></div></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
@@ -595,6 +595,25 @@
     ["summary", "Summary"],
   ];
   let prnStat = {};
+  let haPrn = null; /* printers in HA's Bambu Lab integration, null = not asked yet */
+  let haPrnErr = "";
+  /* Default device names are "<model>_<serial>": show the model, plus the serial's end when two match. */
+  function haPrnLabel(p, list) {
+    if (!p.model || p.name !== p.model + "_" + p.serial) return p.name;
+    return list.filter((q) => q.model === p.model).length > 1 ? p.model + " " + p.serial.slice(-4) : p.model;
+  }
+  async function loadHaPrinters() {
+    haPrn = [];
+    haPrnErr = "Looking in Home Assistant...";
+    renderPrinters();
+    try {
+      haPrn = (await api("/api/printers/ha")).printers || [];
+      haPrnErr = haPrn.length ? "" : "No Bambu Lab printers in Home Assistant";
+    } catch (e) {
+      haPrnErr = e.message;
+    }
+    renderPrinters();
+  }
   const prnName = (id) => {
     const d = (deck.printers || []).find((x) => x.id === id);
     return d ? d.name || d.id : id;
@@ -645,6 +664,7 @@
     );
   }
   function prnLine(d, s) {
+    if (d.source === "ha" && !d.serial) return "Pick the printer in Home Assistant";
     if (!s.secret) return "Serial and access code not saved";
     if (!s.powered) return d.plug ? "Off (plug off)" : "Off";
     return (
@@ -677,7 +697,7 @@
     const on = ps.filter((d) => (prnStat[d.id] || {}).link === "online").length;
     $("dkPrnTag").textContent = ps.length
       ? ps.length + " printer" + (ps.length > 1 ? "s" : "") + ", " + on + " online"
-      : "Bambu Lab, LAN";
+      : "Bambu Lab";
   }
   function renderPrinters() {
     const el = $("dkPrn");
@@ -698,14 +718,36 @@
       ps
         .map((d, i) => {
           const s = prnStat[d.id] || {};
+          const ha = d.source === "ha";
+          if (ha && haPrn === null) setTimeout(loadHaPrinters);
+          const haList = (haPrn || []).slice();
+          if (d.serial && !haList.some((p) => p.serial === d.serial))
+            haList.unshift({ serial: d.serial, name: d.serial, model: "" });
           return (
             '<div class="dk-more" data-prb="' +
             i +
             '" style="margin-bottom:10px">' +
+            '<div class="field"><label class="field-label">Source</label><select data-prsrc="' +
+            i +
+            '">' +
+            opt("lan", "Printer LAN", !ha) +
+            opt("ha", "Home Assistant", ha) +
+            "</select></div>" +
+            (ha
+              ? '<div class="field"><label class="field-label">Printer in Home Assistant</label><div class="dk-row" style="flex-wrap:nowrap"><select style="flex:1;min-width:0" data-prha="' +
+                i +
+                '"><option value="">' +
+                (haList.length ? "Pick a printer" : "None found") +
+                "</option>" +
+                haList.map((p) => opt(p.serial, haPrnLabel(p, haList), p.serial === d.serial)).join("") +
+                '</select><button type="button" class="btn" data-prhf="1">Refresh</button></div>' +
+                (haPrnErr ? '<p class="field-hint">' + esc(haPrnErr) + "</p>" : "") +
+                "</div>"
+              : "") +
             [
               ["id", "Id (letters, digits, _)", "h2c"],
               ["name", "Name", "H2C"],
-              ["ip", "IP address", "192.168.0.54"],
+              ...(ha ? [] : [["ip", "IP address", "192.168.0.54"]]),
               ["plug", "Plug (HA switch, optional)", "switch.printer_plug"],
             ]
               .map(
@@ -723,19 +765,21 @@
                   '" spellcheck="false"></div>',
               )
               .join("") +
-            '<div class="field"><label class="field-label">Serial</label><input type="text" id="dkPrS' +
-            i +
-            '" placeholder="' +
-            (s.secret ? "saved - leave empty to keep" : "printer serial number") +
-            '" autocomplete="off" spellcheck="false"></div>' +
-            '<div class="field"><label class="field-label">Access code</label><input type="password" id="dkPrC' +
-            i +
-            '" placeholder="' +
-            (s.secret ? "saved - leave empty to keep" : "LAN access code") +
-            '" autocomplete="off"></div>' +
-            '<div class="field wide"><div class="dk-row"><button type="button" class="btn" data-prs="' +
-            i +
-            '">Save serial and code</button><button type="button" class="btn" data-prp="' +
+            (ha
+              ? ""
+              : '<div class="field"><label class="field-label">Serial</label><input type="text" id="dkPrS' +
+                i +
+                '" placeholder="' +
+                (s.secret ? "saved - leave empty to keep" : "printer serial number") +
+                '" autocomplete="off" spellcheck="false"></div>' +
+                '<div class="field"><label class="field-label">Access code</label><input type="password" id="dkPrC' +
+                i +
+                '" placeholder="' +
+                (s.secret ? "saved - leave empty to keep" : "LAN access code") +
+                '" autocomplete="off"></div>') +
+            '<div class="field wide"><div class="dk-row">' +
+            (ha ? "" : '<button type="button" class="btn" data-prs="' + i + '">Save serial and code</button>') +
+            '<button type="button" class="btn" data-prp="' +
             i +
             '">Create printer page</button><button type="button" class="btn btn-danger" data-prx="' +
             i +
@@ -765,6 +809,41 @@
           else delete d[k];
           setDirty(true);
           renderPage();
+        }),
+    );
+    el.querySelectorAll("[data-prsrc]").forEach(
+      (x) =>
+        (x.onchange = () => {
+          const d = ps[+x.dataset.prsrc];
+          if (x.value === "ha") d.source = "ha";
+          else {
+            delete d.source;
+            delete d.serial;
+          }
+          setDirty(true);
+          x.blur(); /* renderPrinters skips a block that has the focus */
+          renderPrinters();
+        }),
+    );
+    el.querySelectorAll("[data-prha]").forEach(
+      (x) =>
+        (x.onchange = () => {
+          const d = ps[+x.dataset.prha],
+            p = (haPrn || []).find((q) => q.serial === x.value);
+          if (x.value) d.serial = x.value;
+          else delete d.serial;
+          if (p && p.model && (!d.name || /^Printer \d+$/.test(d.name))) d.name = p.model;
+          setDirty(true);
+          x.blur();
+          renderPrinters();
+          renderPage();
+        }),
+    );
+    el.querySelectorAll("[data-prhf]").forEach(
+      (b) =>
+        (b.onclick = () => {
+          b.blur();
+          loadHaPrinters();
         }),
     );
     el.querySelectorAll("[data-prs]").forEach(

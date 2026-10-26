@@ -1151,6 +1151,7 @@ String deckPrintersJson() {
     JsonObject o = arr.add<JsonObject>();
     o["id"] = d.id;
     o["secret"] = printerHasSecret(d.id);
+    o["source"] = d.ha ? "ha" : "lan";
     o["powered"] = printerPowered(d.id);
     if (!s || !printerRead(d.id, *s)) continue;
     static const char* const kLink[] = {"off", "connecting", "online", "failed"};

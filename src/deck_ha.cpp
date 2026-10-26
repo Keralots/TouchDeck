@@ -72,8 +72,30 @@ struct Failure {
   String entity, message;
 };
 std::deque<Failure> s_failures;
+struct RawId {
+  char id[HA_RAW_ID];
+};
+RawId* s_raw = nullptr;  // PSRAM, sorted
+size_t s_rawCount = 0;
+HaRawHook s_rawHook = nullptr;
+
+int rawCmp(const void* a, const void* b) { return strcmp((const char*)a, (const char*)b); }
+
+// Registry lookup: queued under s_lock, then owned by the HA task.
+constexpr size_t REG_BATCH = 6;  // get_entries answers stay well under the frame limit
+struct RegJob {
+  String tmpl;
+  uint32_t tag = 0;
+  HaRegDone done = nullptr;
+  HaRegEntry* list = nullptr;  // PSRAM
+  size_t count = 0, next = 0;
+  uint32_t waitId = 0;
+  bool started = false;
+};
+RegJob* s_regQueued = nullptr;
 
 // --- HA task only ---
+RegJob* s_reg = nullptr;
 WebSocketsClient s_ws;
 bool s_started = false;
 uint32_t s_appliedCredGen = 0;
@@ -299,8 +321,20 @@ Entry* findEntry(const char* id) {
   return nullptr;
 }
 
+HaRawHook rawHook(const char* id) {
+  Lock g;
+  if (!s_rawHook || !s_rawCount || !bsearch(id, s_raw, s_rawCount, sizeof(RawId), rawCmp)) return nullptr;
+  return s_rawHook;
+}
+
 // subscribe_entities event: "a" = full states, "c" = diffs, "r" = removed.
 void applyEvent(JsonObjectConst ev) {
+  for (JsonPairConst kv : ev["a"].as<JsonObjectConst>())
+    if (HaRawHook h = rawHook(kv.key().c_str())) h(kv.key().c_str(), kv.value().as<JsonObjectConst>(), true);
+  for (JsonPairConst kv : ev["c"].as<JsonObjectConst>())
+    if (HaRawHook h = rawHook(kv.key().c_str())) h(kv.key().c_str(), kv.value().as<JsonObjectConst>(), false);
+  for (JsonVariantConst r : ev["r"].as<JsonArrayConst>())
+    if (HaRawHook h = rawHook(r | "")) h(r | "", JsonObjectConst(), true);
   Lock g;
   bool changed = false;
   for (JsonPairConst kv : ev["a"].as<JsonObjectConst>()) {
@@ -379,6 +413,10 @@ void failPending(const String& message) {
   s_calls.clear();
 }
 
+void regFinish(bool ok, const char* err);
+void regReply(bool ok, JsonDocument& doc);
+void regStep();
+
 void handleText(const uint8_t* payload, size_t len) {
   JsonDocument doc(psram());
   if (deserializeJson(doc, payload, len)) return;
@@ -413,6 +451,10 @@ void handleText(const uint8_t* payload, size_t len) {
   } else if (!strcmp(type, "result")) {
     const uint32_t id = doc["id"] | 0;
     const bool ok = doc["success"] | false;
+    if (s_reg && s_reg->waitId == id) {
+      regReply(ok, doc);
+      return;
+    }
     for (size_t i = 0; i < s_pending.size(); i++) {
       if (s_pending[i].id != id) continue;
       {
@@ -444,6 +486,7 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
                                        s_everConnected ? String() : String("no answer from Home Assistant"));
       s_subscribedGen = 0;
       s_subIds.clear();
+      if (s_reg) regFinish(false, "connection to Home Assistant lost");
       // Never replay an uncertain call after a reconnect: report it instead.
       failPending("connection to Home Assistant lost");
       break;
@@ -458,12 +501,24 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
 
 void resubscribe() {
   std::vector<String> wanted;
+  RawId* raw = nullptr;
+  size_t rawCount = 0;
   uint32_t gen;
   {
     Lock g;
     wanted = s_wanted;
+    raw = s_rawCount ? (RawId*)heap_caps_malloc(s_rawCount * sizeof(RawId), MALLOC_CAP_SPIRAM) : nullptr;
+    if (raw) {
+      memcpy(raw, s_raw, s_rawCount * sizeof(RawId));
+      rawCount = s_rawCount;
+    }
     gen = s_wantedGen;
   }
+  std::vector<const char*> ids;
+  ids.reserve(wanted.size() + rawCount);
+  for (const String& id : wanted) ids.push_back(id.c_str());
+  for (size_t i = 0; i < rawCount; i++)
+    if (!std::binary_search(wanted.begin(), wanted.end(), String(raw[i].id))) ids.push_back(raw[i].id);
   for (uint32_t sub : s_subIds) {
     JsonDocument u(psram());
     u["id"] = s_nextId++;
@@ -472,16 +527,17 @@ void resubscribe() {
     sendJson(u);
   }
   s_subIds.clear();
-  for (size_t i = 0; i < wanted.size(); i += SUB_BATCH) {
+  for (size_t i = 0; i < ids.size(); i += SUB_BATCH) {
     JsonDocument d(psram());
     const uint32_t id = s_nextId++;
     d["id"] = id;
     d["type"] = "subscribe_entities";
-    JsonArray ids = d["entity_ids"].to<JsonArray>();
-    for (size_t k = i; k < wanted.size() && k < i + SUB_BATCH; k++) ids.add(wanted[k]);
+    JsonArray batch = d["entity_ids"].to<JsonArray>();
+    for (size_t k = i; k < ids.size() && k < i + SUB_BATCH; k++) batch.add(ids[k]);
     sendJson(d);
     s_subIds.push_back(id);
   }
+  heap_caps_free(raw);
   s_subscribedGen = gen;
 }
 
@@ -527,6 +583,7 @@ void haTask(void*) {
       s_everConnected = false;
       setLink(HA_NOT_CONFIGURED);
       failPending("connection to Home Assistant lost");
+      if (s_reg) regFinish(false, "Home Assistant settings changed");
       {
         Lock g;
         s_error = "";
@@ -582,6 +639,7 @@ void haTask(void*) {
       }
       if (s_subscribedGen != wantedGen) resubscribe();
       sendQueuedCalls();
+      regStep();
     }
     vTaskDelay(pdMS_TO_TICKS(5));
   }
@@ -679,6 +737,41 @@ void haSetEntities(const std::vector<String>& ids) {
   s_store.swap(next);
   s_wantedGen++;
   s_version++;
+}
+
+void haSetRawEntities(const char* const* ids, size_t count, HaRawHook hook) {
+  RawId* next = count ? (RawId*)heap_caps_calloc(count, sizeof(RawId), MALLOC_CAP_SPIRAM) : nullptr;
+  size_t n = 0;
+  if (next) {
+    for (size_t i = 0; i < count; i++)
+      if (strlen(ids[i]) < HA_RAW_ID) strlcpy(next[n++].id, ids[i], HA_RAW_ID);
+    qsort(next, n, sizeof(RawId), rawCmp);
+    size_t u = 0;
+    for (size_t i = 0; i < n; i++)
+      if (!u || strcmp(next[u - 1].id, next[i].id)) next[u++] = next[i];
+    n = u;
+  }
+  Lock g;
+  s_rawHook = hook;
+  if (n == s_rawCount && (!n || !memcmp(next, s_raw, n * sizeof(RawId)))) {
+    heap_caps_free(next);
+    return;
+  }
+  heap_caps_free(s_raw);
+  s_raw = next;
+  s_rawCount = n;
+  s_wantedGen++;
+}
+
+bool haRegistryLookup(const String& tmpl, uint32_t tag, HaRegDone done) {
+  if (!s_lock || !done) return false;
+  Lock g;
+  if (s_regQueued) return false;
+  s_regQueued = new RegJob;
+  s_regQueued->tmpl = tmpl;
+  s_regQueued->tag = tag;
+  s_regQueued->done = done;
+  return true;
 }
 
 bool haGetEntity(const String& id, HaEntity& out) {
@@ -910,6 +1003,111 @@ bool openHa(HTTPClient& http, const char* path, String& token, String& err) {
   }
   http.addHeader("Authorization", "Bearer " + token);
   return true;
+}
+
+// --- Registry lookup (HA task) ---
+
+void regFinish(bool ok, const char* err) {
+  RegJob* j = s_reg;
+  s_reg = nullptr;
+  j->done(j->tag, ok, j->list, ok ? j->count : 0, err);
+  heap_caps_free(j->list);
+  delete j;
+}
+
+// Rendered text in a PSRAM buffer (caller frees).
+bool renderTemplate(const String& tmpl, char*& text, size_t& len, String& err) {
+  HTTPClient http;
+  String token;
+  if (!openHa(http, "/api/template", token, err)) return false;
+  http.addHeader("Content-Type", "application/json");
+  JsonDocument req(psram());
+  req["template"] = tmpl;
+  String body;
+  serializeJson(req, body);
+  const int code = http.POST(body);
+  if (code != 200) {
+    err = code == 401 ? String("token rejected") : String("template answered ") + code;
+    http.end();
+    return false;
+  }
+  const bool ok = readBody(http, text, len, err);
+  http.end();
+  return ok;
+}
+
+bool regRender(RegJob& j, String& err) {
+  char* text = nullptr;
+  size_t len = 0;
+  if (!renderTemplate(j.tmpl, text, len, err)) return false;
+  size_t lines = 1;
+  for (size_t i = 0; i < len; i++) lines += text[i] == '\n';
+  j.list = (HaRegEntry*)heap_caps_calloc(lines, sizeof(HaRegEntry), MALLOC_CAP_SPIRAM);
+  if (!j.list) {
+    heap_caps_free(text);
+    err = "out of memory";
+    return false;
+  }
+  for (char* line = strtok(text, "\n"); line; line = strtok(nullptr, "\n")) {
+    char* bar = strchr(line, '|');
+    if (bar) *bar = 0;
+    while (*line == ' ' || *line == '\r') line++;
+    // A cut entity id would match the wrong entity: skip it.
+    if (!*line || strlen(line) >= sizeof(HaRegEntry::entity)) continue;
+    HaRegEntry& e = j.list[j.count++];
+    strlcpy(e.entity, line, sizeof(e.entity));
+    if (bar) strlcpy(e.extra, bar + 1, sizeof(e.extra));
+    for (char* p = e.extra + strlen(e.extra); p > e.extra && (p[-1] == '\r' || p[-1] == ' ');) *--p = 0;
+  }
+  heap_caps_free(text);
+  return true;
+}
+
+void regSendBatch() {
+  JsonDocument d(psram());
+  s_reg->waitId = s_nextId++;
+  d["id"] = s_reg->waitId;
+  d["type"] = "config/entity_registry/get_entries";
+  JsonArray ids = d["entity_ids"].to<JsonArray>();
+  for (size_t k = s_reg->next; k < s_reg->count && k < s_reg->next + REG_BATCH; k++)
+    ids.add((const char*)s_reg->list[k].entity);
+  sendJson(d);
+}
+
+void regReply(bool ok, JsonDocument& doc) {
+  if (!ok) {
+    regFinish(false, doc["error"]["message"] | "registry lookup failed");
+    return;
+  }
+  JsonObjectConst result = doc["result"];
+  const size_t end = min(s_reg->count, s_reg->next + REG_BATCH);
+  for (size_t k = s_reg->next; k < end; k++) {
+    HaRegEntry& e = s_reg->list[k];
+    strlcpy(e.uid, result[(const char*)e.entity]["unique_id"] | "", sizeof(e.uid));
+  }
+  s_reg->next = end;
+  if (end >= s_reg->count) regFinish(true, "");
+  else regSendBatch();
+}
+
+void regStep() {
+  if (!s_reg) {
+    Lock g;
+    s_reg = s_regQueued;
+    s_regQueued = nullptr;
+  }
+  if (!s_reg || s_reg->started) return;
+  s_reg->started = true;
+  const uint32_t t0 = millis();
+  String err;
+  if (!regRender(*s_reg, err)) {
+    regFinish(false, err.c_str());
+    return;
+  }
+  Serial.printf("HA: registry lookup, %u entities (template %u ms)\n", (unsigned)s_reg->count,
+                (unsigned)(millis() - t0));
+  if (!s_reg->count) regFinish(true, "");
+  else regSendBatch();
 }
 
 // ISO timestamps are UTC or carry an explicit offset; mktime would use local TZ.
@@ -1308,6 +1506,15 @@ uint32_t haHistoryVersion() {
 }
 
 const char* haEntityListPath() { return LIST_PATH; }
+
+bool haRenderTemplate(const String& tmpl, String& out, String& err) {
+  char* text = nullptr;
+  size_t len = 0;
+  if (!renderTemplate(tmpl, text, len, err)) return false;
+  out = text;
+  heap_caps_free(text);
+  return true;
+}
 
 bool haFetchEntityList(String& outJson, bool refresh, String& err) {
   if (!refresh && deckFsReady() && LittleFS.exists(LIST_PATH)) {
