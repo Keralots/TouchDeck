@@ -502,11 +502,28 @@ void fitPrinter(TileRt& r, int cw, int ch) {
     }
     case PS_NOZZLE:
     case PS_BED:
-    case PS_CHAMBER:
-      setFont(r.sub, ch >= 70 && cw >= 86 ? &deck_font_28 : &deck_font_20);
-      showObj(r.unit, cw >= 86);
+    case PS_CHAMBER: {
+      // Half-height tiles: name and reading share one row, the bar hugs the bottom edge.
+      const bool row = ch < 48;
+      lv_obj_t* top = lv_obj_get_parent(r.name);
+      lv_obj_set_flex_flow(r.obj, row ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
+      lv_obj_set_flex_align(r.obj, LV_FLEX_ALIGN_START, row ? LV_FLEX_ALIGN_CENTER : LV_FLEX_ALIGN_START,
+                            row ? LV_FLEX_ALIGN_CENTER : LV_FLEX_ALIGN_START);
+      lv_obj_set_style_pad_column(r.obj, 6, 0);
+      lv_obj_set_size(top, row ? 0 : lv_pct(100), LV_SIZE_CONTENT);
+      if (row) lv_obj_add_flag(r.viz, LV_OBJ_FLAG_FLOATING);
+      else lv_obj_remove_flag(r.viz, LV_OBJ_FLAG_FLOATING);
+      if (row) lv_obj_align(r.viz, LV_ALIGN_BOTTOM_MID, 0, 0);
+      setFont(r.sub, ch >= 70 && cw >= 86 ? &deck_font_28 : row && ch < 24 ? &deck_font_14 : &deck_font_20);
+      showObj(r.unit, row ? cw >= 140 : cw >= 86);
       prnOneLine(r.name);
+      if (row != r.besideName) {  // "Left" / "Left nozzle"
+        r.besideName = row;
+        r.prnKey = 0;
+        applyPrinterToTile(r);
+      }
       break;
+    }
     case PS_FILAMENT: {
       const int c = LV_MIN(44, ch - 8);
       lv_obj_set_size(r.chip, c, c);
@@ -518,12 +535,37 @@ void fitPrinter(TileRt& r, int cw, int ch) {
       break;
     }
     case PS_LAYER:
-      setFont(r.sub, ch >= 64 ? &deck_font_20 : &deck_font_14);
-      prnOneLine(r.unit);
+    case PS_LIGHT: {
+      // Too low for the stacked layout (half-height tiles): one row instead.
+      const bool row = ch < 48;
+      const bool changed = row != r.besideName;
+      r.besideName = row;
+      lv_obj_set_flex_flow(r.obj, row ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
+      lv_obj_set_flex_align(r.obj, LV_FLEX_ALIGN_START, row ? LV_FLEX_ALIGN_CENTER : LV_FLEX_ALIGN_START,
+                            row ? LV_FLEX_ALIGN_CENTER : LV_FLEX_ALIGN_START);
+      lv_obj_set_style_pad_column(r.obj, 6, 0);
+      if (d.show == PS_LAYER) {
+        setFont(r.sub, ch >= 64 || (row && ch >= 24) ? &deck_font_20 : &deck_font_14);
+        lv_obj_set_width(r.unit, row ? LV_SIZE_CONTENT : lv_pct(100));
+        prnOneLine(r.unit);
+      } else {
+        const int c = row ? LV_MIN(24, ch) : 30;
+        lv_obj_set_size(r.chip, c, c);
+        lv_obj_t* fill = lv_obj_get_child(r.obj, 1);
+        showObj(fill, !row);
+        lv_obj_set_flex_grow(r.name, row ? 1 : 0);
+        lv_obj_set_width(r.name, row ? 0 : LV_SIZE_CONTENT);
+        lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
+        prnOneLine(r.name);
+        showObj(r.sub, row || ch >= 64);
+      }
+      // The layer text differs per layout ("of 60 - Std" / "/60").
+      if (changed) {
+        r.prnKey = 0;
+        applyPrinterToTile(r);
+      }
       break;
-    case PS_LIGHT:
-      showObj(r.sub, ch >= 64);
-      break;
+    }
   }
 }
 
@@ -920,7 +962,7 @@ void applyPrinterToTile(TileRt& r) {
         now = s->nozzle[n];
         target = s->nozzleTarget[n];
         if (s->dualNozzle) {
-          label = n ? "Left nozzle" : "Right nozzle";
+          label = r.besideName ? (n ? "Left" : "Right") : n ? "Left nozzle" : "Right nozzle";
           active = online && s->activeNozzle == n;
         }
       } else if (s && d.show == PS_BED) {
@@ -983,8 +1025,9 @@ void applyPrinterToTile(TileRt& r) {
         snprintf(b, sizeof(b), "%u", s->layer);
         lv_label_set_text(r.sub, b);
         static const char* const kSpeed[] = {"", "Silent", "Std", "Sport", "Ludicrous"};
-        snprintf(b, sizeof(b), "of %u%s%s", s->totalLayers, s->speedLevel ? " - " : "",
-                 kSpeed[s->speedLevel < 5 ? s->speedLevel : 0]);
+        if (r.besideName) snprintf(b, sizeof(b), "/%u", s->totalLayers);
+        else snprintf(b, sizeof(b), "of %u%s%s", s->totalLayers, s->speedLevel ? " - " : "",
+                      kSpeed[s->speedLevel < 5 ? s->speedLevel : 0]);
         lv_label_set_text(r.unit, b);
       } else {
         lv_label_set_text(r.sub, "--");

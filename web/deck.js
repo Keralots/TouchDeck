@@ -2073,7 +2073,7 @@
             '</button><div class="dk-tmain"><input type="text" data-l="' +
             i +
             '" value="' +
-            esc(t.label || "") +
+            esc(t.label === "" ? " " : t.label || "") +
             '" placeholder="' +
             esc(nm) +
             '"><div class="dk-tsub">' +
@@ -2293,7 +2293,8 @@
         (x.oninput = (e) => {
           const t = p.tiles[+x.dataset.l];
           const v = e.target.value.trim();
-          if (v) t.label = v;
+          /* Blank but not empty (a space): no name on the tile. */
+          if (v || e.target.value) t.label = v;
           else delete t.label;
           setDirty(true);
         }),

@@ -173,6 +173,7 @@ struct TileDef {
   String id;
   TileType type = TILE_ACTION;
   String entity, label, sub, icon;
+  bool noName = false;  // "label": "" (or blank): show no name instead of HA's
   HttpSensorDef http;
   String unit;  // HTTP sensor: unit for JSON numbers only
   String detail;  // HTTP sensor: second line template, see above

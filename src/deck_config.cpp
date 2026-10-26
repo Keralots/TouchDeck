@@ -336,6 +336,8 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       }
       t.entity = (const char*)(tv["entity"] | "");
       t.label = (const char*)(tv["label"] | "");
+      t.label.trim();
+      t.noName = tv["label"].is<const char*>() && !t.label.length();
       t.sub = (const char*)(tv["sub"] | "");
       t.icon = (const char*)(tv["icon"] | "");
       t.hasColor = parseColor(tv["color"] | (const char*)nullptr, t.color);
