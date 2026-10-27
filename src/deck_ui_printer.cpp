@@ -351,6 +351,24 @@ void makePrinterContent(TileRt& r, lv_obj_t* t) {
       break;
     }
     case PS_LAYER: {
+      // Half-height row: an icon instead of the word, which does not fit beside the count.
+      const uint32_t cp = iconCodepoint("mdi:layers");
+      const lv_font_t* f = cp ? iconFont(18) : nullptr;
+      if (f) {
+        r.chip = lv_obj_create(t);
+        lv_obj_remove_flag(r.chip, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+        lv_obj_set_size(r.chip, 24, 24);
+        lv_obj_set_style_radius(r.chip, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(r.chip, 0, 0);
+        lv_obj_set_style_pad_all(r.chip, 0, 0);
+        styleIconChip(r.chip, C_PRN_BLUE);
+        r.icon = lv_label_create(r.chip);
+        lv_obj_center(r.icon);
+        char u[5];
+        iconUtf8(cp, u);
+        lv_obj_set_style_text_font(r.icon, f, 0);
+        lv_label_set_text(r.icon, u);
+      }
       r.name = prnLabel(t, &deck_font_12, LV_OPA_70);
       lv_label_set_text(r.name, "Layer");
       lv_obj_set_flex_grow(r.name, 1);
@@ -559,6 +577,12 @@ void fitPrinter(TileRt& r, int cw, int ch) {
                             row ? LV_FLEX_ALIGN_CENTER : LV_FLEX_ALIGN_START);
       lv_obj_set_style_pad_column(r.obj, 6, 0);
       if (d.show == PS_LAYER) {
+        showObj(r.chip, row);
+        showObj(r.name, !row || !r.chip);
+        if (r.chip) lv_obj_set_size(r.chip, LV_MIN(24, ch), LV_MIN(24, ch));
+        lv_obj_set_width(r.name, row ? 0 : LV_SIZE_CONTENT);
+        lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
+        prnOneLine(r.name);
         setFont(r.sub, ch >= 64 || (row && ch >= 24) ? &deck_font_20 : &deck_font_14);
         lv_obj_set_width(r.unit, row ? LV_SIZE_CONTENT : lv_pct(100));
         prnOneLine(r.unit);
@@ -573,8 +597,8 @@ void fitPrinter(TileRt& r, int cw, int ch) {
         prnOneLine(r.name);
         showObj(r.sub, row || ch >= 64);
       }
-      // The layer text differs per layout ("of 60 - Std" / "/60").
-      if (changed) {
+      // The layer text differs per layout ("of 60 - Std" / "/60") and the row's depends on the width.
+      if (changed || (row && d.show == PS_LAYER)) {
         r.prnKey = 0;
         applyPrinterToTile(r);
       }
@@ -1046,9 +1070,18 @@ void applyPrinterToTile(TileRt& r) {
         snprintf(b, sizeof(b), "%u", s->layer);
         lv_label_set_text(r.sub, b);
         static const char* const kSpeed[] = {"", "Silent", "Std", "Sport", "Ludicrous"};
-        if (r.besideName) snprintf(b, sizeof(b), "/%u", s->totalLayers);
-        else snprintf(b, sizeof(b), "of %u%s%s", s->totalLayers, s->speedLevel ? " - " : "",
-                      kSpeed[s->speedLevel < 5 ? s->speedLevel : 0]);
+        if (r.besideName) {
+          // Four-digit counts: the total goes before the current layer is cut.
+          char c[8];
+          snprintf(c, sizeof(c), "%u", s->layer);
+          snprintf(b, sizeof(b), "/%u", s->totalLayers);
+          const int lead = r.chip ? lv_obj_get_style_width(r.chip, LV_PART_MAIN) : textW("Layer", &deck_font_12);
+          const int need = lead + textW(c, lv_obj_get_style_text_font(r.sub, LV_PART_MAIN)) + textW(b, &deck_font_12) + 12;
+          if (need > lv_obj_get_content_width(r.obj)) b[0] = 0;
+        } else {
+          snprintf(b, sizeof(b), "of %u%s%s", s->totalLayers, s->speedLevel ? " - " : "",
+                   kSpeed[s->speedLevel < 5 ? s->speedLevel : 0]);
+        }
         lv_label_set_text(r.unit, b);
       } else {
         lv_label_set_text(r.sub, "--");
