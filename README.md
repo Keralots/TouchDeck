@@ -53,7 +53,7 @@ Recorded frame by frame from the display. Pick a set under **Display > Animation
 - **Quick panel:** pull down from the top edge for screen and LED brightness, link status, screen off, night mode, the top bar switch and the page editor.
 - **Edit on the device:** long press an empty spot of a page (or Edit in the quick panel) to move (swap works as in the portal), resize or remove its tiles, or add one with + (a list of Home Assistant entities by group, from the list cached with "Update from HA" in the portal); Done saves the page.
 - **Night schedules** for the backlight and, separately, an optional status / filament LED on a PWM pin. The LED's day brightness can follow a Home Assistant input_boolean, input_number or light, and the quick panel's Light slider sets that entity.
-- **Screen sleep:** after a set time without touch and without presence the screen fades out or dims. Presence is up to four Home Assistant entities (motion, occupancy, a person) and optionally a PC online; someone arriving wakes it. See [Screen sleep](#screen-sleep).
+- **Screen sleep:** after a set time without touch and without presence the screen fades out or dims. Presence is up to four Home Assistant entities (motion, occupancy, a person) and optionally a PC online or a printer printing; someone arriving wakes it. See [Screen sleep](#screen-sleep).
 - **System screens** for start-up, WiFi setup (with a QR code to join the setup network), connecting, and a firmware update screen with progress.
 
 ## Web portal
@@ -101,7 +101,7 @@ A page that goes away while it is shown always hands over to another page first;
 
 On the **Screen & light** page, the Sleep card sets the time without touch and without presence after which the screen fades out or dims (the night level still applies when it is lower), and what counts as presence:
 
-- Up to four Home Assistant entities (motion, occupancy, a person); one counts as present while its state is `on` or `home`. Optionally any PC sending metrics. Presence starting wakes the screen, also after Off in the quick panel.
+- Up to four Home Assistant entities (motion, occupancy, a person); one counts as present while its state is `on` or `home`. Optionally any PC sending metrics, and any printer preparing, printing or paused. Presence starting wakes the screen, also after Off in the quick panel.
 - A touch always wakes it; that first touch does nothing else. With a night brightness of 0 a touch lights the screen at 10% until a minute after the last touch.
 
 ## Wallpapers and microSD

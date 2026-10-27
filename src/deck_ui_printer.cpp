@@ -435,6 +435,18 @@ bool prnShown(const PrinterState* s) {
   return true;
 }
 
+// Any printer with a job (preparing, printing or paused), for presence.
+bool printersJobActive() {
+  for (size_t i = 0; i < s_cfg.printers.size() && i < MAX_PRINTERS; i++) {
+    const PrinterState* s = s_prnHave[i] ? s_prn[i] : nullptr;
+    if (!prnShown(s)) continue;
+    const char* st = s->gcodeState;
+    if (!strcmp(st, "RUNNING") || !strcmp(st, "PREPARE") || !strcmp(st, "SLICING") || !strcmp(st, "PAUSE"))
+      return true;
+  }
+  return false;
+}
+
 // Printing for real: not paused, preparing or changing filament.
 bool prnPrinting(const PrinterState* s) {
   return prnShown(s) && !strcmp(s->gcodeState, "RUNNING") && (s->layer || s->progress) &&

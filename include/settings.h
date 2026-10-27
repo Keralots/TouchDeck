@@ -61,7 +61,7 @@ struct DisplaySettings {
 };
 
 // Screen sleep (portal Screen & light page); NVS scalars. Present = an entity
-// "on"/"home", or (pc) any PC online.
+// "on"/"home", (pc) any PC online, or (printing) a printer with a job.
 constexpr size_t MAX_PRESENCE_ENTITIES = 4;
 struct PresenceSettings {
   uint16_t sleepMin = 0;  // 0 = never sleeps
@@ -71,6 +71,7 @@ struct PresenceSettings {
   bool frameClock = true;
   bool frameAnim = true;
   bool pc = false;
+  bool printing = false;
   String entities[MAX_PRESENCE_ENTITIES];  // "" = unused slot
 };
 

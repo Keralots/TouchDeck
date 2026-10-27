@@ -155,6 +155,7 @@ static void presenceJson(JsonObject out) {
   out["frameClock"] = presenceSettings.frameClock;
   out["frameAnim"] = presenceSettings.frameAnim;
   out["pc"] = presenceSettings.pc;
+  out["printing"] = presenceSettings.printing;
   JsonArray ids = out["entities"].to<JsonArray>();
   for (const String& id : presenceSettings.entities)
     if (id.length()) ids.add(id);
@@ -680,6 +681,7 @@ static void handleConfigImport() {
     READ_INT(presence, "sleep", 0, 1440, nextPresence.sleepMin, uint16_t);
     READ_INT(presence, "dim", 0, 100, nextPresence.dimPct, uint8_t);
     READ_BOOL(presence, "pc", nextPresence.pc);
+    if (!presence["printing"].isNull()) READ_BOOL(presence, "printing", nextPresence.printing);
     if (!presence["frame"].isNull()) READ_BOOL(presence, "frame", nextPresence.frame);
     if (!presence["frameClock"].isNull()) READ_BOOL(presence, "frameClock", nextPresence.frameClock);
     if (!presence["frameAnim"].isNull()) READ_BOOL(presence, "frameAnim", nextPresence.frameAnim);
@@ -810,6 +812,7 @@ static void handleSaveLight() {
   nextPresence.sleepMin = (uint16_t)clampedArg("sleepMin", presenceSettings.sleepMin, 0, 1440);
   nextPresence.dimPct = server.arg("sleepMode") == "dim" ? (uint8_t)clampedArg("sleepDim", 10, 1, 100) : 0;
   nextPresence.pc = server.hasArg("presencePc");
+  nextPresence.printing = server.hasArg("presencePrinting");
   nextPresence.frame = server.arg("sleepMode") == "frame";
   const int frameEvery = clampedArg("frameEvery", 5, 1, 30);
   if (!validFrameEvery(frameEvery)) {

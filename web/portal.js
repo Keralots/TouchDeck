@@ -383,6 +383,7 @@
     setVal("sleepDim", p.dim || 10);
     for (let i = 0; i < 4; i++) setVal("presence" + i, (p.entities || [])[i] || "");
     setCheck("presencePc", p.pc);
+    setCheck("presencePrinting", p.printing);
     updateSleepFields();
     const adv = c.advanced || {};
     setCheck("printersEnabled", adv.printers);

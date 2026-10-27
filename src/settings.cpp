@@ -219,6 +219,7 @@ void loadSettings() {
   presenceSettings.sleepMin = min<uint16_t>(prefs.getUShort("psleep", 0), 1440);
   presenceSettings.dimPct = min<uint8_t>(prefs.getUChar("pdim", 0), 100);
   presenceSettings.pc = prefs.getBool("ppc", false);
+  presenceSettings.printing = prefs.getBool("pprint", false);
   presenceSettings.frame = prefs.getBool("pframe", false);
   presenceSettings.frameEvery = prefs.getUChar("pfevery", 5);
   if (!validFrameEvery(presenceSettings.frameEvery)) presenceSettings.frameEvery = 5;
@@ -290,6 +291,7 @@ void saveSettings() {
   prefs.putUShort("psleep", presenceSettings.sleepMin);
   prefs.putUChar("pdim", presenceSettings.dimPct);
   prefs.putBool("ppc", presenceSettings.pc);
+  prefs.putBool("pprint", presenceSettings.printing);
   prefs.putBool("pframe", presenceSettings.frame);
   prefs.putUChar("pfevery", presenceSettings.frameEvery);
   prefs.putBool("pfclock", presenceSettings.frameClock);
