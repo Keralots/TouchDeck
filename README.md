@@ -6,6 +6,8 @@ A touch control deck for the Guition JC3248W535 (3.5" 320x480 IPS, capacitive to
 
 No cloud, no accounts: the device talks to Home Assistant over its local WebSocket API and receives PC metrics over UDP on the LAN.
 
+**Install from the browser:** [touchdeck.stolaris.dev](https://touchdeck.stolaris.dev) flashes the latest release over USB from desktop Chrome or Edge and sets up WiFi in the same tab. Other ways in [Flashing a prebuilt binary](#flashing-a-prebuilt-binary).
+
 ## Screenshots
 
 Short video of the deck in use: [YouTube](https://youtube.com/shorts/eh1_8pJR3-M).
@@ -299,7 +301,7 @@ The full image is flashed at `0x0` (esptool or the [ESP web flasher](https://esp
 
 ## First-run setup
 
-1. Flash the firmware and power the device.
+1. Flash the firmware (easiest from [touchdeck.stolaris.dev](https://touchdeck.stolaris.dev)) and power the device.
 2. It opens the WiFi network **`TouchDeck-XXXX`** (password `touchdeck1234`); scan the QR code on the screen or join it by hand, and the setup page opens at `http://192.168.4.1`. (Improv over USB serial also works for the first 3 minutes.)
 3. Once it is on your network, open the device IP, connect Home Assistant and build your pages.
 
