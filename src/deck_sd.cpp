@@ -126,7 +126,7 @@ void wallStorageBegin() {
   dev.host_id = SPI3_HOST;
   esp_vfs_fat_mount_config_t mc = {};
   mc.format_if_mount_failed = false;
-  mc.max_files = 4;
+  mc.max_files = 8;  // brand icon sizes hold files open next to the gallery and portal ones
   mc.allocation_unit_size = 16 * 1024;
   sdmmc_card_t* card = nullptr;
   err = esp_vfs_fat_sdspi_mount("/sd", &host, &dev, &mc, &card);

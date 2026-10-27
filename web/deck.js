@@ -27,7 +27,7 @@
 .dk-cell{border:1px dashed var(--line);border-radius:8px}
 .dk-gt{position:relative;display:flex;flex-direction:column;justify-content:space-between;gap:4px;min-width:0;min-height:0;overflow:hidden;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);cursor:grab;touch-action:none}
 .dk-gt.sel{outline:2px solid var(--accent);outline-offset:1px}.dk-gt.row{flex-direction:row;align-items:center;justify-content:flex-start;gap:6px;padding:2px 8px}.dk-gt.ic b{display:none}.dk-gt.drag{z-index:5;opacity:.85;cursor:grabbing;box-shadow:0 8px 20px rgba(0,0,0,.35)}
-.dk-gt i{font:20px dkmdi;font-style:normal;line-height:1}.dk-gt i.tx{font:600 11px var(--mono)}
+.dk-gt i{font:20px dkmdi, dkcbi;font-style:normal;line-height:1}.dk-gt i.tx{font:600 11px var(--mono)}
 .dk-gt b{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dk-rs{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 55%,var(--mute) 55%);opacity:.7}
 .dk-ghost{z-index:4;border:2px solid var(--ok);border-radius:8px;background:rgba(92,201,167,.15);pointer-events:none}.dk-ghost.bad{border-color:var(--err);background:rgba(229,83,75,.15)}
@@ -43,11 +43,11 @@
 .dk-ent{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:9px 12px;border-radius:var(--r-md);cursor:pointer}.dk-ent:hover{background:var(--card-2)}
 .dk-ent b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dk-ent small{font:11px var(--mono);color:var(--dim)}.dk-ent .st{font:12px var(--mono);color:var(--mute);align-self:center}
 .dk-empty{padding:22px;text-align:center;color:var(--dim);font-size:13px}
-.dk-ic{cursor:pointer;border:0;padding:0}.dk-ic.mdi{font:22px dkmdi;line-height:1}
+.dk-ic{cursor:pointer;border:0;padding:0}.dk-ic.mdi{font:22px dkmdi, dkcbi;line-height:1}
 .dk-igrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:6px;overflow-y:auto;padding:10px}
 .dk-ibtn{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 4px;border:1px solid transparent;border-radius:var(--r-md);background:none;color:var(--ink);cursor:pointer;min-width:0}
 .dk-ibtn:hover{background:var(--card-2)}.dk-ibtn.on{border-color:var(--accent);background:var(--accent-soft)}
-.dk-ibtn i{font:28px dkmdi;font-style:normal;line-height:1}.dk-ibtn small{font:10px var(--mono);color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dk-ibtn i{font:28px dkmdi, dkcbi;font-style:normal;line-height:1}.dk-ibtn small{font:10px var(--mono);color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:560px){.dk-tile{grid-template-columns:36px minmax(0,1fr)}.dk-tact{grid-column:1/-1}.dk-save{margin:18px -16px -18px;padding:12px 16px}}
 `;
   const st = document.createElement("style");
@@ -64,7 +64,11 @@
 <div class="card"><div class="card-head"><h2 class="card-title">Icons</h2><span class="tag" id="dkIcTag">-</span></div>
 <p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; "Install" downloads it in this browser and sends it to the device. Without it the deck shows a few built-in symbols.</p>
 <div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
-<div class="dk-status"><span class="dk-dot" id="dkIcDot"></span><span id="dkIcState">checking...</span></div></div>
+<div class="dk-status"><span class="dk-dot" id="dkIcDot"></span><span id="dkIcState">checking...</span></div>
+<h3 class="card-title" style="margin-top:18px">Brand icons</h3>
+<p class="field-hint">Custom Brand Icons (phu:) by elax46, installed from <a href="https://github.com/elax46/custom-brand-icons" target="_blank" rel="noopener">their GitHub</a>, not bundled. Needs a mounted microSD card. Enable "Store pictures on microSD" in Display and restart if needed. You can also upload a .js subset from the upstream Icon Finder.</p>
+<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkBrNet" disabled>Install latest from GitHub</button><button type="button" class="btn" id="dkBrFile" disabled>Upload .js file</button><button type="button" class="btn" id="dkBrRemove" disabled>Remove</button><input type="file" id="dkBrInput" accept=".js" hidden></div>
+<div class="dk-status"><span class="dk-dot" id="dkBrDot"></span><span id="dkBrState">checking...</span></div></div>
 <div class="card" id="dkPrnCard"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag" id="dkPrnTag">Bambu Lab</span><button type="button" class="btn" id="dkPrnTog" style="margin-left:auto;padding:5px 10px" aria-expanded="false">Show</button></div>
 <p class="field-hint">Source Printer LAN talks to the printer directly: it must be in LAN mode or have LAN access on, and its serial and access code are stored only on the device. Source Home Assistant reads a printer already added to the Bambu Lab integration (ha-bambulab) - nothing else to enter. With a plug (an HA switch), the printer's pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
 <div id="dkPrnBody" hidden>
@@ -2981,10 +2985,11 @@
     return m;
   }
   const iconCp = (n) => {
-    if (!mdi || !n) return 0;
+    if (!n) return 0;
+    if (n.startsWith("phu:")) return cbi ? cbi.get(n.slice(4)) || 0 : 0;
     if (n.startsWith("mdi:")) n = n.slice(4);
     else if (n.includes(":")) return 0;
-    return mdi.get(n) || 0;
+    return mdi ? mdi.get(n) || 0 : 0;
   };
   const tileCp = (t) => iconCp(t.icon) || iconCp((entMap[t.entity] || {}).icon);
   async function loadMdi(size) {
@@ -3055,11 +3060,312 @@
     e.target.value = "";
     if (f) icInstall(f);
   };
+  let cbi = null, cbiNames = [], cbiFace = null, brState = null, brBusy = false, opentypeLoad = null;
+  const brandEncoder = new TextEncoder();
+  const validBrandName = (n) => /^[\p{L}\p{N}_.-]+$/u.test(n) && brandEncoder.encode(n).length <= 127;
+  const brandOrder = (a, b) => {
+    const x = brandEncoder.encode(a), y = brandEncoder.encode(b);
+    for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i] - y[i];
+    return x.length - y.length;
+  };
+  const brandVersion = /^[A-Za-z0-9_.+-]{1,63}$/;
+  const brProgress = (text) => { $("dkBrState").textContent = text; };
+  const brYield = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  function parseBrandSource(src) {
+    if (src.length > 12 * 1024 * 1024) throw new Error("The .js file is too big");
+    const start = /\b(?:var|let|const)\s+icons\s*=\s*\{/.exec(src);
+    if (!start) throw new Error("No icons object in this file");
+    const quoted = '"(?:[^"\\\\\\r\\n]|\\\\.)*"';
+    const number = '-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?';
+    const entry = new RegExp('(' + quoted + ')\\s*:\\s*(\\[\\s*' +
+      (number + '\\s*,\\s*').repeat(4) + quoted + '\\s*\\])', 'y');
+    const icons = new Map();
+    let at = start.index + start[0].length;
+    const space = () => { while (/\s/.test(src[at] || "") && at < src.length) at++; };
+    while (true) {
+      space();
+      if (src[at] === "}") break;
+      entry.lastIndex = at;
+      const m = entry.exec(src);
+      if (!m) throw new Error("Invalid icon entry near character " + at);
+      const name = JSON.parse(m[1]), value = JSON.parse(m[2]);
+      if (!validBrandName(name) || icons.has(name)) throw new Error("Invalid or duplicate icon name: " + name);
+      if (value[0] !== 0 || value[1] !== 0 || value[2] !== 24 || value[3] !== 24)
+        throw new Error("Expected a 0 0 24 24 viewBox: " + name);
+      icons.set(name, value[4]);
+      if (icons.size > 20000) throw new Error("Too many icons");
+      at = entry.lastIndex;
+      space();
+      if (src[at] === "}") break;
+      if (src[at++] !== ",") throw new Error("Expected a comma after " + name);
+    }
+    if (!icons.size) throw new Error("No icons in this file");
+    return icons;
+  }
+
+  function parseBrandPath(d) {
+    let i = 0, cmd = "", x = 0, y = 0, sx = 0, sy = 0, cx = 0, cy = 0, qx = 0, qy = 0, prev = "";
+    const out = [], number = /[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/iy;
+    const space = () => { while (i < d.length && /[\s,]/.test(d[i])) i++; };
+    const num = () => {
+      space();
+      number.lastIndex = i;
+      const m = number.exec(d);
+      if (!m || !Number.isFinite(+m[0]) || Math.abs(+m[0]) > 1e7) throw new Error("Invalid path number at " + i);
+      i = number.lastIndex;
+      return +m[0];
+    };
+    const flag = () => {
+      space();
+      // Consume one character: SVG arc flags can touch each other and the next coordinate.
+      if (d[i] !== "0" && d[i] !== "1") throw new Error("Invalid arc flag at " + i);
+      return +d[i++];
+    };
+    while (true) {
+      space();
+      if (i === d.length) break;
+      if (/[a-z]/i.test(d[i])) cmd = d[i++];
+      const rel = cmd === cmd.toLowerCase(), C = cmd.toUpperCase();
+      if (!prev && C !== "M") throw new Error("Path must start with M");
+      const ox = rel ? x : 0, oy = rel ? y : 0;
+      if (C === "M") { x = ox + num(); y = oy + num(); sx = x; sy = y; out.push(["M", x, y]); cmd = rel ? "l" : "L"; }
+      else if (C === "L") { x = ox + num(); y = oy + num(); out.push(["L", x, y]); }
+      else if (C === "H") { x = ox + num(); out.push(["L", x, y]); }
+      else if (C === "V") { y = oy + num(); out.push(["L", x, y]); }
+      else if (C === "C") {
+        const a = [ox + num(), oy + num(), ox + num(), oy + num(), ox + num(), oy + num()];
+        out.push(["C", ...a]); cx = a[2]; cy = a[3]; x = a[4]; y = a[5];
+      } else if (C === "S") {
+        const r1x = /[CS]/.test(prev) ? 2 * x - cx : x, r1y = /[CS]/.test(prev) ? 2 * y - cy : y;
+        const a = [ox + num(), oy + num(), ox + num(), oy + num()];
+        out.push(["C", r1x, r1y, ...a]); cx = a[0]; cy = a[1]; x = a[2]; y = a[3];
+      } else if (C === "Q" || C === "T") {
+        let px, py;
+        if (C === "Q") { px = ox + num(); py = oy + num(); }
+        else { px = /[QT]/.test(prev) ? 2 * x - qx : x; py = /[QT]/.test(prev) ? 2 * y - qy : y; }
+        const ex = ox + num(), ey = oy + num();
+        out.push(["C", x + 2 / 3 * (px - x), y + 2 / 3 * (py - y), ex + 2 / 3 * (px - ex), ey + 2 / 3 * (py - ey), ex, ey]);
+        qx = px; qy = py; x = ex; y = ey;
+      } else if (C === "A") {
+        const rx = num(), ry = num(), rot = num(), la = flag(), sw = flag(), ex = ox + num(), ey = oy + num();
+        for (const c of brandArc(x, y, rx, ry, rot, la, sw, ex, ey)) out.push(["C", ...c]);
+        x = ex; y = ey;
+      } else if (C === "Z") { out.push(["Z"]); x = sx; y = sy; cmd = ""; }
+      else throw new Error("Unsupported path command: " + cmd);
+      if (out.length > 100000) throw new Error("Path is too complex");
+      prev = C;
+    }
+    if (!out.length) throw new Error("Empty icon path");
+    return out;
+  }
+
+  function brandArc(x1, y1, rx, ry, phiDeg, fa, fs, x2, y2) {
+    if (x1 === x2 && y1 === y2) return [];
+    if (rx === 0 || ry === 0) return [[x1, y1, x2, y2, x2, y2]];
+    const phi = (phiDeg % 360) * Math.PI / 180, cp = Math.cos(phi), sp = Math.sin(phi);
+    const dx = (x1 - x2) / 2, dy = (y1 - y2) / 2;
+    const x1p = cp * dx + sp * dy, y1p = -sp * dx + cp * dy;
+    rx = Math.abs(rx); ry = Math.abs(ry);
+    const lam = x1p * x1p / (rx * rx) + y1p * y1p / (ry * ry);
+    if (lam > 1) { rx *= Math.sqrt(lam); ry *= Math.sqrt(lam); }
+    const num = rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p;
+    const den = rx * rx * y1p * y1p + ry * ry * x1p * x1p;
+    let co = Math.sqrt(Math.max(0, num / den)); if (fa === fs) co = -co;
+    const cxp = co * rx * y1p / ry, cyp = -co * ry * x1p / rx;
+    const cx = cp * cxp - sp * cyp + (x1 + x2) / 2, cy = sp * cxp + cp * cyp + (y1 + y2) / 2;
+    const ang = (ux, uy, vx, vy) => Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+    const t1 = ang(1, 0, (x1p - cxp) / rx, (y1p - cyp) / ry);
+    let dt = ang((x1p - cxp) / rx, (y1p - cyp) / ry, (-x1p - cxp) / rx, (-y1p - cyp) / ry);
+    if (!fs && dt > 0) dt -= 2 * Math.PI; else if (fs && dt < 0) dt += 2 * Math.PI;
+    const segs = Math.ceil(Math.abs(dt) / (Math.PI / 2)), step = dt / segs, k = 4 / 3 * Math.tan(step / 4), res = [];
+    const pt = (t) => [cx + rx * Math.cos(t) * cp - ry * Math.sin(t) * sp, cy + rx * Math.cos(t) * sp + ry * Math.sin(t) * cp];
+    const dv = (t) => [-rx * Math.sin(t) * cp - ry * Math.cos(t) * sp, -rx * Math.sin(t) * sp + ry * Math.cos(t) * cp];
+    for (let s = 0; s < segs; s++) {
+      const a = t1 + s * step, b = a + step, p0 = pt(a), p3 = pt(b), d0 = dv(a), d3 = dv(b);
+      res.push([p0[0] + k * d0[0], p0[1] + k * d0[1], p3[0] - k * d3[0], p3[1] - k * d3[1], p3[0], p3[1]]);
+    }
+    return res;
+  }
+
+  async function loadOpentype() {
+    if (window.opentype) return window.opentype;
+    if (!opentypeLoad) opentypeLoad = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js";
+      script.onload = () => window.opentype ? resolve(window.opentype) : reject(new Error("Font converter unavailable"));
+      script.onerror = () => { script.remove(); reject(new Error("Could not download the font converter")); };
+      document.head.appendChild(script);
+    }).catch((e) => { opentypeLoad = null; throw e; });
+    return opentypeLoad;
+  }
+
+  async function convertBrand(src, version) {
+    const icons = parseBrandSource(src), names = [...icons.keys()].sort(brandOrder);
+    if (!brandVersion.test(version)) throw new Error("Invalid release version");
+    brProgress("Loading the font converter...");
+    const ot = await loadOpentype();
+    const notdef = () => new ot.Glyph({ name: ".notdef", unicode: 0, advanceWidth: 512, path: new ot.Path() });
+    const cffLen = (glyphs) => {
+      const d = new DataView(new ot.Font({ familyName: "t", styleName: "Regular", unitsPerEm: 512,
+        ascender: 448, descender: -64, glyphs }).toArrayBuffer());
+      for (let i = 0, n = d.getUint16(4); i < n; i++)
+        if (d.getUint32(12 + 16 * i) === 0x43464620) return d.getUint32(12 + 16 * i + 12);
+      return 0;
+    };
+    const emptyCff = cffLen([notdef()]);
+    const glyphs = [notdef()], kept = [], skipped = [];
+    const X = (v) => Math.round(v * 512 / 24), Y = (v) => Math.round(448 - v * 512 / 24);
+    for (let i = 0; i < names.length; i++) {
+      if (i % 24 === 0) {
+        brProgress("Converting " + names.length + " icons... " + i + "/" + names.length);
+        await brYield();
+      }
+      const path = new ot.Path();
+      try {
+        const cmds = parseBrandPath(icons.get(names[i]));
+        for (const c of cmds) {
+          if (c.slice(1).some((v) => !Number.isFinite(v) || Math.abs(v) > 1e7)) throw new Error("Invalid path coordinate");
+          if (c[0] === "M") path.moveTo(X(c[1]), Y(c[2]));
+          else if (c[0] === "L") path.lineTo(X(c[1]), Y(c[2]));
+          else if (c[0] === "C") path.curveTo(X(c[1]), Y(c[2]), X(c[3]), Y(c[4]), X(c[5]), Y(c[6]));
+          else path.close();
+        }
+        // Browsers reject a font with a charstring over 64 KB (Type 2 limit); only huge paths can reach it.
+        if (cmds.length > 4000) {
+          const g = new ot.Glyph({ name: names[i], unicode: 0x100000, advanceWidth: 512, path });
+          if (cffLen([notdef(), g]) - emptyCff > 65535) { skipped.push(names[i]); continue; }
+        }
+      } catch (e) { throw new Error(names[i] + ": " + e.message); }
+      glyphs.push(new ot.Glyph({ name: names[i], unicode: 0x100000 + kept.length, advanceWidth: 512, path }));
+      kept.push(names[i]);
+    }
+    if (!kept.length) throw new Error("No usable icons in this file");
+    brProgress("Building the font...");
+    await brYield();
+    const font = new ot.Font({ familyName: "Custom Brand Icons", styleName: "Regular", unitsPerEm: 512,
+      ascender: 448, descender: -64, glyphs });
+    const data = font.toArrayBuffer(), index = "#" + version + "\n" + kept.join("\n") + "\n";
+    if (data.byteLength > 3 * 1024 * 1024 || brandEncoder.encode(index).length > 512 * 1024)
+      throw new Error("Converted icon set is too big");
+    return { data, index, skipped };
+  }
+
+  function brButtons() {
+    $("dkBrNet").disabled = $("dkBrFile").disabled = brBusy || !brState || !brState.sd;
+    $("dkBrRemove").disabled = brBusy || !brState || !brState.sd || !brState.loaded;
+  }
+  function brStatus(s) {
+    brState = s;
+    $("dkBrDot").className = "dk-dot" + (s.loaded ? " ok" : "");
+    brProgress(!s.sd ? "needs a microSD card" : s.loaded
+      ? s.count + " icons, " + s.version + ", " + (s.size / 1024 / 1024).toFixed(2) + " MB" : "not installed");
+    brButtons();
+  }
+  function clearBrand() {
+    cbi = null;
+    cbiNames = [];
+    if (cbiFace) document.fonts.delete(cbiFace);
+    cbiFace = null;
+  }
+  async function loadBrand(size) {
+    const responses = await Promise.all([fetch("/cbi.otf?v=" + size), fetch("/cbi.names?v=" + size)]);
+    for (const r of responses) if (!r.ok) throw new Error("HTTP " + r.status);
+    const [buf, text] = await Promise.all([responses[0].arrayBuffer(), responses[1].text()]);
+    const lines = text.split("\n"), header = lines.shift();
+    if (lines[lines.length - 1] === "") lines.pop();
+    if (!header.startsWith("#") || !brandVersion.test(header.slice(1)) || !lines.length || lines.length > 20000 ||
+        lines.some((n, i) => !validBrandName(n) || (i && brandOrder(lines[i - 1], n) >= 0)))
+      throw new Error("Invalid brand names file");
+    const face = new FontFace("dkcbi", buf);
+    await face.load();
+    clearBrand();
+    cbi = new Map(lines.map((n, i) => [n, 0x100000 + i]));
+    cbiNames = lines;
+    cbiFace = face;
+    document.fonts.add(face);
+    if (deck) renderPage();
+  }
+  async function brRefresh() {
+    brBusy = true;
+    brButtons();
+    try {
+      const s = await api("/api/deck/brand");
+      brStatus(s);
+      if (s.loaded) await loadBrand(s.size);
+      else clearBrand();
+    } catch (e) {
+      $("dkBrDot").className = "dk-dot err";
+      brProgress("Brand icons unavailable: " + e.message);
+    } finally { brBusy = false; brButtons(); }
+  }
+  async function brInstall(file) {
+    if (brBusy || !brState || !brState.sd) return;
+    brBusy = true;
+    brButtons();
+    $("dkBrDot").className = "dk-dot busy";
+    try {
+      let src, version = "file";
+      if (file) {
+        if (file.size > 12 * 1024 * 1024) throw new Error("The .js file is too big");
+        brProgress("Reading the .js file...");
+        src = await file.text();
+      } else {
+        brProgress("Finding the latest GitHub release...");
+        const release = await fetch("https://api.github.com/repos/elax46/custom-brand-icons/releases/latest");
+        if (!release.ok) throw new Error("GitHub HTTP " + release.status);
+        const tag = (await release.json()).tag_name;
+        if (typeof tag !== "string" || !brandVersion.test(tag)) throw new Error("Invalid GitHub release tag");
+        version = tag.replace(/^v(?=\d)/, "");
+        brProgress("Downloading Custom Brand Icons " + version + "...");
+        const r = await fetch("https://cdn.jsdelivr.net/gh/elax46/custom-brand-icons@" + encodeURIComponent(tag) + "/dist/custom-brand-icons.js");
+        if (!r.ok) throw new Error("Download HTTP " + r.status);
+        src = await r.text();
+      }
+      const { data, index, skipped } = await convertBrand(src, version);
+      brProgress("Sending to the device and installing...");
+      const fd = new FormData();
+      fd.append("font", new Blob([data], { type: "font/otf" }), "cbi.otf");
+      fd.append("names", new Blob([index], { type: "text/plain" }), "cbi.names");
+      const s = await api("/api/deck/brand", { method: "POST", body: fd });
+      clearBrand();
+      brStatus(s);
+      try {
+        await loadBrand(s.size);
+        if (skipped.length) brProgress($("dkBrState").textContent + " (skipped, too complex: " + skipped.join(", ") + ")");
+      } catch (e) { brProgress("Installed, but the portal could not read the font: " + e.message); }
+    } catch (e) {
+      $("dkBrDot").className = "dk-dot err";
+      brProgress("Not installed: " + e.message + (file ? "" : '. Download custom-brand-icons.js and use "Upload .js file".'));
+    } finally { brBusy = false; brButtons(); }
+  }
+  $("dkBrNet").onclick = () => brInstall(null);
+  $("dkBrFile").onclick = () => $("dkBrInput").click();
+  $("dkBrInput").onchange = (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (file) brInstall(file);
+  };
+  $("dkBrRemove").onclick = async () => {
+    if (brBusy || !brState || !brState.sd) return;
+    brBusy = true;
+    brButtons();
+    brProgress("Removing brand icons...");
+    try {
+      const s = await api("/api/deck/brand/remove", { method: "POST" });
+      clearBrand();
+      brStatus(s);
+      if (deck) renderPage();
+    } catch (e) { brProgress("Could not remove brand icons: " + e.message); }
+    finally { brBusy = false; brButtons(); }
+  };
+
   function renderIcons() {
     const t = pages()[cur].tiles[icFor];
     const q = $("dkIcQ").value.trim().toLowerCase().replace(/^mdi:/, "");
     const cur0 = (t.icon || "").replace(/^mdi:/, "");
-    const list = q ? mdiNames.filter((n) => n.includes(q)) : mdiNames;
+    const all = mdiNames.concat(cbiNames.map((n) => "phu:" + n));
+    const list = q ? all.filter((n) => n.toLowerCase().includes(q)) : all;
     const shown = list.slice(0, 240);
     $("dkIcInfo").textContent =
       (t.icon ? "Chosen: " + t.icon : "Automatic (the entity icon in HA, else a default)") +
@@ -3076,10 +3382,10 @@
             (n === cur0 ? " on" : "") +
             '" data-n="' +
             esc(n) +
-            '" title="mdi:' +
-            esc(n) +
+            '" title="' +
+            esc(n.startsWith("phu:") ? n : "mdi:" + n) +
             '"><i>' +
-            String.fromCodePoint(mdi.get(n)) +
+            String.fromCodePoint(iconCp(n)) +
             "</i><small>" +
             esc(n) +
             "</small></button>",
@@ -3087,7 +3393,7 @@
         .join("") || '<p class="dk-empty">Nothing matches.</p>';
     $("dkIcGrid")
       .querySelectorAll("[data-n]")
-      .forEach((b) => (b.onclick = () => setIcon("mdi:" + b.dataset.n)));
+      .forEach((b) => (b.onclick = () => setIcon(b.dataset.n.startsWith("phu:") ? b.dataset.n : "mdi:" + b.dataset.n)));
   }
   function setIcon(v) {
     const t = pages()[cur].tiles[icFor];
@@ -3098,7 +3404,7 @@
     renderPage();
   }
   function openIcons(i) {
-    if (!mdi) {
+    if (!mdi && !cbi) {
       alert("Install the icon font first (Icons card above).");
       return;
     }
@@ -3164,6 +3470,7 @@
     prnFold(open);
     haStatus();
     icRefresh();
+    brRefresh();
     printersStatus();
     setInterval(() => {
       if (visible()) {

@@ -69,6 +69,10 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 - **Advanced:** optional features, off by default: Bambu Lab printers and MQTT.
 - **Maintenance:** configuration backup (pages and settings; WiFi and the Home Assistant token are never included), firmware update, factory reset.
 
+### Brand icons
+
+Optional [Custom Brand Icons by elax46](https://github.com/elax46/custom-brand-icons), available under the [MIT license](https://github.com/elax46/custom-brand-icons/blob/main/LICENSE), complement the MDI icon font. They require a mounted microSD card: enable **Display > Store pictures on microSD** and restart first. In **Pages & tiles > Icons > Brand icons**, install the latest GitHub release or upload `custom-brand-icons.js`, including a subset from the upstream Icon Finder. The browser converts and installs the set on the card under `/touchdeck/icons/`; no brand icons are bundled with the firmware. Use `phu:<name>` in tiles or Home Assistant entity icons, or select one in the portal's icon picker.
+
 ## Home Assistant
 
 In **Pages & tiles**, enter the Home Assistant address (for example `http://192.168.0.7:8123`) and a long-lived access token (HA profile, Security tab). The token is stored only on the device. Then add tiles from the entity picker.

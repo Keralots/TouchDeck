@@ -92,15 +92,14 @@ const char* defaultIcon(const String& domain, const String& dc, const String& un
 // Returns the codepoint shown (0 = symbol); shown = what the label has now.
 uint32_t showIcon(lv_obj_t* label, const TileDef& d, const HaEntity* e, bool on, int px,
                   uint32_t shown) {
-  const lv_font_t* f = iconFont(px);
   uint32_t cp = 0;
-  if (f) {
-    if (d.icon.length()) cp = iconCodepoint(d.icon);
-    if (!cp && e && e->icon.length()) cp = iconCodepoint(e->icon);
-    if (!cp)
-      cp = iconCodepoint(defaultIcon(entityDomain(d.entity), e ? e->deviceClass : String(),
-                                     e ? e->unit : String(), on));
-  }
+  if (d.icon.length()) cp = iconCodepoint(d.icon);
+  if (!cp && e && e->icon.length()) cp = iconCodepoint(e->icon);
+  if (!cp)
+    cp = iconCodepoint(defaultIcon(entityDomain(d.entity), e ? e->deviceClass : String(),
+                                   e ? e->unit : String(), on));
+  const lv_font_t* f = cp ? iconFont(px, cp) : nullptr;
+  if (!f) cp = 0;
   if (cp && cp == shown) return cp;
   if (cp) {
     char u[5];
