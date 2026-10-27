@@ -10,6 +10,7 @@ uint32_t s_presenceEval = 0;
 bool presenceNow() {
   const PresenceSettings& p = presenceSettings;
   if (p.pc && pcAnyOnline()) return true;
+  if (p.printing && printersJobActive()) return true;
   for (const String& id : p.entities) {
     HaEntity e;
     if (id.length() && haGetEntity(id, e) && e.known && (e.state == "on" || e.state == "home")) return true;

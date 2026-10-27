@@ -394,6 +394,7 @@ void fitClock(TileRt& r, int cw, int ch);
 
 // deck_ui_printer.cpp
 void readPrinters();
+bool printersJobActive();
 void makePrinterContent(TileRt& r, lv_obj_t* t);
 void fitPrinter(TileRt& r, int cw, int ch);
 void applyPrinterToTile(TileRt& r);
