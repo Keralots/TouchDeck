@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>TouchDeck Web Flasher</title>
+  <meta name="description" content="Flash TouchDeck to your Guition JC3248W535 from your browser, then connect WiFi, Home Assistant and your PC. No cloud, no accounts.">
+  <meta name="theme-color" content="#091120">
+  <link rel="canonical" href="https://touchdeck.stolaris.dev/">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://touchdeck.stolaris.dev/">
+  <meta property="og:title" content="TouchDeck Web Flasher">
+  <meta property="og:description" content="A local touch control deck for Home Assistant, PC stats and Bambu Lab printers. Install straight from your browser.">
+  <meta name="twitter:card" content="summary">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="shell">
+    <div class="layout">
+      <aside class="rail">
+        <div class="rail-inner">
+          <div class="brand">
+            <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+            <div class="brand-text"><div class="brand-name">TouchDeck</div><div class="brand-sub">web flasher</div></div>
+          </div>
+          <nav class="toc" aria-label="On this page">
+            <div class="rail-label">On this page</div>
+            <a href="#prereq-head" class="toc-item" data-target="prereq-head"><span class="toc-num">00</span><span>Before you start</span></a>
+            <a href="#flash-head" class="toc-item" data-target="flash-head"><span class="toc-num">01</span><span>Flash your deck</span></a>
+            <a href="#wifi-head" class="toc-item" data-target="wifi-head"><span class="toc-num">02</span><span>Connect to WiFi</span></a>
+            <a href="#ha-head" class="toc-item" data-target="ha-head"><span class="toc-num">03</span><span>Connect Home Assistant</span></a>
+            <a href="#pc-head" class="toc-item" data-target="pc-head"><span class="toc-num">04</span><span>Connect your PC</span></a>
+            <a href="#monitor-head" class="toc-item" data-target="monitor-head"><span class="toc-num">05</span><span>View serial logs</span></a>
+          </nav>
+          <nav class="rail-links" aria-label="Project links">
+            <div class="rail-label">Project</div>
+            <a href="https://github.com/Keralots/TouchDeck" target="_blank" rel="noopener">github</a>
+            <a href="https://github.com/Keralots/TouchDeck#readme" target="_blank" rel="noopener">docs</a>
+            <a href="https://github.com/Keralots/TouchDeck/issues" target="_blank" rel="noopener">report a bug</a>
+            <a href="https://github.com/Keralots/TouchDeck/releases" target="_blank" rel="noopener">releases</a>
+          </nav>
+          <div class="rail-foot">firmware <span id="rail-version">...</span></div>
+        </div>
+      </aside>
+      <main class="main" id="main">
+        <section class="hero">
+          <h1>Flash TouchDeck to your Guition 3.5&quot; deck <span class="accent">straight from your browser.</span></h1>
+          <p>A touch control deck for Home Assistant, live PC stats from the TouchDeck Companion and Bambu Lab printers, set up from a web portal on the device. No cloud, no accounts.</p>
+        </section>
+
+        <section class="showcase" aria-labelledby="showcase-head">
+          <h2 id="showcase-head">On the device</h2>
+          <p class="lede">Recorded frame by frame from the display. Pick an animation set under <strong>Display &gt; Animations</strong>.</p>
+          <div class="showcase-grid">
+            <figure><img loading="lazy" width="480" height="320" src="img/anim/calm.webp" alt="TouchDeck Calm animations with touch ripples and expanding cards" data-fallback="images/deck-main.png"><figcaption>Calm: a ripple on touch, a glow when a tile turns on, pages crossfade, cards grow out of their tile.</figcaption></figure>
+            <figure><img loading="lazy" width="480" height="320" src="img/anim/water.webp" alt="TouchDeck Water animations with drop rings and flooding tile colours" data-fallback="images/deck-main.png"><figcaption>Water: drop rings, the on colour floods out of your finger, a water edge between pages.</figcaption></figure>
+            <figure><img loading="lazy" width="480" height="320" src="img/anim/glass.webp" alt="TouchDeck Glass animations with glossy highlights and rising cards" data-fallback="images/deck-main-midnight.png"><figcaption>Glass: a highlight under your finger, a glossy sheen, pages slide in depth, cards rise like a glass sheet.</figcaption></figure>
+            <figure><img loading="lazy" width="480" height="320" src="img/anim/heavy.webp" alt="TouchDeck Heavy animations with bending tiles and aurora colours" data-fallback="images/deck-lab.png"><figcaption>Heavy: the tile bends like water, aurora colours, pages change column by column.</figcaption></figure>
+            <figure><img loading="lazy" width="480" height="320" src="img/anim/frame.webp" alt="TouchDeck idle photo frame with full screen pictures and a clock" data-fallback="images/deck-panel.png"><figcaption>Photo frame: when idle, the tiles step aside for full screen pictures and a clock.</figcaption></figure>
+            <figure><img loading="lazy" width="480" height="320" src="img/anim/printer.webp" alt="TouchDeck Bambu Lab printer animations with a spool and filament change" data-fallback="images/deck-printer.png"><figcaption>Bambu Lab printer: heating glow, a turning spool and a filament change.</figcaption></figure>
+          </div>
+        </section>
+
+        <aside id="browser-callout" class="browser-callout" role="status">
+          <span class="pulse" aria-hidden="true"></span>
+          <div><strong>Open this page on desktop Chrome or Edge.</strong> Flashing uses Web Serial, which only runs on a desktop Chromium browser. The rest of this page is just a preview.</div>
+        </aside>
+        <noscript><p class="note">Enable JavaScript to load the firmware version, install TouchDeck and view serial logs. Flashing needs desktop Chrome or Edge.</p></noscript>
+
+        <section class="panel" id="panel-prereq" aria-labelledby="prereq-head">
+          <header class="panel-head"><span class="num">00</span><h2 id="prereq-head">Before you start</h2></header>
+          <ul class="checklist">
+            <li><strong>Desktop Chrome or Edge.</strong> Web Serial does not run on Firefox, Safari or mobile.</li>
+            <li><strong>A real data USB-C cable.</strong> A power-only cable will not expose a serial port.</li>
+            <li><strong>Guition JC3248W535 only.</strong> This firmware is for the ESP32-S3 N16R8 board. Find the <a href="https://makerworld.com/models/3463113" target="_blank" rel="noopener">printed case on MakerWorld</a>.</li>
+            <li><strong>Stuck in a connect / disconnect loop?</strong> Hold <code>BOOT</code>, plug in USB while holding, then release. Or hold <code>BOOT</code>, tap <code>RESET</code>, then release both.</li>
+            <li><strong>Close anything that holds the serial port.</strong> The TouchDeck Companion talks to the deck over the USB cable when plugged in. Close it, Arduino IDE, PlatformIO Monitor and the serial monitor below before flashing.</li>
+            <li><strong>Updating a deck that already runs TouchDeck?</strong> Use the OTA file instead to keep your pages: download <code>TouchDeck-<span data-version>&lt;version&gt;</span>-ota.bin</code> from <a href="https://github.com/Keralots/TouchDeck/releases" target="_blank" rel="noopener">Releases</a> and upload it in the deck's portal under <strong>Maintenance &gt; Firmware update</strong>. Back up the configuration first under <strong>Maintenance &gt; Backup</strong>.</li>
+          </ul>
+        </section>
+
+        <section class="panel" id="panel-flash" aria-labelledby="flash-head">
+          <header class="panel-head"><span class="num">01</span><h2 id="flash-head">Flash your deck</h2></header>
+          <p class="board-note">One board, ready to go: 16 MB flash, 8 MB PSRAM and a 3.5&quot; IPS QSPI panel with capacitive touch.</p>
+          <dl class="specs" aria-label="Board specs">
+            <div class="spec-row"><dt>chip</dt><dd id="spec-chip">ESP32-S3</dd></div>
+            <div class="spec-row"><dt>board</dt><dd>Guition JC3248W535</dd></div>
+            <div class="spec-row"><dt>display</dt><dd>AXS15231B 320x480 touch</dd></div>
+            <div class="spec-row"><dt>firmware</dt><dd id="spec-version">...</dd></div>
+            <div class="spec-row"><dt>flash</dt><dd>0x0 - full image (bootloader + partitions + app)</dd></div>
+          </dl>
+          <p class="status-line" id="status-line" role="status">Loading firmware version...</p>
+          <div class="install-row">
+            <div class="install-actions"><div id="install-slot"></div><a href="firmware/latest/SHA256SUMS.txt" target="_blank" rel="noopener">SHA-256 checksums</a></div>
+            <p class="hint">A dialog will ask which serial port to use. Pick the one that appears when you plug in the deck. Choosing <strong>Erase device</strong> on a fresh install wipes everything stored on the deck. The full image is flashed at <code>0x0</code> and takes about a minute (around 2.7 MB).</p>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-wifi" aria-labelledby="wifi-head">
+          <header class="panel-head"><span class="num">02</span><h2 id="wifi-head">Connect to WiFi</h2></header>
+          <p class="lede">Right after flashing, send your WiFi credentials over USB in this tab. If you miss that window, join the deck's setup hotspot from your phone or laptop.</p>
+          <article class="path" aria-labelledby="wifi-improv">
+            <header class="path-head"><span class="path-tag"><span class="path-pulse" aria-hidden="true"></span>recommended</span><h3 id="wifi-improv">Configure WiFi in this tab</h3></header>
+            <p class="path-body">The installer offers <strong>Configure WiFi</strong> using Improv Serial on a freshly flashed deck with no WiFi stored, for about 3 minutes.</p>
+            <ol class="step-list">
+              <li>Wait for <strong>Installation complete</strong> and keep the install dialog open.</li>
+              <li>Pick your WiFi network, enter its password and click <strong>Connect</strong>.</li>
+              <li>The deck reboots onto your WiFi and shows its <strong>IP address</strong>. Note it down for the next steps.</li>
+            </ol>
+          </article>
+          <article class="path" aria-labelledby="wifi-ap">
+            <header class="path-head"><span class="path-tag path-tag-muted">fallback</span><h3 id="wifi-ap">Or join the setup hotspot</h3></header>
+            <p class="path-body">Scan the QR code shown on the screen or join the hotspot by hand.</p>
+            <div class="creds" aria-label="Setup-mode credentials">
+              <div class="creds-head"><span class="creds-dot" aria-hidden="true"></span><span class="creds-title">setup-mode access point</span></div>
+              <div class="creds-row"><span class="creds-key">network</span><span class="creds-val">TouchDeck-XXXX</span></div>
+              <div class="creds-row"><span class="creds-key">password</span><span class="creds-val">touchdeck1234</span></div>
+              <div class="creds-row"><span class="creds-key">portal</span><span class="creds-val"><a href="http://192.168.4.1" target="_blank" rel="noopener">http://192.168.4.1</a></span></div>
+              <p class="creds-note">The XXXX suffix is unique to your deck. The hotspot closes once the deck joins your WiFi.</p>
+            </div>
+            <ol class="step-list">
+              <li>Join <strong>TouchDeck-XXXX</strong> using the password <code>touchdeck1234</code>.</li>
+              <li>The setup page opens at <a href="http://192.168.4.1" target="_blank" rel="noopener">http://192.168.4.1</a>. Open it by hand if it does not appear.</li>
+              <li>Choose your WiFi network, enter its password and save.</li>
+              <li>The deck reboots onto your WiFi and shows its <strong>IP address</strong>.</li>
+            </ol>
+          </article>
+          <p class="hint">Afterwards the portal is at the device IP or <a href="http://touchdeck.local" target="_blank" rel="noopener">http://touchdeck.local</a>.</p>
+        </section>
+
+        <section class="panel" id="panel-ha" aria-labelledby="ha-head">
+          <header class="panel-head"><span class="num">03</span><h2 id="ha-head">Connect Home Assistant</h2></header>
+          <ol class="step-list">
+            <li>In the portal, open <strong>Pages &amp; tiles</strong>. Enter your Home Assistant address (for example <code>http://192.168.0.7:8123</code>) and a long-lived access token from your HA profile's <strong>Security</strong> tab. The token stays on the device.</li>
+            <li>Install the icon font from the portal: <strong>Material Design Icons</strong>, the set Home Assistant uses.</li>
+            <li>Click <strong>Update from HA</strong> to cache the entity list. Add tiles from the entity picker, then place them in the grid editor. Arrange landscape and portrait separately.</li>
+            <li>Optionally, open <strong>Advanced</strong> for Bambu Lab printers (LAN or through the Home Assistant Bambu Lab integration) and MQTT discovery.</li>
+          </ol>
+          <p class="hint">See the <a href="https://github.com/Keralots/TouchDeck#home-assistant" target="_blank" rel="noopener">Home Assistant setup guide</a> for more details.</p>
+        </section>
+
+        <section class="panel" id="panel-pc" aria-labelledby="pc-head">
+          <header class="panel-head"><span class="num">04</span><h2 id="pc-head">Connect your PC <span class="section-sub">TouchDeck Companion</span></h2></header>
+          <p class="lede">The companion sends live PC metrics to your deck and lets you pair it for media keys, volume, lock and sleep.</p>
+          <div class="os-tabs" role="tablist" aria-label="Operating system">
+            <button id="tab-win" class="os-tab is-active" type="button" role="tab" data-os="win" aria-controls="os-win" aria-selected="true">Windows</button>
+            <button id="tab-linux" class="os-tab" type="button" role="tab" data-os="linux" aria-controls="os-linux" aria-selected="false" tabindex="-1">Linux</button>
+          </div>
+          <div id="os-win" class="os-panel is-active" data-os-panel="win" role="tabpanel" aria-labelledby="tab-win" tabindex="0">
+            <ol class="step-list">
+              <li>Install <a href="https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases" target="_blank" rel="noopener">LibreHardwareMonitor</a>, run it <strong>as Administrator</strong>, then enable <strong>Options &gt; Remote Web Server &gt; Run</strong> (port <code>8085</code>).</li>
+              <li>Download <code>TouchDeckCompanion-<span data-version>&lt;version&gt;</span>.exe</code> from <a href="https://github.com/Keralots/TouchDeck/releases" target="_blank" rel="noopener">Releases</a> and run it. Its control panel opens at <a href="http://127.0.0.1:8750" target="_blank" rel="noopener">http://127.0.0.1:8750</a>.</li>
+              <li>Point it at the <strong>deck's IP</strong>, pick sensors and click <strong>Start</strong>. In the deck portal add tiles with <strong>+ Add PC metric</strong>.</li>
+              <li>For PC control, on the companion's <strong>Device</strong> page click <strong>Pair for control</strong>, then tap <strong>Allow</strong> on the deck.</li>
+            </ol>
+            <div class="note"><span class="note-k">from source</span><div>Run these commands from <code>TouchDeck-CompanionApp/</code>:</div></div>
+            <div class="cmd" data-cmd>
+              <div class="cmd-head"><span class="cmd-dot"></span><span class="cmd-dot"></span><span class="cmd-dot"></span><span class="cmd-title">powershell</span></div>
+              <button class="cmd-copy" type="button" aria-label="Copy Windows commands">copy</button>
+              <pre><span class="pr">&gt; </span>pip install -r win-companion/requirements.txt
+<span class="pr">&gt; </span>python win-companion/touchdeck_companion.py</pre>
+            </div>
+          </div>
+          <div id="os-linux" class="os-panel" data-os-panel="linux" role="tabpanel" aria-labelledby="tab-linux" tabindex="0" hidden>
+            <p class="path-body">Run these commands from <code>TouchDeck-CompanionApp/</code>:</p>
+            <div class="cmd" data-cmd>
+              <div class="cmd-head"><span class="cmd-dot"></span><span class="cmd-dot"></span><span class="cmd-dot"></span><span class="cmd-title">bash</span></div>
+              <button class="cmd-copy" type="button" aria-label="Copy Linux commands">copy</button>
+              <pre><span class="pr">$ </span>pip install -r linux-companion/requirements.txt
+<span class="pr">$ </span>python linux-companion/touchdeck_companion_linux.py</pre>
+            </div>
+            <ol class="step-list">
+              <li>Open <a href="http://127.0.0.1:8750" target="_blank" rel="noopener">http://127.0.0.1:8750</a>. Enter the deck's IP, pick sensors and click <strong>Start</strong>.</li>
+              <li>In the deck portal, use <strong>+ Add PC metric</strong> to add your sensors.</li>
+              <li>For PC control, click <strong>Pair for control</strong> on the companion's <strong>Device</strong> page, then tap <strong>Allow</strong> on the deck.</li>
+            </ol>
+          </div>
+          <p class="hint">Metrics travel over UDP <code>4210</code>, signed PC commands over UDP <code>4211</code>, and cover art over TCP <code>8751</code>. Allow the companion through the firewall. PC and deck must share a subnet. See <a href="https://github.com/Keralots/TouchDeck#pc-stats-and-control-touchdeck-companion" target="_blank" rel="noopener">PC stats and control</a>.</p>
+        </section>
+
+        <section class="panel" id="panel-monitor" aria-labelledby="monitor-head">
+          <header class="panel-head"><span class="num">05</span><h2 id="monitor-head">View serial logs</h2></header>
+          <p class="lede">Capture a boot loop, a WiFi error or a crash for a bug report. Plug the deck in over USB, click Connect and pick the same serial port you would use for flashing.</p>
+          <p class="status-line" id="monitor-status" role="status"></p>
+          <div class="monitor-row">
+            <button id="monitor-connect" class="btn-monitor" type="button">Connect</button>
+            <button id="monitor-disconnect" class="btn-monitor btn-ghost" type="button" disabled>Disconnect</button>
+            <button id="monitor-export" class="btn-monitor btn-ghost" type="button" disabled>Export</button>
+            <button id="monitor-clear" class="btn-monitor btn-ghost" type="button" disabled>Clear</button>
+          </div>
+          <pre id="monitor-output" class="monitor-output" aria-live="polite" aria-label="Serial output" tabindex="0"></pre>
+          <p class="hint">Only one program can hold the serial port at a time. The companion holds it while the USB cable is connected, so close it and any PlatformIO / Arduino monitors first. Disconnect this monitor before installing. Baud rate: <strong>115200</strong>.</p>
+        </section>
+        <footer class="footer">
+          <span>TouchDeck - open-source touch control deck for the Guition JC3248W535.</span>
+          <span><a href="https://github.com/Keralots/TouchDeck" target="_blank" rel="noopener">source</a> / <a href="https://github.com/Keralots/TouchDeck/issues" target="_blank" rel="noopener">report a bug</a></span>
+        </footer>
+      </main>
+    </div>
+  </div>
+  <script src="flasher.js"></script>
+</body>
+</html>

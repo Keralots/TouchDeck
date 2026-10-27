@@ -6,13 +6,18 @@ Usage:
     python create_firmware.py               # version from FW_VERSION in include/config.h
     python create_firmware.py v1.0.0        # explicit version
     python create_firmware.py --no-build    # package what .pio/build already has
+    python create_firmware.py --flasher     # also publish the full image to the web flasher
 
 Output (release/<version>/):
     TouchDeck-<version>-full.bin   bootloader + partitions + app, flash at 0x0
     TouchDeck-<version>-ota.bin    app only, for the portal's firmware update
+
+With --flasher, docs/firmware/latest/ gets the full image, VERSION and SHA256SUMS.txt
+(served by GitHub Pages at touchdeck.stolaris.dev).
 """
 
 import argparse
+import hashlib
 import re
 import shutil
 import subprocess
@@ -26,6 +31,7 @@ FIRMWARE_OFFSET = 0x10000
 
 ROOT = Path(__file__).resolve().parent
 BUILD = ROOT / ".pio" / "build" / ENV
+FLASHER = ROOT / "docs" / "firmware" / "latest"
 
 
 def read_version():
@@ -70,11 +76,24 @@ def merge_full(out):
         f.write(fw)
 
 
+def publish_flasher(full, version):
+    FLASHER.mkdir(parents=True, exist_ok=True)
+    for old in FLASHER.glob("TouchDeck-*-full.bin"):
+        old.unlink()
+    dst = FLASHER / full.name
+    shutil.copy2(full, dst)
+    digest = hashlib.sha256(dst.read_bytes()).hexdigest()
+    (FLASHER / "SHA256SUMS.txt").write_text(f"{digest}  {dst.name}\n", encoding="utf-8", newline="\n")
+    (FLASHER / "VERSION").write_text(version + "\n", encoding="utf-8", newline="\n")
+    print(f"  {dst.relative_to(ROOT)}  (web flasher, {version})")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("version", nargs="?", default=None)
     ap.add_argument("--no-build", action="store_true")
+    ap.add_argument("--flasher", action="store_true")
     args = ap.parse_args()
 
     version = args.version or read_version()
@@ -94,6 +113,8 @@ def main():
     shutil.copy2(BUILD / "firmware.bin", ota)
     for p in (full, ota):
         print(f"  {p.relative_to(ROOT)}  ({p.stat().st_size / 1024:.1f} KB)")
+    if args.flasher:
+        publish_flasher(full, version)
 
 
 if __name__ == "__main__":

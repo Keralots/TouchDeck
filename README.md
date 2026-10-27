@@ -23,6 +23,19 @@ Captured from the device (`/screen.bmp`), Glass theme unless noted.
 | ![Home lab page: Proxmox and pfSense from Home Assistant](docs/images/deck-lab.png) | ![Quick panel with brightness and link status](docs/images/deck-panel.png) |
 | Home lab: Proxmox and pfSense | Quick panel |
 
+## Animations
+
+Recorded frame by frame from the display. Pick a set under **Display > Animations** (Classic, Calm, Water, Glass, Heavy, or Custom to choose each effect).
+
+| | |
+|:---:|:---:|
+| ![Calm: ripple on touch, glow when a tile turns on, crossfade between pages, card growing out of its tile](docs/img/anim/calm.webp) | ![Water: drop rings, the on colour flooding out of the finger, a water edge between pages](docs/img/anim/water.webp) |
+| Calm | Water |
+| ![Glass: highlight under the finger, glossy sheen, pages sliding in depth, card rising like a glass sheet](docs/img/anim/glass.webp) | ![Heavy: the tile bending like water, aurora colours, pages changing column by column](docs/img/anim/heavy.webp) |
+| Glass | Heavy |
+| ![Photo frame: the tiles step aside for a full screen picture and a clock, a tap brings them back](docs/img/anim/frame.webp) | ![Bambu Lab printer: nozzles and bed heating, a turning spool and a filament change](docs/img/anim/printer.webp) |
+| Photo frame | Printer animations |
+
 ## What it does
 
 - **Pages of tiles** in a grid (up to 6x4 per page): switches, buttons and sensors from Home Assistant, and PC metric tiles (number, chart or bar). Tiles are placed and sized in half-cell steps (1x1.5, 1.5x1, 0.5x0.5...); text and icons scale with the tile, so small tiles shrink instead of overlapping.
@@ -253,6 +266,8 @@ Guition JC3248W535: AXS15231B panel over QSPI, AXS15231B touch on I2C. Nothing t
 Optional status LED: a plain single-colour LED driven through a transistor from a free GPIO (default 17 on the extended IO header). Pins used by the display, touch, USB, flash or PSRAM are refused by the portal.
 
 ## Flashing a prebuilt binary
+
+**Easiest: [touchdeck.stolaris.dev](https://touchdeck.stolaris.dev)** flashes the latest release from desktop Chrome or Edge and then sets up WiFi over USB (Improv).
 
 [Releases](https://github.com/Keralots/TouchDeck/releases) ship two firmware files: `TouchDeck-<version>-full.bin` (full image, for a first flash over USB) and `TouchDeck-<version>-ota.bin` (app only, for **Maintenance > Firmware update** in the portal of a device that already runs TouchDeck). The Windows companion is attached as `TouchDeckCompanion-<version>.exe`.
 

@@ -2,6 +2,7 @@
 .vscode/
 release/
 *.bin
+!docs/firmware/latest/*.bin
 *.elf
 *.map
 __pycache__/
