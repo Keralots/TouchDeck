@@ -50,8 +50,10 @@ bool deckApplyConfig(const String& text, String& err);
 // Portal upload: load the MDI font stored at uploaded, keep it as the icon
 // font and rebuild the pages with it. A bad file is deleted, the old font stays.
 bool deckInstallIcons(const char* uploaded, String& err);
-// Rebuild the pages without icons, so the font file can be deleted.
+// Rebuild the pages without MDI, so its font file can be deleted.
 void deckReleaseIcons();
+bool deckInstallBrand(const char* font, const char* names, String& err);
+bool deckRemoveBrand(String& err);
 // Printers for the portal: config, whether secrets are stored, live status.
 String deckPrintersJson();
 // Re-read the printers' secrets after the portal stored new ones.

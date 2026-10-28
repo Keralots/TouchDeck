@@ -1415,6 +1415,104 @@ static void handleIconsFinish() {
   handleIconsStatus();
 }
 
+// --- Brand icons (CFF font and sorted names on microSD) -------------------------
+static const char* const BRAND_FONT_UPLOAD = "/touchdeck/icons/cbi.otf.up";
+static const char* const BRAND_NAMES_UPLOAD = "/touchdeck/icons/cbi.names.up";
+static File brandUpload;
+static String brandError;
+static unsigned brandParts = 0, brandSeen = 0, brandComplete = 0, brandPart = 0;
+static size_t brandBytes = 0;
+
+static void handleBrandStatus() {
+  JsonDocument doc;
+  doc["sd"] = deck::wallOnSd();
+  doc["loaded"] = deck::brandReady();
+  doc["count"] = deck::brandCount();
+  doc["size"] = deck::brandFileSize();
+  doc["version"] = deck::brandVersion();  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+static void handleBrandFile(bool font) {
+  File f = deck::wallOnSd() && deck::brandReady()
+               ? deck::wallFs().open(font ? deck::brandFontPath() : deck::brandNamesPath(), "r") : File();
+  if (!f) { server.send(404, "text/plain", "No brand icons"); return; }
+  f.setBufferSize(128);
+  server.sendHeader("Cache-Control", "public, max-age=31536000, immutable");
+  server.streamFile(f, font ? "font/otf" : "text/plain");
+  f.close();
+}
+
+static void brandUploadCleanup() {
+  if (brandUpload) brandUpload.close();
+  if (deck::wallOnSd()) {
+    deck::wallFs().remove(BRAND_FONT_UPLOAD);
+    deck::wallFs().remove(BRAND_NAMES_UPLOAD);
+  }
+  brandParts = brandSeen = brandComplete = brandPart = 0;
+  brandBytes = 0;
+  brandError = "";
+}
+
+static void handleBrandUpload() {
+  if (!multipartRequest()) return;
+  HTTPUpload& up = server.upload();
+  if (up.status == UPLOAD_FILE_START) {
+    if (brandParts == 0) {
+      brandUploadCleanup();
+      if (!deck::wallOnSd()) brandError = "brand icons need a microSD card";
+      else {
+        deck::wallFs().mkdir("/touchdeck");
+        deck::wallFs().mkdir("/touchdeck/icons");
+      }
+    }
+    brandParts++;
+    brandPart = up.name == "font" ? 1 : up.name == "names" ? 2 : 0;
+    brandBytes = 0;
+    if (!brandPart || (brandSeen & brandPart) || brandParts > 2)
+      brandError = "expected one font file and one names file";
+    brandSeen |= brandPart;
+    if (brandError.length()) return;
+    brandUpload = deck::wallFs().open(brandPart == 1 ? BRAND_FONT_UPLOAD : BRAND_NAMES_UPLOAD, "w");
+    if (brandUpload) brandUpload.setBufferSize(128);
+    else brandError = "cannot create brand upload file";
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    esp_task_wdt_reset();
+    if (brandError.length()) return;
+    const size_t limit = brandPart == 1 ? deck::BRAND_MAX_FILE : deck::BRAND_MAX_NAMES;
+    if (up.currentSize > limit - brandBytes) brandError = "brand file too big";
+    else if (!brandUpload || brandUpload.write(up.buf, up.currentSize) != up.currentSize)
+      brandError = "cannot write brand file (card full or unavailable)";
+    else brandBytes += up.currentSize;
+    if (brandError.length() && brandUpload) brandUpload.close();
+  } else if (up.status == UPLOAD_FILE_END) {
+    if (brandUpload) brandUpload.close();
+    if (!brandBytes || brandBytes != up.totalSize) brandError = "incomplete brand upload";
+    if (!brandError.length()) brandComplete |= brandPart;
+  } else if (up.status == UPLOAD_FILE_ABORTED) {
+    brandUploadCleanup();
+  }
+}
+
+static void handleBrandFinish() {
+  String err = brandError;
+  if (!deck::wallOnSd()) err = "brand icons need a microSD card";
+  if (!err.length() && (!multipartRequest() || brandParts != 2 || brandComplete != 3))
+    err = "expected one complete font file and one complete names file";
+  if (!err.length() && !deckInstallBrand(BRAND_FONT_UPLOAD, BRAND_NAMES_UPLOAD, err) && !err.length())
+    err = "brand install failed";
+  brandUploadCleanup();
+  if (err.length()) { sendJsonMessage(400, false, err.c_str()); return; }
+  handleBrandStatus();
+}
+
+static void handleBrandRemove() {
+  String err;
+  if (!deckRemoveBrand(err)) { sendJsonMessage(400, false, err.c_str()); return; }
+  handleBrandStatus();
+}
+
 // --- Glass wallpaper galleries -----------------------------------------------
 static const char* wallUploadPath() { return deck::wallTemp(false); }
 static File wallUpload;
@@ -2127,6 +2225,11 @@ void initWebServer() {
   server.on("/deck", HTTP_GET, handleDeckPage);
   server.on("/deck.js", HTTP_GET, handleDeckJs);
   server.on("/api/deck/icons", HTTP_GET, handleIconsStatus);
+  server.on("/api/deck/brand", HTTP_GET, handleBrandStatus);
+  server.on("/api/deck/brand", HTTP_POST, handleBrandFinish, handleBrandUpload);
+  server.on("/api/deck/brand/remove", HTTP_POST, handleBrandRemove);
+  server.on("/cbi.otf", HTTP_GET, []() { handleBrandFile(true); });
+  server.on("/cbi.names", HTTP_GET, []() { handleBrandFile(false); });
   server.on("/api/deck/wallpaper", HTTP_GET, handleWallStatus);
   server.on("/api/deck/walls", HTTP_GET, handleWallsStatus);
   server.on("/api/deck/walls/file", HTTP_GET, handleWallsFile);
@@ -2171,6 +2274,7 @@ void handleWebServer() {
     wallComplete = false;
     wallError = "";
   }
+  if (brandParts) brandUploadCleanup();
   // A failed update shows its error for a moment, then the previous screen.
   if (otaFailedAt && millis() - otaFailedAt > 4000) {
     otaFailedAt = 0;

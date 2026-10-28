@@ -1,7 +1,5 @@
-// Guition deck: Material Design Icons (the set Home Assistant uses) from a
-// TTF the owner uploads to LittleFS. LVGL TinyTTF reads glyphs from the file
-// on demand, and the name -> codepoint index (PSRAM) is built from the font's
-// own glyph names (post table), so it always matches the uploaded file.
+// Guition deck: MDI on LittleFS and optional Custom Brand Icons on microSD.
+// TinyTTF reads glyphs on demand; name -> codepoint indexes live in PSRAM.
 #ifndef DECK_ICONS_H
 #define DECK_ICONS_H
 
@@ -22,11 +20,25 @@ bool iconsReady();
 size_t iconsCount();
 size_t iconsFileSize();
 
-// "mdi:name" or "name" -> codepoint; 0 when unknown or no font is loaded.
+constexpr size_t BRAND_MAX_FILE = 3 * 1024 * 1024;
+constexpr size_t BRAND_MAX_NAMES = 512 * 1024;
+const char* brandFontPath();
+const char* brandNamesPath();
+// Call after SD mount and LVGL init. Missing or invalid files leave icons unavailable.
+bool brandLoad(String& err);
+// As with iconsLoad(), callers must release labels before changing fonts.
+bool brandInstall(const char* font, const char* names, String& err);
+bool brandRemove(String& err);
+bool brandReady();
+size_t brandCount();
+size_t brandFileSize();
+const String& brandVersion();
+
+// "mdi:name", "name", or "phu:name" -> codepoint; 0 when unknown or unavailable.
 uint32_t iconCodepoint(const String& name);
 // TinyTTF font for this pixel size (cached); nullptr when no font is loaded.
-const lv_font_t* iconFont(int px);
-// UTF-8 text of one codepoint, for lv_label_set_text.
+// Pass the codepoint to draw: a brand one gets the brand font as fallback.
+const lv_font_t* iconFont(int px, uint32_t cp = 0);// UTF-8 text of one codepoint, for lv_label_set_text.
 void iconUtf8(uint32_t cp, char out[5]);
 
 }  // namespace deck

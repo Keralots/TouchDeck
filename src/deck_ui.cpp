@@ -807,6 +807,7 @@ bool deckBegin(uint8_t rotation) {
   lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
 
   if (!iconsLoad(iconsPath(), err)) Serial.printf("Deck: icons: %s\n", err.c_str());
+  if (wallOnSd() && !brandLoad(err)) Serial.printf("Deck: brand icons: %s\n", err.c_str());
   {
     Preferences prefs;
     if (prefs.begin("deckui", true)) {
@@ -1140,6 +1141,28 @@ void deckReleaseIcons() {
   buildPages();
   s_gen++;
   lv_obj_invalidate(lv_screen_active());
+}
+
+bool deckInstallBrand(const char* font, const char* names, String& err) {
+  if (!s_disp) { err = "display not running"; return false; }
+  stopGestures();
+  destroyPages();
+  const bool ok = brandInstall(font, names, err);
+  buildPages();
+  s_gen++;
+  lv_obj_invalidate(lv_screen_active());
+  return ok;
+}
+
+bool deckRemoveBrand(String& err) {
+  if (!s_disp) return brandRemove(err);
+  stopGestures();
+  destroyPages();
+  const bool ok = brandRemove(err);
+  buildPages();
+  s_gen++;
+  lv_obj_invalidate(lv_screen_active());
+  return ok;
 }
 
 String deckPrintersJson() {
