@@ -18,8 +18,8 @@
 .dk-phead .btn{padding:6px 9px}.dk-phead .dk-row{gap:6px}@media (min-width:561px){.dk-phead{grid-template-columns:minmax(160px,1fr) auto}}
 .dk-cap{font:12px var(--mono);color:var(--dim);margin:10px 0 0}.dk-cap.over{color:var(--err)}
 .dk-tile.sel{border-color:var(--accent)}
-.dk-more{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;padding-top:10px;border-top:1px solid var(--line)}
-.dk-more .field{margin:0}.dk-more .wide{grid-column:1/-1}.dk-more select,.dk-more input,.dk-more textarea{max-width:none;padding:7px 10px;font-size:13px}
+.dk-more{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px 12px;padding-top:10px;border-top:1px solid var(--line)}
+.dk-more .field{margin:0}.dk-sec,.dk-grp.flat>.field::before{font:600 11px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}.dk-sec{grid-column:1/-1}.dk-grp.flat{display:contents}.dk-grp.flat>.field::before{content:"\\a0";display:block;margin-bottom:8px}.dk-grp.flat>.field:first-child::before{content:var(--t)}.dk-grp.wide{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px 12px;min-width:0}.dk-more .field-label{display:flex;align-items:center;min-height:17px;margin-bottom:6px}.dk-more .field-label .tip-btn{width:15px;height:15px;margin-left:6px;font-size:10px}.dk-warn{margin-left:8px;color:var(--warn);font-weight:600;text-transform:none;letter-spacing:0}.dk-more .field-hint.tip{margin:0 0 6px}.dk-oib i{font:18px dkmdi, dkcbi;font-style:normal;line-height:1;margin-right:6px;vertical-align:-3px}.dk-more .wide{grid-column:1/-1}.dk-more select,.dk-more input,.dk-more textarea{max-width:none;padding:7px 10px;font-size:13px}
 .dk-sw{gap:6px;flex-wrap:wrap}.dk-sw input[type=color]{width:40px;height:30px;padding:2px;border:1px solid var(--line-2);border-radius:8px;background:var(--card);cursor:pointer}
 .dk-swb{width:24px;height:24px;padding:0;border:2px solid transparent;border-radius:50%;cursor:pointer}.dk-swb.on{border-color:var(--ink)}
 .dk-more textarea{width:100%;min-height:58px;font:12px var(--mono);background:var(--card);color:var(--ink);border:1px solid var(--line-2);border-radius:var(--r-md);resize:vertical}
@@ -27,7 +27,7 @@
 .dk-cell{border:1px dashed var(--line);border-radius:8px}
 .dk-gt{position:relative;display:flex;flex-direction:column;justify-content:space-between;gap:4px;min-width:0;min-height:0;overflow:hidden;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);cursor:grab;touch-action:none}
 .dk-gt.sel{outline:2px solid var(--accent);outline-offset:1px}.dk-gt.row{flex-direction:row;align-items:center;justify-content:flex-start;gap:6px;padding:2px 8px}.dk-gt.ic b{display:none}.dk-gt.drag{z-index:5;opacity:.85;cursor:grabbing;box-shadow:0 8px 20px rgba(0,0,0,.35)}
-.dk-gt i{font:20px dkmdi, dkcbi;font-style:normal;line-height:1}.dk-gt i.tx{font:600 11px var(--mono)}
+.dk-gt i{font:20px dkmdi, dkcbi;font-style:normal;line-height:1}.dk-chip{display:grid;place-items:center;flex:none;width:26px;height:26px;border-radius:50%}.dk-chip i{font-size:17px}.dk-chip.pl i{font-size:23px}.dk-gt.row .dk-chip{width:20px;height:20px}.dk-gt.row .dk-chip i{font-size:14px}.dk-gt i.tx{font:600 11px var(--mono)}
 .dk-gt b{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dk-rs{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 55%,var(--mute) 55%);opacity:.7}
 .dk-ghost{z-index:4;border:2px solid var(--ok);border-radius:8px;background:rgba(92,201,167,.15);pointer-events:none}.dk-ghost.bad{border-color:var(--err);background:rgba(229,83,75,.15)}
@@ -286,7 +286,7 @@
       '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
       i +
       '" title="Remove">&#215;</button></div>' +
-      (i === more ? '<div class="dk-more">' + whenField(t, i) + colorField(t, i) + "</div>" : "") +
+      (i === more ? '<div class="dk-more">' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
       "</div>"
     );
   }
@@ -332,7 +332,7 @@
       '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
       i +
       '" title="Remove">&#215;</button></div>' +
-      (i === more ? '<div class="dk-more">' + whenField(t, i) + colorField(t, i) + "</div>" : "") +
+      (i === more ? '<div class="dk-more">' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
       "</div>"
     );
   }
@@ -407,22 +407,35 @@
     const w = [];
     if (contrast(c, "#1A1D23") < 3) w.push("Midnight and Glass");
     if (contrast(c, "#FFFFFF") < 3) w.push("Daylight");
-    return w.length ? " <b>Hard to read on " + w.join(" and ") + ".</b>" : "";
+    return w.length ? "Hard to read on " + w.join(" and ") : "";
   }
-  function colRow(t, i, k, label, auto, hint, sw) {
+  /* A field label with its hint behind "?": hover shows it, a click unfolds it. */
+  function lbl(label, hint, warn) {
+    return (
+      '<label class="field-label">' +
+      label +
+      (hint ? '<button type="button" class="tip-btn" data-tg title="' + esc(hint) + '">?</button>' : "") +
+      (warn ? '<span class="dk-warn">' + esc(warn) + "</span>" : "") +
+      "</label>" +
+      (hint ? '<p class="field-hint tip">' + esc(hint) + "</p>" : "")
+    );
+  }
+  const secH = (name) => '<div class="dk-sec">' + name + "</div>";
+  /* o: sw (swatches, default SW), warn (beside the label), extra (buttons before Auto). */
+  function colRow(t, i, k, label, auto, hint, o = {}) {
     const c = (t[k] || auto).toLowerCase(),
       on = (t[k] || "").toLowerCase();
     return (
-      '<div class="field wide"><label class="field-label">' +
-      label +
-      '</label><div class="dk-row dk-sw"><input type="color" data-co="' +
+      '<div class="field wide">' +
+      lbl(label, hint, o.warn) +
+      '<div class="dk-row dk-sw"><input type="color" data-co="' +
       i +
       '" data-ck="' +
       k +
       '" value="' +
       c +
       '" title="Any colour">' +
-      (sw || SW)
+      (o.sw || SW)
         .map(
           (s) =>
             '<button type="button" class="dk-swb' +
@@ -440,31 +453,42 @@
             '"></button>',
         )
         .join("") +
+      (o.extra || "") +
       '<button type="button" class="btn' +
       (t[k] ? "" : " on") +
       '" data-ca="' +
       i +
       '" data-ck="' +
       k +
-      '">Auto</button></div><p class="field-hint" style="margin:4px 0 0">' +
-      hint +
-      "</p></div>"
+      '">Auto</button></div></div>'
     );
   }
+  /* A titled group of fields. A wide one takes whole rows and lays its fields
+   out in columns; a narrow one flows into the panel's grid field by field,
+   its title (--t, drawn by CSS) over the first field, a blank line over the rest. */
+  function grp(title, inner, wide) {
+    if (wide) return '<div class="dk-grp wide">' + secH(title) + inner + "</div>";
+    return '<div class="dk-grp flat" style="--t:&quot;' + title + '&quot;">' + inner + "</div>";
+  }
+  const canOn = (t) => !["metric", "sensor", "clock", "media"].includes(t.type);
+  /* Colours, then the on state; icon colours sit with them, the icon's style in iconFields. */
   function colorField(t, i) {
     const tx = TXT.concat(SW),
       theme = "Auto uses the theme text colour.";
     if (t.type === "clock")
-      return (
-        colRow(t, i, "color", "Time colour", "#E6E8EC", theme + readHint(t.color), tx) +
-        colRow(t, i, "textColor", "Date colour", "#E6E8EC", theme + readHint(t.textColor), tx) +
-        lookField(t, i)
+      return grp(
+        "Colours",
+        colRow(t, i, "color", "Time colour", "#E6E8EC", theme, { sw: tx, warn: readHint(t.color) }) +
+          colRow(t, i, "textColor", "Date colour", "#E6E8EC", theme, { sw: tx, warn: readHint(t.textColor) }) +
+          lookOff(t, i),
+        true,
       );
-    const m = t.type === "metric";
+    const m = t.type === "metric",
+      tg = t.type === "toggle";
     const what = m
       ? "the name, and the chart or bar line unless Chart colour is set"
-      : t.type === "toggle"
-        ? "the icon, and the whole tile while it is on unless On colour is set"
+      : tg
+        ? "the icon, and the whole tile while it is on, unless they have their own colours"
         : t.type === "slider"
           ? "the icon and the level fill"
           : "the icon";
@@ -472,7 +496,7 @@
       t,
       i,
       "color",
-      "Colour",
+      m ? "Colour" : "Accent colour",
       autoCol(t),
       "Colours " + what + ". Auto picks it from the " + (m ? "metric" : "entity type") + ".",
     );
@@ -485,19 +509,27 @@
         t.color || autoCol(t),
         "The chart or bar line. Auto follows Colour.",
       );
-    return (
-      h +
+    if (iconTile(t))
+      h += colRow(
+        t,
+        i,
+        "iconColor",
+        tg ? "Off icon colour" : "Icon colour",
+        t.color || autoCol(t),
+        "The icon" + (tg ? " while the tile is off" : "") + ". Auto follows Accent colour." + (tg ? "" : LIGHT_HINT(t)),
+        { extra: tg ? "" : lightBtn(t, i) },
+      );
+    h +=
       colRow(
         t,
         i,
         "textColor",
-        "Text colour",
+        tg ? "Off text colour" : "Text colour",
         "#E6E8EC",
-        (m ? "The value. " : "") + theme + readHint(t.textColor),
-        tx,
-      ) +
-      lookField(t, i)
-    );
+        (m ? "The value. " : "") + theme,
+        { sw: tx, warn: readHint(t.textColor) },
+      ) + lookOff(t, i);
+    return grp("Colours", h, true) + (canOn(t) ? grp("When on", lookOn(t, i), true) : "");
   }
   /* Tile look: background, on state and Glass opacity; Auto = the theme and Glass look settings. */
   const glassPct = (id, def) => {
@@ -508,9 +540,9 @@
     const set = t[k] != null,
       v = set ? t[k] : glassPct(gid, def);
     return (
-      '<div class="field wide"><label class="field-label">' +
-      label +
-      '</label><div class="dk-row"><div class="range-row" style="flex:1"><input type="range" min="0" max="100" step="5" data-op="' +
+      '<div class="field wide">' +
+      lbl(label, hint) +
+      '<div class="dk-row"><div class="range-row" style="flex:1"><input type="range" min="0" max="100" step="5" data-op="' +
       i +
       '" data-ok="' +
       k +
@@ -525,51 +557,57 @@
       i +
       '" data-ok="' +
       k +
-      '">Auto</button></div><p class="field-hint" style="margin:4px 0 0">' +
-      hint +
-      "</p></div>"
+      '">Auto</button></div></div>'
     );
   }
-  function lookField(t, i) {
-    const th = (document.getElementById("theme") || {}).value,
-      bg = th === "1" ? "#FFFFFF" : th === "2" ? "#0B0E13" : "#1A1D23";
-    const canOn = !["metric", "sensor", "clock", "media"].includes(t.type);
+  const themeBg = () => {
+    const th = (document.getElementById("theme") || {}).value;
+    return th === "1" ? "#FFFFFF" : th === "2" ? "#0B0E13" : "#1A1D23";
+  };
+  function lookOff(t, i) {
+    return (
+      colRow(
+        t,
+        i,
+        "bgColor",
+        canOn(t) ? "Off background" : "Background",
+        themeBg(),
+        "The tile background" +
+          (canOn(t) ? " while it is off" : "") +
+          "; in Glass the tint of its glass. Auto uses the theme.",
+        { sw: ["#1A1D23", "#0B0E13", "#FFFFFF"].concat(SW) },
+      ) +
+      opRow(
+        t,
+        i,
+        "opacity",
+        canOn(t) ? "Off opacity" : "Opacity",
+        "glassTint",
+        10,
+        "Glass only: how much of the background colour covers the picture. Auto text may still darken it. Auto = Glass look.",
+      )
+    );
+  }
+  function lookOn(t, i) {
     let h = colRow(
       t,
       i,
-      "bgColor",
-      "Off colour",
-      bg,
-      "The tile background while it is off; in Glass the tint of its glass. Auto uses the theme.",
-      ["#1A1D23", "#0B0E13", "#FFFFFF"].concat(SW),
-    );
-    h += opRow(
-      t,
-      i,
-      "opacity",
-      "Tile opacity",
-      "glassTint",
-      10,
-      "Glass only: how much of the Off colour covers the picture. Auto text may still darken it. Auto = Glass look.",
-    );
-    if (!canOn) return h;
-    h += colRow(
-      t,
-      i,
       "onColor",
-      "On colour",
+      "On background",
       t.color || autoCol(t),
-      "The whole tile while it is on. Auto follows Colour.",
+      "The whole tile while it is on. Auto follows Accent colour.",
     );
-    h += opRow(
-      t,
-      i,
-      "onOpacity",
-      "On opacity",
-      "glassOn",
-      80,
-      "Glass only: the On colour fill. Below 50% the tile also gets an outline. Auto = Glass look.",
-    );
+    if (t.type === "toggle")
+      h += colRow(
+        t,
+        i,
+        "onIconColor",
+        "On icon colour",
+        t.iconStyle === "plain" ? t.onTextColor || "#221602" : t.iconColor || t.color || autoCol(t),
+        "The icon while the tile is on. Auto keeps Off icon colour in a circle; without a circle the icon takes On text colour." +
+          LIGHT_HINT(t),
+        { extra: lightBtn(t, i) },
+      );
     return (
       h +
       colRow(
@@ -579,10 +617,56 @@
         "On text colour",
         "#221602",
         "Text while the tile is on. Auto picks dark text, or light text in Glass when the fill is faint or dark.",
-        TXT.concat(["#221602"], SW),
+        { sw: TXT.concat(["#221602"], SW), warn: readHint(t.onTextColor) },
+      ) +
+      opRow(
+        t,
+        i,
+        "onOpacity",
+        "On opacity",
+        "glassOn",
+        80,
+        "Glass only: the On background fill. Below 50% the tile also gets an outline. Auto = Glass look.",
       )
     );
   }
+  /* "Light": a light's icon takes its own colour from Home Assistant while on. */
+  const LIGHT_HINT = (t) =>
+    domainOf(t.entity) === "light"
+      ? " Light: while the light is on, the icon shows its colour from Home Assistant, dimmer at low brightness; a light without a colour only dims."
+      : "";
+  const lightBtn = (t, i) =>
+    domainOf(t.entity) === "light"
+      ? '<button type="button" class="btn' + (t.lightIcon ? " on" : "") + '" data-li="' + i + '">Light</button>'
+      : "";
+  /* Icon: style and the on icon (buttons, switches, sliders, sensors). */
+  function iconFields(t, i) {
+    let h =
+      '<div class="field">' +
+      lbl("Icon style", "Without a circle the icon fills its place.") +
+      '<select data-is="' +
+      i +
+      '">' +
+      opt("", "In a circle", t.iconStyle !== "plain") +
+      opt("plain", "No circle", t.iconStyle === "plain") +
+      "</select></div>";
+    if (t.type === "toggle") {
+      const cp = iconCp(t.onIcon);
+      h +=
+        '<div class="field">' +
+        lbl("On icon", "The icon while the tile is on. Same = the tile's own icon.") +
+        '<div class="dk-row"><button type="button" class="btn dk-oib" data-oi="' +
+        i +
+        '">' +
+        (cp ? "<i>" + String.fromCodePoint(cp) + "</i>" + esc(t.onIcon) : t.onIcon ? esc(t.onIcon) : "Same") +
+        "</button>" +
+        (t.onIcon ? '<button type="button" class="btn" data-oia="' + i + '">Same</button>' : "") +
+        "</div></div>";
+    }
+    return grp("Icon", h);
+  }
+  /* Tiles with an icon chip: icon style and icon colours apply. */
+  const iconTile = (t) => ["action", "toggle", "slider", "sensor"].includes(t.type) && !isPcVol(t);
   /* The clock tile: no entity or actions, just its size and colours. */
   /* Bambu printers: deck.printers is saved with the deck; serial and code go
    straight to the device and are never read back. */
@@ -982,7 +1066,7 @@
       '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
       i +
       '" title="Remove">&#215;</button></div>' +
-      (i === more ? '<div class="dk-more">' + whenField(t, i) + colorField(t, i) + "</div>" : "") +
+      (i === more ? '<div class="dk-more">' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
       "</div>"
     );
   }
@@ -1005,11 +1089,10 @@
       '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
       i +
       '" title="Remove">&#215;</button></div>' +
-      (i === more ? '<div class="dk-more">' + whenField(t, i) + colorField(t, i) + "</div>" : "") +
+      (i === more ? '<div class="dk-more">' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
       "</div>"
     );
   }
-  /* A tile's "more options" panel: confirm, colour, and for buttons the tap action. */
   const opt = (v, l, on) =>
     '<option value="' + esc(v) + '"' + (on ? " selected" : "") + ">" + esc(l) + "</option>";
   const isHttpSensor = (t) => t.type === "sensor" && !!t.http;
@@ -1054,10 +1137,170 @@
     Object.keys(h || {})
       .map((k) => k + ": " + h[k])
       .join("\n");
+  /* A tile's "more options": sensor, action, icon, colours, on state, visibility. */
   function moreRow(t, i) {
+    let h = "";
+    if (t.type === "sensor") {
+      h +=
+        '<div class="field">' +
+        lbl("Style") +
+        '<select data-st="' +
+        i +
+        '">' +
+        opt("number", "Number", t.style !== "chart") +
+        opt("chart", "Chart", t.style === "chart") +
+        "</select></div>" +
+        '<div class="field">' +
+        lbl("Show as", "Duration turns a number in s, min, h or d into 1h 49m.") +
+        '<select data-fm="' +
+        i +
+        '">' +
+        opt("", "Value", t.format !== "duration") +
+        opt("duration", "Duration (s, min, h, d)", t.format === "duration") +
+        "</select></div>";
+      if (t.style === "chart" && !isHttpSensor(t))
+        h +=
+          '<div class="field">' +
+          lbl(
+            "History hours",
+            "Defaults to 24 h; longer periods take longer to load from Home Assistant (a chatty sensor over a week can take many seconds).",
+          ) +
+          '<input type="number" min="1" max="168" step="1" data-sh="' +
+          i +
+          '" value="' +
+          esc(t.hours == null ? 24 : t.hours) +
+          '"></div>';
+      [
+        ["warn", "Warn at"],
+        ["crit", "Critical at"],
+      ].forEach(([k, label]) => {
+        h +=
+          '<div class="field">' +
+          lbl(
+            label,
+            isHttpSensor(t) ? "" : "Thresholds use the sensor unit; Critical lower than Warn = low is bad.",
+          ) +
+          '<input type="number" step="any" data-th="' +
+          i +
+          '" data-tk="' +
+          k +
+          '" value="' +
+          esc(t[k] == null ? "" : t[k]) +
+          '" placeholder="Unset"></div>';
+      });
+    }
+    const sensorPart = h;
+    let wideAct = false;
+    h = "";
+    if (t.type === "action" || isHttpSensor(t)) {
+      const tp = t.tap || {},
+        k = isHttp(t) ? "http" : t.tap ? "keep" : "";
+      const kk = isPcCmd(t) ? "pc" : k;
+      h +=
+        '<div class="field">' +
+        lbl("On tap") +
+        '<select data-ak="' +
+        i +
+        '">' +
+        opt("", isHttpSensor(t) ? "None" : "Home Assistant entity", kk === "") +
+        opt("http", "HTTP request", kk === "http") +
+        opt("pc", "PC command", kk === "pc") +
+        (kk === "keep" ? opt("keep", tapName(tp), true) : "") +
+        "</select></div>";
+      if (kk === "pc") {
+        wideAct = true;
+        const tg = pcs.find((x) => x.id === (tp.pc || "")) || (!tp.pc && pcs[0]);
+        h +=
+          '<div class="field">' +
+          lbl("Command", "Sleep, Restart and Shut down ask on the device before they run.") +
+          '<select data-pcc="' +
+          i +
+          '">' +
+          PCCMD.map((c) => opt(c[0], c[1], tp.cmd === c[0])).join("") +
+          "</select></div>";
+        if (tp.cmd === "hotkey")
+          h +=
+            '<div class="field">' +
+            lbl(
+              "Keys",
+              "Joined with +, up to 5: ctrl, shift, alt, win, a-z, 0-9, f1-f24, space, enter, tab, esc, backspace, delete, insert, home, end, pageup, pagedown, up, down, left, right, printscreen. The PC gets them in its focused window.",
+            ) +
+            '<input type="text" data-pck="' +
+            i +
+            '" value="' +
+            esc(tp.keys || "") +
+            '" placeholder="ctrl+shift+m" spellcheck="false"></div>';
+        h +=
+          '<div class="field">' +
+          lbl(
+            "PC",
+            tg && tg.paired
+              ? "Paired with " + tg.name + "."
+              : 'Pair the PC first: TouchDeck Companion, Device page, "Pair for control".',
+            tg && tg.paired ? "" : "Not paired",
+          ) +
+          '<select data-pcp="' +
+          i +
+          '">' +
+          opt("", "Default PC" + (pcs[0] ? " (" + pcs[0].name + ")" : ""), !tp.pc) +
+          pcs.map((x) => opt(x.id, x.name + (x.paired ? "" : " - not paired"), tp.pc === x.id)).join("") +
+          "</select></div>";
+      }
+      if (k === "http") {
+        wideAct = true;
+        const body =
+          typeof tp.body === "object" && tp.body !== null ? JSON.stringify(tp.body) : tp.body || "";
+        h +=
+          '<div class="field">' +
+          lbl("Method") +
+          '<select data-hm="' +
+          i +
+          '">' +
+          ["GET", "POST", "PUT", "PATCH", "DELETE"]
+            .map((m) => opt(m, m, (tp.method || "GET") === m))
+            .join("") +
+          "</select></div>" +
+          '<div class="field wide">' +
+          lbl("URL") +
+          '<input type="text" data-hu="' +
+          i +
+          '" value="' +
+          esc(tp.url || "") +
+          '" placeholder="http://192.168.0.50/cm?cmnd=Power%20Toggle" spellcheck="false">' +
+          '<p class="field-hint" style="margin:4px 0 0">Plain http on the local network. The request is stored in the deck configuration, which anyone on your network can read through this portal: avoid putting important passwords in it.</p></div>' +
+          '<div class="field">' +
+          lbl("Body (optional)", "A body that starts with { or [ goes out as application/json, other text as text/plain.") +
+          '<textarea data-hb="' +
+          i +
+          '" spellcheck="false">' +
+          esc(body) +
+          "</textarea></div>" +
+          '<div class="field">' +
+          lbl("Headers", "One per line, as Name: value.") +
+          '<textarea data-hh="' +
+          i +
+          '" spellcheck="false" placeholder="Authorization: Bearer ...">' +
+          esc(hdrText(tp.headers)) +
+          "</textarea></div>" +
+          '<div class="field">' +
+          lbl("Content type", "Automatic: application/json for a JSON body, else text/plain.") +
+          '<input type="text" data-hc="' +
+          i +
+          '" value="' +
+          esc(tp.contentType || "") +
+          '" placeholder="automatic" spellcheck="false"></div>' +
+          '<div class="field wide"><div class="dk-row"><button type="button" class="btn" data-ht="' +
+          i +
+          '">Test</button><span class="dk-tsub" id="dkHt' +
+          i +
+          '" style="margin:0;white-space:normal;flex:1">Sends the request from the device and shows the answer.</span></div></div>';
+      }
+    }
     const cf = t.confirm || "";
-    let h =
-      '<div class="dk-more"><div class="field"><label class="field-label">Confirm on the device</label><select data-cf="' +
+    h +=
+      '<div class="field">' +
+      lbl("Confirm on the device") +
+      '<select data-cf="' +
       i +
       '">' +
       [
@@ -1068,130 +1311,15 @@
         .map((o) => opt(o[0], o[1], cf === o[0]))
         .join("") +
       "</select></div>";
-    if (t.type === "sensor") {
-      h +=
-        '<div class="field"><label class="field-label">Style</label><select data-st="' +
-        i +
-        '">' +
-        opt("number", "Number", t.style !== "chart") +
-        opt("chart", "Chart", t.style === "chart") +
-        "</select></div>";
-      h +=
-        '<div class="field"><label class="field-label">Show as</label><select data-fm="' +
-        i +
-        '" title="Duration turns a number in s, min, h or d into 1h 49m">' +
-        opt("", "Value", t.format !== "duration") +
-        opt("duration", "Duration (s, min, h, d)", t.format === "duration") +
-        "</select></div>";
-      if (t.style === "chart" && !isHttpSensor(t))
-        h +=
-          '<div class="field"><label class="field-label">History hours</label><input type="number" min="1" max="168" step="1" data-sh="' +
-          i +
-          '" value="' +
-          esc(t.hours == null ? 24 : t.hours) +
-          '"><p class="field-hint">Defaults to 24 h; longer periods take longer to load from Home Assistant (a chatty sensor over a week can take many seconds).</p></div>';
-      [
-        ["warn", "Warn at"],
-        ["crit", "Critical at"],
-      ].forEach(([k, label]) => {
-        h +=
-          '<div class="field"><label class="field-label">' +
-          label +
-          '</label><input type="number" step="any" data-th="' +
-          i +
-          '" data-tk="' +
-          k +
-          '" value="' +
-          esc(t[k] == null ? "" : t[k]) +
-          '" placeholder="Unset">' +
-          (k === "crit" && !isHttpSensor(t)
-            ? '<p class="field-hint" data-tip>Thresholds use the sensor unit; Critical lower than Warn = low is bad.</p>'
-            : "") +
-          "</div>";
-      });
-    }
-    if (t.type === "action" || isHttpSensor(t)) {
-      const tp = t.tap || {},
-        k = isHttp(t) ? "http" : t.tap ? "keep" : "";
-      const kk = isPcCmd(t) ? "pc" : k;
-      h +=
-        '<div class="field"><label class="field-label">On tap</label><select data-ak="' +
-        i +
-        '">' +
-        opt("", isHttpSensor(t) ? "None" : "Home Assistant entity", kk === "") +
-        opt("http", "HTTP request", kk === "http") +
-        opt("pc", "PC command", kk === "pc") +
-        (kk === "keep" ? opt("keep", tapName(tp), true) : "") +
-        "</select></div>";
-      if (kk === "pc") {
-        h +=
-          '<div class="field"><label class="field-label">Command</label><select data-pcc="' +
-          i +
-          '">' +
-          PCCMD.map((c) => opt(c[0], c[1], tp.cmd === c[0])).join("") +
-          "</select></div>";
-        if (tp.cmd === "hotkey")
-          h +=
-            '<div class="field"><label class="field-label">Keys</label><input type="text" data-pck="' +
-            i +
-            '" value="' +
-            esc(tp.keys || "") +
-            '" placeholder="ctrl+shift+m" spellcheck="false"></div><p class="field-hint wide" style="margin:0">Joined with +, up to 5: ctrl, shift, alt, win, a-z, 0-9, f1-f24, space, enter, tab, esc, backspace, delete, insert, home, end, pageup, pagedown, up, down, left, right, printscreen. The PC gets them in its focused window.</p>';
-        h +=
-          '<div class="field"><label class="field-label">PC</label><select data-pcp="' +
-          i +
-          '">' +
-          opt("", "Default PC" + (pcs[0] ? " (" + pcs[0].name + ")" : ""), !tp.pc) +
-          pcs.map((x) => opt(x.id, x.name + (x.paired ? "" : " - not paired"), tp.pc === x.id)).join("") +
-          "</select></div>";
-        const tg = pcs.find((x) => x.id === (tp.pc || "")) || (!tp.pc && pcs[0]);
-        h +=
-          '<p class="field-hint wide" style="margin:0">' +
-          (tg && tg.paired
-            ? "Paired with " + esc(tg.name) + "."
-            : 'Pair the PC first: TouchDeck Companion, Device page, "Pair for control".') +
-          " Sleep, Restart and Shut down ask on the device before they run.</p>";
-      }
-      if (k === "http") {
-        const body =
-          typeof tp.body === "object" && tp.body !== null ? JSON.stringify(tp.body) : tp.body || "";
-        h +=
-          '<div class="field"><label class="field-label">Method</label><select data-hm="' +
-          i +
-          '">' +
-          ["GET", "POST", "PUT", "PATCH", "DELETE"]
-            .map((m) => opt(m, m, (tp.method || "GET") === m))
-            .join("") +
-          "</select></div>" +
-          '<div class="field wide"><label class="field-label">URL</label><input type="text" data-hu="' +
-          i +
-          '" value="' +
-          esc(tp.url || "") +
-          '" placeholder="http://192.168.0.50/cm?cmnd=Power%20Toggle" spellcheck="false"></div>' +
-          '<div class="field"><label class="field-label">Body (optional)</label><textarea data-hb="' +
-          i +
-          '" spellcheck="false">' +
-          esc(body) +
-          "</textarea></div>" +
-          '<div class="field"><label class="field-label">Headers (Name: value)</label><textarea data-hh="' +
-          i +
-          '" spellcheck="false" placeholder="Authorization: Bearer ...">' +
-          esc(hdrText(tp.headers)) +
-          "</textarea></div>" +
-          '<div class="field"><label class="field-label">Content type</label><input type="text" data-hc="' +
-          i +
-          '" value="' +
-          esc(tp.contentType || "") +
-          '" placeholder="automatic" spellcheck="false"></div>' +
-          '<div class="field wide"><div class="dk-row"><button type="button" class="btn" data-ht="' +
-          i +
-          '">Test</button><span class="dk-tsub" id="dkHt' +
-          i +
-          '" style="margin:0;white-space:normal;flex:1">Sends the request from the device and shows the answer.</span></div></div>' +
-          '<p class="field-hint wide" style="margin:0">Plain http on the local network. A body that starts with { or [ goes out as application/json, other text as text/plain. The request is stored in the deck configuration, which anyone on your network can read through this portal: avoid putting important passwords in it.</p>';
-      }
-    }
-    return h + whenField(t, i) + colorField(t, i) + "</div>";
+    return (
+      '<div class="dk-more">' +
+      (sensorPart ? grp("Sensor", sensorPart, true) : "") +
+      grp(t.type === "sensor" ? "Tap" : "Action", h, wideAct) +
+      whenField(t, i) +
+      iconFields(t, i) +
+      colorField(t, i) +
+      "</div>"
+    );
   }
   function parseHdrs(s) {
     const o = {};
@@ -1468,8 +1596,16 @@
   function whenField(t, i) {
     const w = t.when,
       k = !w ? "" : typeof w === "string" ? w : "entity";
+    const hint = !k
+      ? ""
+      : (k === "entity"
+          ? "The state as Home Assistant reports it (on, off, home, playing...). Hidden until it is known."
+          : "The PC counts as off about a minute after its companion goes quiet.") +
+        " Its cell is free otherwise: another tile with the opposite condition can take it. Switch the Preview above the grid to place it.";
     let h =
-      '<div class="field"><label class="field-label">Show</label><select data-wh="' +
+      '<div class="field">' +
+      lbl("Show", hint) +
+      '<select data-wh="' +
       i +
       '">' +
       [
@@ -1485,12 +1621,16 @@
       const s = String(w.state || ""),
         n = s[0] === "!";
       h +=
-        '<div class="field"><label class="field-label">Entity</label><input type="text" data-we="' +
+        '<div class="field">' +
+        lbl("Entity") +
+        '<input type="text" data-we="' +
         i +
         '" value="' +
         esc(w.entity || "") +
         '" placeholder="switch.pc_power" spellcheck="false"></div>' +
-        '<div class="field"><label class="field-label">State</label><div class="dk-row"><select data-wn="' +
+        '<div class="field">' +
+        lbl("State") +
+        '<div class="dk-row"><select data-wn="' +
         i +
         '" style="width:auto">' +
         opt("", "is", !n) +
@@ -1501,14 +1641,7 @@
         esc(n ? s.slice(1) : s) +
         '" placeholder="on" spellcheck="false"></div></div>';
     }
-    if (k)
-      h +=
-        '<p class="field-hint wide" style="margin:0">' +
-        (k === "entity"
-          ? "The state as Home Assistant reports it (on, off, home, playing...). Hidden until it is known."
-          : "The PC counts as off about a minute after its companion goes quiet.") +
-        " Its cell is free otherwise: another tile with the opposite condition can take it. Switch the Preview above the grid to place it.</p>";
-    return h;
+    return grp("Visibility", h);
   }
   const pages = () => deck.pages.filter((p) => p.type !== "metrics" && (prnOn() || !p.printer));
   const MAX_PAGES = 8; // firmware MAX_DECK_PAGES, counts every page in deck.json
@@ -1713,6 +1846,26 @@
       }
     return null;
   }
+  const rgba = (h, a) =>
+    "rgba(" + [1, 3, 5].map((n) => parseInt(h.substr(n, 2), 16)).join(",") + "," + a + ")";
+  /* A button or sensor's icon in the grid: in a circle or plain, in its icon colour. */
+  function gchip(t, col, cp) {
+    if (t.icon === "none") return "";
+    const plain = t.iconStyle === "plain",
+      ic = t.iconColor || col;
+    return (
+      '<span class="dk-chip' +
+      (plain ? " pl" : "") +
+      '" style="color:' +
+      ic +
+      (plain ? "" : ";background:" + rgba(ic, 0.18)) +
+      '"><i' +
+      (cp ? "" : ' class="tx"') +
+      ">" +
+      (cp ? String.fromCodePoint(cp) : esc((domainOf(t.entity) || "?").slice(0, 2).toUpperCase())) +
+      "</i></span>"
+    );
+  }
   function gtile(t, k, a) {
     const m = t.type === "metric",
       mm = m && mlist(t).find((x) => x.id === t.metric),
@@ -1732,6 +1885,7 @@
         : pr
           ? prnTileName(t)
           : t.label || (m ? (mm ? mm.name : "Metric #" + t.metric) : (en && en.name) || t.entity || "Tile");
+    const chip = iconTile(t) ? gchip(t, col, cp) : null;
     return (
       '<div class="dk-gt' +
       (k === sel ? " sel" : "") +
@@ -1741,21 +1895,25 @@
       k +
       '"' +
       (a ? ' style="grid-area:' + (a.y + 1) + "/" + (a.x + 1) + "/span " + a.h + "/span " + a.w + '"' : "") +
-      '><i style="color:' +
-      col +
-      '"' +
-      (cp ? "" : ' class="tx"') +
       ">" +
-      (cp
-        ? String.fromCodePoint(cp)
-        : m || np
-          ? "PC"
-          : ck
-            ? "12"
-            : pr
-              ? "3D"
-              : esc((d || "?").slice(0, 2).toUpperCase())) +
-      "</i><b>" +
+      (chip !== null
+        ? chip
+        : '<i style="color:' +
+          col +
+          '"' +
+          (cp ? "" : ' class="tx"') +
+          ">" +
+          (cp
+            ? String.fromCodePoint(cp)
+            : m || np
+              ? "PC"
+              : ck
+                ? "12"
+                : pr
+                  ? "3D"
+                  : esc((d || "?").slice(0, 2).toUpperCase())) +
+          "</i>") +
+      "<b>" +
       esc(nm) +
       "</b>" +
       (a ? '<span class="dk-rs" data-rs="' + k + '"></span>' : "") +
@@ -2410,6 +2568,43 @@
           setDirty(true);
         }),
     );
+    el.querySelectorAll("[data-tg]").forEach(
+      (b) =>
+        (b.onclick = (e) => {
+          e.preventDefault();
+          const tip = b.closest(".field").querySelector(".tip");
+          if (tip) tip.classList.toggle("tip-open");
+        }),
+    );
+    el.querySelectorAll("[data-oi]").forEach((x) => (x.onclick = () => openIcons(+x.dataset.oi, "onIcon")));
+    el.querySelectorAll("[data-oia]").forEach(
+      (x) =>
+        (x.onclick = () => {
+          delete p.tiles[+x.dataset.oia].onIcon;
+          setDirty(true);
+          renderPage();
+        }),
+    );
+    el.querySelectorAll("[data-li]").forEach(
+      (x) =>
+        (x.onclick = () => {
+          const t = p.tiles[+x.dataset.li];
+          if (t.lightIcon) delete t.lightIcon;
+          else t.lightIcon = true;
+          setDirty(true);
+          renderPage();
+        }),
+    );
+    el.querySelectorAll("[data-is]").forEach(
+      (x) =>
+        (x.onchange = (e) => {
+          const t = p.tiles[+x.dataset.is];
+          if (e.target.value) t.iconStyle = e.target.value;
+          else delete t.iconStyle;
+          setDirty(true);
+          renderPage();
+        }),
+    );
     el.querySelectorAll("[data-fm]").forEach(
       (x) =>
         (x.onchange = (e) => {
@@ -2944,7 +3139,8 @@
   const MDI_URL = "https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf";
   let mdi = null,
     mdiNames = [],
-    icFor = -1;
+    icFor = -1,
+    icKey = "icon";
   // name -> codepoint from the font's own glyph names (post v2 + cmap format 12).
   function parseMdi(buf) {
     const d = new DataView(buf),
@@ -3363,12 +3559,16 @@
   function renderIcons() {
     const t = pages()[cur].tiles[icFor];
     const q = $("dkIcQ").value.trim().toLowerCase().replace(/^mdi:/, "");
-    const cur0 = (t.icon || "").replace(/^mdi:/, "");
+    const cur0 = (t[icKey] || "").replace(/^mdi:/, "");
     const all = mdiNames.concat(cbiNames.map((n) => "phu:" + n));
     const list = q ? all.filter((n) => n.toLowerCase().includes(q)) : all;
     const shown = list.slice(0, 240);
     $("dkIcInfo").textContent =
-      (t.icon ? "Chosen: " + t.icon : "Automatic (the entity icon in HA, else a default)") +
+      (t[icKey]
+        ? "Chosen: " + t[icKey]
+        : icKey === "onIcon"
+          ? "On icon: the same as the tile's icon"
+          : "Automatic (the entity icon in HA, else a default)") +
       " - " +
       list.length +
       " match" +
@@ -3397,18 +3597,21 @@
   }
   function setIcon(v) {
     const t = pages()[cur].tiles[icFor];
-    if (v) t.icon = v;
-    else delete t.icon;
+    if (v) t[icKey] = v;
+    else delete t[icKey];
     setDirty(true);
     $("dkIcPick").classList.remove("show");
     renderPage();
   }
-  function openIcons(i) {
+  function openIcons(i, key) {
     if (!mdi && !cbi) {
       alert("Install the icon font first (Icons card above).");
       return;
     }
     icFor = i;
+    icKey = key || "icon";
+    $("dkIcAuto").textContent = icKey === "onIcon" ? "Same" : "Automatic";
+    $("dkIcNone").hidden = icKey === "onIcon";
     $("dkIcQ").value = "";
     $("dkIcPick").classList.add("show");
     renderIcons();
