@@ -161,12 +161,19 @@ bool defaultActionService(const String& domain, String& svc) {
   return false;
 }
 
-void setTileOn(TileRt& r, bool on) {
+// e: the tile's entity if the caller has it, else looked up when needed.
+void setTileOn(TileRt& r, bool on, const HaEntity* e) {
   const bool was = lv_obj_has_state(r.obj, LV_STATE_CHECKED);
   r.on = on;
   if (was != on) fxBeforeTileOn(r, on);
   if (on) lv_obj_add_state(r.obj, LV_STATE_CHECKED);
   else lv_obj_remove_state(r.obj, LV_STATE_CHECKED);
+  if (was != on && r.def->onIcon.length() && r.icon) {
+    HaEntity own;
+    if (!e && r.def->entity.length() && haGetEntity(r.def->entity, own)) e = &own;
+    r.iconCp = showIcon(r.icon, *r.def, e, on, r.iconPx, r.iconCp);
+  }
+  tileIconColor(r, e);
   fxTileOn(r, was);
 }
 
@@ -481,8 +488,9 @@ void applyHaToTile(TileRt& r, bool force) {
   const bool control = d.type == TILE_TOGGLE || d.type == TILE_SLIDER || d.tap.kind == ACT_TOGGLE;
   const bool on = control ? wishOn(d.entity, e) : avail && haStateOn(domain, e.state);
   if (control) r.on = on;
-  if (d.type == TILE_TOGGLE) setTileOn(r, on);
+  if (d.type == TILE_TOGGLE) setTileOn(r, on, &e);
   if (r.icon) r.iconCp = showIcon(r.icon, d, &e, on, r.iconPx, r.iconCp);
+  if (d.lightIcon && d.type != TILE_TOGGLE) tileIconColor(r, &e);
   lv_obj_set_style_opa(r.obj, avail ? LV_OPA_COVER : LV_OPA_50, 0);
   if (!d.label.length() && !d.noName && e.name.length() && strcmp(lv_label_get_text(r.name), e.name.c_str())) {
     lv_label_set_text(r.name, e.name.c_str());

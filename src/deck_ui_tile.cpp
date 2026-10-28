@@ -93,7 +93,8 @@ const char* defaultIcon(const String& domain, const String& dc, const String& un
 uint32_t showIcon(lv_obj_t* label, const TileDef& d, const HaEntity* e, bool on, int px,
                   uint32_t shown) {
   uint32_t cp = 0;
-  if (d.icon.length()) cp = iconCodepoint(d.icon);
+  if (on && d.onIcon.length()) cp = iconCodepoint(d.onIcon);
+  if (!cp && d.icon.length()) cp = iconCodepoint(d.icon);
   if (!cp && e && e->icon.length()) cp = iconCodepoint(e->icon);
   if (!cp)
     cp = iconCodepoint(defaultIcon(entityDomain(d.entity), e ? e->deviceClass : String(),
@@ -145,6 +146,33 @@ uint32_t tileBg(const TileDef& d) { return d.hasBgColor ? d.bgColor : C_TILE; }
 uint32_t tileOnFill(const TileDef& d) { return d.hasOnColor ? d.onColor : tileAccent(d); }
 int tileTint(const TileDef& d) { return d.opacity >= 0 ? d.opacity : dispSettings.glassTint; }
 int tileOnOpa(const TileDef& d) { return d.onOpacity >= 0 ? d.onOpacity : dispSettings.glassOn; }
+
+// The icon's colour: a lit light's own colour ("lightIcon"; dimmer at low
+// brightness), else "onIconColor" / "iconColor", else the accent; a plain icon
+// on an on tile takes the text colour, as the accent would vanish on the on fill.
+// e: the tile's entity if the caller has it, else looked up when needed.
+void tileIconColor(TileRt& r, const HaEntity* e) {
+  const TileDef& d = *r.def;
+  if (!r.chip || (d.type != TILE_ACTION && d.type != TILE_TOGGLE && d.type != TILE_SLIDER && d.type != TILE_SENSOR))
+    return;
+  const bool on = lv_obj_has_state(r.obj, LV_STATE_CHECKED);
+  HaEntity own;
+  if (d.lightIcon && !e && haGetEntity(d.entity, own)) e = &own;
+  const bool lit = d.lightIcon && e && e->state == "on";
+  const lv_opa_t opa = lit && e->brightness >= 0 ? (lv_opa_t)(102 + e->brightness * 153 / 255) : LV_OPA_COVER;  // 40..100 %
+  if (lit && e->rgb >= 0) {
+    lv_obj_set_style_text_color(r.chip, lv_color_hex(e->rgb), 0);
+  } else if (on && d.hasOnIconColor) {
+    lv_obj_set_style_text_color(r.chip, lv_color_hex(d.onIconColor), 0);
+  } else if (on && d.iconPlain) {
+    lv_obj_remove_local_style_prop(r.chip, LV_STYLE_TEXT_COLOR, 0);
+  } else if (d.hasIconColor) {
+    lv_obj_set_style_text_color(r.chip, lv_color_hex(d.iconColor), 0);
+  } else {
+    styleIconChip(r.chip, tileAccent(d));
+  }
+  if (lv_obj_get_style_text_opa(r.icon, LV_PART_MAIN) != opa) lv_obj_set_style_text_opa(r.icon, opa, 0);
+}
 
 // Glass tiles are see-through: their glass is baked into the page
 // background (bakeGlass); pressed and on states draw over it.
@@ -356,6 +384,8 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_border_width(chip, 0, 0);
   lv_obj_set_style_pad_all(chip, 0, 0);
   styleIconChip(chip, accent);
+  if (def.iconPlain) lv_obj_set_style_bg_opa(chip, LV_OPA_TRANSP, 0);
+  if (def.hasIconColor) lv_obj_set_style_text_color(chip, lv_color_hex(def.iconColor), 0);
   lv_obj_t* ic = lv_label_create(chip);
   lv_obj_center(ic);
 
