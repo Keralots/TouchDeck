@@ -38,7 +38,8 @@ const String& brandVersion();
 uint32_t iconCodepoint(const String& name);
 // TinyTTF font for this pixel size (cached); nullptr when no font is loaded.
 // Pass the codepoint to draw: a brand one gets the brand font as fallback.
-const lv_font_t* iconFont(int px, uint32_t cp = 0);// UTF-8 text of one codepoint, for lv_label_set_text.
+const lv_font_t* iconFont(int px, uint32_t cp = 0);
+// UTF-8 text of one codepoint, for lv_label_set_text.
 void iconUtf8(uint32_t cp, char out[5]);
 
 }  // namespace deck
