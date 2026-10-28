@@ -8,6 +8,7 @@ namespace deckui {
 // Page images are refreshed one per pass, at most this often (each costs
 // ~40 ms of loop time at 480x320).
 constexpr uint32_t SNAP_SPACING_MS = 40;
+constexpr uint32_t PANEL_SNAP_MS = 5000;  // a stale panel image waits at most this long behind busy pages
 constexpr uint32_t STATS_MS = 10000;
 constexpr uint32_t SLIDE_MS = 280;
 
@@ -70,6 +71,7 @@ std::vector<TileRt> s_tiles;
 int s_count = 0;
 uint32_t s_gen = 1;
 uint32_t s_lastSnapMs = 0;
+uint32_t s_panelSnapMs = 0;
 uint32_t s_lastClockCheck = 0;
 int s_lastMinute = -1;
 int s_lastWifi = -1;
@@ -483,8 +485,14 @@ void refreshOneSnapshot() {
   if (touchIsDown() || compMode() != COMP_NONE) return;
   const uint32_t now = millis();
   if (now - s_lastSnapMs < SNAP_SPACING_MS) return;
-  // An open panel is what the next gesture slides; it goes first.
-  if (s_qp.open && s_qp.stale) {
+  // An open panel is what the next gesture slides; it goes first. So does a
+  // panel with no image or an old one: busy pages (a print, gliding charts)
+  // are always due and would keep it from ever opening.
+  portENTER_CRITICAL(&s_mux);
+  const bool panelOk = sh.panelValid;
+  portEXIT_CRITICAL(&s_mux);
+  if (s_qp.stale && (s_qp.open || !panelOk || now - s_panelSnapMs >= PANEL_SNAP_MS)) {
+    s_panelSnapMs = now;
     refreshPanelSnapshot();
     return;
   }
@@ -518,6 +526,7 @@ void refreshOneSnapshot() {
   for (int p = 0; p < s_count && pick < 0; p++)
     if (due(p)) pick = p;
   if (pick < 0) {
+    if (s_qp.stale) s_panelSnapMs = now;
     refreshPanelSnapshot();
     return;
   }
