@@ -304,6 +304,9 @@ void entityFromAttrs(HaEntity& e, JsonObjectConst a) {
     const char* k = kv.key().c_str();
     if (!strcmp(k, "brightness")) {
       e.brightness = kv.value().is<int>() ? kv.value().as<int>() : -1;
+    } else if (!strcmp(k, "rgb_color")) {
+      JsonArrayConst c = kv.value().as<JsonArrayConst>();
+      e.rgb = c.size() == 3 ? (int32_t)((c[0].as<int>() & 255) << 16 | (c[1].as<int>() & 255) << 8 | (c[2].as<int>() & 255)) : -1;
     } else if (!strcmp(k, "current_position") || !strcmp(k, "percentage")) {
       e.level = kv.value().is<float>() ? (int)lroundf(kv.value().as<float>()) : -1;
     } else if (!strcmp(k, "volume_level")) {
@@ -348,6 +351,7 @@ void applyEvent(JsonObjectConst ev) {
     e.unit = "";
     e.deviceClass = "";
     e.brightness = -1;
+    e.rgb = -1;
     e.level = -1;
     e.numMin = e.numMax = e.numStep = NAN;
     entityFromAttrs(e, kv.value()["a"].as<JsonObjectConst>());
@@ -366,6 +370,7 @@ void applyEvent(JsonObjectConst ev) {
     for (JsonVariantConst k : kv.value()["-"]["a"].as<JsonArrayConst>()) {
       const char* key = k | "";
       if (!strcmp(key, "brightness")) e.brightness = -1;
+      else if (!strcmp(key, "rgb_color")) e.rgb = -1;
       else if (!strcmp(key, "current_position") || !strcmp(key, "percentage") ||
                !strcmp(key, "volume_level"))
         e.level = -1;

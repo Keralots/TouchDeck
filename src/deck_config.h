@@ -66,6 +66,10 @@
 // the glass tint in Glass), "onColor" (fill while on, default "color"),
 // "onTextColor", and in Glass "opacity" / "onOpacity" (0..100 %, else the
 // display's Tile opacity / On opacity; auto text may still darken the glass).
+// Action, toggle, slider and sensor tiles take "iconStyle": "plain" (no
+// circle, the icon fills its place), "iconColor" / "onIconColor" (else
+// "color"; a plain icon while on: the text colour), "onIcon" (toggle) and
+// "lightIcon": true (the light's own colour).
 //
 // "type": "slider": the tile is a level control (light brightness, cover
 // position, fan speed, media volume, input_number / number); drag sideways to
@@ -174,6 +178,9 @@ struct TileDef {
   TileType type = TILE_ACTION;
   String entity, label, sub, icon;
   bool noName = false;  // "label": "" (or blank): show no name instead of HA's
+  bool iconPlain = false;   // "iconStyle": "plain": no circle
+  String onIcon;            // toggle: the icon while on, "" = icon
+  bool lightIcon = false;   // "lightIcon": a light's icon takes its colour and brightness
   HttpSensorDef http;
   String unit;  // HTTP sensor: unit for JSON numbers only
   String detail;  // HTTP sensor: second line template, see above
@@ -185,6 +192,8 @@ struct TileDef {
   uint32_t textColor = 0, chartColor = 0;
   bool hasBgColor = false, hasOnColor = false, hasOnTextColor = false;
   uint32_t bgColor = 0, onColor = 0, onTextColor = 0;
+  bool hasIconColor = false, hasOnIconColor = false;
+  uint32_t iconColor = 0, onIconColor = 0;
   int8_t opacity = -1, onOpacity = -1;  // Glass, %, -1 = the display setting
   TilePos pos[2];
   TileAction tap, hold;

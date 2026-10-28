@@ -340,12 +340,19 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       t.noName = tv["label"].is<const char*>() && !t.label.length();
       t.sub = (const char*)(tv["sub"] | "");
       t.icon = (const char*)(tv["icon"] | "");
+      if (t.type == TILE_ACTION || t.type == TILE_TOGGLE || t.type == TILE_SLIDER || t.type == TILE_SENSOR) {
+        t.iconPlain = !strcmp(tv["iconStyle"] | "", "plain");
+        t.onIcon = (const char*)(tv["onIcon"] | "");
+        t.lightIcon = tv["lightIcon"] | false;
+      }
       t.hasColor = parseColor(tv["color"] | (const char*)nullptr, t.color);
       t.hasTextColor = parseColor(tv["textColor"] | (const char*)nullptr, t.textColor);
       t.hasChartColor = parseColor(tv["chartColor"] | (const char*)nullptr, t.chartColor);
       t.hasBgColor = parseColor(tv["bgColor"] | (const char*)nullptr, t.bgColor);
       t.hasOnColor = parseColor(tv["onColor"] | (const char*)nullptr, t.onColor);
       t.hasOnTextColor = parseColor(tv["onTextColor"] | (const char*)nullptr, t.onTextColor);
+      t.hasIconColor = parseColor(tv["iconColor"] | (const char*)nullptr, t.iconColor);
+      t.hasOnIconColor = parseColor(tv["onIconColor"] | (const char*)nullptr, t.onIconColor);
       if (tv["opacity"].is<int>()) t.opacity = (int8_t)constrain(tv["opacity"].as<int>(), 0, 100);
       if (tv["onOpacity"].is<int>()) t.onOpacity = (int8_t)constrain(tv["onOpacity"].as<int>(), 0, 100);
       parsePos(tv["pos"]["landscape"], t.pos[ORIENT_LANDSCAPE]);

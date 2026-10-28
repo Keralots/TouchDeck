@@ -60,9 +60,11 @@ void fitName(lv_obj_t* name, const lv_font_t* f, int lines) {
 
 bool iconOff(const TileRt& r) { return r.def->icon == "none"; }
 
+// A plain icon ("iconStyle": "plain") fills its box; one in a circle keeps a
+// margin. Few sizes: each is a TinyTTF font holding a file open.
 void fitChip(TileRt& r, int size) {
   lv_obj_set_size(r.chip, size, size);
-  const int px = size >= 28 ? 20 : 16;
+  const int px = r.def->iconPlain ? (size >= 28 ? 28 : size >= 20 ? 20 : 16) : size >= 28 ? 20 : 16;
   if (px != r.iconPx) {
     r.iconPx = px;
     HaEntity e;
