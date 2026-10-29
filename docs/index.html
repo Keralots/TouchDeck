@@ -36,6 +36,7 @@
             <a href="#ha-head" class="toc-item" data-target="ha-head"><span class="toc-num">03</span><span>Connect Home Assistant</span></a>
             <a href="#pc-head" class="toc-item" data-target="pc-head"><span class="toc-num">04</span><span>Connect your PC</span></a>
             <a href="#monitor-head" class="toc-item" data-target="monitor-head"><span class="toc-num">05</span><span>View serial logs</span></a>
+            <a href="#next-head" class="toc-item" data-target="next-head"><span class="toc-num">06</span><span>Next steps</span></a>
           </nav>
           <nav class="rail-links" aria-label="Project links">
             <div class="rail-label">Project</div>
@@ -197,6 +198,21 @@
           </div>
           <pre id="monitor-output" class="monitor-output" aria-live="polite" aria-label="Serial output" tabindex="0"></pre>
           <p class="hint">Only one program can hold the serial port at a time. The companion holds it while the USB cable is connected, so close it and any PlatformIO / Arduino monitors first. Disconnect this monitor before installing. Baud rate: <strong>115200</strong>.</p>
+        </section>
+
+        <section class="panel" id="panel-next" aria-labelledby="next-head">
+          <header class="panel-head"><span class="num">06</span><h2 id="next-head">Next steps</h2></header>
+          <p class="lede">Your deck is running. The <a href="https://github.com/Keralots/TouchDeck/blob/main/GUIDE.md" target="_blank" rel="noopener">guide</a> covers the rest:</p>
+          <ul class="checklist">
+            <li><strong><a href="https://github.com/Keralots/TouchDeck/blob/main/GUIDE.md#pages-and-tiles" target="_blank" rel="noopener">Pages and tiles</a></strong>: grid, columns, sliders, sensor charts, colours and editing on the device.</li>
+            <li><strong><a href="https://github.com/Keralots/TouchDeck/blob/main/GUIDE.md#conditional-tiles" target="_blank" rel="noopener">Conditional tiles</a></strong>: show tiles and pages only while a PC is on or an entity is in a state.</li>
+            <li><strong><a href="https://github.com/Keralots/TouchDeck/blob/main/GUIDE.md#bambu-lab-printers" target="_blank" rel="noopener">Bambu Lab printers</a></strong>: printer and AMS pages, over the LAN or through Home Assistant.</li>
+            <li><strong><a href="https://github.com/Keralots/TouchDeck/blob/main/GUIDE.md#mqtt-home-assistant-discovery" target="_blank" rel="noopener">MQTT discovery</a></strong>: control the screen, pages and night mode from Home Assistant, send messages to the deck.</li>
+            <li><strong><a href="https://github.com/Keralots/TouchDeck/blob/main/GUIDE.md#http-buttons" target="_blank" rel="noopener">HTTP buttons</a> and <a href="https://github.com/Keralots/TouchDeck/blob/main/GUIDE.md#http-sensors" target="_blank" rel="noopener">sensors</a></strong>: Tasmota, Node-RED and other LAN devices without Home Assistant.</li>
+            <li><strong><a href="https://github.com/Keralots/TouchDeck/blob/main/GUIDE.md#wallpapers-and-microsd" target="_blank" rel="noopener">Wallpapers and microSD</a></strong>: your own pictures or daily Spotlight wallpapers for the Glass theme.</li>
+            <li><strong><a href="https://github.com/Keralots/TouchDeck/blob/main/GUIDE.md#screen-sleep" target="_blank" rel="noopener">Screen sleep</a></strong>: dim or turn off the screen when nobody is around.</li>
+            <li><strong><a href="https://github.com/Keralots/TouchDeck/blob/main/GUIDE.md#brand-icons" target="_blank" rel="noopener">Brand icons</a></strong>: extra icons on a microSD card.</li>
+          </ul>
         </section>
         <footer class="footer">
           <span>TouchDeck - open-source touch control deck for the Guition JC3248W535.</span>
