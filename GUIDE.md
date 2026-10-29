@@ -1,0 +1,264 @@
+# TouchDeck guide
+
+Full reference for the deck's features. For installing and first-time setup, see the [web flasher](https://touchdeck.stolaris.dev); for an overview, the [README](README.md).
+
+- [Pages and tiles](#pages-and-tiles)
+- [Web portal](#web-portal)
+- [Home Assistant](#home-assistant)
+- [Brand icons](#brand-icons)
+- [Conditional tiles](#conditional-tiles)
+- [Screen sleep](#screen-sleep)
+- [Wallpapers and microSD](#wallpapers-and-microsd)
+- [MQTT (Home Assistant discovery)](#mqtt-home-assistant-discovery)
+- [HTTP buttons](#http-buttons)
+- [HTTP sensors](#http-sensors)
+- [Bambu Lab printers](#bambu-lab-printers)
+- [PC stats and control: TouchDeck Companion](#pc-stats-and-control-touchdeck-companion)
+- [Status LED](#status-led)
+- [Flashing without the web flasher](#flashing-without-the-web-flasher)
+- [Building from source](#building-from-source)
+
+## Pages and tiles
+
+- **Grid:** up to 6x4 cells per page. Tiles are placed and sized in half-cell steps (1x1.5, 1.5x1, 0.5x0.5...); text and icons scale with the tile, so small tiles shrink instead of overlapping.
+- **Columns:** pages stacked into a column. Swipe left and right between columns, up and down between the pages of a column.
+- **Home Assistant tiles:** live state over the WebSocket API, optimistic toggles, scenes / scripts / buttons, a detail card on long press with a level slider (light brightness, cover position, fan speed, volume, numbers). Icons come from Material Design Icons, the set Home Assistant uses (the font is installed from the portal).
+- **Sensor history:** `style: "chart"` and `hours` (1..168, default 24) show Home Assistant history; the detail card includes min / max / now. Optional `warn` and `crit` thresholds colour the value and line amber or red; `crit` below `warn` makes lower values worse, such as battery levels. `"format": "duration"` shows a reading in s, min, h or d as `1h 49m` or `3d 2h` (uptime, time left on a print, a battery runtime).
+- **Slider tiles:** a light, cover, fan, media player or number as a tile that fills to its level; drag sideways on it to change the level (the page does not swipe there), tap to toggle, hold for the card. Pick "Slider" as the tile type in the portal.
+- **Confirm before acting:** a tile can ask on the device before it turns something off (a printer mid-print) or before every action. Set it under the tile's "more options" button in the portal.
+- **Tile colours:** per tile, the accent, icon (off and on), text, off background and on fill colours, and in Glass its own glass and on opacity, all optional on top of the theme ("more options" in Pages & tiles).
+- **Icon style:** buttons, switches, sliders and sensors show their icon in a circle or without one (then it fills its place). A switch can show a different icon while on, and a light's icon can follow the light's own colour and brightness. The grid editor shows each tile's icon style and colour.
+- **Quick panel:** pull down from the top edge for screen and LED brightness, link status, screen off, night mode, the top bar switch and the page editor.
+- **Edit on the device:** long press an empty spot of a page (or Edit in the quick panel) to move (swap works as in the portal), resize or remove its tiles, or add one with + (a list of Home Assistant entities by group, from the list cached with "Update from HA" in the portal); Done saves the page.
+- **System screens** for start-up, WiFi setup (with a QR code to join the setup network), connecting, and a firmware update screen with progress.
+
+## Web portal
+
+Open the device IP (or `http://<hostname>.local`) in a browser:
+
+- **Overview:** live picture of the screen, PC stream, Home Assistant link, diagnostics.
+- **Pages & tiles:** Home Assistant address and token, the icon font, pages (Duplicate copies one as a plain page), tiles, entity and icon pickers (None leaves a tile without an icon; a name of just a space leaves it without a name, `"label": ""`), columns, and a grid editor: drag tiles to move them (dropped onto another tile, that tile jumps to the dragged one's old place if it fits there), resize from the corner (half-cell steps), separately for landscape and portrait.
+- **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper you upload, over daily pictures the deck downloads from Windows Spotlight once a day, or both mixed), animations, optional microSD storage for the pictures, PC metric tile scales. See [Wallpapers and microSD](#wallpapers-and-microsd).
+- **Screen & light:** day brightness and the night schedule, screen sleep and presence, the status LED and its Home Assistant entity.
+- **Time:** 12/24 h clock and timezone.
+- **Network:** WiFi, hostname / mDNS, static IP.
+- **Advanced:** optional features, off by default: Bambu Lab printers and MQTT.
+- **Maintenance:** configuration backup (pages and settings; WiFi and the Home Assistant token are never included), firmware update, factory reset.
+
+## Home Assistant
+
+In **Pages & tiles**, enter the Home Assistant address (for example `http://192.168.0.7:8123`) and a long-lived access token (HA profile, Security tab). The token is stored only on the device. Install the icon font, click "Update from HA" to cache the entity list, then add tiles from the entity picker.
+
+## Brand icons
+
+Optional [Custom Brand Icons by elax46](https://github.com/elax46/custom-brand-icons), available under the [MIT license](https://github.com/elax46/custom-brand-icons/blob/main/LICENSE), complement the MDI icon font. They require a mounted microSD card: enable **Display > Store pictures on microSD** and restart first. In **Pages & tiles > Icons > Brand icons**, install the latest GitHub release or upload `custom-brand-icons.js`, including a subset from the upstream Icon Finder. The browser converts and installs the set on the card under `/touchdeck/icons/`; no brand icons are bundled with the firmware. Use `phu:<name>` in tiles or Home Assistant entity icons, or select one in the portal's icon picker.
+
+## Conditional tiles
+
+In **Pages & tiles**, a tile's "more options" has "Show": Always, Only while the PC is on, Only while the PC is off, or Only while an entity is (or is not) in a state. A tile whose condition does not hold takes no cell, so a tile with the opposite condition can share it: volume buttons while the PC runs, a "PC power" switch in the same place while it is off. The page is laid out again when a condition changes (once nothing is being touched). When a page has conditional tiles, "Preview" above the grid switches each condition so you can place the tiles for both cases.
+
+```json
+{ "id": "vol", "type": "action", "when": "pc-on",
+  "tap": { "action": "pc", "cmd": "volume_up" },
+  "pos": { "landscape": { "x": 3, "y": 0 } } },
+{ "id": "pcpow", "type": "toggle", "entity": "switch.pc_power",
+  "when": { "entity": "switch.pc_power", "state": "!on" },
+  "pos": { "landscape": { "x": 3, "y": 0 } } }
+```
+
+- `"pc-on"` / `"pc-off"` follow the tile's own PC (the PC of its command or metric, otherwise the first known PC). The PC counts as off about a minute after its companion stops sending, so a companion restart does not rearrange the page; it counts as on again with the first packet.
+- `{ "entity": ..., "state": ... }` compares the state Home Assistant reports (`on`, `off`, `home`, `playing`...); a leading `!` means "is not". The tile stays hidden until Home Assistant has reported the entity; while Home Assistant is unreachable the last known state stands.
+
+A whole page can follow a condition the same way ("Page shown" in the page settings; its PC is the first known one). With "Switch to it when it appears" (`"auto": true`) the deck slides to the page when the condition starts to hold, for example a PC stats page when the PC comes on, and back to the page shown before when it stops:
+
+```json
+{ "id": "pcstats", "name": "PC", "when": "pc-on", "auto": true, "tiles": [ ... ] }
+```
+
+A page that goes away while it is shown always hands over to another page first; a slide waits until nothing is being touched and no card is open.
+
+## Screen sleep
+
+On the **Screen & light** page, the Sleep card sets the time without touch and without presence after which the screen fades out or dims (the night level still applies when it is lower), and what counts as presence:
+
+- Up to four Home Assistant entities (motion, occupancy, a person); one counts as present while its state is `on` or `home`. Optionally any PC sending metrics, and any printer preparing, printing or paused. Presence starting wakes the screen, also after Off in the quick panel.
+- A touch always wakes it; that first touch does nothing else. With a night brightness of 0 a touch lights the screen at 10% until a minute after the last touch.
+
+## Wallpapers and microSD
+
+**Display > Glass wallpaper** picks the pictures: My pictures (uploaded in the portal, cropped in the browser), Daily (Windows Spotlight, downloaded by the deck at a set hour) or Both. Internal storage fits a few dozen pictures, and Daily replaces its set every day.
+
+With a microSD card in the slot, turn on **Store pictures on microSD** (the deck restarts). Both galleries then live on the card under `/touchdeck/wall/` (`l`, `p` = own landscape / portrait, `dl`, `dp` = daily), Daily downloads up to 32 new pictures a day and keeps an archive (50 to 500 per orientation) from which the oldest are removed. Pinned pictures and the one on screen are never removed. The card must be FAT formatted; pictures already on internal storage stay there.
+
+The companion's **Wallpapers** page does this on the PC, much faster than on the deck: it downloads Spotlight pictures into the daily archive (microSD only), or crops a folder of your photos and sends them to My pictures, skipping pictures the deck already has. The folder itself is only read.
+
+For scripts, `tools/wall_tool.py` (Python 3 + Pillow) does the same from the command line:
+
+```
+python tools/wall_tool.py prepare <photos> <out>              # your photos -> out/l, out/p
+python tools/wall_tool.py spotlight 100 <out>                 # 100 Spotlight pictures -> out/dl
+python tools/wall_tool.py upload <out> <deck-ip>              # out/l, out/p into My pictures
+python tools/wall_tool.py upload <out> <deck-ip> --daily      # out/dl, out/dp into the daily archive
+```
+
+Or copy the folders straight onto the card under `/touchdeck/wall/` and restart the deck.
+
+## MQTT (Home Assistant discovery)
+
+Under **Advanced**, enable **Connect to an MQTT broker**, enter its host and port (plain TCP, default 1883), and optional username/password. Broker accepts `host`, `host:port` or `mqtt://host:port`. Leave the discovery prefix as `homeassistant` unless your MQTT integration uses another one. Save the form; its status line shows the connection. The deck appears under **Settings > Devices > MQTT** with the configured hostname. Home Assistant needs its MQTT integration and a broker such as the Mosquitto add-on.
+
+- **Screen (light):** wake or turn off the display, and set the current day/night brightness.
+- **Page (select):** choose a currently visible page; duplicate names get numbered suffixes.
+- **Night (switch):** turn manual night mode on or off.
+- **Touch (occupancy):** on for 60 seconds after the last touch.
+- **Message ([MQTT notify](https://www.home-assistant.io/integrations/notify.mqtt/)):** wake and show a wrapped toast for 6 seconds, up to 200 bytes; punctuation is cleaned for the fonts.
+- **LED (light):** control the day level; available only when the LED is enabled with a valid pin. Night and follow-display rules still apply.
+- **RSSI (sensor):** WiFi signal strength in dBm, every 60 seconds.
+- **IP (sensor):** the current IP address, updated on change.
+- **Restart (button):** restart the deck after about half a second.
+
+`<id>` is the last three bytes of the STA MAC, as six lowercase hex digits. Discovery lives at `<prefix>/<component>/touchdeck_<id>/<object>/config`; device states and commands use `touchdeck/<id>/<object>/state` and `touchdeck/<id>/<object>/set`. Availability is retained at `touchdeck/<id>/status` (`online` / `offline`). States and discovery are retained and replayed after reconnect or Home Assistant's `online` birth message. Commands should not be retained.
+
+Example automation (replace the entity IDs with yours):
+
+```yaml
+alias: Wake the deck on motion
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.office_motion
+    to: "on"
+actions:
+  - action: light.turn_on
+    target:
+      entity_id: light.touchdeck_screen
+  - action: notify.send_message
+    target:
+      entity_id: notify.touchdeck_message
+    data:
+      message: "Welcome back"
+```
+
+A blank password keeps the saved one; **Clear password** removes it. Backups contain MQTT settings but never the password. Import preserves that password only when the broker host and username are unchanged; older backups leave MQTT off.
+
+## HTTP buttons
+
+A button tile can send an HTTP request instead of calling Home Assistant, for devices and services on the LAN that take commands over plain http (Tasmota, Node-RED, your own ESP projects). In **Pages & tiles**, use "+ Add HTTP button", or open a button's "more options" and set "On tap" to "HTTP request". Fill in the method, URL and optionally a body and headers; "Test" sends the request from the device and shows the answer. On the device a tap shows a short toast: "OK" for a 2xx answer, otherwise the status code or why it failed.
+
+Example, toggling a Tasmota relay ([Tasmota docs](https://tasmota.github.io/docs/Commands/), spaces as `%20`):
+
+```json
+{ "id": "plug", "type": "action", "label": "Plug", "icon": "mdi:power",
+  "confirm": "always",
+  "tap": { "action": "http", "url": "http://192.168.0.50/cm?cmnd=Power%20Toggle" } }
+```
+
+The full action: `"method"` (GET, POST, PUT, PATCH, DELETE; GET by default, POST when there is a body), `"url"` (http only, no https), `"body"` (text, or a JSON object), `"contentType"` (automatic: a body starting with `{` or `[` is sent as application/json, other text as text/plain) and `"headers"` (`{ "Name": "value" }`). The request lives in the deck configuration, which anyone on your network can read through the portal, so keep important passwords out of it.
+
+## HTTP sensors
+
+Use "+ Add HTTP sensor" to poll a LAN JSON endpoint and show one value. Test fetches the reply from the device; click a JSON leaf to select its path. For example, a UPS endpoint returning `{"ups":{"load":18,"runtime_min":95}}`:
+
+```json
+{ "type": "sensor", "label": "UPS load", "icon": "mdi:battery-charging",
+  "http": { "url": "http://192.168.0.10:8080/status",
+            "path": "ups.load", "poll": 60 },
+  "unit": "%", "style": "chart", "warn": 70, "crit": 90,
+  "detail": "runtime {ups.runtime_min|min}" }
+```
+
+`http.url` uses plain http and GET only. `http.path` selects dot-separated keys; numeric segments index arrays (`items.0.value`). An empty path reads a bare number or string. `http.poll` is seconds, 5..3600, default 30. Optional `http.headers` is a `{"Name":"value"}` object, with the same visibility as HTTP button headers. Tasmota's `http://<ip>/cm?cmnd=<command>` URL form is another possible source; choose a path from that command's actual reply.
+
+Optional `unit` is appended only to JSON numbers, formatted with at most one decimal. Strings display as received, booleans as On/Off. `style` is `number` or `chart`; charts keep the last 48 numeric readings since boot. `warn` and `crit` use the same numeric thresholds as HA sensors, including lower-is-worse. Tiles sharing a URL and headers share one request at their shortest poll interval. A missing path shows `--`; failed first polls or replies older than three poll intervals show `--` at half opacity. Polling runs only with WiFi, with a 32 KB response limit. Tiles are read-only by default; explicit `tap` and `hold` actions still work, without a default HA card.
+
+`"format": "duration"` reads `unit` as the input unit (s, min, h, d) and shows the number as `1h 49m` instead.
+
+`detail` adds a small line under the name, built from the same reply: `{path}` inserts a value, `{path|min}` shows a number of minutes as a duration (also `s`, `h`, `d`), anything else is literal text, for example `"{StatusSNS.ENERGY.Voltage} V  {StatusSNS.ENERGY.Current} A"`. In the portal, Test shows "+ Detail" next to each value. The line gives way on tiles too small for it.
+
+`rows` shows up to four values from the same reply under the name, one line each with a label, a bar and the value, instead of one big reading. The bar spans 0..`scaleMax` (default 100) and is left out when the tile is too narrow for it. `unit`, `format`, `warn` and `crit` apply to every row; `http.path` and `style` are ignored. For example, disk usage from a NAS endpoint returning `{"disks":{"system":{"used":42,"free_gb":58},"data":{"used":81,"free_gb":740}}}`:
+
+```json
+{ "type": "sensor", "label": "NAS", "icon": "mdi:nas",
+  "http": { "url": "http://192.168.0.10:8080/status", "poll": 60 },
+  "unit": "%", "warn": 80, "crit": 95,
+  "rows": [ { "label": "Sys:", "path": "disks.system.used" },
+            { "label": "Data:", "path": "disks.data.used" } ] }
+```
+
+A row's optional `value` is a template like `detail`: the bar still follows `path`, the text shows the template, and the row falls back to the plain reading when the bar would not fit beside it. `{path}` fields also work in the tile's `label`. For example, a 1x1 tile named "NAS 81%" with the free space next to each disk's bar:
+
+```json
+{ "type": "sensor", "label": "NAS {disks.data.used}%", "icon": "none",
+  "http": { "url": "http://192.168.0.10:8080/status", "poll": 60 },
+  "unit": "%", "warn": 80, "crit": 95,
+  "rows": [ { "label": "Sys:", "path": "disks.system.used",
+              "value": "{disks.system.free_gb} GB" },
+            { "label": "Data:", "path": "disks.data.used",
+              "value": "{disks.data.free_gb} GB" } ] }
+```
+
+The portal keeps `rows` when a tile is edited but has no editor for them yet; add them in the JSON.
+
+## Bambu Lab printers
+
+Up to two Bambu Lab printers report to the deck over the LAN (MQTT over TLS, port 8883), so the printer needs LAN mode or LAN access turned on. Printers are off by default: turn them on under **Advanced**. Turned off again, the deck drops the printer connections and hides printer pages and tiles, but keeps their setup. In **Pages & tiles**, "Printers": add the printer's IP address, then store its serial number and LAN access code (both stay on the device and are never shown again). "Create printer page" adds a page with progress and time left on top, the nozzle, bed and chamber temperatures, the filament in use, the layer and the chamber light. An AMS page is stacked below it, with one tile per unit and an all-slots strip when a row is free.
+
+A printer that is already in Home Assistant through the [Bambu Lab integration](https://github.com/greghesp/ha-bambulab) can be read from there instead: set its source to "Home Assistant" and pick it from the list. No IP, serial or access code is needed, the printer does not need LAN mode, and the deck opens no connection to the printer (less RAM in use). The deck finds the printer's entities by their registry ids, so renamed entities and non-English installations work. Through Home Assistant the deck cannot tell which filaments a job uses in slicer order (only the slots from the integration's print weight) or which nozzle of a dual nozzle printer is active (it is inferred from the temperatures).
+
+A printer can have a plug: a Home Assistant switch that powers it. The printer then connects only while the plug is on, and pages set to "Only while ... is on" appear with it; with the plug off the deck holds no connection, buffers or pages for it. Without a plug the printer is always tried.
+
+```json
+"printers": [{ "id": "h2c", "name": "H2C", "ip": "192.168.0.54",
+               "plug": "switch.printer_plug" },
+             { "id": "p1s", "name": "P1S", "source": "ha", "serial": "01P00A000000000" }]
+```
+
+A page with `"printer": "h2c"` follows that printer. A printer tile is `{ "type": "printer", "printer": "h2c", "show": "hero" }`; `show` is `hero`, `nozzle` (with `"nozzle": "left"` on dual nozzle printers), `bed`, `chamber`, `filament`, `layer` or `light` (a tap switches the chamber light). The tiles sit on the page grid like any other tile. Three more views are available:
+
+- `ams` with `"unit": 1` shows one AMS unit, its humidity, temperature and spools. The unit is its 1-based position in the printer's reported list (1..6), default 1. Use 2x1 for a four-slot AMS or 1x1 for an AMS HT.
+- `slots` shows every unit's slots in one colour strip, best at 4x1 or 2x1.
+- `summary` shows compact status, progress and time left on a normal page, best at 2x1. A tap opens the printer's first page when it is available; the tile shows Off while its printer is not powered.
+
+## PC stats and control: TouchDeck Companion
+
+The companion runs on the PC, reads the sensors and pushes a JSON packet to UDP port `4210` of the device every second. It lives in [`TouchDeck-CompanionApp/`](TouchDeck-CompanionApp/); the Windows build is attached to each [release](https://github.com/Keralots/TouchDeck/releases) as `TouchDeckCompanion-<version>.exe`.
+
+- **Windows:** reads [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor), which must be running (as administrator for full coverage), with its remote web server enabled (port `8085`) or through WMI.
+- **Linux:** reads the sensors directly.
+
+The companion UI opens at `http://127.0.0.1:8750`; point it at the device IP. The PC and the device must share a subnet with UDP `4210` reachable. Add metric tiles in **Pages & tiles** with "+ Add PC metric": values, units, history chart and an amber warning colour above a set share of the scale.
+
+- **Several PCs:** each companion sends its own id and name (Connection page, "This PC's name"); the device keeps up to four PCs and a metric tile picks one.
+- **Control:** on the companion's Device page, click "Pair for control", then tap Allow on the device. If the device ever loses the pairing (a full flash erase), the companion notices and the device asks Allow again by itself; Deny stops those prompts until the companion restarts. Tiles made with "+ Add PC control" then send media keys, volume, lock, sleep, restart or shut down to that PC (Sleep, Restart and Shut down ask on the device first). Commands are signed with the key from pairing and arrive on UDP `4211` (allow it in the firewall).
+- **Volume slider:** "+ Add PC volume" adds a slider for the PC's master volume: drag sideways to set it, tap to mute. In deck.json: `{ "type": "slider", "control": "pc-volume" }` (optional `"pc"`). The companion receives it as `volume_set:N` (Windows through the audio endpoint, Linux through `pactl`).
+- **Now playing:** "+ Add now playing" adds a 2x2 tile with cover art, title, artist, progress and previous/play/next controls. Smaller tiles show the track and tap to play or pause. Covers travel over TCP port `8751` on the PC (or an available port if busy), so allow the companion through the firewall. Covers require WiFi transport; playback controls also work over USB.
+- **Hotkeys:** the command "Hotkey" sends a key combination such as `ctrl+shift+m` (up to five keys: ctrl, shift, alt, win, a-z, 0-9, f1-f24 and named keys like enter, esc or pageup) to the PC's focused window, handy for app shortcuts bound to F13-F24. In deck.json: `{ "action": "pc", "cmd": "hotkey", "keys": "ctrl+shift+m" }`. Windows does not let it reach a window running as administrator unless the companion runs as administrator too. On Linux it uses `xdotool`, so X11 only.
+- **USB cable:** when the device is plugged into the PC, the companion finds it (Espressif USB serial, 303A:1001) and sends metrics and commands over the cable instead of WiFi. While it holds the port, USB flashing and the serial monitor cannot open it: use OTA, or set "USB cable" to Off.
+
+## Status LED
+
+An optional plain single-colour LED driven through a transistor from a free GPIO (default 17 on the extended IO header). Pins used by the display, touch, USB, flash or PSRAM are refused by the portal. Set it up under **Screen & light**.
+
+The backlight and the LED have separate night schedules. The LED's day brightness can follow a Home Assistant input_boolean, input_number or light, and the quick panel's Light slider sets that entity.
+
+## Flashing without the web flasher
+
+[Releases](https://github.com/Keralots/TouchDeck/releases) ship two firmware files: `TouchDeck-<version>-full.bin` (full image, for a first flash over USB) and `TouchDeck-<version>-ota.bin` (app only, for **Maintenance > Firmware update** in the portal of a device that already runs TouchDeck).
+
+Flash the full image at `0x0`, with esptool or the [ESP Web Flasher](https://espressif.github.io/esptool-js/) in desktop Chrome or Edge. Close the TouchDeck Companion first: it holds the device's serial port.
+
+```sh
+esptool.py --chip esp32s3 --port COM3 --baud 460800 write_flash 0x0 TouchDeck-v1.2.1-full.bin
+```
+
+If the board keeps connecting and disconnecting, hold **BOOT** while plugging in USB, or hold **BOOT**, press **RESET**, then release both.
+
+## Building from source
+
+Built with [PlatformIO](https://platformio.org/), one environment:
+
+```sh
+pio run                       # build
+pio run -t upload             # flash over USB
+curl -F "firmware=@.pio/build/jc3248w535/firmware.bin" http://<device-ip>/ota/upload
+python create_firmware.py     # full and OTA images in release/<version>/
+```
