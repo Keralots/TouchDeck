@@ -149,6 +149,7 @@
     const pct = (id) => Math.round((Number($(id).value) * 100) / 255) + "%";
     $("brightnessVal").textContent = pct("brightness");
     $("nightBrightnessVal").textContent = pct("nightBrightness");
+    $("nightWakeLevelVal").textContent = pct("nightWakeLevel");
     $("warnThresholdVal").textContent =
       $("warnThreshold").value === "0" ? "Off" : $("warnThreshold").value + "%";
     $("ledBrightnessVal").textContent = pct("ledBrightness");
@@ -164,6 +165,7 @@
   [
     "brightness",
     "nightBrightness",
+    "nightWakeLevel",
     "warnThreshold",
     "ledBrightness",
     "ledNightBrightness",
@@ -207,6 +209,10 @@
     $("sleepFrameFields").classList.toggle("hidden", $("sleepMode").value !== "frame");
   }
   $("sleepMode").addEventListener("change", updateSleepFields);
+  function updateNightWakeFields() {
+    $("nightWakeFields").classList.toggle("hidden", !$("nightWake").checked);
+  }
+  $("nightWake").addEventListener("change", updateNightWakeFields);
   /* Entity suggestions from the list cached on the device ("Update from HA" in Pages & tiles). */
   let entityListsLoaded = false;
   async function loadEntityLists() {
@@ -384,7 +390,10 @@
     for (let i = 0; i < 4; i++) setVal("presence" + i, (p.entities || [])[i] || "");
     setCheck("presencePc", p.pc);
     setCheck("presencePrinting", p.printing);
+    setCheck("nightWake", p.nightWake);
+    setVal("nightWakeLevel", p.nightWakeLevel == null ? 128 : p.nightWakeLevel);
     updateSleepFields();
+    updateNightWakeFields();
     const adv = c.advanced || {};
     setCheck("printersEnabled", adv.printers);
     const mqtt = c.mqtt || {};
@@ -499,11 +508,13 @@
       const pct = Math.round((Number(s.backlight || 0) * 100) / 255);
       $("backlightState").textContent = s.manual_display_off
         ? "screen off"
-        : s.night_active
-          ? "night " + pct + "%"
-          : !s.time_valid && $("nightEnabled").checked
-            ? "day / time pending"
-            : "day " + pct + "%";
+        : s.night_wake
+          ? "night wake " + pct + "%"
+          : s.night_active
+            ? "night " + pct + "%"
+            : !s.time_valid && $("nightEnabled").checked
+              ? "day / time pending"
+              : "day " + pct + "%";
       const pr = s.presence || {};
       $("sleepState").textContent = !pr.sleep_min
         ? "off"

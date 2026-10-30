@@ -23,6 +23,8 @@ static bool g_manual_display_off = false;
 static bool g_manual_night = false;
 static bool g_idle_sleep = false;
 static uint8_t g_idle_level = 0;  // backlight cap while idle-asleep, 0 = off
+static bool g_night_window = false;
+static bool g_wake_presence = false;
 static uint32_t g_last_backlight_check_ms = 0;
 
 // Idle sleep fades; every other change is instant.
@@ -53,7 +55,20 @@ bool manualDisplayOff() { return g_manual_display_off; }
 bool manualNightActive() { return g_manual_night; }
 bool displaySleepingForTouch() { return g_manual_display_off || g_idle_sleep || g_target == 0; }
 bool idleSleepActive() { return g_idle_sleep; }
-bool nightScreenOff() { return g_night_active && !backlightSettings.nightBrightness; }
+bool nightWakeActive() {
+  return presenceSettings.nightWake && g_wake_presence && g_night_window && !g_manual_night;
+}
+bool nightScreenOff() {
+  return g_night_active && !backlightSettings.nightBrightness &&
+         !(nightWakeActive() && presenceSettings.nightWakeLevel);
+}
+
+void setNightWakePresence(bool present) {
+  if (present == g_wake_presence) return;
+  g_wake_presence = present;
+  if (presenceSettings.nightWake && g_night_window) g_next_fade_ms = present ? WAKE_FADE_MS : SLEEP_FADE_MS;
+  refreshBacklightControl();
+}
 
 void setManualNight(bool on) {
   g_manual_night = on;
@@ -124,9 +139,11 @@ void updateBacklightControl() {
     g_led_night = ledSettings.nightEnabled &&
                   inNightWindow(minute, ledSettings.nightStartMinute, ledSettings.nightEndMinute);
   }
+  g_night_window = nightWindow;
   g_night_active = nightWindow || g_manual_night;
 
   uint8_t target = g_night_active ? backlightSettings.nightBrightness : brightness;
+  if (nightWakeActive()) target = max(target, presenceSettings.nightWakeLevel);
   if (g_peek) {
     uint32_t last = deck::touchLastActivity();
     if ((int32_t)(last - g_peek_ms) < 0) last = g_peek_ms;

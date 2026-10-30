@@ -6,6 +6,7 @@ namespace deckui {
 bool s_present = false;     // an entity or PC says someone is there
 uint32_t s_activeMs = 0;    // last touch, presence or wake request
 uint32_t s_presenceEval = 0;
+uint32_t s_presentMs = 0;   // last tick with presence, 0 = none since boot
 
 bool presenceNow() {
   const PresenceSettings& p = presenceSettings;
@@ -36,7 +37,12 @@ void presenceTick() {
   // Arrival also undoes a manual off; staying present only holds the timer.
   if (present && !s_present) presenceWake();
   s_present = present;
-  if (present) s_activeMs = now;
+  if (present) {
+    s_activeMs = now;
+    s_presentMs = now | 1;
+  }
+  // Night wake holds for the sleep timer after presence ends.
+  setNightWakePresence(present || (s_presentMs && p.sleepMin && now - s_presentMs < p.sleepMin * 60000UL));
   const uint32_t touch = touchLastActivity();
   if (touch && (int32_t)(touch - s_activeMs) > 0) s_activeMs = touch;
   const bool sleep = p.sleepMin && getScreenState() == SCREEN_DECK && now - s_activeMs >= p.sleepMin * 60000UL;

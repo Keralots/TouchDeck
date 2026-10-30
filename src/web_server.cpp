@@ -156,6 +156,8 @@ static void presenceJson(JsonObject out) {
   out["frameAnim"] = presenceSettings.frameAnim;
   out["pc"] = presenceSettings.pc;
   out["printing"] = presenceSettings.printing;
+  out["nightWake"] = presenceSettings.nightWake;
+  out["nightWakeLevel"] = presenceSettings.nightWakeLevel;
   JsonArray ids = out["entities"].to<JsonArray>();
   for (const String& id : presenceSettings.entities)
     if (id.length()) ids.add(id);
@@ -685,6 +687,9 @@ static void handleConfigImport() {
     if (!presence["frame"].isNull()) READ_BOOL(presence, "frame", nextPresence.frame);
     if (!presence["frameClock"].isNull()) READ_BOOL(presence, "frameClock", nextPresence.frameClock);
     if (!presence["frameAnim"].isNull()) READ_BOOL(presence, "frameAnim", nextPresence.frameAnim);
+    if (!presence["nightWake"].isNull()) READ_BOOL(presence, "nightWake", nextPresence.nightWake);
+    if (!presence["nightWakeLevel"].isNull())
+      READ_INT(presence, "nightWakeLevel", 0, 255, nextPresence.nightWakeLevel, uint8_t);
     if (!presence["frameEvery"].isNull()) {
       READ_INT(presence, "frameEvery", 1, 30, nextPresence.frameEvery, uint8_t);
       if (!validFrameEvery(nextPresence.frameEvery)) {
@@ -813,6 +818,9 @@ static void handleSaveLight() {
   nextPresence.dimPct = server.arg("sleepMode") == "dim" ? (uint8_t)clampedArg("sleepDim", 10, 1, 100) : 0;
   nextPresence.pc = server.hasArg("presencePc");
   nextPresence.printing = server.hasArg("presencePrinting");
+  nextPresence.nightWake = server.hasArg("nightWake");
+  nextPresence.nightWakeLevel =
+    (uint8_t)clampedArg("nightWakeLevel", presenceSettings.nightWakeLevel, 1, 255);
   nextPresence.frame = server.arg("sleepMode") == "frame";
   const int frameEvery = clampedArg("frameEvery", 5, 1, 30);
   if (!validFrameEvery(frameEvery)) {
@@ -1130,6 +1138,7 @@ static void handleApiStatus() {
   doc["ha_link"] = deck::haLinkName(deck::haLink());
   doc["backlight"] = currentBacklightLevel();
   doc["night_active"] = nightBrightnessActive();
+  doc["night_wake"] = nightWakeActive();
   doc["time_valid"] = backlightTimeValid();
   doc["manual_display_off"] = manualDisplayOff();
   deckPresenceJson(doc["presence"].to<JsonObject>());

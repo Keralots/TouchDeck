@@ -862,6 +862,32 @@
                       ><span class="ct-hint">Preparing, printing or paused, on any printer on the deck.</span></span
                     ></label
                   >
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="nightWake" name="nightWake" /><span class="check-box"></span
+                    ><span class="check-text"
+                      ><strong>Night wake brightness</strong
+                      ><span class="ct-hint"
+                        >During the night brightness schedule, presence lights the screen at this level. It holds
+                        for the sleep time after presence ends.</span
+                      ></span
+                    ></label
+                  >
+                  <div class="subcard hidden" id="nightWakeFields">
+                    <div class="field">
+                      <label class="field-label" for="nightWakeLevel">Night wake level</label>
+                      <div class="range-row">
+                        <input
+                          type="range"
+                          id="nightWakeLevel"
+                          name="nightWakeLevel"
+                          min="1"
+                          max="255"
+                          step="1"
+                          value="128"
+                        /><span class="range-val" id="nightWakeLevelVal">--</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 <div class="card" id="ledCard">
                   <div class="card-head">
