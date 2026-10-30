@@ -12,6 +12,7 @@
 #include "pc_metrics.h"
 #include "led.h"
 #include "haptic.h"
+#include "crash_log.h"
 #include "deck_mqtt.h"
 #include "deck_daily.h"
 #include "deck_sd.h"
@@ -33,6 +34,7 @@ void setup() {
   Serial.println();
   Serial.println(PRODUCT_NAME " " FW_VERSION " boot");
   Serial.printf("Reset reason: %d\n", (int)esp_reset_reason());
+  crashLogBegin();
 
   loadSettings();
   deck::wallStorageBegin();

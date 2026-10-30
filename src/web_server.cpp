@@ -22,6 +22,7 @@
 #include "deck_daily.h"
 #include "deck_sys.h"
 #include "psram_json.h"
+#include "crash_log.h"
 #include <LittleFS.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
@@ -1153,6 +1154,7 @@ static void handleApiStatus() {
   doc["internal_free"] = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
   doc["psram_free"]   = ESP.getFreePsram();
   doc["reset_reason"] = resetReasonName();
+  doc["last_crash"] = lastCrash();
   doc["wifi_disconnects"]     = wifiDisconnectCount();
   doc["wifi_last_disc_reason"] = wifiLastDisconnectReason();
   doc["metric_count"] = pc0 ? pc0->data.count : 0;
@@ -1590,6 +1592,7 @@ static void handleWallsStatus() {
   doc["total"] = deck::wallTotalBytes();
   doc["sd"]["enabled"] = dispSettings.sdCard;
   doc["sd"]["mounted"] = deck::wallOnSd();
+  doc["sd"]["error"] = deck::wallSdError();
   doc["sd"]["indexMs"] = deck::wallIndexMs();
   // Index copies on the card; on LittleFS each would be a directory scan.
   for (int orient = 0; orient < 2 && deck::wallOnSd(); orient++) {

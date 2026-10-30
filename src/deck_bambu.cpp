@@ -45,6 +45,7 @@ struct Slot {
 };
 Slot s_slots[PRN_MAX];
 TaskHandle_t s_task = nullptr;
+bool s_hold = false;  // printersHold: sessions closed, worker stopped
 uint32_t s_version = 1, s_generation = 0;
 volatile uint32_t s_stackFree = 0;  // worker's stack high water mark
 
@@ -644,7 +645,7 @@ void task(void*) {
       {
         Lock lock;
         const Slot& slot = s_slots[i];
-        powered = slot.powered;
+        powered = slot.powered && !s_hold;
         generation = slot.generation;
         if (powered && (!sessions[i] || sessions[i]->generation != generation)) conn = slot.conn;
       }
@@ -684,7 +685,7 @@ void task(void*) {
     bool quit = true;
     {
       Lock lock;
-      for (int i = 0; i < PRN_MAX; ++i) if (s_slots[i].powered || sessions[i]) quit = false;
+      for (int i = 0; i < PRN_MAX; ++i) if ((s_slots[i].powered && !s_hold) || sessions[i]) quit = false;
       if (quit) s_task = nullptr;
     }
     if (quit) break;
@@ -709,6 +710,15 @@ void invalidate(Slot& slot) {
 }
 
 void wake() { if (s_task) xTaskNotifyGive(s_task); }
+
+// Caller holds the lock.
+bool startWorker() {
+  if (s_task) return true;
+  // IDF's dynamic task allocator uses internal RAM, as required by TLS.
+  if (xTaskCreatePinnedToCore(task, "deck_bambu", STACK_SIZE, nullptr, 3, &s_task, 0) == pdPASS) return true;
+  s_task = nullptr;
+  return false;
+}
 
 }  // namespace
 
@@ -760,14 +770,10 @@ void printerPower(const String& id, bool on) {
   for (auto& slot : s_slots) {
     if (!id.length() || slot.conn.id != id) continue;
     if (slot.powered != on) { slot.powered = on; invalidate(slot); }
-    if (on && !s_task) {
-      // IDF's dynamic task allocator uses internal RAM, as required by TLS.
-      if (xTaskCreatePinnedToCore(task, "deck_bambu", STACK_SIZE, nullptr, 3, &s_task, 0) != pdPASS) {
-        s_task = nullptr;
-        slot.link = PRN_FAILED;
-        strlcpy(slot.err, "Cannot start printer worker", sizeof(slot.err));
-        ++s_version;
-      }
+    if (on && !s_hold && !startWorker()) {
+      slot.link = PRN_FAILED;
+      strlcpy(slot.err, "Cannot start printer worker", sizeof(slot.err));
+      ++s_version;
     }
     wake();
     break;
@@ -784,6 +790,33 @@ bool printerPowered(const String& id) {
 bool printersBusy() {
   Lock lock;
   return s_task != nullptr;
+}
+
+void printersHold(bool hold) {
+  Lock lock;
+  if (s_hold == hold) return;
+  s_hold = hold;
+  for (auto& slot : s_slots) {
+    if (!slot.powered) continue;
+    invalidate(slot);
+    if (hold) strlcpy(slot.err, "Paused for the wallpaper download", sizeof(slot.err));
+  }
+  if (!hold) {
+    for (const auto& slot : s_slots)
+      if (slot.powered) { startWorker(); break; }
+  }
+  wake();
+}
+
+bool printersLanJob() {
+  Lock lock;
+  for (const auto& slot : s_slots) {
+    if (!slot.powered || !slot.state) continue;
+    const char* st = slot.state->gcodeState;
+    if (!strcmp(st, "RUNNING") || !strcmp(st, "PREPARE") || !strcmp(st, "SLICING") || !strcmp(st, "PAUSE"))
+      return true;
+  }
+  return false;
 }
 
 bool printerRead(const String& id, PrinterState& out) {

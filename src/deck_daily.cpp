@@ -103,6 +103,7 @@ bool s_replan = false, s_lastLoaded = false;
 uint32_t s_lastRun = 0;  // epoch of the last run that stored a picture (NVS "dlast")
 uint32_t s_checkMs = 0, s_retryAtMs = 0, s_triesDay = 0;
 int s_tries = 0;
+bool s_holding = false;  // printer sessions closed for this run
 
 template <typename F>
 void update(F f) {
@@ -513,6 +514,12 @@ void saveLastRun(uint32_t t) {
 
 bool wants(int p) { return dispSettings.dailyOrient == 2 || dispSettings.dailyOrient == p; }
 
+void holdPrinters(bool hold) {
+  if (s_holding == hold) return;
+  s_holding = hold;
+  printersHold(hold);
+}
+
 }  // namespace
 
 bool dailyStart() {
@@ -613,6 +620,8 @@ void dailyStatus(JsonObject out) {
   free(s);
 }
 
+bool dailyDue();
+
 void dailyPoll() {
   for (int p = 0; p < 2; p++)
     if (s_changed[p]) {
@@ -624,13 +633,34 @@ void dailyPoll() {
     portENTER_CRITICAL(&s_mux);
     const bool stored = s_status->got[0] + s_status->got[1] > 0;
     portEXIT_CRITICAL(&s_mux);
+    holdPrinters(false);
     if (stored) saveLastRun(time(nullptr));
     else s_retryAtMs = millis() + RETRY_MS;
   }
-  if (!wallDaily() || dailyRunning() || millis() - s_checkMs < 10000) return;
+  if (dailyRunning() || millis() - s_checkMs < 10000) return;
   s_checkMs = millis();
+  if (!dailyDue()) {
+    holdPrinters(false);
+    return;
+  }
+  // One printer TLS session leaves too little internal RAM for the download:
+  // close them for the run, unless a printer has a job.
+  if (printersBusy()) {
+    if (!printersLanJob()) holdPrinters(true);
+    return;
+  }
+  if (dailyStart()) {
+    s_tries++;
+    s_retryAtMs = 0;
+  } else {
+    holdPrinters(false);
+  }
+}
+
+bool dailyDue() {
+  if (!wallDaily()) return false;
   const time_t now = time(nullptr);
-  if (now < 1700000000 || !WiFi.isConnected()) return;  // clock not set yet
+  if (now < 1700000000 || !WiFi.isConnected()) return false;  // clock not set yet
   loadLastRun();
   struct tm tm;
   localtime_r(&now, &tm);
@@ -643,14 +673,10 @@ void dailyPoll() {
   for (int p = 0; p < 2; p++) empty |= wants(p) && wallListDir(wallDir(p, true)).empty();
   const bool due = s_replan || empty ||
                    ((!s_lastRun || dayKey(s_lastRun) != today) && tm.tm_hour >= dispSettings.dailyHour);
-  if (!due || s_tries >= MAX_TRIES) return;
-  if (s_retryAtMs && (int32_t)(millis() - s_retryAtMs) < 0) return;
+  if (!due || s_tries >= MAX_TRIES) return false;
+  if (s_retryAtMs && (int32_t)(millis() - s_retryAtMs) < 0) return false;
   // Not while someone is using the screen: decoding slows page swipes.
-  if (millis() - touchLastActivity() < WALL_IDLE_MS) return;
-  if (dailyStart()) {
-    s_tries++;
-    s_retryAtMs = 0;
-  }
+  return millis() - touchLastActivity() >= WALL_IDLE_MS;
 }
 
 }  // namespace deck
