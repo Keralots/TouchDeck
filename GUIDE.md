@@ -83,6 +83,7 @@ On the **Screen & light** page, the Sleep card sets the time without touch and w
 
 - Up to four Home Assistant entities (motion, occupancy, a person); one counts as present while its state is `on` or `home`. Optionally any PC sending metrics, and any printer preparing, printing or paused. Presence starting wakes the screen, also after Off in the quick panel.
 - A touch always wakes it; that first touch does nothing else. With a night brightness of 0 a touch lights the screen at 10% until a minute after the last touch.
+- **Night wake brightness** (off by default): during the night schedule, presence lights the screen at its own level, held for the sleep time after presence ends. Manual night from the quick panel is not affected. While it is lit this way, the quick panel's Screen slider sets the night wake level.
 
 ## Wallpapers and microSD
 

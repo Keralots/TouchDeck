@@ -72,6 +72,8 @@ struct PresenceSettings {
   bool frameAnim = true;
   bool pc = false;
   bool printing = false;
+  bool nightWake = false;        // presence lifts the night schedule to nightWakeLevel
+  uint8_t nightWakeLevel = 128;  // 0..255
   String entities[MAX_PRESENCE_ENTITIES];  // "" = unused slot
 };
 

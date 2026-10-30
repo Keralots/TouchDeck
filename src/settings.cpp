@@ -225,6 +225,8 @@ void loadSettings() {
   if (!validFrameEvery(presenceSettings.frameEvery)) presenceSettings.frameEvery = 5;
   presenceSettings.frameClock = prefs.getBool("pfclock", true);
   presenceSettings.frameAnim = prefs.getBool("pfanim", true);
+  presenceSettings.nightWake = prefs.getBool("pnwake", false);
+  presenceSettings.nightWakeLevel = prefs.getUChar("pnwlvl", 128);
   hapticSettings.enabled = prefs.getBool("hapon", false);
   hapticSettings.pin = prefs.getUChar("happin", 0);
   hapticSettings.strength = constrain(prefs.getUChar("hapstr", 100), HAPTIC_MIN_STRENGTH, 100);
@@ -296,6 +298,8 @@ void saveSettings() {
   prefs.putUChar("pfevery", presenceSettings.frameEvery);
   prefs.putBool("pfclock", presenceSettings.frameClock);
   prefs.putBool("pfanim", presenceSettings.frameAnim);
+  prefs.putBool("pnwake", presenceSettings.nightWake);
+  prefs.putUChar("pnwlvl", presenceSettings.nightWakeLevel);
   prefs.putBool("hapon", hapticSettings.enabled);
   prefs.putUChar("happin", hapticSettings.pin);
   prefs.putUChar("hapstr", hapticSettings.strength);

@@ -42,6 +42,10 @@ bool manualNightActive();
 // Idle sleep (presenceSettings): backlight capped at level (0 = off), faded.
 void setIdleSleep(bool sleep, uint8_t level);
 bool idleSleepActive();
+// Presence seen within the sleep timer (deck_ui_presence.cpp).
+void setNightWakePresence(bool present);
+// Night schedule (not manual night) lifted to presenceSettings.nightWakeLevel.
+bool nightWakeActive();
 // Night schedule (or manual night) with a 0% night level.
 bool nightScreenOff();
 // Manual off, idle sleep or a 0% screen: the next touch only wakes the screen.
