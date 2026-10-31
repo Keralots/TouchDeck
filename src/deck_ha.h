@@ -44,6 +44,16 @@ struct HaEntity {
   float numMin = NAN;       // input_number range and step
   float numMax = NAN;
   float numStep = NAN;
+  // Climate: setpoint(s), room temperature, limits and what it is doing now.
+  float target = NAN;       // temperature (single setpoint)
+  float targetLow = NAN;    // target_temp_low / _high (heat_cool range)
+  float targetHigh = NAN;
+  float current = NAN;      // current_temperature
+  float tempMin = NAN;      // min_temp / max_temp / target_temp_step
+  float tempMax = NAN;
+  float tempStep = NAN;
+  String hvacAction;        // "heating", "cooling", "idle"...
+  String hvacModes;         // hvac_modes joined with ',' ("off,heat,cool")
   uint32_t version = 0;     // bumps on every change of this entity
 };
 

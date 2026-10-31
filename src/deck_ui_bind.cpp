@@ -110,10 +110,48 @@ bool formatDuration(float v, const String& unit, char* out, size_t n) {
   return true;
 }
 
+// A temperature as "21.5°" (whole numbers without the decimal).
+String formatTemp(float v) {
+  if (!isfinite(v)) return "--";
+  char buf[16];
+  formatReading(v, buf, sizeof(buf));
+  return String(buf) + "\xC2\xB0";
+}
+
+// HVAC modes and actions as words: "heat_cool" -> "Heat/Cool".
+String climateWord(const String& s) {
+  if (s == "heat_cool") return "Heat/Cool";
+  if (s == "fan_only") return "Fan";
+  String w = s;
+  w.replace('_', ' ');
+  if (w.length()) w.setCharAt(0, toupper(w[0]));
+  return w;
+}
+
+bool climateRange(const HaEntity& e) {
+  return !isfinite(e.target) && isfinite(e.targetLow) && isfinite(e.targetHigh);
+}
+
+// The setpoint the entity reports: "21.5°", "19-24°", or "" without one.
+String climateTarget(const HaEntity& e) {
+  if (isfinite(e.target)) return formatTemp(e.target);
+  if (climateRange(e)) {
+    char lo[16];
+    formatReading(e.targetLow, lo, sizeof(lo));
+    return String(lo) + "-" + formatTemp(e.targetHigh);
+  }
+  return "";
+}
+
 String prettyState(const String& domain, const HaEntity& e) {
   if (!e.known) return "Unavailable";
   const String& st = e.state;
   if (st == "unavailable" || st == "unknown") return "Unavailable";
+  if (domain == "climate") {
+    // "Heat 21.5°": the mode, then the setpoint while it is not off.
+    const String t = st == "off" ? String() : climateTarget(e);
+    return t.length() ? climateWord(st) + " " + t : climateWord(st);
+  }
   if (domain == "light" && st == "on" && e.brightness >= 0)
     return String((e.brightness * 100 + 127) / 255) + "%";
   if (domain == "scene") return "Scene";
