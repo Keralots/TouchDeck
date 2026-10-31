@@ -92,6 +92,10 @@ void printerPower(const String& id, bool on);
 bool printerPowered(const String& id);
 // True while any printer session (and its internal RAM) may be open.
 bool printersBusy();
+// Close every LAN session and keep them closed until released (daily download).
+void printersHold(bool hold);
+// A LAN printer with a job (preparing, printing or paused).
+bool printersLanJob();
 // Copy of a printer's state; false when the id is unknown or not powered.
 bool printerRead(const String& id, PrinterState& out);
 // Moves whenever any printer's state or link changes.

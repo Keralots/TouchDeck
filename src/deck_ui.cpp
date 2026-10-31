@@ -932,6 +932,12 @@ void deckTick() {
   sh.swipeEnabled = !systemScreen && !frameActive();
   portEXIT_CRITICAL(&s_mux);
   sysScreenSync(sc);
+  // Once per boot, when the deck is first visible.
+  static bool sdWarned = false;
+  if (!sdWarned && !systemScreen && currentBacklightLevel() && !compOwnsScreen() && wallSdError()[0]) {
+    sdWarned = true;
+    deckToastShow("microSD card not working, using internal storage", 6000);
+  }
 
   if (compOwnsScreen()) return;  // LVGL stays frozen during a drag or slide
 

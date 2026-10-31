@@ -901,7 +901,9 @@
         $("sdState").textContent = !sd.enabled
           ? "Not enabled"
           : !sd.mounted
-            ? "Card not found - using internal storage"
+            ? "Card not mounted" +
+              (sd.error ? " (" + sd.error + ")" : "") +
+              " - using internal storage. Power the deck off and on to retry."
             : "Mounted: " +
               Math.floor(data.free / 1048576) +
               " MB free of " +

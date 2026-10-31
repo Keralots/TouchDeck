@@ -17,6 +17,7 @@ namespace deck {
 namespace {
 
 bool s_mounted = false;
+const char* s_error = "";  // why an enabled card is not mounted
 uint32_t s_indexMs = 0;
 fs::FSImplPtr s_impl(new VFSImpl());
 fs::FS s_fs(s_impl);
@@ -57,9 +58,48 @@ void indexChanged(bool p, bool d, const String& name) {
   }
 }
 
+// A card left mid-transfer by a warm reset can miss the first init.
+constexpr int SD_MOUNT_TRIES = 3;
+
+sdmmc_card_t* mountCard() {
+  spi_bus_config_t bus = {};
+  bus.mosi_io_num = 11;
+  bus.miso_io_num = 13;
+  bus.sclk_io_num = 12;
+  bus.quadwp_io_num = bus.quadhd_io_num = -1;
+  bus.max_transfer_sz = 4096;
+  esp_err_t err = spi_bus_initialize(SPI3_HOST, &bus, SPI_DMA_CH_AUTO);
+  if (err != ESP_OK) {
+    s_error = esp_err_to_name(err);
+    Serial.printf("Deck: SD bus failed: %s\n", s_error);
+    return nullptr;
+  }
+  sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+  host.slot = SPI3_HOST;
+  host.max_freq_khz = 20000;
+  sdspi_device_config_t dev = SDSPI_DEVICE_CONFIG_DEFAULT();
+  dev.gpio_cs = GPIO_NUM_10;
+  dev.host_id = SPI3_HOST;
+  esp_vfs_fat_mount_config_t mc = {};
+  mc.format_if_mount_failed = false;
+  mc.max_files = 8;  // brand icon sizes hold files open next to the gallery and portal ones
+  mc.allocation_unit_size = 16 * 1024;
+  sdmmc_card_t* card = nullptr;
+  err = esp_vfs_fat_sdspi_mount("/sd", &host, &dev, &mc, &card);
+  if (err != ESP_OK) {
+    s_error = esp_err_to_name(err);
+    Serial.printf("Deck: SD mount failed: %s\n", s_error);
+    spi_bus_free(SPI3_HOST);
+    return nullptr;
+  }
+  s_error = "";
+  return card;
+}
+
 }  // namespace
 
 bool wallOnSd() { return s_mounted; }
+const char* wallSdError() { return s_error; }
 uint32_t wallIndexMs() { return s_indexMs; }
 fs::FS& wallFs() {
   if (s_mounted) return s_fs;
@@ -107,34 +147,12 @@ void wallStorageBegin() {
     prefs.end();
   }
   if (!dispSettings.sdCard) return;
-  spi_bus_config_t bus = {};
-  bus.mosi_io_num = 11;
-  bus.miso_io_num = 13;
-  bus.sclk_io_num = 12;
-  bus.quadwp_io_num = bus.quadhd_io_num = -1;
-  bus.max_transfer_sz = 4096;
-  esp_err_t err = spi_bus_initialize(SPI3_HOST, &bus, SPI_DMA_CH_AUTO);
-  if (err != ESP_OK) {
-    Serial.printf("Deck: SD bus failed: %s\n", esp_err_to_name(err));
-    return;
-  }
-  sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-  host.slot = SPI3_HOST;
-  host.max_freq_khz = 20000;
-  sdspi_device_config_t dev = SDSPI_DEVICE_CONFIG_DEFAULT();
-  dev.gpio_cs = GPIO_NUM_10;
-  dev.host_id = SPI3_HOST;
-  esp_vfs_fat_mount_config_t mc = {};
-  mc.format_if_mount_failed = false;
-  mc.max_files = 8;  // brand icon sizes hold files open next to the gallery and portal ones
-  mc.allocation_unit_size = 16 * 1024;
   sdmmc_card_t* card = nullptr;
-  err = esp_vfs_fat_sdspi_mount("/sd", &host, &dev, &mc, &card);
-  if (err != ESP_OK) {
-    Serial.printf("Deck: SD mount failed: %s\n", esp_err_to_name(err));
-    spi_bus_free(SPI3_HOST);
-    return;
+  for (int attempt = 1; attempt <= SD_MOUNT_TRIES && !card; attempt++) {
+    if (attempt > 1) delay(250);
+    card = mountCard();
   }
+  if (!card) return;
   s_impl->mountpoint("/sd");
   s_mounted = true;
   bool ok = (s_fs.exists("/touchdeck") || s_fs.mkdir("/touchdeck")) &&
@@ -142,6 +160,7 @@ void wallStorageBegin() {
   for (int p = 0; p < 2; p++)
     for (int d = 0; d < 2; d++) ok &= s_fs.exists(wallDir(p, d)) || s_fs.mkdir(wallDir(p, d));
   if (!ok) {
+    s_error = "gallery folders unavailable";
     Serial.println("Deck: SD gallery directories unavailable");
     s_mounted = false;
     s_impl->mountpoint(nullptr);

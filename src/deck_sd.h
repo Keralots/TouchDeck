@@ -25,6 +25,8 @@ template <typename T> using WallVector = std::vector<T, WallAllocator<T>>;
 
 void wallStorageBegin();
 bool wallOnSd();
+// Why an enabled card did not mount; "" when mounted or disabled.
+const char* wallSdError();
 // Last full index rebuild, ms.
 uint32_t wallIndexMs();
 fs::FS& wallFs();
