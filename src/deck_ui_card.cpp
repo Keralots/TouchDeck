@@ -154,6 +154,257 @@ void deckToastShow(const char* text, uint32_t holdMs) {
   lv_anim_start(&out);
 }
 
+// --- Climate controls on the detail card ---------------------------------------------
+// +/- move the setpoint the card shows at once; the call goes out once the
+// taps stop, so five taps are one set_temperature. The asked value stays on
+// the card until Home Assistant reports it or CLIMATE_SETTLE_MS pass.
+bool s_climate = false;
+lv_obj_t* s_climMinus = nullptr;
+lv_obj_t* s_climPlus = nullptr;
+lv_obj_t* s_climInfo = nullptr;
+std::vector<lv_obj_t*> s_climModeBtns;
+std::vector<String> s_climModes;
+float s_climWant = NAN, s_climWantHigh = NAN;  // high: heat_cool range only
+bool s_climSent = false;
+uint32_t s_climSentMs = 0;
+lv_timer_t* s_climTimer = nullptr;
+String s_climModeWant;
+uint32_t s_climModeMs = 0;
+constexpr uint32_t CLIMATE_SEND_MS = 700;
+constexpr uint32_t CLIMATE_SETTLE_MS = 5000;
+
+bool modalTileOk() { return s_modalTile >= 0 && s_modalTile < (int)s_tiles.size(); }
+const String& modalEntity() { return s_tiles[s_modalTile].def->entity; }
+
+float climateStep(const HaEntity& e) { return e.tempStep > 0 ? e.tempStep : 0.5f; }
+
+float climateClamp(const HaEntity& e, float v) {
+  const float step = climateStep(e);
+  v = roundf(v / step) * step;
+  if (isfinite(e.tempMin) && v < e.tempMin) v = e.tempMin;
+  if (isfinite(e.tempMax) && v > e.tempMax) v = e.tempMax;
+  return v;
+}
+
+bool climateHasSetpoint(const HaEntity& e) {
+  return e.known && e.state != "off" && e.state != "unavailable" && e.state != "unknown" &&
+         (isfinite(e.target) || climateRange(e));
+}
+
+void climateWantClear() {
+  s_climWant = s_climWantHigh = NAN;
+  s_climSent = false;
+  if (s_climTimer) lv_timer_delete(s_climTimer);
+  s_climTimer = nullptr;
+}
+
+bool climateSend(const String& entity) {
+  char data[80];
+  char a[16], b[16];
+  snprintf(a, sizeof a, "%.4g", s_climWant);
+  if (isfinite(s_climWantHigh)) {
+    snprintf(b, sizeof b, "%.4g", s_climWantHigh);
+    snprintf(data, sizeof data, "{\"target_temp_low\":%s,\"target_temp_high\":%s}", a, b);
+  } else {
+    snprintf(data, sizeof data, "{\"temperature\":%s}", a);
+  }
+  if (haCallService("climate", "set_temperature", entity, data)) return true;
+  deckToastShow(haLink() == HA_CONNECTED ? "Home Assistant is busy, try again" :
+                                        "Home Assistant is offline", 1800);
+  return false;
+}
+
+void onClimateTimer(lv_timer_t*) {
+  s_climTimer = nullptr;  // one-shot: it deletes itself
+  if (!modalTileOk() || !s_climate || !isfinite(s_climWant)) return;
+  if (s_climSent) {  // Home Assistant never reported it: show what it has
+    climateWantClear();
+    refreshModal();
+    return;
+  }
+  if (!climateSend(modalEntity())) {
+    climateWantClear();
+    refreshModal();
+    return;
+  }
+  s_climSent = true;
+  s_climSentMs = millis();
+  s_climTimer = lv_timer_create(onClimateTimer, CLIMATE_SETTLE_MS, nullptr);
+  lv_timer_set_repeat_count(s_climTimer, 1);
+}
+
+void climateArm(uint32_t ms) {
+  if (s_climTimer) lv_timer_delete(s_climTimer);
+  s_climTimer = lv_timer_create(onClimateTimer, ms, nullptr);
+  lv_timer_set_repeat_count(s_climTimer, 1);
+}
+
+void onClimateStep(lv_event_t* ev) {
+  if (!modalTileOk() || !s_climate) return;
+  const int dir = (int)(intptr_t)lv_event_get_user_data(ev);
+  HaEntity e;
+  if (!haGetEntity(modalEntity(), e) || !climateHasSetpoint(e)) return;
+  const float step = climateStep(e) * dir;
+  if (climateRange(e)) {
+    float lo = isfinite(s_climWant) ? s_climWant : e.targetLow;
+    float hi = isfinite(s_climWantHigh) ? s_climWantHigh : e.targetHigh;
+    // The range moves as one, and stops at either limit.
+    if ((isfinite(e.tempMin) && lo + step < e.tempMin) || (isfinite(e.tempMax) && hi + step > e.tempMax))
+      return;
+    s_climWant = climateClamp(e, lo + step);
+    s_climWantHigh = climateClamp(e, hi + step);
+  } else {
+    const float base = isfinite(s_climWant) ? s_climWant : e.target;
+    s_climWant = climateClamp(e, base + step);
+    s_climWantHigh = NAN;
+  }
+  s_climSent = false;
+  climateArm(CLIMATE_SEND_MS);
+  refreshModal();
+}
+
+void onClimateMode(lv_event_t* ev) {
+  if (!modalTileOk() || !s_climate) return;
+  const size_t i = (size_t)(intptr_t)lv_event_get_user_data(ev);
+  if (i >= s_climModes.size()) return;
+  const String& mode = s_climModes[i];
+  if (!haCallService("climate", "set_hvac_mode", modalEntity(), "{\"hvac_mode\":\"" + mode + "\"}")) {
+    deckToastShow(haLink() == HA_CONNECTED ? "Home Assistant is busy, try again" :
+                                          "Home Assistant is offline", 1800);
+    return;
+  }
+  climateWantClear();  // the setpoint may change with the mode
+  s_climModeWant = mode;
+  s_climModeMs = millis();
+  refreshModal();
+}
+
+// A setpoint still waiting for its call goes out when the card closes.
+void climateClose() {
+  if (s_climate && modalTileOk() && isfinite(s_climWant) && !s_climSent)
+    climateSend(modalEntity());
+  climateWantClear();
+  s_climate = false;
+  s_climMinus = s_climPlus = s_climInfo = nullptr;
+  s_climModeBtns.clear();
+  s_climModes.clear();
+  s_climModeWant = "";
+}
+
+void climateRefresh(const HaEntity* e) {
+  const bool known = e != nullptr;
+  // The asked setpoint has arrived: drop it, Home Assistant's own is the same.
+  if (known && s_climSent && isfinite(s_climWant)) {
+    const float tol = climateStep(*e) / 2;
+    const bool same = isfinite(s_climWantHigh)
+        ? fabsf(e->targetLow - s_climWant) < tol && fabsf(e->targetHigh - s_climWantHigh) < tol
+        : fabsf(e->target - s_climWant) < tol;
+    if (same) climateWantClear();
+  }
+  if (s_climModeWant.length() &&
+      ((known && e->state == s_climModeWant) || millis() - s_climModeMs >= CLIMATE_SETTLE_MS))
+    s_climModeWant = "";
+  const bool setpoint = known && climateHasSetpoint(*e);
+  String big;
+  if (!known || !e->known || e->state == "unavailable" || e->state == "unknown") big = "Unavailable";
+  else if (isfinite(s_climWant)) {
+    if (isfinite(s_climWantHigh)) {
+      char lo[16];
+      formatReading(s_climWant, lo, sizeof lo);
+      big = String(lo) + "-" + formatTemp(s_climWantHigh);
+    } else big = formatTemp(s_climWant);
+  } else if (setpoint) big = climateTarget(*e);
+  else big = climateWord(e->state);
+  lv_label_set_text(s_modalState, big.c_str());
+  for (lv_obj_t* b : {s_climMinus, s_climPlus}) {
+    if (setpoint) lv_obj_remove_state(b, LV_STATE_DISABLED);
+    else lv_obj_add_state(b, LV_STATE_DISABLED);
+  }
+  // "Now 20.5°  ·  Heating"
+  String info;
+  if (known && isfinite(e->current)) info = "Now " + formatTemp(e->current);
+  if (known && e->hvacAction.length()) {
+    if (info.length()) info += "  \xE2\x80\xA2  ";
+    info += climateWord(e->hvacAction);
+  }
+  lv_label_set_text(s_climInfo, info.c_str());
+  const String& mode = s_climModeWant.length() ? s_climModeWant : known ? e->state : String();
+  for (size_t i = 0; i < s_climModeBtns.size(); i++) {
+    if (s_climModes[i] == mode) lv_obj_add_state(s_climModeBtns[i], LV_STATE_CHECKED);
+    else lv_obj_remove_state(s_climModeBtns[i], LV_STATE_CHECKED);
+  }
+}
+
+// Builds the climate part of the card from y; returns the height it took.
+int climateBuild(lv_obj_t* c, int cw, int y, uint32_t accent, const HaEntity* e) {
+  s_climate = true;
+  constexpr int BTN = 52;
+  auto stepButton = [&](int x, const char* sym, int dir) {
+    lv_obj_t* b = qpButton(c, x, y, BTN, sym, false);
+    lv_obj_set_height(b, BTN);
+    lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_text_font(b, &deck_font_20, 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(accent), 0);
+    lv_obj_set_style_text_color(b, lv_color_hex(C_TEXT_ON), 0);
+    lv_obj_set_style_opa(b, LV_OPA_40, LV_STATE_DISABLED);
+    lv_obj_set_ext_click_area(b, 8);
+    lv_obj_add_event_cb(b, onClimateStep, LV_EVENT_CLICKED, (void*)(intptr_t)dir);
+    return b;
+  };
+  s_climMinus = stepButton(16, LV_SYMBOL_MINUS, -1);
+  s_climPlus = stepButton(cw - 16 - BTN, LV_SYMBOL_PLUS, 1);
+  // The setpoint between the buttons.
+  const int lh = lv_font_get_line_height(&deck_font_28);
+  lv_obj_set_pos(s_modalState, 16 + BTN + 8, y + (BTN - lh) / 2);
+  lv_obj_set_width(s_modalState, cw - 32 - 2 * BTN - 16);
+  lv_obj_set_style_text_align(s_modalState, LV_TEXT_ALIGN_CENTER, 0);
+  int at = y + BTN + 8;
+  s_climInfo = lv_label_create(c);
+  lv_obj_set_style_text_color(s_climInfo, lv_color_hex(C_DIM), 0);
+  lv_obj_set_style_text_align(s_climInfo, LV_TEXT_ALIGN_CENTER, 0);
+  lv_label_set_long_mode(s_climInfo, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_size(s_climInfo, cw - 32, lv_font_get_line_height(&deck_font_14));
+  lv_obj_set_pos(s_climInfo, 16, at);
+  lv_label_set_text(s_climInfo, "");
+  at += lv_font_get_line_height(&deck_font_14) + 10;
+  // HVAC modes as a row of chips; it scrolls sideways when they do not fit.
+  s_climModes.clear();
+  s_climModeBtns.clear();
+  if (e) {
+    int from = 0;
+    while (from < (int)e->hvacModes.length() && s_climModes.size() < 8) {
+      int comma = e->hvacModes.indexOf(',', from);
+      if (comma < 0) comma = e->hvacModes.length();
+      if (comma > from) s_climModes.push_back(e->hvacModes.substring(from, comma));
+      from = comma + 1;
+    }
+  }
+  if (s_climModes.size() > 1) {
+    lv_obj_t* row = lv_obj_create(c);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_pos(row, 16, at);
+    lv_obj_set_size(row, cw - 32, 40);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(row, 8, 0);
+    lv_obj_set_scroll_dir(row, LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
+    for (size_t i = 0; i < s_climModes.size(); i++) {
+      lv_obj_t* b = qpButton(row, 0, 0, 10, climateWord(s_climModes[i]).c_str(), false);
+      lv_obj_set_width(b, LV_SIZE_CONTENT);
+      lv_obj_set_style_pad_hor(b, 12, 0);
+      lv_obj_set_style_min_width(b, 52, 0);
+      lv_obj_set_flex_grow(b, 1);
+      lv_obj_set_style_bg_color(b, lv_color_hex(accent), LV_STATE_CHECKED);
+      lv_obj_add_event_cb(b, onClimateMode, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+      s_climModeBtns.push_back(b);
+    }
+    at += 40 + 6;
+  } else {
+    s_climModes.clear();
+  }
+  return at - y;
+}
+
 void closeModal() {
   if (s_modalSlider && s_modalTile >= 0 && s_modalTile < (int)s_tiles.size()) {
     if (Wish* w = findWish(s_tiles[s_modalTile].def->entity)) {
@@ -161,6 +412,7 @@ void closeModal() {
       w->dragging = w->holding = false;
     }
   }
+  climateClose();
   if (s_modalCard) lv_obj_delete(s_modalCard);
   if (s_modalScrim) lv_obj_delete(s_modalScrim);
   if (s_modalUnder) lv_obj_delete(s_modalUnder);
@@ -237,7 +489,9 @@ void refreshModal() {
   HaEntity e;
   const bool haKnown = r.def->entity.length() && haGetEntity(r.def->entity, e);
   if (haKnown) st = wishText(r.def->entity, e, false);
-  if (s_modalSlider) {
+  if (s_climate) {
+    climateRefresh(haKnown ? &e : nullptr);
+  } else if (s_modalSlider) {
     const float f = haKnown ? wishFrac(r.def->entity, e) : -1;
     const int pct = f > 0 ? (int)lroundf(f * 100) : 0;
     lv_slider_set_value(s_modalSlider, pct, LV_ANIM_OFF);
@@ -294,11 +548,18 @@ void openModal(int tileIdx) {
   float hv;
   const bool haKnown = d.entity.length() && haGetEntity(d.entity, he);
   const bool graph = d.type == TILE_SENSOR && haKnown && he.known && haNumericState(he.state, hv);
+  const bool climate = entityDomain(d.entity) == "climate" && !d.http.enabled;
 
   s_modalScrim = makeScrim();
 
   const int cw = w - 40 < 380 ? w - 40 : 380;
-  const int ch = graph ? (light ? 304 : 284) : light ? 236 : 196;
+  int ch = graph ? (light ? 304 : 284) : light ? 236 : 196;
+  // Climate: +/- row (52), info line, mode chips when it has several modes.
+  int nModes = 0;
+  if (climate && haKnown)
+    for (int i = 0, n = he.hvacModes.length(); i < n; i++) nModes += i == 0 || he.hvacModes[i] == ',';
+  if (climate) ch = 74 + 52 + 8 + lv_font_get_line_height(&deck_font_14) + 10 +
+                    (nModes > 1 ? 46 : 0) + 10 + 44 + 16;
   lv_obj_t* c = lv_obj_create(lv_layer_top());
   s_modalCard = c;
   lv_obj_remove_style_all(c);
@@ -352,7 +613,8 @@ void openModal(int tileIdx) {
   lv_obj_set_pos(s_modalState, 16, 74);
 
   s_modalSlider = nullptr;
-  if (light) {
+  if (climate) climateBuild(c, cw, 74, accent, haKnown ? &he : nullptr);
+  if (light && !climate) {
     lv_obj_t* sl = lv_slider_create(c);
     s_modalSlider = sl;
     lv_obj_set_pos(sl, 26, 128);

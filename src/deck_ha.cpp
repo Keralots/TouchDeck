@@ -292,6 +292,25 @@ void sendJson(JsonDocument& doc) {
   s_ws.sendTXT(out);
 }
 
+// The climate attribute a number field holds, or null for other keys.
+float* climateField(HaEntity& e, const char* k) {
+  if (!strcmp(k, "temperature")) return &e.target;
+  if (!strcmp(k, "target_temp_low")) return &e.targetLow;
+  if (!strcmp(k, "target_temp_high")) return &e.targetHigh;
+  if (!strcmp(k, "current_temperature")) return &e.current;
+  if (!strcmp(k, "min_temp")) return &e.tempMin;
+  if (!strcmp(k, "max_temp")) return &e.tempMax;
+  if (!strcmp(k, "target_temp_step")) return &e.tempStep;
+  return nullptr;
+}
+
+void clearClimate(HaEntity& e) {
+  e.target = e.targetLow = e.targetHigh = e.current = NAN;
+  e.tempMin = e.tempMax = e.tempStep = NAN;
+  e.hvacAction = "";
+  e.hvacModes = "";
+}
+
 void entityFromAttrs(HaEntity& e, JsonObjectConst a) {
   if (a.isNull()) return;
   if (a["friendly_name"].is<const char*>()) e.name = (const char*)a["friendly_name"];
@@ -311,6 +330,17 @@ void entityFromAttrs(HaEntity& e, JsonObjectConst a) {
       e.level = kv.value().is<float>() ? (int)lroundf(kv.value().as<float>()) : -1;
     } else if (!strcmp(k, "volume_level")) {
       e.level = kv.value().is<float>() ? (int)lroundf(kv.value().as<float>() * 100) : -1;
+    } else if (float* f = climateField(e, k)) {
+      *f = kv.value().is<float>() ? kv.value().as<float>() : NAN;  // null when off
+    } else if (!strcmp(k, "hvac_action")) {
+      e.hvacAction = kv.value().is<const char*>() ? (const char*)kv.value() : "";
+    } else if (!strcmp(k, "hvac_modes")) {
+      e.hvacModes = "";
+      for (JsonVariantConst m : kv.value().as<JsonArrayConst>()) {
+        if (!m.is<const char*>()) continue;
+        if (e.hvacModes.length()) e.hvacModes += ',';
+        e.hvacModes += (const char*)m;
+      }
     }
   }
   if (a["min"].is<float>()) e.numMin = a["min"].as<float>();
@@ -354,6 +384,7 @@ void applyEvent(JsonObjectConst ev) {
     e.rgb = -1;
     e.level = -1;
     e.numMin = e.numMax = e.numStep = NAN;
+    clearClimate(e);
     entityFromAttrs(e, kv.value()["a"].as<JsonObjectConst>());
     e.version++;
     changed = true;
@@ -374,6 +405,9 @@ void applyEvent(JsonObjectConst ev) {
       else if (!strcmp(key, "current_position") || !strcmp(key, "percentage") ||
                !strcmp(key, "volume_level"))
         e.level = -1;
+      else if (float* f = climateField(e, key)) *f = NAN;
+      else if (!strcmp(key, "hvac_action")) e.hvacAction = "";
+      else if (!strcmp(key, "hvac_modes")) e.hvacModes = "";
       else if (!strcmp(key, "icon")) e.icon = "";
       else if (!strcmp(key, "unit_of_measurement")) e.unit = "";
       else if (!strcmp(key, "device_class")) e.deviceClass = "";
