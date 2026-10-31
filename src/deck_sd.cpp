@@ -8,7 +8,9 @@
 #include <vfs_api.h>
 #include <esp_vfs_fat.h>
 #include <sdmmc_cmd.h>
+#include <driver/sdmmc_host.h>
 #include <driver/sdspi_host.h>
+#include <driver/gpio.h>
 #include <driver/spi_master.h>
 #include <freertos/semphr.h>
 #include <algorithm>
@@ -18,6 +20,8 @@ namespace {
 
 bool s_mounted = false;
 const char* s_error = "";  // why an enabled card is not mounted
+const char* s_mode = "";   // bus the card mounted on
+const char* s_sdmmcError = "";  // why SD mode failed before the SPI fallback
 uint32_t s_indexMs = 0;
 fs::FSImplPtr s_impl(new VFSImpl());
 fs::FS s_fs(s_impl);
@@ -61,7 +65,35 @@ void indexChanged(bool p, bool d, const String& name) {
 // A card left mid-transfer by a warm reset can miss the first init.
 constexpr int SD_MOUNT_TRIES = 3;
 
-sdmmc_card_t* mountCard() {
+// Slot wiring: CLK 12, CMD/MOSI 11, DAT0/MISO 13, DAT3/CS 10.
+esp_vfs_fat_mount_config_t mountConfig() {
+  esp_vfs_fat_mount_config_t mc = {};
+  mc.format_if_mount_failed = false;
+  mc.max_files = 8;  // brand icon sizes hold files open next to the gallery and portal ones
+  mc.allocation_unit_size = 16 * 1024;
+  return mc;
+}
+
+// 1-bit SD mode, as the board's factory firmware uses.
+esp_err_t mountSdmmc(sdmmc_card_t** card) {
+  // DAT3 high at power-up keeps the card out of SPI mode.
+  gpio_reset_pin(GPIO_NUM_10);
+  gpio_set_direction(GPIO_NUM_10, GPIO_MODE_OUTPUT);
+  gpio_set_level(GPIO_NUM_10, 1);
+  sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+  host.flags = SDMMC_HOST_FLAG_1BIT;
+  host.max_freq_khz = SDMMC_FREQ_DEFAULT;
+  sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
+  slot.width = 1;
+  slot.clk = GPIO_NUM_12;
+  slot.cmd = GPIO_NUM_11;
+  slot.d0 = GPIO_NUM_13;
+  slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+  const esp_vfs_fat_mount_config_t mc = mountConfig();
+  return esp_vfs_fat_sdmmc_mount("/sd", &host, &slot, &mc, card);
+}
+
+esp_err_t mountSpi(sdmmc_card_t** card) {
   spi_bus_config_t bus = {};
   bus.mosi_io_num = 11;
   bus.miso_io_num = 13;
@@ -69,30 +101,41 @@ sdmmc_card_t* mountCard() {
   bus.quadwp_io_num = bus.quadhd_io_num = -1;
   bus.max_transfer_sz = 4096;
   esp_err_t err = spi_bus_initialize(SPI3_HOST, &bus, SPI_DMA_CH_AUTO);
-  if (err != ESP_OK) {
-    s_error = esp_err_to_name(err);
-    Serial.printf("Deck: SD bus failed: %s\n", s_error);
-    return nullptr;
-  }
+  if (err != ESP_OK) return err;
   sdmmc_host_t host = SDSPI_HOST_DEFAULT();
   host.slot = SPI3_HOST;
   host.max_freq_khz = 20000;
   sdspi_device_config_t dev = SDSPI_DEVICE_CONFIG_DEFAULT();
   dev.gpio_cs = GPIO_NUM_10;
   dev.host_id = SPI3_HOST;
-  esp_vfs_fat_mount_config_t mc = {};
-  mc.format_if_mount_failed = false;
-  mc.max_files = 8;  // brand icon sizes hold files open next to the gallery and portal ones
-  mc.allocation_unit_size = 16 * 1024;
+  const esp_vfs_fat_mount_config_t mc = mountConfig();
+  err = esp_vfs_fat_sdspi_mount("/sd", &host, &dev, &mc, card);
+  if (err != ESP_OK) spi_bus_free(SPI3_HOST);
+  return err;
+}
+
+// SD mode first; SPI stays as the fallback that worked before (#2).
+// A card leaves SPI mode (and enters it from SD mode) only after a power cycle.
+sdmmc_card_t* mountCard() {
+  static char error[64];
   sdmmc_card_t* card = nullptr;
-  err = esp_vfs_fat_sdspi_mount("/sd", &host, &dev, &mc, &card);
-  if (err != ESP_OK) {
-    s_error = esp_err_to_name(err);
-    Serial.printf("Deck: SD mount failed: %s\n", s_error);
-    spi_bus_free(SPI3_HOST);
-    return nullptr;
+  const esp_err_t mmcErr = mountSdmmc(&card);
+  s_sdmmcError = mmcErr == ESP_OK ? "" : esp_err_to_name(mmcErr);
+  if (mmcErr == ESP_OK) {
+    s_mode = "SD 1-bit";
+  } else {
+    const esp_err_t spiErr = mountSpi(&card);
+    if (spiErr != ESP_OK) {
+      snprintf(error, sizeof(error), "SD %s, SPI %s", esp_err_to_name(mmcErr), esp_err_to_name(spiErr));
+      s_error = error;
+      Serial.printf("Deck: SD mount failed: %s\n", s_error);
+      return nullptr;
+    }
+    s_mode = "SPI";
   }
   s_error = "";
+  Serial.printf("Deck: SD card %s, %s, %llu MB\n", card->cid.name, s_mode,
+                (unsigned long long)card->csd.capacity * card->csd.sector_size / 1048576);
   return card;
 }
 
@@ -100,6 +143,8 @@ sdmmc_card_t* mountCard() {
 
 bool wallOnSd() { return s_mounted; }
 const char* wallSdError() { return s_error; }
+const char* wallSdMode() { return s_mode; }
+const char* wallSdmmcError() { return s_sdmmcError; }
 uint32_t wallIndexMs() { return s_indexMs; }
 fs::FS& wallFs() {
   if (s_mounted) return s_fs;
@@ -165,7 +210,8 @@ void wallStorageBegin() {
     s_mounted = false;
     s_impl->mountpoint(nullptr);
     esp_vfs_fat_sdcard_unmount("/sd", card);
-    spi_bus_free(SPI3_HOST);
+    if (!strcmp(s_mode, "SPI")) spi_bus_free(SPI3_HOST);
+    s_mode = "";
     return;
   }
   wallRebuildIndex();

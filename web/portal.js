@@ -904,7 +904,9 @@
             ? "Card not mounted" +
               (sd.error ? " (" + sd.error + ")" : "") +
               " - using internal storage. Power the deck off and on to retry."
-            : "Mounted: " +
+            : "Mounted" +
+              (sd.mode ? " (" + sd.mode + ")" : "") +
+              ": " +
               Math.floor(data.free / 1048576) +
               " MB free of " +
               Math.floor(data.total / 1048576) +
