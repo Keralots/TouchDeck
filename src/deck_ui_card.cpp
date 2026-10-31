@@ -166,12 +166,16 @@ std::vector<lv_obj_t*> s_climModeBtns;
 std::vector<String> s_climModes;
 float s_climWant = NAN, s_climWantHigh = NAN;  // high: heat_cool range only
 bool s_climSent = false;
-uint32_t s_climSentMs = 0;
 lv_timer_t* s_climTimer = nullptr;
 String s_climModeWant;
 uint32_t s_climModeMs = 0;
 constexpr uint32_t CLIMATE_SEND_MS = 700;
 constexpr uint32_t CLIMATE_SETTLE_MS = 5000;
+
+void climateCallFailed() {
+  deckToastShow(haLink() == HA_CONNECTED ? "Home Assistant is busy, try again" :
+                                        "Home Assistant is offline", 1800);
+}
 
 bool modalTileOk() { return s_modalTile >= 0 && s_modalTile < (int)s_tiles.size(); }
 const String& modalEntity() { return s_tiles[s_modalTile].def->entity; }
@@ -209,8 +213,7 @@ bool climateSend(const String& entity) {
     snprintf(data, sizeof data, "{\"temperature\":%s}", a);
   }
   if (haCallService("climate", "set_temperature", entity, data)) return true;
-  deckToastShow(haLink() == HA_CONNECTED ? "Home Assistant is busy, try again" :
-                                        "Home Assistant is offline", 1800);
+  climateCallFailed();
   return false;
 }
 
@@ -228,7 +231,6 @@ void onClimateTimer(lv_timer_t*) {
     return;
   }
   s_climSent = true;
-  s_climSentMs = millis();
   s_climTimer = lv_timer_create(onClimateTimer, CLIMATE_SETTLE_MS, nullptr);
   lv_timer_set_repeat_count(s_climTimer, 1);
 }
@@ -269,8 +271,7 @@ void onClimateMode(lv_event_t* ev) {
   if (i >= s_climModes.size()) return;
   const String& mode = s_climModes[i];
   if (!haCallService("climate", "set_hvac_mode", modalEntity(), "{\"hvac_mode\":\"" + mode + "\"}")) {
-    deckToastShow(haLink() == HA_CONNECTED ? "Home Assistant is busy, try again" :
-                                          "Home Assistant is offline", 1800);
+    climateCallFailed();
     return;
   }
   climateWantClear();  // the setpoint may change with the mode
