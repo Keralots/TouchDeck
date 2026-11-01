@@ -7,6 +7,7 @@
 
 #include <Arduino.h>
 #include <vector>
+#include "deck_hms.h"
 
 namespace deck {
 
@@ -81,6 +82,13 @@ struct PrinterState {
   PrinterTray ext;            // external spool (vt_tray)
   uint8_t mapCount = 0;       // print.mapping of the current job
   uint16_t map[PRN_MAP_MAX];  // (unit raw id << 8) | slot
+
+  // Errors (deck_hms) and the door
+  uint32_t printError = 0;    // print.print_error, 0 = none
+  bool printErrorFresh = false;  // set after the first report: worth an alert
+  uint8_t hmsCount = 0, hmsTotal = 0;  // kept / reported after the filters
+  PrinterHms hms[PRN_HMS_MAX];
+  int8_t door = -1;           // -1 no door sensor, 0 closed, 1 open
 };
 
 // Replace the printer list. Printers no longer listed are stopped; a changed
