@@ -21,7 +21,8 @@ bool s_prnHave[MAX_PRINTERS] = {};
 struct PrnTrack {
   String id;
   bool seen = false, job = false, cool = false, kwhLoaded = false;
-  uint32_t alertId = 0;
+  uint64_t active[PRN_ALERT_MAX];  // badge-worthy errors of the last pass
+  uint8_t nActive = 0;
   float lastKwh = NAN;  // energy of the last finished or failed job
 };
 PrnTrack s_track[MAX_PRINTERS];
@@ -772,7 +773,12 @@ uint32_t prnTileKey(const TileRt& r, const PrinterState* s, bool online) {
       k.add((int32_t)s->layer);
       k.add((int32_t)(time(nullptr) / 60));  // "done 16:23"
       k.add((int32_t)netSettings.use24h);
-      k.add((int32_t)printerAlert(*s).id());
+      {
+        const PrinterAlert a = printerAlert(*s);
+        const uint64_t key = a.key();
+        k.add(&key, sizeof(key));
+        k.add((int32_t)a.sev);
+      }
       k.add((int32_t)printerCanceled(*s));
       k.add((int32_t)s->door);
       k.add((int32_t)s->hmsCount);
@@ -1254,6 +1260,8 @@ void printerEvents() {
     const bool finished = !strcmp(st, "FINISH");
     if (t.seen && job && !t.job) {
       t.cool = false;
+      t.lastKwh = NAN;
+      prnKwhPut('l', def.id, NAN);
       prnKwhPut('s', def.id, prnEnergyNow(def));
     }
     if (t.seen && t.job && (finished || !strcmp(st, "FAILED"))) {
@@ -1276,12 +1284,20 @@ void printerEvents() {
       snprintf(b, sizeof(b), "%s: the bed has cooled to %.0f\xC2\xB0", def.name.c_str(), s->bed);
       deckToastShow(b, 8000);
     }
-    const PrinterAlert a = printerAlert(*s);
-    const uint32_t id = a.id();
-    const bool fire = id && id != t.alertId && a.fresh && printerSettings.errorWake;
-    t.alertId = id;
-    if (!fire) continue;
-    Serial.printf("Printer %s: new error %08lX%08lX\n", def.id.c_str(), (unsigned long)a.attr, (unsigned long)a.code);
+    // Any badge-worthy error not there last pass and not standing since the baseline.
+    PrinterAlert list[PRN_ALERT_MAX];
+    const uint8_t n = printerAlerts(*s, list, PRN_ALERT_MAX);
+    const PrinterAlert* fresh = nullptr;
+    for (uint8_t k = 0; k < n && !fresh; k++) {
+      if (!list[k].fresh) continue;
+      bool known = false;
+      for (uint8_t j = 0; j < t.nActive && !known; j++) known = t.active[j] == list[k].key();
+      if (!known) fresh = &list[k];
+    }
+    t.nActive = n;
+    for (uint8_t k = 0; k < n; k++) t.active[k] = list[k].key();
+    if (!fresh || !printerSettings.errorWake) continue;
+    Serial.printf("Printer %s: new error %08lX%08lX\n", def.id.c_str(), (unsigned long)fresh->attr, (unsigned long)fresh->code);
     prnWake();
     for (int p = 0; p < s_count; p++)
       if (s_pages[p].def && s_pages[p].def->printer == def.id) {

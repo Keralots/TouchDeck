@@ -115,8 +115,8 @@ struct Printer {
   static constexpr uint8_t HMS_IDX = 24;
   uint64_t hmsIdx[HMS_IDX + 1] = {};
   int8_t hmsOn = -1, perrOn = -1;  // entity state, -1 = unavailable
-  uint32_t perrCode = 0;
-  bool perrSeen = false;
+  uint32_t perrCode = 0, perrLast = 0;  // attribute, last available value
+  bool perrSeen = false, perrFresh = false;
   HmsBaseline hmsBase;
 };
 
@@ -165,8 +165,8 @@ void resetState(Printer& p) {
   p.weightCount = 0;
   memset(p.hmsIdx, 0, sizeof(p.hmsIdx));
   p.hmsOn = p.perrOn = -1;
-  p.perrCode = 0;
-  p.perrSeen = false;
+  p.perrCode = p.perrLast = 0;
+  p.perrSeen = p.perrFresh = false;
   p.hmsBase.reset();
 }
 
@@ -369,11 +369,18 @@ void printErrorMap(Printer& p, const char* st, JsonObjectConst a, bool full, Jso
     p.perrCode = sscanf(a["code"], "%4x_%4x%c", &hi, &lo, &tail) == 2 ? (hi << 16) | lo : 0;
   }
   if (st) p.perrOn = unusable(st) ? -1 : !strcmp(st, "on");
-  if (p.perrOn < 0) return;
+  // Unavailable shows nothing; the value it comes back with is judged against the last real one.
+  if (p.perrOn < 0) {
+    s.printError = 0;
+    s.printErrorFresh = false;
+    return;
+  }
   const uint32_t pe = p.perrOn ? p.perrCode : 0;
-  if (pe != s.printError) s.printErrorFresh = p.perrSeen && pe;
-  s.printError = pe;
+  if (pe != p.perrLast) p.perrFresh = p.perrSeen && pe;
+  p.perrLast = pe;
   p.perrSeen = true;
+  s.printError = pe;
+  s.printErrorFresh = p.perrFresh;
 }
 
 float num(const char* s) {

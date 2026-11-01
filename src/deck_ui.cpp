@@ -685,8 +685,8 @@ void printerSync() {
   if (graceOver) s_prnGraceAt = 0;
   s_prnSeen = v;
   readPrinters();
-  for (TileRt& r : s_tiles) applyPrinterToTile(r);
   printerEvents();
+  for (TileRt& r : s_tiles) applyPrinterToTile(r);
 }
 
 String s_autoFrom;  // the page shown before an "auto" page took over

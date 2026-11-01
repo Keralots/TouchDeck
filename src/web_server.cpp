@@ -716,13 +716,18 @@ static void handleConfigImport() {
     READ_BOOL(prnIn, "errorWake", nextPrn.errorWake);
     READ_BOOL(prnIn, "coolAlert", nextPrn.coolAlert);
     READ_INT(prnIn, "coolTemp", PRN_COOL_MIN, PRN_COOL_MAX, nextPrn.coolTemp, uint8_t);
-    const float price = prnIn["kwhPrice"] | 0.0f;
-    if (!isfinite(price) || price < 0 || price > 100) {
-      sendJsonMessage(400, false, "printers.kwhPrice must be 0..100");
+    JsonVariantConst price = prnIn["kwhPrice"], cur = prnIn["currency"];
+    const float p = price.as<float>();
+    if (!price.isNull() && (!price.is<float>() || !isfinite(p) || p < 0 || p > 100)) {
+      sendJsonMessage(400, false, "printers.kwhPrice must be a number 0..100");
       return;
     }
-    nextPrn.kwhPrice = price;
-    strlcpy(nextPrn.currency, prnIn["currency"] | "", sizeof(nextPrn.currency));
+    if (!cur.isNull() && (!cur.is<const char*>() || strlen(cur.as<const char*>()) >= sizeof(nextPrn.currency))) {
+      sendJsonMessage(400, false, "printers.currency must be text of up to 7 bytes");
+      return;
+    }
+    nextPrn.kwhPrice = price.isNull() ? 0 : p;
+    strlcpy(nextPrn.currency, cur | "", sizeof(nextPrn.currency));
   }
   PresenceSettings nextPresence;  // older backups: never sleeps
   JsonObjectConst presence = root["presence"].as<JsonObjectConst>();

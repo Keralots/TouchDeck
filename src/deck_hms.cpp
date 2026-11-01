@@ -181,29 +181,37 @@ bool printerCanceled(const PrinterState& s) {
   return !strcmp(s.gcodeState, "FAILED") && printErrorIsCancel(s.printError);
 }
 
-PrinterAlert printerAlert(const PrinterState& s) {
-  PrinterAlert a;
-  if (!printerSettings.errors) return a;
+uint8_t printerAlerts(const PrinterState& s, PrinterAlert* out, uint8_t max) {
+  uint8_t n = 0;
+  if (!printerSettings.errors) return 0;
   // print_error first: the job stopped.
-  if (s.printError && !printErrorIsCancel(s.printError)) {
+  if (s.printError && !printErrorIsCancel(s.printError) && n < max) {
+    PrinterAlert& a = out[n++];
+    a = PrinterAlert{};
     a.sev = 1;
     a.printError = true;
     a.code = s.printError;
     a.fresh = s.printErrorFresh;
-    return a;
   }
   // Info codes are listed only; common ones only with "errorsAll".
   const uint8_t worst = printerSettings.errorsAll ? 3 : 2;
-  for (uint8_t i = 0; i < s.hmsCount; i++) {
+  for (uint8_t i = 0; i < s.hmsCount && n < max; i++) {
     const PrinterHms& e = s.hms[i];
     const uint8_t sev = hmsSeverity(e.code);
     if (sev < 1 || sev > worst || e.quiet) continue;
+    PrinterAlert& a = out[n++];
+    a = PrinterAlert{};
     a.sev = sev;
     a.attr = e.attr;
     a.code = e.code;
     a.fresh = e.fresh;
-    return a;
   }
+  return n;
+}
+
+PrinterAlert printerAlert(const PrinterState& s) {
+  PrinterAlert a;
+  printerAlerts(s, &a, 1);
   return a;
 }
 

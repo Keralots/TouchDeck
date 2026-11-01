@@ -66,8 +66,12 @@ struct PrinterAlert {
   bool printError = false;
   uint32_t attr = 0, code = 0;  // code = print_error value when printError
   bool fresh = false;    // new since the baseline: jump and wake
-  uint32_t id() const { return sev ? (uint32_t)(hmsKey(attr, code) ^ (hmsKey(attr, code) >> 32)) | 1 : 0; }
+  // Unique per error; bit 63 marks print_error (HMS attrs never reach it).
+  uint64_t key() const { return printError ? (1ULL << 63) | code : hmsKey(attr, code); }
 };
+constexpr uint8_t PRN_ALERT_MAX = PRN_HMS_MAX + 1;
+// Every error worth a badge, worst first (print_error, then HMS); returns the count.
+uint8_t printerAlerts(const PrinterState& s, PrinterAlert* out, uint8_t max);
 PrinterAlert printerAlert(const PrinterState& s);
 // Text for an alert: table text, else a generic line with the module.
 String printerAlertText(const PrinterAlert& a);
