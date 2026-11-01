@@ -31,6 +31,12 @@ const char* wallSdError();
 const char* wallSdMode();
 // SD mode error when the card fell back to SPI.
 const char* wallSdmmcError();
+// Driver error lines from the boot mount, one per line.
+const char* wallSdLog();
+// "OK" or the error of a format run at this boot, "" when none ran.
+const char* wallSdFormatResult();
+// Erases the card at the next boot (one FAT partition).
+bool wallSdFormatRequest();
 // Last full index rebuild, ms.
 uint32_t wallIndexMs();
 fs::FS& wallFs();

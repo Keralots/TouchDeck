@@ -1402,10 +1402,15 @@
                   ><input type="checkbox" id="sdCard" name="sdCard" /><span class="check-box"></span
                   ><span class="check-text"><strong>Use the microSD card</strong></span></label
                 >
-                <p id="sdState" class="field-hint" role="status"></p>
+                <p id="sdState" class="field-hint" role="status" style="white-space: pre-line"></p>
                 <div class="maintenance-actions">
-                  <button type="button" class="btn btn-accent" id="sdSave" disabled>Save and restart</button>
+                  <button type="button" class="btn btn-accent" id="sdSave" disabled>Save and restart</button
+                  ><button type="button" class="btn btn-danger hidden" id="sdFormat">Format card</button>
                 </div>
+                <p class="field-hint">
+                  Format card erases the card and creates one FAT partition the deck can read. Use it when
+                  the card answers but its file system is not accepted.
+                </p>
               </div>
               <div class="card danger-card">
                 <h2 class="card-title">Factory reset</h2>

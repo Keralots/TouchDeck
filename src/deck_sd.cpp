@@ -13,6 +13,12 @@
 #include <driver/gpio.h>
 #include <driver/spi_master.h>
 #include <freertos/semphr.h>
+#include <esp_log.h>
+#include <esp_heap_caps.h>
+#include <diskio_impl.h>
+#include <diskio_sdmmc.h>
+#include <ff.h>
+#include <ctype.h>
 #include <algorithm>
 
 namespace deck {
@@ -22,6 +28,7 @@ bool s_mounted = false;
 const char* s_error = "";  // why an enabled card is not mounted
 const char* s_mode = "";   // bus the card mounted on
 const char* s_sdmmcError = "";  // why SD mode failed before the SPI fallback
+const char* s_format = "";      // result of a format requested before this boot
 uint32_t s_indexMs = 0;
 fs::FSImplPtr s_impl(new VFSImpl());
 fs::FS s_fs(s_impl);
@@ -74,21 +81,26 @@ esp_vfs_fat_mount_config_t mountConfig() {
   return mc;
 }
 
-// 1-bit SD mode, as the board's factory firmware uses.
-esp_err_t mountSdmmc(sdmmc_card_t** card) {
-  // DAT3 high at power-up keeps the card out of SPI mode.
-  gpio_reset_pin(GPIO_NUM_10);
-  gpio_set_direction(GPIO_NUM_10, GPIO_MODE_OUTPUT);
-  gpio_set_level(GPIO_NUM_10, 1);
-  sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+// 1-bit SD mode, set up as the vendor's SD_MMC.setPins(12, 11, 13) demo:
+// DAT3 and the pull-ups are left to the board.
+void sdmmcConfig(sdmmc_host_t& host, sdmmc_slot_config_t& slot) {
+  host = SDMMC_HOST_DEFAULT();
   host.flags = SDMMC_HOST_FLAG_1BIT;
   host.max_freq_khz = SDMMC_FREQ_DEFAULT;
-  sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
+  slot = SDMMC_SLOT_CONFIG_DEFAULT();
   slot.width = 1;
   slot.clk = GPIO_NUM_12;
   slot.cmd = GPIO_NUM_11;
   slot.d0 = GPIO_NUM_13;
-  slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+  // S3 defaults put D2/D3 on GPIO 12/13, this slot's CLK and D0.
+  slot.d1 = slot.d2 = slot.d3 = GPIO_NUM_NC;
+  slot.d4 = slot.d5 = slot.d6 = slot.d7 = GPIO_NUM_NC;
+}
+
+esp_err_t mountSdmmc(sdmmc_card_t** card) {
+  sdmmc_host_t host;
+  sdmmc_slot_config_t slot;
+  sdmmcConfig(host, slot);
   const esp_vfs_fat_mount_config_t mc = mountConfig();
   return esp_vfs_fat_sdmmc_mount("/sd", &host, &slot, &mc, card);
 }
@@ -114,24 +126,213 @@ esp_err_t mountSpi(sdmmc_card_t** card) {
   return err;
 }
 
-// SD mode first; SPI stays as the fallback that worked before (#2).
-// A card leaves SPI mode (and enters it from SD mode) only after a power cycle.
-sdmmc_card_t* mountCard() {
-  static char error[64];
-  sdmmc_card_t* card = nullptr;
-  const esp_err_t mmcErr = mountSdmmc(&card);
-  s_sdmmcError = mmcErr == ESP_OK ? "" : esp_err_to_name(mmcErr);
-  if (mmcErr == ESP_OK) {
-    s_mode = "SD 1-bit";
+// Driver error lines logged while mounting, for the portal (#2).
+char* s_log = nullptr;
+size_t s_logLen = 0;
+constexpr size_t SD_LOG_SIZE = 1024;
+size_t s_logSection = 0;  // dedupe only within the current "SD mode:" / "SPI:" block
+portMUX_TYPE s_logMux = portMUX_INITIALIZER_UNLOCKED;
+vprintf_like_t s_prevLog = nullptr;
+
+void logLine(const char* text, bool section = false) {
+  const size_t len = strlen(text);
+  portENTER_CRITICAL(&s_logMux);
+  if (section) s_logSection = s_logLen;
+  if ((section || !strstr(s_log + s_logSection, text)) && s_logLen + len + 2 < SD_LOG_SIZE) {
+    memcpy(s_log + s_logLen, text, len);
+    s_logLen += len;
+    s_log[s_logLen++] = '\n';
+    s_log[s_logLen] = 0;
+  }
+  portEXIT_CRITICAL(&s_logMux);
+}
+
+// Keeps each distinct line once, without the "E (352) " prefix.
+int captureLog(const char* fmt, va_list args) {
+  char line[160];
+  va_list copy;
+  va_copy(copy, args);
+  int n = vsnprintf(line, sizeof(line), fmt, copy);
+  va_end(copy);
+  n = std::min<int>(n, sizeof(line) - 1);
+  while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) n--;
+  line[std::max(n, 0)] = 0;
+  const char* text = strstr(line, ") ");
+  text = text && text - line < 16 ? text + 2 : line;
+  if (*text && (strstr(text, "sdmmc") || strstr(text, "sdspi") || strstr(text, "vfs_fat"))) logLine(text);
+  return s_prevLog ? s_prevLog(fmt, args) : vprintf(fmt, args);
+}
+
+void logBegin() {
+  if (!s_log) s_log = (char*)heap_caps_calloc(1, SD_LOG_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (s_log) s_prevLog = esp_log_set_vprintf(captureLog);
+}
+
+void logEnd() {
+  if (s_log) esp_log_set_vprintf(s_prevLog);
+}
+
+void logf(const char* fmt, ...) {
+  if (!s_log) return;
+  char line[160];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(line, sizeof(line), fmt, args);
+  va_end(args);
+  logLine(line);
+  Serial.printf("Deck: SD %s\n", line);
+}
+
+// The card in SD mode with FatFs but without the VFS, for the probe and
+// the format.
+struct RawCard {
+  sdmmc_card_t card = {};
+  BYTE pdrv = 0xFF;
+  bool host = false;
+  char drv[3] = {0};
+
+  esp_err_t open() {
+    sdmmc_host_t h;
+    sdmmc_slot_config_t slot;
+    sdmmcConfig(h, slot);
+    esp_err_t err = h.init();
+    if (err != ESP_OK) return err;
+    host = true;
+    if ((err = sdmmc_host_init_slot(h.slot, &slot)) != ESP_OK) return err;
+    if ((err = sdmmc_card_init(&h, &card)) != ESP_OK) return err;
+    if ((err = ff_diskio_get_drive(&pdrv)) != ESP_OK) return err;
+    ff_diskio_register_sdmmc(pdrv, &card);
+    drv[0] = '0' + pdrv;
+    drv[1] = ':';
+    return ESP_OK;
+  }
+  ~RawCard() {
+    if (pdrv != 0xFF) ff_diskio_unregister(pdrv);
+    if (host) sdmmc_host_deinit();
+  }
+};
+
+uint32_t le32(const uint8_t* p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
+uint16_t le16(const uint8_t* p) { return p[0] | p[1] << 8; }
+
+// Why FatFs refused a card that answers: partition table, boot sector
+// fields and the f_mount result (#2).
+void probeCard() {
+  logLine("Probe:", true);
+  RawCard* rc = new RawCard();
+  uint8_t* buf = (uint8_t*)heap_caps_malloc(512, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+  FATFS* fs = (FATFS*)heap_caps_calloc(1, sizeof(FATFS), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  esp_err_t err = buf && fs ? rc->open() : ESP_ERR_NO_MEM;
+  if (err != ESP_OK) {
+    logf("card open %s", esp_err_to_name(err));
+  } else if ((err = sdmmc_read_sectors(&rc->card, buf, 0, 1)) != ESP_OK) {
+    logf("read sector 0 %s", esp_err_to_name(err));
   } else {
-    const esp_err_t spiErr = mountSpi(&card);
-    if (spiErr != ESP_OK) {
-      snprintf(error, sizeof(error), "SD %s, SPI %s", esp_err_to_name(mmcErr), esp_err_to_name(spiErr));
-      s_error = error;
-      Serial.printf("Deck: SD mount failed: %s\n", s_error);
-      return nullptr;
+    logf("card %llu sectors of %u B", (unsigned long long)rc->card.csd.capacity,
+         (unsigned)rc->card.csd.sector_size);
+    uint32_t vbr = 0;
+    if (buf[0] == 0xEB || buf[0] == 0xE9 || buf[0] == 0xE8) {
+      logf("sector 0: boot sector, no partition table");
+    } else {
+      logf("sector 0: signature %04X", le16(buf + 510));
+      for (int i = 0; i < 4; i++) {
+        const uint8_t* e = buf + 446 + 16 * i;
+        if (!e[4]) continue;
+        logf("partition %d: status %02X type %02X start %u size %u", i + 1, e[0], e[4],
+             (unsigned)le32(e + 8), (unsigned)le32(e + 12));
+        if (!vbr) vbr = le32(e + 8);
+      }
     }
-    s_mode = "SPI";
+    if (vbr && (err = sdmmc_read_sectors(&rc->card, buf, vbr, 1)) != ESP_OK) {
+      logf("read sector %u %s", (unsigned)vbr, esp_err_to_name(err));
+    } else if (vbr || buf[0] == 0xEB || buf[0] == 0xE9 || buf[0] == 0xE8) {
+      char oem[9] = {0}, type16[9] = {0}, type32[9] = {0};
+      for (int i = 0; i < 8; i++) {
+        oem[i] = isprint(buf[3 + i]) ? buf[3 + i] : '.';
+        type16[i] = isprint(buf[54 + i]) ? buf[54 + i] : '.';
+        type32[i] = isprint(buf[82 + i]) ? buf[82 + i] : '.';
+      }
+      logf("boot: jump %02X OEM '%s' bytes/sec %u sec/clus %u reserved %u FATs %u", buf[0], oem,
+           le16(buf + 11), buf[13], le16(buf + 14), buf[16]);
+      logf("boot: root %u total16 %u total32 %u FAT16 size %u FAT32 size %u", le16(buf + 17),
+           le16(buf + 19), (unsigned)le32(buf + 32), le16(buf + 22), (unsigned)le32(buf + 36));
+      logf("boot: type '%s' / '%s' signature %04X", type16, type32, le16(buf + 510));
+    }
+    logf("f_mount result %d", (int)f_mount(fs, rc->drv, 1));
+    f_mount(nullptr, rc->drv, 0);
+  }
+  delete rc;
+  free(buf);
+  free(fs);
+}
+
+// One FAT partition over the whole card, as esp_vfs_fat formats it.
+const char* formatCard() {
+  static char result[48];
+  logLine("Format:", true);
+  RawCard* rc = new RawCard();
+  void* work = heap_caps_malloc(FF_MAX_SS, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  esp_err_t err = work ? rc->open() : ESP_ERR_NO_MEM;
+  if (err != ESP_OK) {
+    snprintf(result, sizeof(result), "card open %s", esp_err_to_name(err));
+  } else {
+    const LBA_t parts[] = {100, 0, 0, 0};
+    FRESULT res = f_fdisk(rc->pdrv, parts, work);
+    if (res != FR_OK) {
+      snprintf(result, sizeof(result), "f_fdisk %d", (int)res);
+    } else {
+      const MKFS_PARM opt = {FM_ANY, 2, 0, 0, 16 * 1024};
+      res = f_mkfs(rc->drv, &opt, work, FF_MAX_SS);
+      if (res != FR_OK) snprintf(result, sizeof(result), "f_mkfs %d", (int)res);
+      else strlcpy(result, "OK", sizeof(result));
+    }
+  }
+  logf("%s", result);
+  delete rc;
+  free(work);
+  return result;
+}
+
+// All SD mode tries first: once SPI has addressed the card, SD mode times
+// out until a power cycle, so interleaving hid the real error.
+sdmmc_card_t* mountCard() {
+  static char error[96];
+  sdmmc_card_t* card = nullptr;
+  esp_err_t mmcErr = ESP_OK, spiErr = ESP_OK;
+  if (s_log) logLine("SD mode:", true);
+  for (int i = 0; i < SD_MOUNT_TRIES && !card; i++) {
+    if (i) delay(250);
+    const esp_err_t err = mountSdmmc(&card);
+    if (err != ESP_OK && mmcErr == ESP_OK) mmcErr = err;
+  }
+  const bool sdMode = card;
+  if (sdMode) {
+    s_mode = "SD 1-bit";
+  } else if (mmcErr == ESP_FAIL) {
+    // The card answered but FatFs refused it; SPI cannot help a card
+    // already in SD mode.
+    if (s_log) probeCard();
+  } else {
+    if (s_log) logLine("SPI:", true);
+    for (int i = 0; i < SD_MOUNT_TRIES && !card; i++) {
+      if (i) delay(250);
+      const esp_err_t err = mountSpi(&card);
+      if (err != ESP_OK && spiErr == ESP_OK) spiErr = err;
+    }
+    if (card) s_mode = "SPI";
+  }
+  s_sdmmcError = sdMode ? "" : esp_err_to_name(mmcErr);
+  if (!card && mmcErr == ESP_FAIL) {
+    snprintf(error, sizeof(error), "SD %s: file system not accepted", esp_err_to_name(mmcErr));
+    s_error = error;
+    Serial.printf("Deck: SD mount failed: %s\n", s_error);
+    return nullptr;
+  }
+  if (!card) {
+    snprintf(error, sizeof(error), "SD %s, SPI %s", esp_err_to_name(mmcErr), esp_err_to_name(spiErr));
+    s_error = error;
+    Serial.printf("Deck: SD mount failed: %s\n", s_error);
+    return nullptr;
   }
   s_error = "";
   Serial.printf("Deck: SD card %s, %s, %llu MB\n", card->cid.name, s_mode,
@@ -145,6 +346,16 @@ bool wallOnSd() { return s_mounted; }
 const char* wallSdError() { return s_error; }
 const char* wallSdMode() { return s_mode; }
 const char* wallSdmmcError() { return s_sdmmcError; }
+const char* wallSdLog() { return s_log ? s_log : ""; }
+const char* wallSdFormatResult() { return s_format; }
+
+bool wallSdFormatRequest() {
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, false)) return false;
+  const bool ok = prefs.putBool("sdfmt", true);
+  prefs.end();
+  return ok;
+}
 uint32_t wallIndexMs() { return s_indexMs; }
 fs::FS& wallFs() {
   if (s_mounted) return s_fs;
@@ -192,11 +403,16 @@ void wallStorageBegin() {
     prefs.end();
   }
   if (!dispSettings.sdCard) return;
-  sdmmc_card_t* card = nullptr;
-  for (int attempt = 1; attempt <= SD_MOUNT_TRIES && !card; attempt++) {
-    if (attempt > 1) delay(250);
-    card = mountCard();
+  bool format = false;
+  if (prefs.begin(NVS_NAMESPACE, false)) {
+    format = prefs.getBool("sdfmt", false);
+    if (format) prefs.remove("sdfmt");  // cleared first: a crash must not format again
+    prefs.end();
   }
+  logBegin();
+  if (format) s_format = formatCard();
+  sdmmc_card_t* card = mountCard();
+  logEnd();
   if (!card) return;
   s_impl->mountpoint("/sd");
   s_mounted = true;
