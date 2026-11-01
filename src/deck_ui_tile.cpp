@@ -242,8 +242,10 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     const size_t idx = s_tiles.size();
     s_tiles.push_back(r);
     applyPrinterToTile(s_tiles.back());
-    if (def.show == PS_LIGHT || def.show == PS_SUMMARY) lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
-    else lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);
+    // The hero is clickable only while it has errors to list (applyPrinterToTile).
+    if (def.show == PS_LIGHT || def.show == PS_SUMMARY || def.show == PS_HERO)
+      lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
+    if (def.show != PS_LIGHT && def.show != PS_SUMMARY) lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
     return;
   }

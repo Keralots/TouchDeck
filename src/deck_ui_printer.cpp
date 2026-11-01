@@ -68,6 +68,17 @@ lv_obj_t* prnBar(lv_obj_t* parent, int h) {
   return b;
 }
 
+// The hero's state and door badges.
+lv_obj_t* prnBadgeLabel(lv_obj_t* parent) {
+  lv_obj_t* l = prnLabel(parent, &deck_font_12, LV_OPA_COVER);
+  lv_obj_set_style_bg_opa(l, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(l, 7, 0);
+  lv_obj_set_style_pad_hor(l, 6, 0);
+  lv_obj_set_style_pad_ver(l, 1, 0);
+  lv_obj_set_style_text_color(l, lv_color_hex(C_PRN_BADGE_TEXT), 0);
+  return l;
+}
+
 // Column layout: the first child grows, so the rest sits at the bottom.
 void prnColumn(lv_obj_t* t) {
   lv_obj_set_flex_flow(t, LV_FLEX_FLOW_COLUMN);
@@ -255,17 +266,16 @@ void makePrinterContent(TileRt& r, lv_obj_t* t) {
       lv_obj_set_style_pad_column(top, 8, 0);
       lv_obj_set_flex_grow(top, 1);
       lv_obj_set_flex_align(t, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-      r.name = prnLabel(top, &deck_font_12, LV_OPA_COVER);  // state badge
-      lv_obj_set_style_bg_opa(r.name, LV_OPA_COVER, 0);
-      lv_obj_set_style_radius(r.name, 7, 0);
-      lv_obj_set_style_pad_hor(r.name, 6, 0);
-      lv_obj_set_style_pad_ver(r.name, 1, 0);
-      lv_obj_set_style_text_color(r.name, lv_color_hex(C_PRN_BADGE_TEXT), 0);
+      r.name = prnBadgeLabel(top);  // state badge
       r.sub = prnLabel(top, &deck_font_14, LV_OPA_COVER);  // job
       lv_label_set_long_mode(r.sub, LV_LABEL_LONG_MODE_DOTS);
       lv_obj_set_flex_grow(r.sub, 1);
       r.unit = prnLabel(top, &deck_font_12, LV_OPA_70);  // printer name
       lv_label_set_text(r.unit, printerDef(d.printer) ? printerDef(d.printer)->name.c_str() : "");
+      r.px[3] = prnBadgeLabel(top);  // door, while open
+      lv_label_set_text(r.px[3], "DOOR OPEN");
+      lv_obj_set_style_bg_color(r.px[3], lv_color_hex(C_PRN_HEAT), 0);
+      lv_obj_add_flag(r.px[3], LV_OBJ_FLAG_HIDDEN);
       lv_obj_t* mid = prnBox(t, LV_FLEX_FLOW_ROW);
       lv_obj_set_size(mid, lv_pct(100), LV_SIZE_CONTENT);
       lv_obj_set_flex_align(mid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
@@ -736,6 +746,10 @@ uint32_t prnTileKey(const TileRt& r, const PrinterState* s, bool online) {
       k.add((int32_t)s->layer);
       k.add((int32_t)(time(nullptr) / 60));  // "done 16:23"
       k.add((int32_t)netSettings.use24h);
+      k.add((int32_t)printerAlert(*s).id());
+      k.add((int32_t)printerCanceled(*s));
+      k.add((int32_t)s->door);
+      k.add((int32_t)s->hmsCount);
       break;
     }
     case PS_NOZZLE:
@@ -901,10 +915,14 @@ void applyPrinterToTile(TileRt& r) {
       const bool paused = st == "PAUSE";
       const bool starting = running && !s->layer && !s->progress;
       const char* stage = running ? printerStageName(s->stage) : nullptr;
-      const char* state = !powered ? "Off" : !online ? "Connecting" : paused ? "Paused" :
+      const PrinterAlert alert = powered && online ? printerAlert(*s) : PrinterAlert{};
+      const bool canceled = powered && online && printerCanceled(*s);
+      const char* state = !powered ? "Off" : !online ? "Connecting" : alert.sev ? "Error" : paused ? "Paused" :
                           running ? (starting || st != "RUNNING" ? "Preparing" : "Printing") :
-                          st == "FINISH" ? "Done" : st == "FAILED" ? "Failed" : st == "IDLE" ? "Ready" : "Connecting";
-      const uint32_t color = !powered || !online ? 0x9AA3B2 : paused ? C_PRN_HEAT : running ? C_PRN_OK :
+                          st == "FINISH" ? "Done" : canceled ? "Canceled" : st == "FAILED" ? "Failed" :
+                          st == "IDLE" ? "Ready" : "Connecting";
+      const uint32_t color = !powered || !online ? 0x9AA3B2 : alert.sev ? hmsSeverityColor(alert.sev) :
+                             paused ? C_PRN_HEAT : running ? C_PRN_OK : canceled ? 0x9AA3B2 :
                              st == "FAILED" ? C_CRIT : st == "IDLE" || st == "FINISH" ? C_PRN_BLUE : 0x9AA3B2;
       lv_label_set_text(r.px[1], state);
       lv_obj_set_style_bg_color(r.px[0], lv_color_hex(color), 0);
@@ -943,6 +961,8 @@ void applyPrinterToTile(TileRt& r) {
       const bool paused = st == "PAUSE";
       if (!online) {
         prnBadge(r, s && s->link == PRN_FAILED ? "OFFLINE" : "CONNECTING", 0x9AA3B2);
+        showObj(r.px[3], false);
+        lv_obj_remove_flag(r.obj, LV_OBJ_FLAG_CLICKABLE);
         lv_label_set_text(r.sub, s && s->link == PRN_FAILED ? s->err : "");
         lv_label_set_text(r.px[0], "--");
         lv_label_set_text(r.px[1], "");
@@ -979,14 +999,24 @@ void applyPrinterToTile(TileRt& r) {
         lv_label_set_text(r.px[2], b);
         prnHeroSet(r, s->progress, paused ? C_PRN_HEAT : C_PRN_OK);
       } else {
-        const bool done = st == "FINISH", failed = st == "FAILED";
-        prnBadge(r, done ? "DONE" : failed ? "FAILED" : "READY", done ? C_PRN_BLUE : failed ? C_CRIT : 0x9AA3B2);
+        const bool done = st == "FINISH", failed = st == "FAILED", canceled = printerCanceled(*s);
+        prnBadge(r, done ? "DONE" : canceled ? "CANCELED" : failed ? "FAILED" : "READY",
+                 done ? C_PRN_BLUE : failed && !canceled ? C_CRIT : 0x9AA3B2);
         lv_label_set_text(r.sub, done || failed ? s->job : "");
-        lv_label_set_text(r.px[0], done ? "Finished" : failed ? "Stopped" : "Ready");
+        lv_label_set_text(r.px[0], done ? "Finished" : canceled ? "Canceled" : failed ? "Stopped" : "Ready");
         lv_label_set_text(r.px[1], "");
         lv_label_set_text(r.px[2], done ? "100%" : "");
         prnHeroSet(r, done ? 100 : 0, C_PRN_BLUE);
       }
+      // An error takes the badge and the job line; the tile opens the list.
+      const PrinterAlert alert = printerAlert(*s);
+      if (alert.sev) {
+        prnBadge(r, "ERROR", hmsSeverityColor(alert.sev));
+        lv_label_set_text(r.sub, printerAlertText(alert).c_str());
+      }
+      showObj(r.px[3], s->door == 1);
+      if (s->hmsCount || alert.sev) lv_obj_add_flag(r.obj, LV_OBJ_FLAG_CLICKABLE);
+      else lv_obj_remove_flag(r.obj, LV_OBJ_FLAG_CLICKABLE);
       break;
     }
     case PS_NOZZLE:
@@ -1111,6 +1141,13 @@ void printerTap(TileRt& r) {
       goToPage(s_pages[i].def->id);
       return;
     }
+    return;
+  }
+  if (d.show == PS_HERO) {
+    const PrinterState* s = printerFor(d);
+    if (!prnShown(s) || (!s->hmsCount && (!s->printError || printErrorIsCancel(s->printError)))) return;
+    const PrinterDef* p = printerDef(d.printer);
+    openPrinterErrors(p ? p->name : d.printer, *s);
     return;
   }
   if (d.show != PS_LIGHT) return;

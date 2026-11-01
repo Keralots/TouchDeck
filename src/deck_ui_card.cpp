@@ -791,6 +791,93 @@ void openConfirm(int tileIdx, bool hold) {
   setModalOpen(true);
 }
 
+// Printer errors: print_error first, then the HMS codes worst first. A tap
+// anywhere closes it.
+void onErrorsClose(lv_event_t*) { closeModal(); }
+
+void openPrinterErrors(const String& title, const PrinterState& s) {
+  closeModal();
+  cleanPage();
+  const int w = logicalW(), h = logicalH();
+  s_modalScrim = makeScrim();
+  const int cw = w - 32 < 440 ? w - 32 : 440;
+  const int ch = h - 40 < 340 ? h - 40 : 340;
+  lv_obj_t* c = lv_obj_create(lv_layer_top());
+  s_modalCard = c;
+  lv_obj_remove_style_all(c);
+  lv_obj_set_size(c, cw, ch);
+  lv_obj_center(c);
+  lv_obj_set_style_bg_color(c, lv_color_hex(C_PANEL), 0);
+  lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(c, 22, 0);
+  if (s_theme == THEME_GLASS &&
+      (s_modalGlass = frostedCopy((w - cw) / 2, (h - ch) / 2, cw, ch, 22)))
+    frostStyle(c, s_modalGlass);
+  lv_obj_set_style_text_color(c, lv_color_hex(C_TEXT), 0);
+  lv_obj_set_style_pad_all(c, 16, 0);
+  lv_obj_set_style_pad_row(c, 10, 0);
+  lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_scroll_dir(c, LV_DIR_VER);
+  lv_obj_add_flag(c, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(c, onErrorsClose, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* name = lv_label_create(c);
+  lv_label_set_text(name, title.c_str());
+  lv_obj_set_style_text_font(name, &deck_font_20, 0);
+  lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_width(name, lv_pct(100));
+
+  auto entry = [&](uint8_t sev, const String& head, const char* code, const String& text) {
+    const uint32_t color = hmsSeverityColor(sev);
+    lv_obj_t* box = lv_obj_create(c);
+    lv_obj_remove_style_all(box);
+    lv_obj_remove_flag(box, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_add_flag(box, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_set_size(box, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_left(box, 10, 0);
+    lv_obj_set_style_pad_row(box, 2, 0);
+    lv_obj_set_style_border_side(box, LV_BORDER_SIDE_LEFT, 0);
+    lv_obj_set_style_border_width(box, 3, 0);
+    lv_obj_set_style_border_color(box, lv_color_hex(color), 0);
+    lv_obj_t* hl = lv_label_create(box);
+    lv_label_set_text(hl, head.c_str());
+    lv_obj_set_style_text_font(hl, &deck_font_14, 0);
+    lv_obj_set_style_text_color(hl, lv_color_hex(color), 0);
+    lv_obj_t* tl = lv_label_create(box);
+    lv_label_set_text(tl, text.c_str());
+    lv_obj_set_style_text_font(tl, &deck_font_14, 0);
+    lv_obj_set_width(tl, lv_pct(100));
+    lv_label_set_long_mode(tl, LV_LABEL_LONG_MODE_WRAP);
+    lv_obj_t* cl = lv_label_create(box);
+    lv_label_set_text(cl, code);
+    lv_obj_set_style_text_font(cl, &deck_font_12, 0);
+    lv_obj_set_style_text_opa(cl, LV_OPA_60, 0);
+  };
+  char code[32];
+  if (s.printError && !printErrorIsCancel(s.printError)) {
+    printErrorFormatCode(s.printError, code, sizeof(code));
+    const char* t = printErrorText(s.printError);
+    entry(1, "Print error", code, t ? t : "No description published for this code");
+  }
+  for (uint8_t i = 0; i < s.hmsCount; i++) {
+    const PrinterHms& e = s.hms[i];
+    const uint8_t sev = hmsSeverity(e.code);
+    hmsFormatCode(e.attr, e.code, code, sizeof(code));
+    const char* t = hmsText(e.attr, e.code);
+    String head = String(hmsSeverityLabel(sev)) + " - " + hmsModuleLabel(e.attr);
+    if (e.quiet) head += " (handled)";
+    entry(sev >= 1 && sev <= 3 ? sev : 0, head, code, t ? t : "No description published for this code");
+  }
+  if (s.hmsTotal > s.hmsCount) {
+    lv_obj_t* more = lv_label_create(c);
+    lv_label_set_text_fmt(more, "+%u more on the printer", (unsigned)(s.hmsTotal - s.hmsCount));
+    lv_obj_set_style_text_font(more, &deck_font_12, 0);
+    lv_obj_set_style_text_opa(more, LV_OPA_60, 0);
+  }
+  setModalOpen(true);
+}
+
 // The pairing card: Allow / Deny for a companion's request, or the code an
 // older companion asked for, until answered, cancelled or timed out
 // (pc_metrics owns the state).

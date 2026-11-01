@@ -369,6 +369,7 @@ void refreshModal();
 void openModal(int tileIdx);
 void onConfirmOk(lv_event_t*);
 void openConfirm(int tileIdx, bool hold);
+void openPrinterErrors(const String& title, const PrinterState& s);
 void pairSync();
 
 // deck_ui_fit.cpp
