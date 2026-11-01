@@ -69,10 +69,11 @@
 <p class="field-hint">Custom Brand Icons (phu:) by elax46, installed from <a href="https://github.com/elax46/custom-brand-icons" target="_blank" rel="noopener">their GitHub</a>, not bundled. Needs a mounted microSD card. Enable it in <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>. You can also upload a .js subset from the upstream Icon Finder.</p>
 <div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkBrNet" disabled>Install latest from GitHub</button><button type="button" class="btn" id="dkBrFile" disabled>Upload .js file</button><button type="button" class="btn" id="dkBrRemove" disabled>Remove</button><input type="file" id="dkBrInput" accept=".js" hidden></div>
 <div class="dk-status"><span class="dk-dot" id="dkBrDot"></span><span id="dkBrState">checking...</span></div></div>
-<div class="card" id="dkPrnCard"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag" id="dkPrnTag">Bambu Lab</span><button type="button" class="btn" id="dkPrnTog" style="margin-left:auto;padding:5px 10px" aria-expanded="false">Show</button></div>
+<div class="card" id="dkPrnCard"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag" id="dkPrnTag">Bambu Lab</span></div>
 <p class="field-hint">Source Printer LAN talks to the printer directly: it must be in LAN mode or have LAN access on, and its serial and access code are stored only on the device. Source Home Assistant reads a printer already added to the Bambu Lab integration (ha-bambulab) - nothing else to enter. With a plug (an HA switch), the printer's pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
-<div id="dkPrnBody" hidden>
-<div id="dkPrn"></div><div class="dk-row"><button type="button" class="btn" id="dkPrnAdd">+ Add printer</button></div></div></div>
+<div id="dkPrnBody">
+<div id="dkPrn"></div><div class="dk-row"><button type="button" class="btn" id="dkPrnAdd">+ Add printer</button></div></div>
+<div class="dk-save"><span class="dk-msg" id="dkPrnMsg">No changes</span><button type="button" class="btn btn-accent" id="dkPrnSave">Save to device</button></div></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
 <label class="check-row standalone" style="margin-bottom:14px"><input type="checkbox" id="dkHeader"><span class="check-box"></span><span class="check-text"><strong>Show the top bar</strong><span class="ct-hint">Page name, WiFi and clock above the tiles. Also switchable in the quick panel on the device.</span></span></label>
 <div class="dk-tabs" id="dkTabs"></div><div id="dkPage"></div>
@@ -772,14 +773,6 @@
     } catch (e) {}
   }
   /* The card folds to one line: printer count and how many are online. */
-  function prnFold(open) {
-    $("dkPrnBody").hidden = !open;
-    $("dkPrnTog").textContent = open ? "Hide" : "Show";
-    $("dkPrnTog").setAttribute("aria-expanded", open);
-    try {
-      localStorage.setItem("dkPrnOpen", open ? "1" : "");
-    } catch (e) {}
-  }
   function prnTag() {
     const ps = deck.printers || [];
     const on = ps.filter((d) => (prnStat[d.id] || {}).link === "online").length;
@@ -837,6 +830,7 @@
               ["name", "Name", "H2C"],
               ...(ha ? [] : [["ip", "IP address", "192.168.0.54"]]),
               ["plug", "Plug (HA switch, optional)", "switch.printer_plug"],
+              ["energy", "Energy meter (HA sensor, kWh, optional)", "sensor.printer_energy_total"],
             ]
               .map(
                 ([k, l, ph]) =>
@@ -1523,7 +1517,7 @@
   };
   function setDirty(v) {
     dirty = v;
-    $("dkMsg").textContent = v ? "Unsaved changes" : "Saved";
+    $("dkMsg").textContent = $("dkPrnMsg").textContent = v ? "Unsaved changes" : "Saved";
   }
   /* Printers off (Advanced page, window.snPrn from portal.js): printer pages and
    tiles stay in deck.json but are left out here, as the firmware does. */
@@ -1648,7 +1642,7 @@
   window.dkPrnSync = () => {
     if (deck) render();
   };
-  const visible = () => document.querySelector(".page.active")?.dataset.page === "deck";
+  const visible = () => ["deck", "printers"].includes(document.querySelector(".page.active")?.dataset.page);
 
   /* Home Assistant */
   async function haStatus() {
@@ -3636,8 +3630,8 @@
     if (deck) renderPage();
   };
 
-  /* save */
-  $("dkSave").onclick = async () => {
+  /* save; the Printers page has its own button for the same deck */
+  $("dkSave").onclick = $("dkPrnSave").onclick = async () => {
     try {
       await api("/api/deck", {
         method: "POST",
@@ -3656,7 +3650,6 @@
     }
   });
 
-  $("dkPrnTog").onclick = () => prnFold($("dkPrnBody").hidden);
   $("dkPrnAdd").onclick = () => {
     deck.printers = deck.printers || [];
     let n = deck.printers.length + 1;
@@ -3666,11 +3659,8 @@
     renderPrinters();
   };
   (async function init() {
-    let open = false;
-    try {
-      open = localStorage.getItem("dkPrnOpen") === "1";
-    } catch (e) {}
-    prnFold(open);
+    const host = document.getElementById("prnListHost");
+    if (host) host.appendChild($("dkPrnCard"));
     haStatus();
     icRefresh();
     brRefresh();

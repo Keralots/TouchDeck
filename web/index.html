@@ -131,6 +131,9 @@
               <button type="button" class="nav-item active" data-nav="overview">Overview</button
               ><button type="button" class="nav-item hidden" data-nav="deck" id="navDeck">
                 Pages &amp; tiles
+              </button
+              ><button type="button" class="nav-item hidden" data-nav="printers" id="navPrinters">
+                Printers
               </button>
             </div>
             <div class="nav-group">
@@ -262,6 +265,91 @@
             </section>
 
             <section class="page" data-page="deck" id="deckSection"></section>
+
+            <section class="page" data-page="printers">
+              <div class="page-header">
+                <h1 class="page-h1">Printers</h1>
+                <p class="page-lede">Bambu Lab printers on the deck, their errors and alerts, and the energy of a print.</p>
+              </div>
+              <div id="prnListHost"></div>
+              <form
+                id="printersForm"
+                class="portal-form"
+                data-endpoint="/save/printers"
+                data-save-label="Save printer settings"
+              >
+                <div class="card">
+                  <h2 class="card-title">Printer errors</h2>
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="prnErrors" name="prnErrors" /><span class="check-box"></span
+                    ><span class="check-text"
+                      ><strong>Show printer errors</strong
+                      ><span class="ct-hint"
+                        >HMS codes and print errors with Bambu's own text: an ERROR badge on the printer tile,
+                        and a tap on it lists them. Off: no badge, list or alerts.</span
+                      ></span
+                    ></label
+                  >
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="prnErrorsAll" name="prnErrorsAll" /><span class="check-box"></span
+                    ><span class="check-text"
+                      ><strong>Also common errors</strong
+                      ><span class="ct-hint"
+                        >Off: only fatal and serious errors raise the badge; common ones are still listed.</span
+                      ></span
+                    ></label
+                  >
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="prnErrorWake" name="prnErrorWake" /><span class="check-box"></span
+                    ><span class="check-text"
+                      ><strong>Wake the deck and show the printer on a new error</strong
+                      ><span class="ct-hint"
+                        >Errors already standing when the deck connects do not wake it.</span
+                      ></span
+                    ></label
+                  >
+                </div>
+                <div class="card">
+                  <h2 class="card-title">Bed cooled</h2>
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="prnCool" name="prnCool" /><span class="check-box"></span
+                    ><span class="check-text"
+                      ><strong>Tell me when the bed has cooled after a print</strong
+                      ><span class="ct-hint"
+                        >Wakes the deck with a message once the bed is down to the temperature below, so the
+                        print comes off the plate easily.</span
+                      ></span
+                    ></label
+                  >
+                  <div class="grid-2">
+                    <div class="field">
+                      <label class="field-label" for="prnCoolTemp">Bed temperature (&deg;C)</label>
+                      <input type="number" id="prnCoolTemp" name="prnCoolTemp" min="20" max="80" value="35" />
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <h2 class="card-title">Energy of a print</h2>
+                  <p class="field-hint">
+                    Give a printer an energy meter (a Home Assistant sensor counting kWh, such as a smart
+                    plug's total energy) in the printer list above. After a print the printer tile shows what
+                    it used, and the cost with a price set here.
+                  </p>
+                  <div class="grid-2">
+                    <div class="field">
+                      <label class="field-label" for="prnKwhPrice">Price per kWh</label>
+                      <input type="text" id="prnKwhPrice" name="prnKwhPrice" inputmode="decimal"
+                        maxlength="10" placeholder="0.85" />
+                      <span class="field-hint">Empty or 0: energy only.</span>
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="prnCurrency">Currency</label>
+                      <input type="text" id="prnCurrency" name="prnCurrency" maxlength="7" placeholder="PLN" />
+                    </div>
+                  </div>
+                </div>
+              </form>
+            </section>
 
             <section class="page" data-page="display">
               <div class="page-header">
@@ -1273,8 +1361,8 @@
                       ><strong>Bambu Lab printers over LAN</strong
                       ><span class="ct-hint"
                         >The deck connects to the printers itself and shows them on printer pages and tiles,
-                        set up under Pages &amp; tiles. Off: no printer connections, and printer pages, tiles
-                        and settings are hidden. Their setup stays stored and comes back when this is turned
+                        set up on the <a href="#" data-page="printers">Printers</a> page. Off: no printer
+                        connections, and printer pages, tiles and settings are hidden. Their setup stays stored and comes back when this is turned
                         on again.</span
                       ></span
                     ></label
