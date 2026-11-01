@@ -1620,6 +1620,7 @@ static void handleWallsStatus() {
   doc["sd"]["error"] = deck::wallSdError();
   doc["sd"]["mode"] = deck::wallSdMode();
   doc["sd"]["sdmmcError"] = deck::wallSdmmcError();
+  doc["sd"]["log"] = deck::wallSdLog();
   doc["sd"]["indexMs"] = deck::wallIndexMs();
   // Index copies on the card; on LittleFS each would be a directory scan.
   for (int orient = 0; orient < 2 && deck::wallOnSd(); orient++) {

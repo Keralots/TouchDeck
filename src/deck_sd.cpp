@@ -13,6 +13,8 @@
 #include <driver/gpio.h>
 #include <driver/spi_master.h>
 #include <freertos/semphr.h>
+#include <esp_log.h>
+#include <esp_heap_caps.h>
 #include <algorithm>
 
 namespace deck {
@@ -114,24 +116,76 @@ esp_err_t mountSpi(sdmmc_card_t** card) {
   return err;
 }
 
-// SD mode first; SPI stays as the fallback that worked before (#2).
-// A card leaves SPI mode (and enters it from SD mode) only after a power cycle.
+// Driver error lines logged while mounting, for the portal (#2).
+char* s_log = nullptr;
+size_t s_logLen = 0;
+constexpr size_t SD_LOG_SIZE = 1024;
+size_t s_logSection = 0;  // dedupe only within the current "SD mode:" / "SPI:" block
+portMUX_TYPE s_logMux = portMUX_INITIALIZER_UNLOCKED;
+vprintf_like_t s_prevLog = nullptr;
+
+void logLine(const char* text, bool section = false) {
+  const size_t len = strlen(text);
+  portENTER_CRITICAL(&s_logMux);
+  if (section) s_logSection = s_logLen;
+  if ((section || !strstr(s_log + s_logSection, text)) && s_logLen + len + 2 < SD_LOG_SIZE) {
+    memcpy(s_log + s_logLen, text, len);
+    s_logLen += len;
+    s_log[s_logLen++] = '\n';
+    s_log[s_logLen] = 0;
+  }
+  portEXIT_CRITICAL(&s_logMux);
+}
+
+// Keeps each distinct line once, without the "E (352) " prefix.
+int captureLog(const char* fmt, va_list args) {
+  char line[160];
+  va_list copy;
+  va_copy(copy, args);
+  int n = vsnprintf(line, sizeof(line), fmt, copy);
+  va_end(copy);
+  n = std::min<int>(n, sizeof(line) - 1);
+  while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) n--;
+  line[std::max(n, 0)] = 0;
+  const char* text = strstr(line, ") ");
+  text = text && text - line < 16 ? text + 2 : line;
+  if (*text && (strstr(text, "sdmmc") || strstr(text, "sdspi") || strstr(text, "vfs_fat"))) logLine(text);
+  return s_prevLog ? s_prevLog(fmt, args) : vprintf(fmt, args);
+}
+
+// All SD mode tries first: once SPI has addressed the card, SD mode times
+// out until a power cycle, so interleaving hid the real error.
 sdmmc_card_t* mountCard() {
-  static char error[64];
+  static char error[96];
+  if (!s_log) s_log = (char*)heap_caps_calloc(1, SD_LOG_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (s_log) s_prevLog = esp_log_set_vprintf(captureLog);
   sdmmc_card_t* card = nullptr;
-  const esp_err_t mmcErr = mountSdmmc(&card);
-  s_sdmmcError = mmcErr == ESP_OK ? "" : esp_err_to_name(mmcErr);
-  if (mmcErr == ESP_OK) {
+  esp_err_t mmcErr = ESP_OK, spiErr = ESP_OK;
+  if (s_log) logLine("SD mode:", true);
+  for (int i = 0; i < SD_MOUNT_TRIES && !card; i++) {
+    if (i) delay(250);
+    const esp_err_t err = mountSdmmc(&card);
+    if (err != ESP_OK && mmcErr == ESP_OK) mmcErr = err;
+  }
+  const bool sdMode = card;
+  if (sdMode) {
     s_mode = "SD 1-bit";
   } else {
-    const esp_err_t spiErr = mountSpi(&card);
-    if (spiErr != ESP_OK) {
-      snprintf(error, sizeof(error), "SD %s, SPI %s", esp_err_to_name(mmcErr), esp_err_to_name(spiErr));
-      s_error = error;
-      Serial.printf("Deck: SD mount failed: %s\n", s_error);
-      return nullptr;
+    if (s_log) logLine("SPI:", true);
+    for (int i = 0; i < SD_MOUNT_TRIES && !card; i++) {
+      if (i) delay(250);
+      const esp_err_t err = mountSpi(&card);
+      if (err != ESP_OK && spiErr == ESP_OK) spiErr = err;
     }
-    s_mode = "SPI";
+    if (card) s_mode = "SPI";
+  }
+  if (s_log) esp_log_set_vprintf(s_prevLog);
+  s_sdmmcError = sdMode ? "" : esp_err_to_name(mmcErr);
+  if (!card) {
+    snprintf(error, sizeof(error), "SD %s, SPI %s", esp_err_to_name(mmcErr), esp_err_to_name(spiErr));
+    s_error = error;
+    Serial.printf("Deck: SD mount failed: %s\n", s_error);
+    return nullptr;
   }
   s_error = "";
   Serial.printf("Deck: SD card %s, %s, %llu MB\n", card->cid.name, s_mode,
@@ -145,6 +199,7 @@ bool wallOnSd() { return s_mounted; }
 const char* wallSdError() { return s_error; }
 const char* wallSdMode() { return s_mode; }
 const char* wallSdmmcError() { return s_sdmmcError; }
+const char* wallSdLog() { return s_log ? s_log : ""; }
 uint32_t wallIndexMs() { return s_indexMs; }
 fs::FS& wallFs() {
   if (s_mounted) return s_fs;
@@ -192,11 +247,7 @@ void wallStorageBegin() {
     prefs.end();
   }
   if (!dispSettings.sdCard) return;
-  sdmmc_card_t* card = nullptr;
-  for (int attempt = 1; attempt <= SD_MOUNT_TRIES && !card; attempt++) {
-    if (attempt > 1) delay(250);
-    card = mountCard();
-  }
+  sdmmc_card_t* card = mountCard();
   if (!card) return;
   s_impl->mountpoint("/sd");
   s_mounted = true;

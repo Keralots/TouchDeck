@@ -31,6 +31,8 @@ const char* wallSdError();
 const char* wallSdMode();
 // SD mode error when the card fell back to SPI.
 const char* wallSdmmcError();
+// Driver error lines from the boot mount, one per line.
+const char* wallSdLog();
 // Last full index rebuild, ms.
 uint32_t wallIndexMs();
 fs::FS& wallFs();

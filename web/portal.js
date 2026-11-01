@@ -926,7 +926,8 @@
           : !sd.mounted
             ? "Card not mounted" +
               (sd.error ? " (" + sd.error + ")" : "") +
-              " - using internal storage. Power the deck off and on to retry."
+              " - using internal storage. Power the deck off and on to retry." +
+              (sd.log ? "\n" + sd.log : "")
             : "Mounted" +
               (sd.mode ? " (" + sd.mode + ")" : "") +
               ": " +
