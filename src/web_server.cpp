@@ -1003,6 +1003,7 @@ static void handleSavePrinters() {
   strlcpy(next.currency, cur.c_str(), sizeof(next.currency));
   printerSettings = next;
   saveSettings();
+  deckPrinterSettingsChanged();
   sendJsonMessage(200, true, "Printer settings saved.");
 }
 

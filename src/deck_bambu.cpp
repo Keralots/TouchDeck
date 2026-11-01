@@ -530,6 +530,7 @@ void report(void* context, const char* topic, const uint8_t* payload, size_t len
     const uint32_t pe = p["print_error"].as<uint32_t>();
     if (pe != s.printError) s.printErrorFresh = c.printErrorSeen && pe;
     s.printError = pe;
+    s.printErrorKnown = true;
     c.printErrorSeen = true;
   }
   if (p["hms"].is<JsonArrayConst>()) {
@@ -542,6 +543,7 @@ void report(void* context, const char* topic, const uint8_t* payload, size_t len
     ctx.doorShown = s.door >= 0;
     ctx.ownCommandRecent = c.ctrlMs && millis() - c.ctrlMs < HMS_OWN_CMD_MS;
     hmsReport(s, c.hmsBase, keys, n, ctx);
+    s.hmsKnown = true;
   }
   s.lastReportMs = millis();
   if (core) c.lastCore = s.lastReportMs;

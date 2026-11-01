@@ -21,6 +21,8 @@ void deckTick();
 void deckToast(const char* text);
 // Wake the screen and restart the presence sleep timer (loop task only).
 void deckPresenceWake();
+// Printer settings changed: re-apply the printer tiles (loop task only).
+void deckPrinterSettingsChanged();
 // presenceSettings changed: follow the new entities, restart the timer.
 void deckPresenceApply();
 // HA entity the LED's day level follows (deck.json "led"), "" = none.

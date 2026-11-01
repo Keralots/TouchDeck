@@ -347,6 +347,7 @@ void hmsMap(Printer& p, const char* st, JsonObjectConst a, bool full, JsonArrayC
     if (const int n = index(kv.key().c_str())) p.hmsIdx[n] = hmsCodeKey(kv.value() | "");
   if (st) p.hmsOn = unusable(st) ? -1 : !strcmp(st, "on");
   // Unavailable is not "no errors": the baseline waits for a real report.
+  s.hmsKnown = p.hmsOn >= 0;
   if (p.hmsOn < 0) { s.hmsCount = s.hmsTotal = 0; return; }
   uint64_t keys[Printer::HMS_IDX];
   size_t n = 0;
@@ -370,6 +371,7 @@ void printErrorMap(Printer& p, const char* st, JsonObjectConst a, bool full, Jso
   }
   if (st) p.perrOn = unusable(st) ? -1 : !strcmp(st, "on");
   // Unavailable shows nothing; the value it comes back with is judged against the last real one.
+  s.printErrorKnown = p.perrOn >= 0;
   if (p.perrOn < 0) {
     s.printError = 0;
     s.printErrorFresh = false;
@@ -569,7 +571,13 @@ void apply(Printer& p, Bind& b, JsonObjectConst ev, bool full) {
     case F_WEIGHT: weightMap(p, a, full, removed); break;
     case F_HMS: hmsMap(p, st, a, full, removed); break;
     case F_PERR: printErrorMap(p, st, a, full, removed); break;
-    case F_DOOR: if (st) s.door = unusable(st) ? -1 : !strcmp(st, "on"); break;
+    case F_DOOR: {
+      if (!st) break;
+      const bool had = s.door >= 0;
+      s.door = unusable(st) ? -1 : !strcmp(st, "on");
+      if (had != (s.door >= 0)) hmsMap(p, nullptr, JsonObjectConst(), false, JsonArrayConst());
+      break;
+    }
     case F_SIDE:
       if (!st) break;
       p.side = !strcmp(st, "left") ? 1 : !strcmp(st, "right") ? 0 : -1;

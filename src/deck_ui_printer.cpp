@@ -18,19 +18,42 @@ bool s_prnHave[MAX_PRINTERS] = {};
 
 // Per printer: job edges for the bed cooled alert and the print's energy, the
 // last error alerted. Reset when the printer at that index changes.
+// Energy of a print, NVS "prnkwh" e_<id>: the meter at the job start and the
+// last job's use, each tagged with prnJobHash() so another job or meter never
+// borrows them (a restart mid-print keeps the start).
+struct PrnEnergy {
+  float start = NAN;
+  uint32_t startHash = 0;
+  float last = NAN;
+  uint32_t lastHash = 0;
+};
+
+// Per printer id: job edges, the energy record and the errors already announced.
+constexpr uint8_t PRN_ANNOUNCED = 16;
 struct PrnTrack {
   String id;
-  bool seen = false, job = false, cool = false, kwhLoaded = false;
-  uint64_t active[PRN_ALERT_MAX];  // badge-worthy errors of the last pass
-  uint8_t nActive = 0;
-  float lastKwh = NAN;  // energy of the last finished or failed job
+  bool seen = false, job = false, cool = false, loaded = false;
+  bool startLive = false;  // this session saw the job start (its name may follow the state)
+  PrnEnergy energy;
+  uint64_t announced[PRN_ANNOUNCED];  // PrinterAlert::key(), oldest first
+  uint8_t nAnnounced = 0;
 };
 PrnTrack s_track[MAX_PRINTERS];
+String s_prnToast;  // waits for the photo frame to end
 
 const PrnTrack* prnTrack(const String& id) {
   for (const PrnTrack& t : s_track)
     if (t.id.length() && t.id == id) return &t;
   return nullptr;
+}
+
+// The job name and the energy meter, so a stored reading belongs to one job on one meter.
+uint32_t prnJobHash(const PrinterState& s, const String& meter) {
+  uint32_t h = 2166136261u;
+  for (const char* c = s.job; *c; c++) h = (h ^ (uint8_t)*c) * 16777619u;
+  h = (h ^ 0xFF) * 16777619u;
+  for (size_t i = 0; i < meter.length(); i++) h = (h ^ (uint8_t)meter[i]) * 16777619u;
+  return h | 1;
 }
 
 const PrinterState* printerFor(const TileDef& d) {
@@ -693,6 +716,14 @@ bool prnInJob(const PrinterState& s, uint8_t unit, uint8_t slot) {
   return false;
 }
 
+// The shown job's energy, NAN when the record belongs to another job or meter.
+float prnLastKwh(const String& id, const PrinterState& s) {
+  const PrnTrack* t = prnTrack(id);
+  const PrinterDef* def = printerDef(id);
+  if (!t || !def || !t->energy.lastHash || t->energy.lastHash != prnJobHash(s, def->energy)) return NAN;
+  return t->energy.last;
+}
+
 // "0.42 kWh  0.36 zl" for the hero after a job, "" when unknown.
 String prnEnergyText(float kwh) {
   if (!isfinite(kwh)) return "";
@@ -783,8 +814,7 @@ uint32_t prnTileKey(const TileRt& r, const PrinterState* s, bool online) {
       k.add((int32_t)s->door);
       k.add((int32_t)s->hmsCount);
       k.add((int32_t)(printerSettings.errors | printerSettings.errorsAll << 1));
-      if (const PrnTrack* t = prnTrack(d.printer))
-        k.add(isfinite(t->lastKwh) ? (int32_t)lroundf(t->lastKwh * 1000) : -1);
+      k.add(prnLastKwh(d.printer, *s) * 1000);
       k.add((int32_t)lroundf(printerSettings.kwhPrice * 1000));
       k.add(printerSettings.currency);
       break;
@@ -1044,8 +1074,7 @@ void applyPrinterToTile(TileRt& r) {
                  done ? C_PRN_BLUE : failed && !canceled ? C_CRIT : 0x9AA3B2);
         lv_label_set_text(r.sub, done || failed ? s->job : "");
         lv_label_set_text(r.px[0], done ? "Finished" : canceled ? "Canceled" : failed ? "Stopped" : "Ready");
-        const PrnTrack* t = done || failed ? prnTrack(d.printer) : nullptr;
-        lv_label_set_text(r.px[1], t ? prnEnergyText(t->lastKwh).c_str() : "");
+        lv_label_set_text(r.px[1], done || failed ? prnEnergyText(prnLastKwh(d.printer, *s)).c_str() : "");
         lv_label_set_text(r.px[2], done ? "100%" : "");
         prnHeroSet(r, done ? 100 : 0, C_PRN_BLUE);
       }
@@ -1207,7 +1236,8 @@ void printerTap(TileRt& r) {
 // The printer's energy meter in kWh, NAN when it has none or no number.
 float prnEnergyNow(const PrinterDef& d) {
   HaEntity e;
-  if (!d.energy.length() || !haGetEntity(d.energy, e) || !e.known) return NAN;
+  // A cached value from before an HA outage is not a reading.
+  if (!d.energy.length() || haLink() != HA_CONNECTED || !haGetEntity(d.energy, e) || !e.known) return NAN;
   char* end = nullptr;
   const float v = strtof(e.state.c_str(), &end);
   if (end == e.state.c_str() || *end || !isfinite(v)) return NAN;
@@ -1216,22 +1246,34 @@ float prnEnergyNow(const PrinterDef& d) {
   return v;
 }
 
-// NVS "prnkwh": s_<id> = meter at the job start (survives a deck restart), l_<id> = last job.
-float prnKwhGet(char kind, const String& id) {
-  Preferences p;
-  if (!p.begin("prnkwh", false)) return NAN;
-  const float v = p.getFloat((String(kind) + "_" + id).c_str(), NAN);
-  p.end();
-  return v;
-}
-
-void prnKwhPut(char kind, const String& id, float v) {
+void prnEnergyLoad(PrnTrack& t) {
   Preferences p;
   if (!p.begin("prnkwh", false)) return;
-  const String key = String(kind) + "_" + id;
-  if (isfinite(v)) p.putFloat(key.c_str(), v);
-  else p.remove(key.c_str());
+  const String key = "e_" + t.id;
+  if (p.getBytesLength(key.c_str()) == sizeof(PrnEnergy)) p.getBytes(key.c_str(), &t.energy, sizeof(PrnEnergy));
   p.end();
+}
+
+void prnEnergySave(const PrnTrack& t) {
+  Preferences p;
+  if (!p.begin("prnkwh", false)) return;
+  p.putBytes(("e_" + t.id).c_str(), &t.energy, sizeof(PrnEnergy));
+  p.end();
+}
+
+// The track for a printer id; a free one (id no longer configured) is taken over.
+PrnTrack* prnTrackFor(const String& id) {
+  for (PrnTrack& t : s_track)
+    if (t.id == id) return &t;
+  for (PrnTrack& t : s_track) {
+    bool used = false;
+    for (const PrinterDef& d : s_cfg.printers) used |= t.id.length() && d.id == t.id;
+    if (used) continue;
+    t = PrnTrack{};
+    t.id = id;
+    return &t;
+  }
+  return nullptr;
 }
 
 void prnWake() {
@@ -1239,40 +1281,83 @@ void prnWake() {
   if (nightScreenOff()) wakeDisplayFromTouch();  // a 0% night screen gets its short peek
 }
 
-// Job start / end edges (energy, bed cooled alert) and new errors. The first
-// state seen after boot or a config change only sets the baseline.
+void printerToast() {
+  if (!s_prnToast.length() || frameActive()) return;
+  deckToastShow(s_prnToast.c_str(), 8000);
+  s_prnToast = "";
+}
+
+// An announced error is forgotten only once its source reports it gone, so a
+// settings toggle, an unavailable entity or a code pushed off the kept list
+// does not announce it again.
+void prnPrune(PrnTrack& t, const PrinterState& s) {
+  for (uint8_t i = 0; i < t.nAnnounced;) {
+    const uint64_t key = t.announced[i];
+    bool gone;
+    if (key >> 63) gone = s.printErrorKnown && s.printError != (uint32_t)key;
+    else {
+      bool present = false;
+      for (uint8_t j = 0; j < s.hmsCount && !present; j++) present = hmsKey(s.hms[j].attr, s.hms[j].code) == key;
+      gone = s.hmsKnown && !present && s.hmsTotal <= s.hmsCount;
+    }
+    if (!gone) { i++; continue; }
+    memmove(&t.announced[i], &t.announced[i + 1], (t.nAnnounced - i - 1) * sizeof(t.announced[0]));
+    t.nAnnounced--;
+  }
+}
+
+void prnAnnounce(PrnTrack& t, uint64_t key) {
+  if (t.nAnnounced == PRN_ANNOUNCED) {
+    memmove(&t.announced[0], &t.announced[1], (PRN_ANNOUNCED - 1) * sizeof(t.announced[0]));
+    t.nAnnounced--;
+  }
+  t.announced[t.nAnnounced++] = key;
+}
+
+// Job start / end edges (energy, bed cooled alert) and new errors, tracked per
+// printer id. The first state seen after boot only sets the baseline.
 void printerEvents() {
   for (size_t i = 0; i < s_cfg.printers.size() && i < MAX_PRINTERS; i++) {
     const PrinterDef& def = s_cfg.printers[i];
-    PrnTrack& t = s_track[i];
-    if (t.id != def.id) {
-      t = PrnTrack{};
-      t.id = def.id;
-    }
-    if (!t.kwhLoaded) {
-      t.lastKwh = prnKwhGet('l', def.id);
-      t.kwhLoaded = true;
+    PrnTrack* tp = prnTrackFor(def.id);
+    if (!tp) continue;
+    PrnTrack& t = *tp;
+    if (!t.loaded) {
+      prnEnergyLoad(t);
+      t.loaded = true;
     }
     const PrinterState* s = s_prnHave[i] ? s_prn[i] : nullptr;
     if (!prnShown(s) || !s->gcodeState[0]) continue;
     const char* st = s->gcodeState;
     const bool job = !strcmp(st, "RUNNING") || !strcmp(st, "PREPARE") || !strcmp(st, "SLICING") || !strcmp(st, "PAUSE");
     const bool finished = !strcmp(st, "FINISH");
-    if (t.seen && job && !t.job) {
+    const uint32_t hash = prnJobHash(*s, def.energy);
+    if (job && !t.job) {
+      // A job seen first after boot keeps its start only if it is the same job on the same meter.
+      if (t.seen || t.energy.startHash != hash) {
+        t.energy.start = t.seen ? prnEnergyNow(def) : NAN;
+        t.energy.startHash = hash;
+      }
+      t.energy.last = NAN;
+      t.energy.lastHash = 0;
+      prnEnergySave(t);
+      t.startLive = t.seen;
       t.cool = false;
-      t.lastKwh = NAN;
-      prnKwhPut('l', def.id, NAN);
-      prnKwhPut('s', def.id, prnEnergyNow(def));
+    } else if (job && t.startLive && t.energy.startHash != hash) {
+      t.energy.startHash = hash;
+      prnEnergySave(t);
     }
     if (t.seen && t.job && (finished || !strcmp(st, "FAILED"))) {
       t.cool = finished && printerSettings.coolAlert;
-      const float from = prnKwhGet('s', def.id), to = prnEnergyNow(def);
-      if (isfinite(from) && isfinite(to) && to >= from) {
-        t.lastKwh = to - from;
-        prnKwhPut('l', def.id, t.lastKwh);
-        Serial.printf("Printer %s: job used %.3f kWh\n", def.id.c_str(), t.lastKwh);
-      }
-      prnKwhPut('s', def.id, NAN);
+      const float to = prnEnergyNow(def);
+      const bool ok = t.energy.startHash == hash && isfinite(t.energy.start) && isfinite(to) && to >= t.energy.start;
+      t.energy.last = ok ? to - t.energy.start : NAN;
+      t.energy.lastHash = ok ? hash : 0;
+      t.energy.start = NAN;
+      t.energy.startHash = 0;
+      t.startLive = false;
+      prnEnergySave(t);
+      if (ok) Serial.printf("Printer %s: job used %.3f kWh\n", def.id.c_str(), t.energy.last);
     }
     t.seen = true;
     t.job = job;
@@ -1282,20 +1367,22 @@ void printerEvents() {
       prnWake();
       char b[64];
       snprintf(b, sizeof(b), "%s: the bed has cooled to %.0f\xC2\xB0", def.name.c_str(), s->bed);
-      deckToastShow(b, 8000);
+      s_prnToast = b;
+      printerToast();
     }
-    // Any badge-worthy error not there last pass and not standing since the baseline.
+    // A badge-worthy error that came after the baseline and was not announced yet.
+    prnPrune(t, *s);
     PrinterAlert list[PRN_ALERT_MAX];
     const uint8_t n = printerAlerts(*s, list, PRN_ALERT_MAX);
     const PrinterAlert* fresh = nullptr;
-    for (uint8_t k = 0; k < n && !fresh; k++) {
+    for (uint8_t k = 0; k < n; k++) {
       if (!list[k].fresh) continue;
       bool known = false;
-      for (uint8_t j = 0; j < t.nActive && !known; j++) known = t.active[j] == list[k].key();
-      if (!known) fresh = &list[k];
+      for (uint8_t j = 0; j < t.nAnnounced && !known; j++) known = t.announced[j] == list[k].key();
+      if (known) continue;
+      prnAnnounce(t, list[k].key());
+      if (!fresh) fresh = &list[k];
     }
-    t.nActive = n;
-    for (uint8_t k = 0; k < n; k++) t.active[k] = list[k].key();
     if (!fresh || !printerSettings.errorWake) continue;
     Serial.printf("Printer %s: new error %08lX%08lX\n", def.id.c_str(), (unsigned long)fresh->attr, (unsigned long)fresh->code);
     prnWake();

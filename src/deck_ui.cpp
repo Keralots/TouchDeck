@@ -687,6 +687,18 @@ void printerSync() {
   readPrinters();
   printerEvents();
   for (TileRt& r : s_tiles) applyPrinterToTile(r);
+  printerToast();
+}
+
+// Under the photo frame only the printer events run (a new error or the bed
+// cooling wakes the deck); the tiles follow once the frame is gone.
+uint32_t s_prnWatchSeen = 0;
+void printerWatch() {
+  const uint32_t v = printersVersion();
+  if (v == s_prnWatchSeen) return;
+  s_prnWatchSeen = v;
+  readPrinters();
+  printerEvents();
 }
 
 String s_autoFrom;  // the page shown before an "auto" page took over
@@ -952,6 +964,7 @@ void deckTick() {
   if (compOwnsScreen()) return;
 
   if (frameActive()) {
+    printerWatch();
     frameTick();
     if (!compOwnsScreen()) {
       dailyBarSync();
@@ -1441,3 +1454,5 @@ bool uiPanelIsOpen() {
 }
 
 }  // namespace deck
+
+void deckPrinterSettingsChanged() { deckui::s_prnSeen = 0; }
