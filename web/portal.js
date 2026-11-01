@@ -180,7 +180,6 @@
   function updateGlassFields() {
     const g = $("theme").value === "2";
     $("glassLook").classList.toggle("hidden", !g);
-    $("glassWall").classList.toggle("hidden", !g);
   }
   $("theme").addEventListener("change", updateGlassFields);
   // Animations: the presets as touch, on/off, page, card (as on the deck);

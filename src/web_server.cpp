@@ -955,7 +955,8 @@ static void handleSaveSd() {
   sendJsonMessage(200, true, "Saved. Restarting...", true);
 }
 
-static void handleSaveDisplay() {
+// Wallpapers page: gallery source, Daily download and Glass rotation.
+static void handleSaveWallpapers() {
   int every = dispSettings.wallEvery, order = dispSettings.wallOrder;
   if (server.hasArg("wallEvery")) {
     const String value = server.arg("wallEvery");
@@ -997,6 +998,15 @@ static void handleSaveDisplay() {
   dispSettings.dailyHour = (uint8_t)clampedArg("dailyHour", dispSettings.dailyHour, 0, 23);
   dispSettings.dailyOrient = (uint8_t)clampedArg("dailyOrient", dispSettings.dailyOrient, 0, 2);
   dispSettings.dailyCount = (uint8_t)clampedArg("dailyCount", dispSettings.dailyCount, 1, DAILY_MAX_COUNT);
+  saveSettings();
+  if (dispSettings.wallSource != oldSource) deck::wallSetSource(dispSettings.wallSource);
+  // A new plan fetches again today instead of waiting for the hour.
+  if (oldPlan != (uint32_t)(dispSettings.dailyOrient << 8 | dispSettings.dailyCount)) deck::dailyReplan();
+  sendJsonMessage(200, true, "Wallpaper settings applied.");
+}
+
+static void handleSaveDisplay() {
+  deck::wallInvalidateJobs();
   const uint8_t oldRotation = dispSettings.rotation;
   const uint8_t oldTheme = dispSettings.theme;
   dispSettings.theme = (uint8_t)clampedArg("theme", dispSettings.theme, 0, 2);
@@ -1025,9 +1035,6 @@ static void handleSaveDisplay() {
   dispSettings.fxCard = (uint8_t)clampedArg("fxCard", dispSettings.fxCard, 0, 3);
 
   saveSettings();
-  if (dispSettings.wallSource != oldSource) deck::wallSetSource(dispSettings.wallSource);
-  // A new plan fetches again today instead of waiting for the hour.
-  if (oldPlan != (uint32_t)(dispSettings.dailyOrient << 8 | dispSettings.dailyCount)) deck::dailyReplan();
   if (dispSettings.rotation != oldRotation || dispSettings.theme != oldTheme) applyDisplaySettings();
   else if (glassChanged) deckReloadWallpaper(false);
   sendJsonMessage(200, true, "Display settings applied.");
@@ -2227,6 +2234,7 @@ void initWebServer() {
   server.on("/save/wifi", HTTP_POST, handleSaveWifiLegacy);
   server.on("/save/display", HTTP_POST, handleSaveDisplay);
   server.on("/save/sd", HTTP_POST, handleSaveSd);
+  server.on("/save/wallpapers", HTTP_POST, handleSaveWallpapers);
   server.on("/save/light", HTTP_POST, handleSaveLight);
   server.on("/save/advanced", HTTP_POST, handleSaveAdvanced);
   server.on("/led/preview", HTTP_POST, handleLedPreview);
