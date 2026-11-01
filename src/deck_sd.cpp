@@ -81,12 +81,9 @@ esp_vfs_fat_mount_config_t mountConfig() {
   return mc;
 }
 
-// 1-bit SD mode, as the board's factory firmware uses.
+// 1-bit SD mode, set up as the vendor's SD_MMC.setPins(12, 11, 13) demo:
+// DAT3 and the pull-ups are left to the board.
 void sdmmcConfig(sdmmc_host_t& host, sdmmc_slot_config_t& slot) {
-  // DAT3 high at power-up keeps the card out of SPI mode.
-  gpio_reset_pin(GPIO_NUM_10);
-  gpio_set_direction(GPIO_NUM_10, GPIO_MODE_OUTPUT);
-  gpio_set_level(GPIO_NUM_10, 1);
   host = SDMMC_HOST_DEFAULT();
   host.flags = SDMMC_HOST_FLAG_1BIT;
   host.max_freq_khz = SDMMC_FREQ_DEFAULT;
@@ -95,7 +92,9 @@ void sdmmcConfig(sdmmc_host_t& host, sdmmc_slot_config_t& slot) {
   slot.clk = GPIO_NUM_12;
   slot.cmd = GPIO_NUM_11;
   slot.d0 = GPIO_NUM_13;
-  slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+  // S3 defaults put D2/D3 on GPIO 12/13, this slot's CLK and D0.
+  slot.d1 = slot.d2 = slot.d3 = GPIO_NUM_NC;
+  slot.d4 = slot.d5 = slot.d6 = slot.d7 = GPIO_NUM_NC;
 }
 
 esp_err_t mountSdmmc(sdmmc_card_t** card) {
