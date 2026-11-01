@@ -1161,6 +1161,31 @@ void printerTap(TileRt& r) {
   markPageStale(r.page);
 }
 
+// A new error (not one standing when the source first saw the printer) wakes
+// the screen and brings up the printer's page.
+uint32_t s_alertId[MAX_PRINTERS] = {};
+
+void printerAlerts() {
+  for (size_t i = 0; i < s_cfg.printers.size() && i < MAX_PRINTERS; i++) {
+    const PrinterState* s = s_prnHave[i] ? s_prn[i] : nullptr;
+    if (!prnShown(s)) continue;
+    const PrinterAlert a = printerAlert(*s);
+    const uint32_t id = a.id();
+    const bool fire = id && id != s_alertId[i] && a.fresh;
+    s_alertId[i] = id;
+    if (!fire) continue;
+    const String& printer = s_cfg.printers[i].id;
+    Serial.printf("Printer %s: new error %08lX%08lX\n", printer.c_str(), (unsigned long)a.attr, (unsigned long)a.code);
+    presenceWake();
+    if (nightScreenOff()) wakeDisplayFromTouch();  // a 0% night screen gets its short peek
+    for (int p = 0; p < s_count; p++)
+      if (s_pages[p].def && s_pages[p].def->printer == printer) {
+        autoNavTo(s_pages[p].def->id);
+        break;
+      }
+  }
+}
+
 // The shown page's hero runs its nozzle along the fill's edge while
 // printing; otherwise the nozzle is hidden.
 uint32_t s_heroMs = 0;
