@@ -467,15 +467,7 @@
                       </p>
                     </div>
                   </div>
-                  <label class="check-row">
-                    <input type="checkbox" id="sdCard" name="sdCard" />
-                    <span class="check-box"></span>
-                    <span class="check-text"><strong>Store pictures on microSD</strong></span>
-                  </label>
-                  <p class="field-hint">
-                    Saving this change restarts the device. Pictures stay in their current storage.
-                  </p>
-                  <p id="sdState" class="field-hint" role="status"></p>
+                  <p id="sdWallState" class="field-hint" role="status"></p>
                   <div id="dailyFields" class="hidden" style="margin-top: 14px">
                     <div class="grid-2">
                       <div class="field">
@@ -803,6 +795,8 @@
                       <p class="field-hint">
                         Shows the wallpaper gallery (Display &gt; Glass wallpaper) in any theme. At night it uses the
                         night brightness; the screen turns off when that is 0 or the gallery is empty.
+                        Pictures on a microSD card: enable it in
+                        <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>.
                       </p>
                     </div>
                     <label class="check-row standalone"
@@ -1305,7 +1299,7 @@
               <div class="page-header">
                 <h1 class="page-h1">Maintenance</h1>
                 <p class="page-lede">
-                  Back up device settings, install firmware, or return the monitor to first-run setup.
+                  Back up device settings, install firmware, set up the microSD card, or return the monitor to first-run setup.
                 </p>
               </div>
               <div class="card">
@@ -1368,6 +1362,22 @@
                     <dd id="maintIp">--</dd>
                   </div>
                 </dl>
+              </div>
+              <div class="card" id="sdCardBox">
+                <h2 class="card-title">microSD card</h2>
+                <p class="maintenance-copy">
+                  Holds the wallpaper gallery (also shown by the photo frame), the daily picture archive and
+                  brand icons. Without a card, pictures go to internal storage and brand icons are not
+                  available. The card uses GPIO 10-13. Pictures already stored stay where they are.
+                </p>
+                <label class="check-row standalone"
+                  ><input type="checkbox" id="sdCard" name="sdCard" /><span class="check-box"></span
+                  ><span class="check-text"><strong>Use the microSD card</strong></span></label
+                >
+                <p id="sdState" class="field-hint" role="status"></p>
+                <div class="maintenance-actions">
+                  <button type="button" class="btn btn-accent" id="sdSave" disabled>Save and restart</button>
+                </div>
               </div>
               <div class="card danger-card">
                 <h2 class="card-title">Factory reset</h2>
