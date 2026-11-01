@@ -136,6 +136,7 @@
             <div class="nav-group">
               <div class="nav-label">Configuration</div>
               <button type="button" class="nav-item" data-nav="display">Display</button
+              ><button type="button" class="nav-item" data-nav="wallpapers">Wallpapers</button
               ><button type="button" class="nav-item" data-nav="light">Screen &amp; light</button
               ><button type="button" class="nav-item" data-nav="clock">Time</button>
             </div>
@@ -376,6 +377,9 @@
                 </div>
                 <div class="card hidden" id="glassLook">
                   <h2 class="card-title">Glass look</h2>
+                  <p class="field-hint" style="margin: 0 0 14px">
+                    The pictures behind the glass are set in <a href="#" data-page="wallpapers">Wallpapers</a>.
+                  </p>
                   <div class="grid-2">
                     <div class="field">
                       <label class="field-label" for="glassTint">Tile opacity</label>
@@ -443,8 +447,75 @@
                     ></label
                   >
                 </div>
-                <div class="card hidden" id="glassWall">
-                  <h2 class="card-title">Glass wallpaper</h2>
+                <div class="card">
+                  <h2 class="card-title">PC metric tiles</h2>
+                  <div class="grid-2">
+                    <div class="field">
+                      <label class="field-label" for="tempScale">Default temperature scale</label>
+                      <div class="input-unit">
+                        <input type="number" id="tempScale" name="tempScale" min="1" max="500" /><span
+                          >C</span
+                        >
+                      </div>
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="powerScale">Default power scale</label>
+                      <div class="input-unit">
+                        <input type="number" id="powerScale" name="powerScale" min="1" max="65535" /><span
+                          >W</span
+                        >
+                      </div>
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="warnThreshold">Warning threshold</label>
+                      <div class="range-row">
+                        <input
+                          type="range"
+                          id="warnThreshold"
+                          name="warnThreshold"
+                          min="0"
+                          max="100"
+                          step="1"
+                        /><span class="range-val" id="warnThresholdVal">--</span>
+                      </div>
+                      <p class="field-hint">
+                        A metric tile turns amber at this share of its scale. 0 turns it off.
+                      </p>
+                    </div>
+                  </div>
+                  <p class="field-hint">The scales apply to tiles that set no full scale of their own.</p>
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="smoothCharts" name="smoothCharts" /><span
+                      class="check-box"
+                    ></span
+                    ><span class="check-text"
+                      ><strong>Smooth chart motion</strong
+                      ><span class="ct-hint"
+                        >Charts glide between PC updates instead of stepping once a second. Uses more
+                        processor time while a page with a PC chart is on screen.</span
+                      ></span
+                    ></label
+                  >
+                </div>
+              </form>
+            </section>
+
+            <section class="page" data-page="wallpapers">
+              <div class="page-header">
+                <h1 class="page-h1">Wallpapers</h1>
+                <p class="page-lede">
+                  Pictures shown behind the tiles by the Glass theme and by the photo frame while the screen
+                  sleeps.
+                </p>
+              </div>
+              <form
+                id="wallForm"
+                class="portal-form"
+                data-endpoint="/save/wallpapers"
+                data-save-label="Save wallpapers"
+              >
+                <div class="card">
+                  <h2 class="card-title">Pictures</h2>
                   <p class="field-hint" style="margin: 0 0 14px">
                     Add pictures separately for each orientation. This browser crops them to fit and stores
                     JPEGs on the device. Glass uses the old single picture or a built-in gradient when a
@@ -467,15 +538,7 @@
                       </p>
                     </div>
                   </div>
-                  <label class="check-row">
-                    <input type="checkbox" id="sdCard" name="sdCard" />
-                    <span class="check-box"></span>
-                    <span class="check-text"><strong>Store pictures on microSD</strong></span>
-                  </label>
-                  <p class="field-hint">
-                    Saving this change restarts the device. Pictures stay in their current storage.
-                  </p>
-                  <p id="sdState" class="field-hint" role="status"></p>
+                  <p id="sdWallState" class="field-hint" role="status"></p>
                   <div id="dailyFields" class="hidden" style="margin-top: 14px">
                     <div class="grid-2">
                       <div class="field">
@@ -600,7 +663,14 @@
                     <button type="button" class="btn hidden" id="wallMore_p">Show more</button>
                     <div id="wallErrors_p" role="status" class="field-hint"></div>
                   </section>
-                  <div class="grid-2" style="margin-top: 16px">
+                </div>
+                <div class="card">
+                  <h2 class="card-title">Glass theme</h2>
+                  <p class="field-hint" style="margin: 0 0 14px">
+                    How the Glass background changes. The photo frame has its own interval in
+                    <a href="#" data-page="light">Screen &amp; light &gt; Sleep</a>.
+                  </p>
+                  <div class="grid-2">
                     <div class="field">
                       <label class="field-label" for="wallEvery">Change every</label>
                       <div class="select-wrap">
@@ -633,56 +703,6 @@
                       </p>
                     </div>
                   </div>
-                </div>
-                <div class="card">
-                  <h2 class="card-title">PC metric tiles</h2>
-                  <div class="grid-2">
-                    <div class="field">
-                      <label class="field-label" for="tempScale">Default temperature scale</label>
-                      <div class="input-unit">
-                        <input type="number" id="tempScale" name="tempScale" min="1" max="500" /><span
-                          >C</span
-                        >
-                      </div>
-                    </div>
-                    <div class="field">
-                      <label class="field-label" for="powerScale">Default power scale</label>
-                      <div class="input-unit">
-                        <input type="number" id="powerScale" name="powerScale" min="1" max="65535" /><span
-                          >W</span
-                        >
-                      </div>
-                    </div>
-                    <div class="field">
-                      <label class="field-label" for="warnThreshold">Warning threshold</label>
-                      <div class="range-row">
-                        <input
-                          type="range"
-                          id="warnThreshold"
-                          name="warnThreshold"
-                          min="0"
-                          max="100"
-                          step="1"
-                        /><span class="range-val" id="warnThresholdVal">--</span>
-                      </div>
-                      <p class="field-hint">
-                        A metric tile turns amber at this share of its scale. 0 turns it off.
-                      </p>
-                    </div>
-                  </div>
-                  <p class="field-hint">The scales apply to tiles that set no full scale of their own.</p>
-                  <label class="check-row standalone"
-                    ><input type="checkbox" id="smoothCharts" name="smoothCharts" /><span
-                      class="check-box"
-                    ></span
-                    ><span class="check-text"
-                      ><strong>Smooth chart motion</strong
-                      ><span class="ct-hint"
-                        >Charts glide between PC updates instead of stepping once a second. Uses more
-                        processor time while a page with a PC chart is on screen.</span
-                      ></span
-                    ></label
-                  >
                 </div>
               </form>
             </section>
@@ -801,8 +821,10 @@
                         </select>
                       </div>
                       <p class="field-hint">
-                        Shows the wallpaper gallery (Display &gt; Glass wallpaper) in any theme. At night it uses the
+                        Shows the wallpaper gallery (<a href="#" data-page="wallpapers">Wallpapers</a>) in any theme. At night it uses the
                         night brightness; the screen turns off when that is 0 or the gallery is empty.
+                        Pictures on a microSD card: enable it in
+                        <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>.
                       </p>
                     </div>
                     <label class="check-row standalone"
@@ -1305,7 +1327,7 @@
               <div class="page-header">
                 <h1 class="page-h1">Maintenance</h1>
                 <p class="page-lede">
-                  Back up device settings, install firmware, or return the monitor to first-run setup.
+                  Back up device settings, install firmware, set up the microSD card, or return the monitor to first-run setup.
                 </p>
               </div>
               <div class="card">
@@ -1368,6 +1390,22 @@
                     <dd id="maintIp">--</dd>
                   </div>
                 </dl>
+              </div>
+              <div class="card" id="sdCardBox">
+                <h2 class="card-title">microSD card</h2>
+                <p class="maintenance-copy">
+                  Holds the wallpaper gallery (also shown by the photo frame), the daily picture archive and
+                  brand icons. Without a card, pictures go to internal storage and brand icons are not
+                  available. The card uses GPIO 10-13. Pictures already stored stay where they are.
+                </p>
+                <label class="check-row standalone"
+                  ><input type="checkbox" id="sdCard" name="sdCard" /><span class="check-box"></span
+                  ><span class="check-text"><strong>Use the microSD card</strong></span></label
+                >
+                <p id="sdState" class="field-hint" role="status"></p>
+                <div class="maintenance-actions">
+                  <button type="button" class="btn btn-accent" id="sdSave" disabled>Save and restart</button>
+                </div>
               </div>
               <div class="card danger-card">
                 <h2 class="card-title">Factory reset</h2>

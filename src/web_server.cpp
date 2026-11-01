@@ -930,7 +930,33 @@ static void handleHapticTest() {
   sendJsonMessage(200, true, "Pulse sent.");
 }
 
-static void handleSaveDisplay() {
+// The card is mounted only at boot, so a change restarts.
+static void handleSaveSd() {
+  const bool on = server.hasArg("sdCard");
+  if (on == dispSettings.sdCard) {
+    sendJsonMessage(200, true, "No change.");
+    return;
+  }
+  const auto sdPin = [](uint8_t pin) { return pin >= 10 && pin <= 13; };
+  const char* user = nullptr;
+  uint8_t pin = 0;
+  if (on && ledSettings.enabled && sdPin(ledSettings.pin)) user = "status LED", pin = ledSettings.pin;
+  else if (on && hapticSettings.enabled && sdPin(hapticSettings.pin))
+    user = "vibration motor", pin = hapticSettings.pin;
+  if (user) {
+    const String msg = String("The ") + user + " uses GPIO " + pin +
+                       ", which the microSD card needs. Move or disable it first.";
+    sendJsonMessage(400, false, msg.c_str());
+    return;
+  }
+  dispSettings.sdCard = on;
+  saveSettings();
+  scheduleRestart(1000);
+  sendJsonMessage(200, true, "Saved. Restarting...", true);
+}
+
+// Wallpapers page: gallery source, Daily download and Glass rotation.
+static void handleSaveWallpapers() {
   int every = dispSettings.wallEvery, order = dispSettings.wallOrder;
   if (server.hasArg("wallEvery")) {
     const String value = server.arg("wallEvery");
@@ -961,8 +987,6 @@ static void handleSaveDisplay() {
       return;
     }
   }
-  const bool oldSd = dispSettings.sdCard;
-  dispSettings.sdCard = server.hasArg("sdCard");
   dispSettings.dailyMax = dailyMax;
   deck::wallInvalidateJobs();
   dispSettings.wallEvery = every;
@@ -974,6 +998,15 @@ static void handleSaveDisplay() {
   dispSettings.dailyHour = (uint8_t)clampedArg("dailyHour", dispSettings.dailyHour, 0, 23);
   dispSettings.dailyOrient = (uint8_t)clampedArg("dailyOrient", dispSettings.dailyOrient, 0, 2);
   dispSettings.dailyCount = (uint8_t)clampedArg("dailyCount", dispSettings.dailyCount, 1, DAILY_MAX_COUNT);
+  saveSettings();
+  if (dispSettings.wallSource != oldSource) deck::wallSetSource(dispSettings.wallSource);
+  // A new plan fetches again today instead of waiting for the hour.
+  if (oldPlan != (uint32_t)(dispSettings.dailyOrient << 8 | dispSettings.dailyCount)) deck::dailyReplan();
+  sendJsonMessage(200, true, "Wallpaper settings applied.");
+}
+
+static void handleSaveDisplay() {
+  deck::wallInvalidateJobs();
   const uint8_t oldRotation = dispSettings.rotation;
   const uint8_t oldTheme = dispSettings.theme;
   dispSettings.theme = (uint8_t)clampedArg("theme", dispSettings.theme, 0, 2);
@@ -1002,14 +1035,6 @@ static void handleSaveDisplay() {
   dispSettings.fxCard = (uint8_t)clampedArg("fxCard", dispSettings.fxCard, 0, 3);
 
   saveSettings();
-  if (oldSd != dispSettings.sdCard) {
-    scheduleRestart(1000);
-    server.send(200, "application/json", "{\"ok\":true,\"restarting\":true,\"message\":\"Settings saved. Restarting...\"}");
-    return;
-  }
-  if (dispSettings.wallSource != oldSource) deck::wallSetSource(dispSettings.wallSource);
-  // A new plan fetches again today instead of waiting for the hour.
-  if (oldPlan != (uint32_t)(dispSettings.dailyOrient << 8 | dispSettings.dailyCount)) deck::dailyReplan();
   if (dispSettings.rotation != oldRotation || dispSettings.theme != oldTheme) applyDisplaySettings();
   else if (glassChanged) deckReloadWallpaper(false);
   sendJsonMessage(200, true, "Display settings applied.");
@@ -2208,6 +2233,8 @@ void initWebServer() {
   server.on("/portal.js", HTTP_GET, handlePortalJs);
   server.on("/save/wifi", HTTP_POST, handleSaveWifiLegacy);
   server.on("/save/display", HTTP_POST, handleSaveDisplay);
+  server.on("/save/sd", HTTP_POST, handleSaveSd);
+  server.on("/save/wallpapers", HTTP_POST, handleSaveWallpapers);
   server.on("/save/light", HTTP_POST, handleSaveLight);
   server.on("/save/advanced", HTTP_POST, handleSaveAdvanced);
   server.on("/led/preview", HTTP_POST, handleLedPreview);

@@ -180,7 +180,6 @@
   function updateGlassFields() {
     const g = $("theme").value === "2";
     $("glassLook").classList.toggle("hidden", !g);
-    $("glassWall").classList.toggle("hidden", !g);
   }
   $("theme").addEventListener("change", updateGlassFields);
   // Animations: the presets as touch, on/off, page, card (as on the deck);
@@ -326,6 +325,7 @@
     setVal("wallOrder", c.display.wallOrder ?? 0);
     setVal("wallSource", c.display.wallSource ?? (c.display.wallDaily ? 1 : 0));
     setCheck("sdCard", c.display.sdCard ?? false);
+    $("sdSave").disabled = true;
     setVal("dailyMax", c.display.dailyMax ?? 100);
     setWallSource(c.display.wallSource ?? (c.display.wallDaily ? 1 : 0));
     setVal("dailyOrient", c.display.dailyOrient ?? 0);
@@ -669,6 +669,24 @@
     $("factoryReset").disabled = !ready;
   }
   $("factoryConfirm").addEventListener("input", updateFactoryReset);
+  $("sdCard").addEventListener("change", () => {
+    $("sdSave").disabled = $("sdCard").checked === !!config.display.sdCard;
+  });
+  $("sdSave").addEventListener("click", async () => {
+    try {
+      $("sdSave").disabled = true;
+      const body = new URLSearchParams($("sdCard").checked ? { sdCard: "1" } : {});
+      const data = await getJson("/save/sd", { method: "POST", body });
+      showToast(data.message || "Saved", false);
+      if (data.restarting) {
+        $("sdSave").textContent = "Restarting...";
+        setTimeout(() => location.reload(), 5000);
+      }
+    } catch (e) {
+      showToast(e.message, true);
+      $("sdSave").disabled = false;
+    }
+  });
   $("factoryReset").addEventListener("click", async () => {
     if ($("factoryConfirm").value.trim() !== "RESET") return;
     if (!confirm("Erase all settings and WiFi credentials? The device will restart in setup mode.")) return;
@@ -898,6 +916,11 @@
         }
         Object.assign(s, data, { files });
         const sd = data.sd;
+        $("sdWallState").innerHTML = !sd.enabled
+          ? 'Pictures are stored internally. To use a microSD card, enable it in <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>.'
+          : !sd.mounted
+            ? 'microSD card not mounted, using internal storage. See <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>.'
+            : "Stored on the microSD card.";
         $("sdState").textContent = !sd.enabled
           ? "Not enabled"
           : !sd.mounted
