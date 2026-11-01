@@ -1,6 +1,7 @@
 // Guition deck: Bambu printer errors. See deck_hms.h.
 #include "deck_hms.h"
 #include "deck_bambu.h"
+#include "settings.h"
 #include "error_tables/hms_table.h"
 #include "error_tables/print_error_table.h"
 
@@ -182,6 +183,7 @@ bool printerCanceled(const PrinterState& s) {
 
 PrinterAlert printerAlert(const PrinterState& s) {
   PrinterAlert a;
+  if (!printerSettings.errors) return a;
   // print_error first: the job stopped.
   if (s.printError && !printErrorIsCancel(s.printError)) {
     a.sev = 1;
@@ -190,11 +192,12 @@ PrinterAlert printerAlert(const PrinterState& s) {
     a.fresh = s.printErrorFresh;
     return a;
   }
-  // Common and info codes are listed only, as BambuHelper's "important only".
+  // Info codes are listed only; common ones only with "errorsAll".
+  const uint8_t worst = printerSettings.errorsAll ? 3 : 2;
   for (uint8_t i = 0; i < s.hmsCount; i++) {
     const PrinterHms& e = s.hms[i];
     const uint8_t sev = hmsSeverity(e.code);
-    if (sev < 1 || sev > 2 || e.quiet) continue;
+    if (sev < 1 || sev > worst || e.quiet) continue;
     a.sev = sev;
     a.attr = e.attr;
     a.code = e.code;

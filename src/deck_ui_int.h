@@ -405,7 +405,7 @@ void makePrinterContent(TileRt& r, lv_obj_t* t);
 void fitPrinter(TileRt& r, int cw, int ch);
 void applyPrinterToTile(TileRt& r);
 void printerTap(TileRt& r);
-void printerAlerts();
+void printerEvents();
 void autoNavTo(const String& id);
 void heroTick();
 

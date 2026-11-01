@@ -686,7 +686,7 @@ void printerSync() {
   s_prnSeen = v;
   readPrinters();
   for (TileRt& r : s_tiles) applyPrinterToTile(r);
-  printerAlerts();
+  printerEvents();
 }
 
 String s_autoFrom;  // the page shown before an "auto" page took over
@@ -709,7 +709,7 @@ void autoNavTick() {
   s_autoTo = "";
 }
 
-// Same slide for a printer error (printerAlerts); the "auto" return stays as it was.
+// Same slide for a printer error (printerEvents); the "auto" return stays as it was.
 void autoNavTo(const String& id) {
   s_autoTo = id;
   s_autoUntil = millis() + AUTO_WAIT_MS;

@@ -82,6 +82,18 @@ struct AdvancedSettings {
   bool printers;  // Bambu printers over LAN; off hides their pages and tiles, config kept
 };
 
+// Printers page: printer errors, the bed cooled alert and print energy cost; NVS scalars.
+struct PrinterSettings {
+  bool errors = true;      // badge, error card and alerts for HMS / print_error
+  bool errorsAll = false;  // common codes too, not only fatal and serious
+  bool errorWake = true;   // a new error wakes the deck and shows the printer page
+  bool coolAlert = true;   // after a print, say when the bed has cooled
+  uint8_t coolTemp = 35;   // C
+  float kwhPrice = 0;      // per kWh, 0 = energy without a cost
+  char currency[8] = "";
+};
+constexpr uint8_t PRN_COOL_MIN = 20, PRN_COOL_MAX = 80;
+
 // Vibration motor module on a GPIO (portal Screen & light page); NVS scalars.
 struct HapticSettings {
   bool enabled = false;
@@ -123,6 +135,7 @@ extern LedSettings ledSettings;
 extern AdvancedSettings advSettings;
 extern PresenceSettings presenceSettings;
 extern HapticSettings hapticSettings;
+extern PrinterSettings printerSettings;
 
 bool validDailyMax(int count);
 bool validWallEvery(int minutes);

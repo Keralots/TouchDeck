@@ -16,6 +16,22 @@ constexpr uint32_t HERO_HEAD_MS = 1600;    // one run along the edge
 PrinterState* s_prn[MAX_PRINTERS] = {};  // last copy per s_cfg.printers index (PSRAM)
 bool s_prnHave[MAX_PRINTERS] = {};
 
+// Per printer: job edges for the bed cooled alert and the print's energy, the
+// last error alerted. Reset when the printer at that index changes.
+struct PrnTrack {
+  String id;
+  bool seen = false, job = false, cool = false, kwhLoaded = false;
+  uint32_t alertId = 0;
+  float lastKwh = NAN;  // energy of the last finished or failed job
+};
+PrnTrack s_track[MAX_PRINTERS];
+
+const PrnTrack* prnTrack(const String& id) {
+  for (const PrnTrack& t : s_track)
+    if (t.id.length() && t.id == id) return &t;
+  return nullptr;
+}
+
 const PrinterState* printerFor(const TileDef& d) {
   for (size_t i = 0; i < s_cfg.printers.size() && i < MAX_PRINTERS; i++)
     if (s_cfg.printers[i].id == d.printer) return s_prnHave[i] ? s_prn[i] : nullptr;
@@ -676,6 +692,16 @@ bool prnInJob(const PrinterState& s, uint8_t unit, uint8_t slot) {
   return false;
 }
 
+// "0.42 kWh  0.36 zl" for the hero after a job, "" when unknown.
+String prnEnergyText(float kwh) {
+  if (!isfinite(kwh)) return "";
+  char b[40];
+  if (printerSettings.kwhPrice > 0)
+    snprintf(b, sizeof(b), "%.2f kWh  %.2f %s", kwh, kwh * printerSettings.kwhPrice, printerSettings.currency);
+  else snprintf(b, sizeof(b), "%.2f kWh", kwh);
+  return b;
+}
+
 // Hero fill level and colour.
 void prnHeroSet(TileRt& r, int pct, uint32_t color) {
   const float frac = constrain(pct, 0, 100) / 100.0f;
@@ -750,6 +776,11 @@ uint32_t prnTileKey(const TileRt& r, const PrinterState* s, bool online) {
       k.add((int32_t)printerCanceled(*s));
       k.add((int32_t)s->door);
       k.add((int32_t)s->hmsCount);
+      k.add((int32_t)(printerSettings.errors | printerSettings.errorsAll << 1));
+      if (const PrnTrack* t = prnTrack(d.printer))
+        k.add(isfinite(t->lastKwh) ? (int32_t)lroundf(t->lastKwh * 1000) : -1);
+      k.add((int32_t)lroundf(printerSettings.kwhPrice * 1000));
+      k.add(printerSettings.currency);
       break;
     }
     case PS_NOZZLE:
@@ -989,10 +1020,13 @@ void applyPrinterToTile(TileRt& r) {
         b[0] = 0;
         if (now > 1609459200) {
           const time_t eta = now + (time_t)s->remainingMin * 60;
-          struct tm lt;
+          struct tm lt, today;
           localtime_r(&eta, &lt);
-          if (netSettings.use24h) snprintf(b, sizeof(b), "ETA %02d:%02d", lt.tm_hour, lt.tm_min);
-          else snprintf(b, sizeof(b), "ETA %d:%02d %s", (lt.tm_hour + 11) % 12 + 1, lt.tm_min, lt.tm_hour < 12 ? "AM" : "PM");
+          localtime_r(&now, &today);
+          char day[16] = "";  // "Tue 03 Nov " when it ends on another day
+          if (lt.tm_yday != today.tm_yday || lt.tm_year != today.tm_year) strftime(day, sizeof(day), "%a %d %b ", &lt);
+          if (netSettings.use24h) snprintf(b, sizeof(b), "ETA %s%02d:%02d", day, lt.tm_hour, lt.tm_min);
+          else snprintf(b, sizeof(b), "ETA %s%d:%02d %s", day, (lt.tm_hour + 11) % 12 + 1, lt.tm_min, lt.tm_hour < 12 ? "AM" : "PM");
         }
         lv_label_set_text(r.px[1], b);
         snprintf(b, sizeof(b), "%u%%", s->progress);
@@ -1004,7 +1038,8 @@ void applyPrinterToTile(TileRt& r) {
                  done ? C_PRN_BLUE : failed && !canceled ? C_CRIT : 0x9AA3B2);
         lv_label_set_text(r.sub, done || failed ? s->job : "");
         lv_label_set_text(r.px[0], done ? "Finished" : canceled ? "Canceled" : failed ? "Stopped" : "Ready");
-        lv_label_set_text(r.px[1], "");
+        const PrnTrack* t = done || failed ? prnTrack(d.printer) : nullptr;
+        lv_label_set_text(r.px[1], t ? prnEnergyText(t->lastKwh).c_str() : "");
         lv_label_set_text(r.px[2], done ? "100%" : "");
         prnHeroSet(r, done ? 100 : 0, C_PRN_BLUE);
       }
@@ -1015,7 +1050,7 @@ void applyPrinterToTile(TileRt& r) {
         lv_label_set_text(r.sub, printerAlertText(alert).c_str());
       }
       showObj(r.px[3], s->door == 1);
-      if (s->hmsCount || alert.sev) lv_obj_add_flag(r.obj, LV_OBJ_FLAG_CLICKABLE);
+      if (printerSettings.errors && (s->hmsCount || alert.sev)) lv_obj_add_flag(r.obj, LV_OBJ_FLAG_CLICKABLE);
       else lv_obj_remove_flag(r.obj, LV_OBJ_FLAG_CLICKABLE);
       break;
     }
@@ -1145,7 +1180,9 @@ void printerTap(TileRt& r) {
   }
   if (d.show == PS_HERO) {
     const PrinterState* s = printerFor(d);
-    if (!prnShown(s) || (!s->hmsCount && (!s->printError || printErrorIsCancel(s->printError)))) return;
+    if (!prnShown(s) || !printerSettings.errors ||
+        (!s->hmsCount && (!s->printError || printErrorIsCancel(s->printError))))
+      return;
     const PrinterDef* p = printerDef(d.printer);
     openPrinterErrors(p ? p->name : d.printer, *s);
     return;
@@ -1161,25 +1198,93 @@ void printerTap(TileRt& r) {
   markPageStale(r.page);
 }
 
-// A new error (not one standing when the source first saw the printer) wakes
-// the screen and brings up the printer's page.
-uint32_t s_alertId[MAX_PRINTERS] = {};
+// The printer's energy meter in kWh, NAN when it has none or no number.
+float prnEnergyNow(const PrinterDef& d) {
+  HaEntity e;
+  if (!d.energy.length() || !haGetEntity(d.energy, e) || !e.known) return NAN;
+  char* end = nullptr;
+  const float v = strtof(e.state.c_str(), &end);
+  if (end == e.state.c_str() || *end || !isfinite(v)) return NAN;
+  if (e.unit == "Wh") return v / 1000;
+  if (e.unit == "MWh") return v * 1000;
+  return v;
+}
 
-void printerAlerts() {
+// NVS "prnkwh": s_<id> = meter at the job start (survives a deck restart), l_<id> = last job.
+float prnKwhGet(char kind, const String& id) {
+  Preferences p;
+  if (!p.begin("prnkwh", false)) return NAN;
+  const float v = p.getFloat((String(kind) + "_" + id).c_str(), NAN);
+  p.end();
+  return v;
+}
+
+void prnKwhPut(char kind, const String& id, float v) {
+  Preferences p;
+  if (!p.begin("prnkwh", false)) return;
+  const String key = String(kind) + "_" + id;
+  if (isfinite(v)) p.putFloat(key.c_str(), v);
+  else p.remove(key.c_str());
+  p.end();
+}
+
+void prnWake() {
+  presenceWake();
+  if (nightScreenOff()) wakeDisplayFromTouch();  // a 0% night screen gets its short peek
+}
+
+// Job start / end edges (energy, bed cooled alert) and new errors. The first
+// state seen after boot or a config change only sets the baseline.
+void printerEvents() {
   for (size_t i = 0; i < s_cfg.printers.size() && i < MAX_PRINTERS; i++) {
+    const PrinterDef& def = s_cfg.printers[i];
+    PrnTrack& t = s_track[i];
+    if (t.id != def.id) {
+      t = PrnTrack{};
+      t.id = def.id;
+    }
+    if (!t.kwhLoaded) {
+      t.lastKwh = prnKwhGet('l', def.id);
+      t.kwhLoaded = true;
+    }
     const PrinterState* s = s_prnHave[i] ? s_prn[i] : nullptr;
-    if (!prnShown(s)) continue;
+    if (!prnShown(s) || !s->gcodeState[0]) continue;
+    const char* st = s->gcodeState;
+    const bool job = !strcmp(st, "RUNNING") || !strcmp(st, "PREPARE") || !strcmp(st, "SLICING") || !strcmp(st, "PAUSE");
+    const bool finished = !strcmp(st, "FINISH");
+    if (t.seen && job && !t.job) {
+      t.cool = false;
+      prnKwhPut('s', def.id, prnEnergyNow(def));
+    }
+    if (t.seen && t.job && (finished || !strcmp(st, "FAILED"))) {
+      t.cool = finished && printerSettings.coolAlert;
+      const float from = prnKwhGet('s', def.id), to = prnEnergyNow(def);
+      if (isfinite(from) && isfinite(to) && to >= from) {
+        t.lastKwh = to - from;
+        prnKwhPut('l', def.id, t.lastKwh);
+        Serial.printf("Printer %s: job used %.3f kWh\n", def.id.c_str(), t.lastKwh);
+      }
+      prnKwhPut('s', def.id, NAN);
+    }
+    t.seen = true;
+    t.job = job;
+    if (t.cool && (!printerSettings.coolAlert || job)) t.cool = false;
+    if (t.cool && isfinite(s->bed) && s->bed <= printerSettings.coolTemp) {
+      t.cool = false;
+      prnWake();
+      char b[64];
+      snprintf(b, sizeof(b), "%s: the bed has cooled to %.0f\xC2\xB0", def.name.c_str(), s->bed);
+      deckToastShow(b, 8000);
+    }
     const PrinterAlert a = printerAlert(*s);
     const uint32_t id = a.id();
-    const bool fire = id && id != s_alertId[i] && a.fresh;
-    s_alertId[i] = id;
+    const bool fire = id && id != t.alertId && a.fresh && printerSettings.errorWake;
+    t.alertId = id;
     if (!fire) continue;
-    const String& printer = s_cfg.printers[i].id;
-    Serial.printf("Printer %s: new error %08lX%08lX\n", printer.c_str(), (unsigned long)a.attr, (unsigned long)a.code);
-    presenceWake();
-    if (nightScreenOff()) wakeDisplayFromTouch();  // a 0% night screen gets its short peek
+    Serial.printf("Printer %s: new error %08lX%08lX\n", def.id.c_str(), (unsigned long)a.attr, (unsigned long)a.code);
+    prnWake();
     for (int p = 0; p < s_count; p++)
-      if (s_pages[p].def && s_pages[p].def->printer == printer) {
+      if (s_pages[p].def && s_pages[p].def->printer == def.id) {
         autoNavTo(s_pages[p].def->id);
         break;
       }
