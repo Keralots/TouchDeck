@@ -177,9 +177,12 @@ const char* hmsTableVersion() { return HMS_TABLE_VER; }
 // "The task was canceled." / "Printing was cancelled."
 bool printErrorIsCancel(uint32_t err) { return err == 0x0300400CUL || err == 0x0500400EUL; }
 
-bool printerCanceled(const PrinterState& s) {
-  return !strcmp(s.gcodeState, "FAILED") && printErrorIsCancel(s.printError);
+void printerCancelTrack(PrinterState& s, const char* stateBefore) {
+  if (s.gcodeState[0] && strcmp(s.gcodeState, stateBefore) && strcmp(s.gcodeState, "FAILED")) s.canceled = false;
+  if (printErrorIsCancel(s.printError)) s.canceled = true;
 }
+
+bool printerCanceled(const PrinterState& s) { return !strcmp(s.gcodeState, "FAILED") && s.canceled; }
 
 uint8_t printerAlerts(const PrinterState& s, PrinterAlert* out, uint8_t max) {
   uint8_t n = 0;

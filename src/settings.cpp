@@ -195,9 +195,9 @@ void loadSettings() {
   printerSettings.errorWake = prefs.getBool("pwake", true);
   printerSettings.coolAlert = prefs.getBool("pcool", true);
   printerSettings.coolTemp = constrain(prefs.getUChar("pcoolt", 35), PRN_COOL_MIN, PRN_COOL_MAX);
-  printerSettings.kwhPrice = prefs.getFloat("pkwh", 0);
+  printerSettings.kwhPrice = prefs.isKey("pkwh") ? prefs.getFloat("pkwh", 0) : 0;  // getFloat logs a missing key
   if (!isfinite(printerSettings.kwhPrice) || printerSettings.kwhPrice < 0) printerSettings.kwhPrice = 0;
-  prefs.getString("pcur", printerSettings.currency, sizeof(printerSettings.currency));
+  if (prefs.isKey("pcur")) prefs.getString("pcur", printerSettings.currency, sizeof(printerSettings.currency));
   if (prefs.getBytesLength("net") == sizeof(NetworkSettings))
     prefs.getBytes("net", &netSettings, sizeof(NetworkSettings));
   if (prefs.getBytesLength("backlight") == sizeof(BacklightSettings)) {

@@ -523,6 +523,8 @@ void apply(Printer& p, Bind& b, JsonObjectConst ev, bool full) {
     else if (!strcmp(u, "d")) b.scale = 1440;
   }
   const float v = num(st);
+  char stateBefore[sizeof(s.gcodeState)];
+  strlcpy(stateBefore, s.gcodeState, sizeof(stateBefore));
   switch (b.field) {
     case F_STATUS:
       if (!st) break;
@@ -596,6 +598,7 @@ void apply(Printer& p, Bind& b, JsonObjectConst ev, bool full) {
       activeTray(p);
       break;
   }
+  if (b.field == F_STATUS || b.field == F_PERR) printerCancelTrack(s, stateBefore);
   if (p.online) s.lastReportMs = millis();
 }
 

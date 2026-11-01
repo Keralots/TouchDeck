@@ -86,6 +86,7 @@ struct PrinterState {
   // Errors (deck_hms) and the door
   uint32_t printError = 0;    // print.print_error, 0 = none
   bool printErrorFresh = false;  // set after the first report: worth an alert
+  bool canceled = false;      // a cancel code was seen; printerCancelTrack()
   uint8_t hmsCount = 0, hmsTotal = 0;  // kept / reported after the filters
   bool hmsKnown = false, printErrorKnown = false;  // the source reported them (HA: entity available)
   PrinterHms hms[PRN_HMS_MAX];

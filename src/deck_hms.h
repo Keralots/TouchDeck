@@ -58,6 +58,9 @@ const char* hmsTableVersion();
 
 // A user cancel also sets print_error; it is a state, not a fault.
 bool printErrorIsCancel(uint32_t err);
+// After a state or print_error update: print_error drops back to 0 seconds after a
+// cancel, so the cancel is kept until the printer moves on to another state.
+void printerCancelTrack(PrinterState& s, const char* stateBefore);
 bool printerCanceled(const PrinterState& s);
 
 // The worst error worth a badge, or sev 0 when none.

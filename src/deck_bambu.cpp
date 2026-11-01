@@ -466,6 +466,8 @@ void report(void* context, const char* topic, const uint8_t* payload, size_t len
     s.extPresent = s.ext.present;
   }
   activeTray(c);
+  char stateBefore[sizeof(s.gcodeState)];
+  strlcpy(stateBefore, s.gcodeState, sizeof(stateBefore));
   if (p["gcode_state"].is<const char*>()) {
     strlcpy(s.gcodeState, p["gcode_state"], sizeof(s.gcodeState));
     core = true;
@@ -533,6 +535,7 @@ void report(void* context, const char* topic, const uint8_t* payload, size_t len
     s.printErrorKnown = true;
     c.printErrorSeen = true;
   }
+  printerCancelTrack(s, stateBefore);
   if (p["hms"].is<JsonArrayConst>()) {
     uint64_t keys[32];
     size_t n = 0;

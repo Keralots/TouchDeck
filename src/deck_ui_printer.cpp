@@ -1327,7 +1327,10 @@ void printerEvents() {
       t.loaded = true;
     }
     const PrinterState* s = s_prnHave[i] ? s_prn[i] : nullptr;
-    if (!prnShown(s) || !s->gcodeState[0]) continue;
+    const bool shown = prnShown(s);
+    // A printer gone past the grace (plug off) drops its bed alert: a cold bed at power-on is no news.
+    if (!shown) t.cool = false;
+    if (!shown || !s->gcodeState[0]) continue;
     const char* st = s->gcodeState;
     const bool job = !strcmp(st, "RUNNING") || !strcmp(st, "PREPARE") || !strcmp(st, "SLICING") || !strcmp(st, "PAUSE");
     const bool finished = !strcmp(st, "FINISH");

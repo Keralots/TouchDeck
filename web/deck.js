@@ -772,7 +772,7 @@
       renderPrinters();
     } catch (e) {}
   }
-  /* The card folds to one line: printer count and how many are online. */
+  /* The card's tag: printer count and how many are online. */
   function prnTag() {
     const ps = deck.printers || [];
     const on = ps.filter((d) => (prnStat[d.id] || {}).link === "online").length;
