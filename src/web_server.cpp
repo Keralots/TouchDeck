@@ -955,6 +955,24 @@ static void handleSaveSd() {
   sendJsonMessage(200, true, "Saved. Restarting...", true);
 }
 
+// The card is formatted at the next boot, before anything opens it.
+static void handleSdFormat() {
+  if (server.arg("confirmation") != "FORMAT") {
+    sendJsonMessage(400, false, "Confirmation required.");
+    return;
+  }
+  if (!dispSettings.sdCard) {
+    sendJsonMessage(400, false, "Turn on Use the microSD card first.");
+    return;
+  }
+  if (!deck::wallSdFormatRequest()) {
+    sendJsonMessage(500, false, "Could not save the format request.");
+    return;
+  }
+  scheduleRestart(1000);
+  sendJsonMessage(200, true, "Formatting the card. Restarting...", true);
+}
+
 // Wallpapers page: gallery source, Daily download and Glass rotation.
 static void handleSaveWallpapers() {
   int every = dispSettings.wallEvery, order = dispSettings.wallOrder;
@@ -1621,6 +1639,7 @@ static void handleWallsStatus() {
   doc["sd"]["mode"] = deck::wallSdMode();
   doc["sd"]["sdmmcError"] = deck::wallSdmmcError();
   doc["sd"]["log"] = deck::wallSdLog();
+  doc["sd"]["format"] = deck::wallSdFormatResult();
   doc["sd"]["indexMs"] = deck::wallIndexMs();
   // Index copies on the card; on LittleFS each would be a directory scan.
   for (int orient = 0; orient < 2 && deck::wallOnSd(); orient++) {
@@ -2235,6 +2254,7 @@ void initWebServer() {
   server.on("/save/wifi", HTTP_POST, handleSaveWifiLegacy);
   server.on("/save/display", HTTP_POST, handleSaveDisplay);
   server.on("/save/sd", HTTP_POST, handleSaveSd);
+  server.on("/api/sd/format", HTTP_POST, handleSdFormat);
   server.on("/save/wallpapers", HTTP_POST, handleSaveWallpapers);
   server.on("/save/light", HTTP_POST, handleSaveLight);
   server.on("/save/advanced", HTTP_POST, handleSaveAdvanced);

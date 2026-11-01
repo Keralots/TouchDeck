@@ -687,6 +687,21 @@
       $("sdSave").disabled = false;
     }
   });
+  $("sdFormat").addEventListener("click", async () => {
+    if (!confirm("Erase everything on the microSD card (pictures, brand icons) and create a new FAT file system?"))
+      return;
+    try {
+      $("sdFormat").disabled = true;
+      const body = new URLSearchParams({ confirmation: "FORMAT" });
+      const data = await getJson("/api/sd/format", { method: "POST", body });
+      showToast(data.message || "Formatting", false);
+      $("sdFormat").textContent = "Restarting...";
+      setTimeout(() => location.reload(), 8000);
+    } catch (e) {
+      showToast(e.message, true);
+      $("sdFormat").disabled = false;
+    }
+  });
   $("factoryReset").addEventListener("click", async () => {
     if ($("factoryConfirm").value.trim() !== "RESET") return;
     if (!confirm("Erase all settings and WiFi credentials? The device will restart in setup mode.")) return;
@@ -921,12 +936,18 @@
           : !sd.mounted
             ? 'microSD card not mounted, using internal storage. See <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>.'
             : "Stored on the microSD card.";
-        $("sdState").textContent = !sd.enabled
+        $("sdFormat").classList.toggle("hidden", !sd.enabled);
+        $("sdState").textContent =
+          (sd.format ? "Format at the last restart: " + sd.format + "\n" : "") +
+          (!sd.enabled
           ? "Not enabled"
           : !sd.mounted
             ? "Card not mounted" +
               (sd.error ? " (" + sd.error + ")" : "") +
-              " - using internal storage. Power the deck off and on to retry." +
+              " - using internal storage. " +
+              (/not accepted/.test(sd.error || "")
+                ? "Format card below erases it and makes it readable."
+                : "Power the deck off and on to retry.") +
               (sd.log ? "\n" + sd.log : "")
             : "Mounted" +
               (sd.mode ? " (" + sd.mode + ")" : "") +
@@ -938,7 +959,7 @@
               sd.own.join(" landscape / ") +
               " portrait; Daily: " +
               sd.daily.join(" landscape / ") +
-              " portrait";
+              " portrait");
         wallRender(o);
       }
     } catch (e) {
