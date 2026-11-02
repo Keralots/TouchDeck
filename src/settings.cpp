@@ -14,6 +14,7 @@ LedSettings ledSettings;
 AdvancedSettings advSettings = {};
 PresenceSettings presenceSettings;
 HapticSettings hapticSettings;
+AudioSettings audioSettings;
 PrinterSettings printerSettings;
 
 bool validFrameEvery(int minutes) {
@@ -240,6 +241,17 @@ void loadSettings() {
   hapticSettings.pin = prefs.getUChar("happin", 0);
   hapticSettings.strength = constrain(prefs.getUChar("hapstr", 100), HAPTIC_MIN_STRENGTH, 100);
   hapticSettings.pulseMs = constrain(prefs.getUChar("hapms", 40), HAPTIC_MIN_MS, HAPTIC_MAX_MS);
+  audioSettings.enabled = prefs.getBool("audon", false);
+  audioSettings.volume = min<uint8_t>(prefs.getUChar("audvol", 70), 100);
+  audioSettings.nightMute = prefs.getBool("audnight", true);
+  audioSettings.click = prefs.getBool("audclk", false);
+  audioSettings.finished = prefs.getBool("audfin", true);
+  audioSettings.error = prefs.getBool("auderr", true);
+  audioSettings.cooled = prefs.getBool("audcool", true);
+  // isKey first: getString logs a missing key.
+  if (prefs.isKey("audffin")) prefs.getString("audffin", audioSettings.fileFinished, AUDIO_FILE_LEN);
+  if (prefs.isKey("audferr")) prefs.getString("audferr", audioSettings.fileError, AUDIO_FILE_LEN);
+  if (prefs.isKey("audfcool")) prefs.getString("audfcool", audioSettings.fileCooled, AUDIO_FILE_LEN);
   // Entity ids, comma-separated.
   const String ids = prefs.getString("pent", "");
   for (size_t i = 0, from = 0; i < MAX_PRESENCE_ENTITIES && from < ids.length(); i++) {
@@ -320,6 +332,16 @@ void saveSettings() {
   prefs.putUChar("happin", hapticSettings.pin);
   prefs.putUChar("hapstr", hapticSettings.strength);
   prefs.putUChar("hapms", hapticSettings.pulseMs);
+  prefs.putBool("audon", audioSettings.enabled);
+  prefs.putUChar("audvol", audioSettings.volume);
+  prefs.putBool("audnight", audioSettings.nightMute);
+  prefs.putBool("audclk", audioSettings.click);
+  prefs.putBool("audfin", audioSettings.finished);
+  prefs.putBool("auderr", audioSettings.error);
+  prefs.putBool("audcool", audioSettings.cooled);
+  prefs.putString("audffin", audioSettings.fileFinished);
+  prefs.putString("audferr", audioSettings.fileError);
+  prefs.putString("audfcool", audioSettings.fileCooled);
   String ids;
   for (const String& id : presenceSettings.entities)
     if (id.length()) ids += (ids.length() ? "," : "") + id;

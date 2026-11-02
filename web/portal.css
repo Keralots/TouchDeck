@@ -1178,3 +1178,55 @@ input[type="range"]::-webkit-slider-thumb {
     grid-template-columns: 1fr;
   }
 }
+
+/* Speaker card: one row per event, then the sound files. */
+.audio-event {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.audio-event .check-row {
+  border-top: 0;
+  padding: 0;
+  flex: 1 1 200px;
+}
+.audio-pick {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex: 1 1 240px;
+  max-width: 360px;
+}
+.audio-pick select {
+  flex: 1;
+  min-width: 0;
+}
+.audio-files {
+  margin-bottom: 10px;
+}
+.audio-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.audio-file-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.audio-file-name small {
+  color: var(--dim);
+}
+.audio-file-btns {
+  display: flex;
+  gap: 8px;
+}

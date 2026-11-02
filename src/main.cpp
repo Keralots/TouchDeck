@@ -12,6 +12,7 @@
 #include "pc_metrics.h"
 #include "led.h"
 #include "haptic.h"
+#include "audio.h"
 #include "crash_log.h"
 #include "deck_mqtt.h"
 #include "deck_daily.h"
@@ -53,6 +54,7 @@ void setup() {
   pcMetricsBegin();
   initLed();
   initHaptic();
+  audioInit();
   mqttBegin();
 
   if (isWiFiConnected()) setScreenState(SCREEN_DECK);
