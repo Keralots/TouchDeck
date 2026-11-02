@@ -200,6 +200,18 @@ static void handleApiConfig() {
   doc["board"] = BOARD_VARIANT;
   doc["ip"] = WiFi.localIP().toString();
   doc["deck"] = true;
+  // Screen and grid facts for the portal's page editor and picture uploads.
+  JsonObject screen = doc["screen"].to<JsonObject>();
+  screen["w"] = deck::screenW(false);
+  screen["h"] = deck::screenH(false);
+  screen["gridMax"] = deck::GRID_MAX;
+  screen["maxTiles"] = deck::MAX_PAGE_TILES;
+  screen["maxJpeg"] = (uint32_t)deck::WALL_MAX_JPEG;
+  JsonObject grid = screen["grid"].to<JsonObject>();
+  grid["landscape"][0] = BOARD_GRID_LANDSCAPE_COLS;
+  grid["landscape"][1] = BOARD_GRID_LANDSCAPE_ROWS;
+  grid["portrait"][0] = BOARD_GRID_PORTRAIT_COLS;
+  grid["portrait"][1] = BOARD_GRID_PORTRAIT_ROWS;
 
   JsonObject display = doc["display"].to<JsonObject>();
   display["rotation"] = dispSettings.rotation;
@@ -2006,7 +2018,7 @@ static void handleWallFinish() {
   if (!wallOrientation(p)) { wallUploadCleanup(); return; }
   if (!complete && !err.length()) err = "expected one JPEG file";
   if (!err.length() && !deck::wallValidateJpeg(wallUploadPath(), p))
-    err = p ? "expected a baseline 320x480 JPEG" : "expected a baseline 480x320 JPEG";
+    err = String("expected a baseline ") + deck::screenW(p) + "x" + deck::screenH(p) + " JPEG";
   if (!err.length() && wallRoom(p) < deck::WALL_RESERVE) err = "flash full";
   // Daily archive upload (PC download): keeps the URL-based name so the deck dedupes it.
   if (server.arg("gallery") == "d") {

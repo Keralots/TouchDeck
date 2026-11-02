@@ -625,7 +625,7 @@ void emitDepthRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) 
 // Cascade: the strip in bands, one per grid column (edges in the middle of
 // the gaps), each with its own progress: column k starts 9 % later than
 // k - 1. Per-frame values, set before chunk 0 (flush task only).
-constexpr int MAX_BANDS = 8;
+constexpr int MAX_BANDS = BOARD_GRID_MAX > 8 ? BOARD_GRID_MAX : 8;
 struct CascadeRun {
   int16_t x, end;  // screen columns
   int16_t shift;   // source column = x + shift
@@ -656,9 +656,11 @@ void cascadeSide(CascadeSide& c, int cols, uint16_t cuts, int w, int full, float
     if (!cuts || (cuts >> k & 1)) c.edge[n++] = 8 + (int)lroundf(k * (cw + 7)) - 4;
   c.edge[n] = w;
   c.n = n;
-  const float spread = .09f * (n - 1);
+  // The whole stagger stays within 63 % of the slide on wide grids.
+  const float step = n > 1 ? std::min(.09f, .63f / (n - 1)) : 0;
+  const float spread = step * (n - 1);
   for (int k = 0; k < n; k++) {
-    const float q = std::min(1.0f, std::max(0.0f, (e - .09f * k) / (1 - spread)));
+    const float q = std::min(1.0f, std::max(0.0f, (e - step * k) / (1 - spread)));
     c.off[k] = (int)lroundf(q * full);
   }
 }

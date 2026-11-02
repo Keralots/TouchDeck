@@ -24,6 +24,14 @@
 #define BOARD_BACKLIGHT_ACTIVE_LOW 0
 #define BOARD_BACKLIGHT_FREQ 1000  // analogWrite's default, as before
 
+// --- Deck grid: limits and defaults for this screen size ---
+#define BOARD_GRID_MAX 6
+#define BOARD_GRID_LANDSCAPE_COLS 4
+#define BOARD_GRID_LANDSCAPE_ROWS 3
+#define BOARD_GRID_PORTRAIT_COLS 3
+#define BOARD_GRID_PORTRAIT_ROWS 4
+#define BOARD_MAX_PAGE_TILES 24
+
 // --- Touch: AXS15231B controller (deck_touch_axs15231b.cpp) ---
 #define BOARD_TOUCH_AXS15231B 1
 #define BOARD_TOUCH_SDA 4

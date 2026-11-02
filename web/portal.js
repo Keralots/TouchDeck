@@ -1144,8 +1144,10 @@
     const img = await createImageBitmap(file);
     try {
       const c = document.createElement("canvas");
-      c.width = o === "l" ? 480 : 320;
-      c.height = o === "l" ? 320 : 480;
+      /* The device's screen (older firmware: the 3.5" deck). */
+      const s = (config && config.screen) || { w: 480, h: 320 };
+      c.width = o === "l" ? s.w : s.h;
+      c.height = o === "l" ? s.h : s.w;
       const scale = Math.max(c.width / img.width, c.height / img.height),
         w = img.width * scale,
         h = img.height * scale;

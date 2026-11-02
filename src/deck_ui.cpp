@@ -194,7 +194,7 @@ void layoutHeader(Page& p) {
 
 void placeTiles(const PageDef& def, int orient, std::vector<Cell>& out) {
   const int cols = def.cols[orient] * 2, rows = def.rows[orient] * 2;
-  bool used[12][12] = {};
+  bool used[2 * GRID_MAX][2 * GRID_MAX] = {};
   auto fits = [&](int x, int y, int tw, int th) {
     if (x + tw > cols || y + th > rows) return false;
     for (int yy = y; yy < y + th; yy++)
@@ -257,8 +257,8 @@ void addTilesPage(const PageDef& def) {
   // Two tracks per cell: tiles sit and span in half cells. Static descriptor
   // arrays per page (LVGL keeps the pointers).
   const int cols = def.cols[orient] * 2, rows = def.rows[orient] * 2;
-  static int32_t colDsc[MAX_PAGES][13];
-  static int32_t rowDsc[MAX_PAGES][13];
+  static int32_t colDsc[MAX_PAGES][2 * GRID_MAX + 1];
+  static int32_t rowDsc[MAX_PAGES][2 * GRID_MAX + 1];
   for (int i = 0; i < cols; i++) colDsc[page][i] = LV_GRID_FR(1);
   colDsc[page][cols] = LV_GRID_TEMPLATE_LAST;
   for (int i = 0; i < rows; i++) rowDsc[page][i] = LV_GRID_FR(1);

@@ -37,6 +37,14 @@
 #define BOARD_BACKLIGHT_ACTIVE_LOW 1
 #define BOARD_BACKLIGHT_FREQ 5000  // vendor BSP
 
+// --- Deck grid: about the JC3248W535's cell size (same pixel density) ---
+#define BOARD_GRID_MAX 10
+#define BOARD_GRID_LANDSCAPE_COLS 8
+#define BOARD_GRID_LANDSCAPE_ROWS 6
+#define BOARD_GRID_PORTRAIT_COLS 5
+#define BOARD_GRID_PORTRAIT_ROWS 9
+#define BOARD_MAX_PAGE_TILES 48
+
 // --- Touch: GT911 on the shared I2C bus, polled (deck_touch_gt911.cpp) ---
 // The vendor Arduino code uses neither INT nor RST.
 #define BOARD_I2C_SDA 7         // shared by touch and codec
