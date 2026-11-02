@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="470" viewBox="0 0 780 470" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13">
+  <style>text{stroke:none;fill:#1a1a1a}text.m{fill:#555}</style>
+  <rect width="780" height="470" fill="#ffffff"/>
+  <defs>
+    <g id="top">
+      <!-- 5V supply, series resistor, LED -->
+      <circle cx="220" cy="60" r="3.5" fill="#1a1a1a"/>
+      <text x="232" y="64" font-weight="600">5V</text>
+      <text x="256" y="64" class="m">P1 pin 1 (VIN)</text>
+      <line x1="220" y1="60" x2="220" y2="80"/>
+      <rect x="210" y="80" width="20" height="44" fill="#fff"/>
+      <text x="240" y="100">18 Ω</text>
+      <text x="240" y="116" class="m">0.5 W or more</text>
+      <line x1="220" y1="124" x2="220" y2="146"/>
+      <polygon points="204,146 236,146 220,172" fill="#fff"/>
+      <line x1="204" y1="172" x2="236" y2="172"/>
+      <line x1="242" y1="150" x2="254" y2="140"/>
+      <polyline points="249,140 254,140 254,145" fill="none"/>
+      <line x1="244" y1="162" x2="256" y2="152"/>
+      <polyline points="251,152 256,152 256,157" fill="none"/>
+      <text x="266" y="152">filament LED</text>
+      <text x="266" y="168" class="m">3 V, 120 mA</text>
+      <text x="190" y="144" text-anchor="end" class="m">LED+</text>
+      <text x="190" y="184" text-anchor="end" class="m">LED-</text>
+      <line x1="220" y1="172" x2="220" y2="214"/>
+      <!-- GPIO input -->
+      <text x="20" y="248" font-weight="600">GPIO 44</text>
+      <text x="20" y="264" class="m">P1 pin 3 (RX)</text>
+      <circle cx="118" cy="252" r="3.5" fill="#1a1a1a"/>
+      <!-- ground bus -->
+      <line x1="140" y1="370" x2="220" y2="370"/>
+      <line x1="180" y1="370" x2="180" y2="382"/>
+      <line x1="164" y1="382" x2="196" y2="382"/>
+      <line x1="170" y1="388" x2="190" y2="388"/>
+      <line x1="176" y1="394" x2="184" y2="394"/>
+      <text x="204" y="392" font-weight="600">GND</text>
+      <text x="238" y="392" class="m">P1 pin 4</text>
+    </g>
+  </defs>
+
+  <!-- Panel A: N-channel MOSFET -->
+  <g stroke="#1a1a1a" stroke-width="2" fill="none">
+    <use href="#top"/>
+  </g>
+  <g fill="#1a1a1a">
+    <text x="20" y="28" font-size="15" font-weight="700">A. N-channel MOSFET (SMD)</text>
+  </g>
+  <g stroke="#1a1a1a" stroke-width="2" fill="none">
+    <line x1="118" y1="252" x2="196" y2="252"/>
+    <line x1="196" y1="230" x2="196" y2="274"/>
+    <line x1="204" y1="228" x2="204" y2="240"/>
+    <line x1="204" y1="246" x2="204" y2="258"/>
+    <line x1="204" y1="264" x2="204" y2="276"/>
+    <polyline points="204,234 220,234 220,214"/>
+    <polyline points="204,252 220,252 220,270"/>
+    <polyline points="204,270 220,270 220,370"/>
+    <polygon points="205,252 213,248 213,256" fill="#1a1a1a"/>
+    <circle cx="140" cy="252" r="3" fill="#1a1a1a"/>
+    <line x1="140" y1="252" x2="140" y2="290"/>
+    <rect x="130" y="290" width="20" height="44" fill="#fff"/>
+    <line x1="140" y1="334" x2="140" y2="370"/>
+  </g>
+  <g fill="#1a1a1a">
+    <text x="228" y="226">D</text>
+    <text x="182" y="246">G</text>
+    <text x="228" y="290">S</text>
+    <text x="244" y="250" font-weight="600">AO3400</text>
+    <text x="244" y="266" class="m">SOT-23</text>
+    <text x="104" y="316" text-anchor="end">10 kΩ</text>
+  </g>
+
+  <!-- Panel B: NPN transistor -->
+  <g transform="translate(390,0)">
+    <g stroke="#1a1a1a" stroke-width="2" fill="none">
+      <use href="#top"/>
+      <rect x="124" y="243" width="40" height="18" fill="#fff"/>
+      <line x1="118" y1="252" x2="124" y2="252"/>
+      <line x1="164" y1="252" x2="202" y2="252"/>
+      <circle cx="210" cy="252" r="24"/>
+      <line x1="202" y1="236" x2="202" y2="268"/>
+      <polyline points="202,244 220,232 220,214"/>
+      <polyline points="202,260 220,272 220,370"/>
+      <polygon points="219,271 210.2,269.9 214.6,263.3" fill="#1a1a1a"/>
+      <circle cx="182" cy="252" r="3" fill="#1a1a1a"/>
+      <line x1="182" y1="252" x2="182" y2="290"/>
+      <rect x="172" y="290" width="20" height="44" fill="#fff"/>
+      <line x1="182" y1="334" x2="182" y2="370"/>
+      <line x1="140" y1="370" x2="182" y2="370"/>
+    </g>
+    <g fill="#1a1a1a">
+      <text x="20" y="28" font-size="15" font-weight="700">B. NPN transistor (through-hole)</text>
+      <text x="144" y="236" text-anchor="middle">470 Ω</text>
+      <text x="228" y="226">C</text>
+      <text x="168" y="246">B</text>
+      <text x="228" y="290">E</text>
+      <text x="244" y="250" font-weight="600">BC337-40</text>
+      <text x="244" y="266" class="m">or 2N2222A, TO-92</text>
+      <text x="166" y="316" text-anchor="end">10 kΩ</text>
+    </g>
+  </g>
+
+  <g fill="#333" font-size="12.5">
+    <text x="20" y="432">P1 = the 4-pin 1.25 mm UART connector. Any GPIO the portal allows works (17 or 18 are on the extended IO header).</text>
+    <text x="20" y="450">LED resistor: R = (5 V - LED voltage) / LED current. The 10 kΩ keeps the LED off while the deck boots.</text>
+  </g>
+</svg>

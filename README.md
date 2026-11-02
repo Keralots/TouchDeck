@@ -10,13 +10,13 @@ A touch control deck for the Guition JC3248W535 (3.5" 320x480 IPS, capacitive to
 
 ## Hardware
 
-Guition JC3248W535: AXS15231B panel over QSPI, AXS15231B touch on I2C. Nothing to wire. 3D printed case: [MakerWorld model 3463113](https://makerworld.com/models/3463113).
+[Guition JC3248W535](https://aliexpress.com/item/1005007566315926.html): AXS15231B panel over QSPI, AXS15231B touch on I2C. Nothing to wire. 3D printed case: [MakerWorld model 3463113](https://makerworld.com/models/3463113). USB-C cable I use: [AliExpress](https://aliexpress.com/item/1005007148475800.html).
 
 | | |
 |:---:|:---:|
 | ![TouchDeck in the printed case, front](docs/images/case-front.jpg) | ![Printed case from the back with the USB-C cable](docs/images/case-back.jpg) |
 
-Optional: a single-colour status LED on a free GPIO ([Status LED](GUIDE.md#status-led)) and a microSD card for wallpapers and brand icons.
+Optional: a single-colour status LED on a free GPIO ([wiring](GUIDE.md#wiring-the-led)), a [vibration motor](GUIDE.md#vibration-motor) for tile taps and a microSD card for wallpapers and brand icons.
 
 ## Screenshots
 

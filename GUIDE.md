@@ -239,9 +239,32 @@ The companion UI opens at `http://127.0.0.1:8750`; point it at the device IP. Th
 
 ## Status LED
 
-An optional plain single-colour LED driven through a transistor from a free GPIO (default 17 on the extended IO header). Pins used by the display, touch, USB, flash or PSRAM are refused by the portal. Set it up under **Screen & light**.
+An optional plain single-colour LED driven through a transistor from a free GPIO (default 17 on the extended IO header). Pins used by the display, touch, USB, flash or PSRAM are refused by the portal. Set it up on the **Hardware** page.
 
 The backlight and the LED have separate night schedules. The LED's day brightness can follow a Home Assistant input_boolean, input_number or light, and the quick panel's Light slider sets that entity.
+
+### Wiring the LED
+
+A GPIO gives only 3.3 V and a few mA, so the LED runs from 5V and a transistor switches its negative side. The 4-pin 1.25 mm UART connector (P1 on the board schematic) has everything needed: pin 1 = 5V (VIN), pin 3 = RX (GPIO 44), pin 4 = GND. GPIO 17 or 18 on the extended IO header work as well, with 5V and GND taken from P1.
+
+![Status LED wiring: an AO3400 MOSFET or an NPN transistor switching the LED's negative side](docs/images/led-wiring.svg)
+
+- **A. N-channel MOSFET:** AO3400 (SOT-23), small and needs some SMD soldering; a SOT-23 to DIP adapter board makes that easier. The 10 kΩ from gate to GND keeps the LED off while the deck boots.
+- **B. NPN transistor:** BC337-40 or 2N2222A (TO-92), easy to solder. 470 Ω goes in the base; the 10 kΩ from base to GND is optional. The transistor drops about 0.2 V, so the LED is a little dimmer; 15 Ω instead of 18 Ω makes up for it.
+
+The series resistor sets the current: R = (5 V - LED voltage) / LED current. The 5V pin sits a little under 5 V (USB through a Schottky diode on the board). With a 3 V, 120 mA filament LED, 18 Ω gives about 100 mA and turns about 0.2 W into heat, so use a 0.5 W resistor or larger.
+
+Then turn on **Hardware > Status LED** and pick the GPIO you used (44 for the RX pin).
+
+Parts used for variant A: [3 V filament LED](https://aliexpress.com/item/1005010248262866.html), [resistors](https://aliexpress.com/item/1005004744999110.html), [AO3400](https://aliexpress.com/item/1005010437466838.html).
+
+## Vibration motor
+
+An optional vibration motor gives a short pulse each time a tile is tapped or held on the screen. Use a motor module with its own driver transistor and IN, VCC and GND pins, such as [this one](https://aliexpress.com/item/1005005298184969.html); a bare motor on a GPIO pulls more current than the pin can give.
+
+Connect IN to a free GPIO, VCC to 5V and GND to GND. The 4-pin 1.25 mm extended IO header (P3 or P4 on the board schematic) has pin 1 = GND, pin 2 = 3.3V, pin 3 = GPIO 17, pin 4 = GPIO 18; 5V comes from pin 1 (VIN) of the UART connector P1, see [Wiring the LED](#wiring-the-led).
+
+Turn it on under **Hardware > Vibration motor**, pick the GPIO, set the strength (20 to 100 %) and the pulse length (10 to 200 ms), and press **Test**. The motor and the status LED cannot share a pin.
 
 ## Flashing without the web flasher
 
