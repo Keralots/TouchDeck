@@ -892,6 +892,8 @@ std::vector<String> entityIds() {
     if (r.def->entity.length()) ids.push_back(r.def->entity);
   for (const PrinterDef& d : s_cfg.printers)
     if (advSettings.printers && d.plug.length()) ids.push_back(d.plug);
+  for (const PrinterDef& d : s_cfg.printers)
+    if (advSettings.printers && d.energy.length()) ids.push_back(d.energy);
   for (const auto& s : s_whenStates) ids.push_back(s.first);
   if (s_cfg.ledEntity.length()) ids.push_back(s_cfg.ledEntity);
   for (const String& id : presenceSettings.entities)

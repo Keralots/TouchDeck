@@ -217,6 +217,7 @@ struct TileDef {
 struct PrinterDef {
   String id, name, ip;
   String plug;  // HA switch that powers the printer, "" = always powered
+  String energy;  // HA energy meter (kWh / Wh total) for the energy of a print, optional
   bool ha = false;  // "source": "ha": state from the Bambu Lab integration in HA
   String serial;    // HA source: the printer's serial number
 };

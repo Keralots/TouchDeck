@@ -16,6 +16,46 @@ constexpr uint32_t HERO_HEAD_MS = 1600;    // one run along the edge
 PrinterState* s_prn[MAX_PRINTERS] = {};  // last copy per s_cfg.printers index (PSRAM)
 bool s_prnHave[MAX_PRINTERS] = {};
 
+// Per printer: job edges for the bed cooled alert and the print's energy, the
+// last error alerted. Reset when the printer at that index changes.
+// Energy of a print, NVS "prnkwh" e_<id>: the meter at the job start and the
+// last job's use, each tagged with prnJobHash() so another job or meter never
+// borrows them (a restart mid-print keeps the start).
+struct PrnEnergy {
+  float start = NAN;
+  uint32_t startHash = 0;
+  float last = NAN;
+  uint32_t lastHash = 0;
+};
+
+// Per printer id: job edges, the energy record and the errors already announced.
+constexpr uint8_t PRN_ANNOUNCED = 16;
+struct PrnTrack {
+  String id;
+  bool seen = false, job = false, cool = false, loaded = false;
+  bool startLive = false;  // this session saw the job start (its name may follow the state)
+  PrnEnergy energy;
+  uint64_t announced[PRN_ANNOUNCED];  // PrinterAlert::key(), oldest first
+  uint8_t nAnnounced = 0;
+};
+PrnTrack s_track[MAX_PRINTERS];
+String s_prnToast;  // waits for the photo frame to end
+
+const PrnTrack* prnTrack(const String& id) {
+  for (const PrnTrack& t : s_track)
+    if (t.id.length() && t.id == id) return &t;
+  return nullptr;
+}
+
+// The job name and the energy meter, so a stored reading belongs to one job on one meter.
+uint32_t prnJobHash(const PrinterState& s, const String& meter) {
+  uint32_t h = 2166136261u;
+  for (const char* c = s.job; *c; c++) h = (h ^ (uint8_t)*c) * 16777619u;
+  h = (h ^ 0xFF) * 16777619u;
+  for (size_t i = 0; i < meter.length(); i++) h = (h ^ (uint8_t)meter[i]) * 16777619u;
+  return h | 1;
+}
+
 const PrinterState* printerFor(const TileDef& d) {
   for (size_t i = 0; i < s_cfg.printers.size() && i < MAX_PRINTERS; i++)
     if (s_cfg.printers[i].id == d.printer) return s_prnHave[i] ? s_prn[i] : nullptr;
@@ -66,6 +106,17 @@ lv_obj_t* prnBar(lv_obj_t* parent, int h) {
   lv_obj_set_style_bg_color(b, lv_color_hex(C_PRN_BLUE), LV_PART_INDICATOR);
   lv_obj_remove_flag(b, LV_OBJ_FLAG_CLICKABLE);
   return b;
+}
+
+// The hero's state and door badges.
+lv_obj_t* prnBadgeLabel(lv_obj_t* parent) {
+  lv_obj_t* l = prnLabel(parent, &deck_font_12, LV_OPA_COVER);
+  lv_obj_set_style_bg_opa(l, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(l, 7, 0);
+  lv_obj_set_style_pad_hor(l, 6, 0);
+  lv_obj_set_style_pad_ver(l, 1, 0);
+  lv_obj_set_style_text_color(l, lv_color_hex(C_PRN_BADGE_TEXT), 0);
+  return l;
 }
 
 // Column layout: the first child grows, so the rest sits at the bottom.
@@ -255,17 +306,16 @@ void makePrinterContent(TileRt& r, lv_obj_t* t) {
       lv_obj_set_style_pad_column(top, 8, 0);
       lv_obj_set_flex_grow(top, 1);
       lv_obj_set_flex_align(t, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-      r.name = prnLabel(top, &deck_font_12, LV_OPA_COVER);  // state badge
-      lv_obj_set_style_bg_opa(r.name, LV_OPA_COVER, 0);
-      lv_obj_set_style_radius(r.name, 7, 0);
-      lv_obj_set_style_pad_hor(r.name, 6, 0);
-      lv_obj_set_style_pad_ver(r.name, 1, 0);
-      lv_obj_set_style_text_color(r.name, lv_color_hex(C_PRN_BADGE_TEXT), 0);
+      r.name = prnBadgeLabel(top);  // state badge
       r.sub = prnLabel(top, &deck_font_14, LV_OPA_COVER);  // job
       lv_label_set_long_mode(r.sub, LV_LABEL_LONG_MODE_DOTS);
       lv_obj_set_flex_grow(r.sub, 1);
       r.unit = prnLabel(top, &deck_font_12, LV_OPA_70);  // printer name
       lv_label_set_text(r.unit, printerDef(d.printer) ? printerDef(d.printer)->name.c_str() : "");
+      r.px[3] = prnBadgeLabel(top);  // door, while open
+      lv_label_set_text(r.px[3], "DOOR OPEN");
+      lv_obj_set_style_bg_color(r.px[3], lv_color_hex(C_PRN_HEAT), 0);
+      lv_obj_add_flag(r.px[3], LV_OBJ_FLAG_HIDDEN);
       lv_obj_t* mid = prnBox(t, LV_FLEX_FLOW_ROW);
       lv_obj_set_size(mid, lv_pct(100), LV_SIZE_CONTENT);
       lv_obj_set_flex_align(mid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
@@ -666,6 +716,24 @@ bool prnInJob(const PrinterState& s, uint8_t unit, uint8_t slot) {
   return false;
 }
 
+// The shown job's energy, NAN when the record belongs to another job or meter.
+float prnLastKwh(const String& id, const PrinterState& s) {
+  const PrnTrack* t = prnTrack(id);
+  const PrinterDef* def = printerDef(id);
+  if (!t || !def || !t->energy.lastHash || t->energy.lastHash != prnJobHash(s, def->energy)) return NAN;
+  return t->energy.last;
+}
+
+// "0.42 kWh  0.36 zl" for the hero after a job, "" when unknown.
+String prnEnergyText(float kwh) {
+  if (!isfinite(kwh)) return "";
+  char b[40];
+  if (printerSettings.kwhPrice > 0)
+    snprintf(b, sizeof(b), "%.2f kWh  %.2f %s", kwh, kwh * printerSettings.kwhPrice, printerSettings.currency);
+  else snprintf(b, sizeof(b), "%.2f kWh", kwh);
+  return b;
+}
+
 // Hero fill level and colour.
 void prnHeroSet(TileRt& r, int pct, uint32_t color) {
   const float frac = constrain(pct, 0, 100) / 100.0f;
@@ -736,6 +804,19 @@ uint32_t prnTileKey(const TileRt& r, const PrinterState* s, bool online) {
       k.add((int32_t)s->layer);
       k.add((int32_t)(time(nullptr) / 60));  // "done 16:23"
       k.add((int32_t)netSettings.use24h);
+      {
+        const PrinterAlert a = printerAlert(*s);
+        const uint64_t key = a.key();
+        k.add(&key, sizeof(key));
+        k.add((int32_t)a.sev);
+      }
+      k.add((int32_t)printerCanceled(*s));
+      k.add((int32_t)s->door);
+      k.add((int32_t)s->hmsCount);
+      k.add((int32_t)(printerSettings.errors | printerSettings.errorsAll << 1));
+      k.add(prnLastKwh(d.printer, *s) * 1000);
+      k.add((int32_t)lroundf(printerSettings.kwhPrice * 1000));
+      k.add(printerSettings.currency);
       break;
     }
     case PS_NOZZLE:
@@ -901,10 +982,14 @@ void applyPrinterToTile(TileRt& r) {
       const bool paused = st == "PAUSE";
       const bool starting = running && !s->layer && !s->progress;
       const char* stage = running ? printerStageName(s->stage) : nullptr;
-      const char* state = !powered ? "Off" : !online ? "Connecting" : paused ? "Paused" :
+      const PrinterAlert alert = powered && online ? printerAlert(*s) : PrinterAlert{};
+      const bool canceled = powered && online && printerCanceled(*s);
+      const char* state = !powered ? "Off" : !online ? "Connecting" : alert.sev ? "Error" : paused ? "Paused" :
                           running ? (starting || st != "RUNNING" ? "Preparing" : "Printing") :
-                          st == "FINISH" ? "Done" : st == "FAILED" ? "Failed" : st == "IDLE" ? "Ready" : "Connecting";
-      const uint32_t color = !powered || !online ? 0x9AA3B2 : paused ? C_PRN_HEAT : running ? C_PRN_OK :
+                          st == "FINISH" ? "Done" : canceled ? "Canceled" : st == "FAILED" ? "Failed" :
+                          st == "IDLE" ? "Ready" : "Connecting";
+      const uint32_t color = !powered || !online ? 0x9AA3B2 : alert.sev ? hmsSeverityColor(alert.sev) :
+                             paused ? C_PRN_HEAT : running ? C_PRN_OK : canceled ? 0x9AA3B2 :
                              st == "FAILED" ? C_CRIT : st == "IDLE" || st == "FINISH" ? C_PRN_BLUE : 0x9AA3B2;
       lv_label_set_text(r.px[1], state);
       lv_obj_set_style_bg_color(r.px[0], lv_color_hex(color), 0);
@@ -943,6 +1028,8 @@ void applyPrinterToTile(TileRt& r) {
       const bool paused = st == "PAUSE";
       if (!online) {
         prnBadge(r, s && s->link == PRN_FAILED ? "OFFLINE" : "CONNECTING", 0x9AA3B2);
+        showObj(r.px[3], false);
+        lv_obj_remove_flag(r.obj, LV_OBJ_FLAG_CLICKABLE);
         lv_label_set_text(r.sub, s && s->link == PRN_FAILED ? s->err : "");
         lv_label_set_text(r.px[0], "--");
         lv_label_set_text(r.px[1], "");
@@ -969,24 +1056,37 @@ void applyPrinterToTile(TileRt& r) {
         b[0] = 0;
         if (now > 1609459200) {
           const time_t eta = now + (time_t)s->remainingMin * 60;
-          struct tm lt;
+          struct tm lt, today;
           localtime_r(&eta, &lt);
-          if (netSettings.use24h) snprintf(b, sizeof(b), "ETA %02d:%02d", lt.tm_hour, lt.tm_min);
-          else snprintf(b, sizeof(b), "ETA %d:%02d %s", (lt.tm_hour + 11) % 12 + 1, lt.tm_min, lt.tm_hour < 12 ? "AM" : "PM");
+          localtime_r(&now, &today);
+          char day[16] = "";  // "Tue 03 Nov " when it ends on another day
+          if (lt.tm_yday != today.tm_yday || lt.tm_year != today.tm_year) strftime(day, sizeof(day), "%a %d %b ", &lt);
+          if (netSettings.use24h) snprintf(b, sizeof(b), "ETA %s%02d:%02d", day, lt.tm_hour, lt.tm_min);
+          else snprintf(b, sizeof(b), "ETA %s%d:%02d %s", day, (lt.tm_hour + 11) % 12 + 1, lt.tm_min, lt.tm_hour < 12 ? "AM" : "PM");
         }
         lv_label_set_text(r.px[1], b);
         snprintf(b, sizeof(b), "%u%%", s->progress);
         lv_label_set_text(r.px[2], b);
         prnHeroSet(r, s->progress, paused ? C_PRN_HEAT : C_PRN_OK);
       } else {
-        const bool done = st == "FINISH", failed = st == "FAILED";
-        prnBadge(r, done ? "DONE" : failed ? "FAILED" : "READY", done ? C_PRN_BLUE : failed ? C_CRIT : 0x9AA3B2);
+        const bool done = st == "FINISH", failed = st == "FAILED", canceled = printerCanceled(*s);
+        prnBadge(r, done ? "DONE" : canceled ? "CANCELED" : failed ? "FAILED" : "READY",
+                 done ? C_PRN_BLUE : failed && !canceled ? C_CRIT : 0x9AA3B2);
         lv_label_set_text(r.sub, done || failed ? s->job : "");
-        lv_label_set_text(r.px[0], done ? "Finished" : failed ? "Stopped" : "Ready");
-        lv_label_set_text(r.px[1], "");
+        lv_label_set_text(r.px[0], done ? "Finished" : canceled ? "Canceled" : failed ? "Stopped" : "Ready");
+        lv_label_set_text(r.px[1], done || failed ? prnEnergyText(prnLastKwh(d.printer, *s)).c_str() : "");
         lv_label_set_text(r.px[2], done ? "100%" : "");
         prnHeroSet(r, done ? 100 : 0, C_PRN_BLUE);
       }
+      // An error takes the badge and the job line; the tile opens the list.
+      const PrinterAlert alert = printerAlert(*s);
+      if (alert.sev) {
+        prnBadge(r, "ERROR", hmsSeverityColor(alert.sev));
+        lv_label_set_text(r.sub, printerAlertText(alert).c_str());
+      }
+      showObj(r.px[3], s->door == 1);
+      if (printerSettings.errors && (s->hmsCount || alert.sev)) lv_obj_add_flag(r.obj, LV_OBJ_FLAG_CLICKABLE);
+      else lv_obj_remove_flag(r.obj, LV_OBJ_FLAG_CLICKABLE);
       break;
     }
     case PS_NOZZLE:
@@ -1113,6 +1213,15 @@ void printerTap(TileRt& r) {
     }
     return;
   }
+  if (d.show == PS_HERO) {
+    const PrinterState* s = printerFor(d);
+    if (!prnShown(s) || !printerSettings.errors ||
+        (!s->hmsCount && (!s->printError || printErrorIsCancel(s->printError))))
+      return;
+    const PrinterDef* p = printerDef(d.printer);
+    openPrinterErrors(p ? p->name : d.printer, *s);
+    return;
+  }
   if (d.show != PS_LIGHT) return;
   const PrinterState* s = printerFor(d);
   if (!s || s->link != PRN_ONLINE || !printerLight(d.printer, s->light != 1)) {
@@ -1122,6 +1231,170 @@ void printerTap(TileRt& r) {
   setTileOn(r, s->light != 1);  // optimistic; the next report confirms it
   lv_label_set_text(r.sub, s->light != 1 ? "On" : "Off");
   markPageStale(r.page);
+}
+
+// The printer's energy meter in kWh, NAN when it has none or no number.
+float prnEnergyNow(const PrinterDef& d) {
+  HaEntity e;
+  // A cached value from before an HA outage is not a reading.
+  if (!d.energy.length() || haLink() != HA_CONNECTED || !haGetEntity(d.energy, e) || !e.known) return NAN;
+  char* end = nullptr;
+  const float v = strtof(e.state.c_str(), &end);
+  if (end == e.state.c_str() || *end || !isfinite(v)) return NAN;
+  if (e.unit == "Wh") return v / 1000;
+  if (e.unit == "MWh") return v * 1000;
+  return v;
+}
+
+void prnEnergyLoad(PrnTrack& t) {
+  Preferences p;
+  if (!p.begin("prnkwh", false)) return;
+  const String key = "e_" + t.id;
+  if (p.getBytesLength(key.c_str()) == sizeof(PrnEnergy)) p.getBytes(key.c_str(), &t.energy, sizeof(PrnEnergy));
+  p.end();
+}
+
+void prnEnergySave(const PrnTrack& t) {
+  Preferences p;
+  if (!p.begin("prnkwh", false)) return;
+  p.putBytes(("e_" + t.id).c_str(), &t.energy, sizeof(PrnEnergy));
+  p.end();
+}
+
+// The track for a printer id; a free one (id no longer configured) is taken over.
+PrnTrack* prnTrackFor(const String& id) {
+  for (PrnTrack& t : s_track)
+    if (t.id == id) return &t;
+  for (PrnTrack& t : s_track) {
+    bool used = false;
+    for (const PrinterDef& d : s_cfg.printers) used |= t.id.length() && d.id == t.id;
+    if (used) continue;
+    t = PrnTrack{};
+    t.id = id;
+    return &t;
+  }
+  return nullptr;
+}
+
+void prnWake() {
+  presenceWake();
+  if (nightScreenOff()) wakeDisplayFromTouch();  // a 0% night screen gets its short peek
+}
+
+void printerToast() {
+  if (!s_prnToast.length() || frameActive()) return;
+  deckToastShow(s_prnToast.c_str(), 8000);
+  s_prnToast = "";
+}
+
+// An announced error is forgotten only once its source reports it gone, so a
+// settings toggle, an unavailable entity or a code pushed off the kept list
+// does not announce it again.
+void prnPrune(PrnTrack& t, const PrinterState& s) {
+  for (uint8_t i = 0; i < t.nAnnounced;) {
+    const uint64_t key = t.announced[i];
+    bool gone;
+    if (key >> 63) gone = s.printErrorKnown && s.printError != (uint32_t)key;
+    else {
+      bool present = false;
+      for (uint8_t j = 0; j < s.hmsCount && !present; j++) present = hmsKey(s.hms[j].attr, s.hms[j].code) == key;
+      gone = s.hmsKnown && !present && s.hmsTotal <= s.hmsCount;
+    }
+    if (!gone) { i++; continue; }
+    memmove(&t.announced[i], &t.announced[i + 1], (t.nAnnounced - i - 1) * sizeof(t.announced[0]));
+    t.nAnnounced--;
+  }
+}
+
+void prnAnnounce(PrnTrack& t, uint64_t key) {
+  if (t.nAnnounced == PRN_ANNOUNCED) {
+    memmove(&t.announced[0], &t.announced[1], (PRN_ANNOUNCED - 1) * sizeof(t.announced[0]));
+    t.nAnnounced--;
+  }
+  t.announced[t.nAnnounced++] = key;
+}
+
+// Job start / end edges (energy, bed cooled alert) and new errors, tracked per
+// printer id. The first state seen after boot only sets the baseline.
+void printerEvents() {
+  for (size_t i = 0; i < s_cfg.printers.size() && i < MAX_PRINTERS; i++) {
+    const PrinterDef& def = s_cfg.printers[i];
+    PrnTrack* tp = prnTrackFor(def.id);
+    if (!tp) continue;
+    PrnTrack& t = *tp;
+    if (!t.loaded) {
+      prnEnergyLoad(t);
+      t.loaded = true;
+    }
+    const PrinterState* s = s_prnHave[i] ? s_prn[i] : nullptr;
+    const bool shown = prnShown(s);
+    // A printer gone past the grace (plug off) drops its bed alert: a cold bed at power-on is no news.
+    if (!shown) t.cool = false;
+    if (!shown || !s->gcodeState[0]) continue;
+    const char* st = s->gcodeState;
+    const bool job = !strcmp(st, "RUNNING") || !strcmp(st, "PREPARE") || !strcmp(st, "SLICING") || !strcmp(st, "PAUSE");
+    const bool finished = !strcmp(st, "FINISH");
+    const uint32_t hash = prnJobHash(*s, def.energy);
+    if (job && !t.job) {
+      // A job seen first after boot keeps its start only if it is the same job on the same meter.
+      if (t.seen || t.energy.startHash != hash) {
+        t.energy.start = t.seen ? prnEnergyNow(def) : NAN;
+        t.energy.startHash = hash;
+      }
+      t.energy.last = NAN;
+      t.energy.lastHash = 0;
+      prnEnergySave(t);
+      t.startLive = t.seen;
+      t.cool = false;
+    } else if (job && t.startLive && t.energy.startHash != hash) {
+      t.energy.startHash = hash;
+      prnEnergySave(t);
+    }
+    if (t.seen && t.job && (finished || !strcmp(st, "FAILED"))) {
+      t.cool = finished && printerSettings.coolAlert;
+      const float to = prnEnergyNow(def);
+      const bool ok = t.energy.startHash == hash && isfinite(t.energy.start) && isfinite(to) && to >= t.energy.start;
+      t.energy.last = ok ? to - t.energy.start : NAN;
+      t.energy.lastHash = ok ? hash : 0;
+      t.energy.start = NAN;
+      t.energy.startHash = 0;
+      t.startLive = false;
+      prnEnergySave(t);
+      if (ok) Serial.printf("Printer %s: job used %.3f kWh\n", def.id.c_str(), t.energy.last);
+    }
+    t.seen = true;
+    t.job = job;
+    if (t.cool && (!printerSettings.coolAlert || job)) t.cool = false;
+    if (t.cool && isfinite(s->bed) && s->bed <= printerSettings.coolTemp) {
+      t.cool = false;
+      prnWake();
+      char b[64];
+      snprintf(b, sizeof(b), "%s: the bed has cooled to %.0f\xC2\xB0", def.name.c_str(), s->bed);
+      s_prnToast = b;
+      printerToast();
+    }
+    // A badge-worthy error that came after the baseline and was not announced yet.
+    prnPrune(t, *s);
+    PrinterAlert list[PRN_ALERT_MAX];
+    const uint8_t n = printerAlerts(*s, list, PRN_ALERT_MAX);
+    const PrinterAlert* fresh = nullptr;
+    for (uint8_t k = 0; k < n; k++) {
+      if (!list[k].fresh) continue;
+      bool known = false;
+      for (uint8_t j = 0; j < t.nAnnounced && !known; j++) known = t.announced[j] == list[k].key();
+      if (known) continue;
+      prnAnnounce(t, list[k].key());
+      if (!fresh) fresh = &list[k];
+    }
+    if (!fresh || !printerSettings.errorWake) continue;
+    Serial.printf("Printer %s: new error %08lX%08lX\n", def.id.c_str(), (unsigned long)fresh->attr, (unsigned long)fresh->code);
+    prnWake();
+    for (int p = 0; p < s_count; p++)
+      if (s_pages[p].def && s_pages[p].def->printer == def.id) {
+        autoNavTo(s_pages[p].def->id);
+        break;
+      }
+  }
 }
 
 // The shown page's hero runs its nozzle along the fill's edge while

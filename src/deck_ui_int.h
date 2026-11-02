@@ -369,6 +369,7 @@ void refreshModal();
 void openModal(int tileIdx);
 void onConfirmOk(lv_event_t*);
 void openConfirm(int tileIdx, bool hold);
+void openPrinterErrors(const String& title, const PrinterState& s);
 void pairSync();
 
 // deck_ui_fit.cpp
@@ -404,6 +405,9 @@ void makePrinterContent(TileRt& r, lv_obj_t* t);
 void fitPrinter(TileRt& r, int cw, int ch);
 void applyPrinterToTile(TileRt& r);
 void printerTap(TileRt& r);
+void printerEvents();
+void printerToast();
+void autoNavTo(const String& id);
 void heroTick();
 
 // deck_ui_prnfx.cpp

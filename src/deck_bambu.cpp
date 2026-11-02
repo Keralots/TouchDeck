@@ -252,6 +252,9 @@ struct Session {
   uint16_t trayNow = 255;
   TrayNames trayNames[PRN_AMS_UNITS][PRN_AMS_SLOTS], extNames;
   char taskId[32] = "";
+  HmsBaseline hmsBase;
+  bool printErrorSeen = false;
+  uint32_t ctrlMs = 0;  // last control publish, for refusals of our own commands
   Session(const PrinterConn& c, int i, uint32_t gen)
       : conn(c), index(i), generation(gen), io(tls, i, gen), mqtt(io) {}
   ~Session() { io.stop(); }
@@ -376,7 +379,8 @@ void report(void* context, const char* topic, const uint8_t* payload, size_t len
   for (const char* key : {"gcode_state", "subtask_name", "task_id", "mapping", "mc_percent",
                          "mc_remaining_time", "layer_num", "total_layer_num", "spd_lvl",
                          "nozzle_temper", "nozzle_target_temper", "bed_temper",
-                         "bed_target_temper", "chamber_temper", "lights_report", "stg_cur"}) pf[key] = true;
+                         "bed_target_temper", "chamber_temper", "lights_report", "stg_cur",
+                         "print_error", "hms", "stat", "home_flag"}) pf[key] = true;
   if (filter.overflowed()) { link(c, PRN_FAILED, "No PSRAM for JSON filter"); return; }
   const auto error = deserializeJson(doc, (const char*)payload, length,
                                     DeserializationOption::Filter(filter), DeserializationOption::NestingLimit(32));
@@ -462,6 +466,8 @@ void report(void* context, const char* topic, const uint8_t* payload, size_t len
     s.extPresent = s.ext.present;
   }
   activeTray(c);
+  char stateBefore[sizeof(s.gcodeState)];
+  strlcpy(stateBefore, s.gcodeState, sizeof(stateBefore));
   if (p["gcode_state"].is<const char*>()) {
     strlcpy(s.gcodeState, p["gcode_state"], sizeof(s.gcodeState));
     core = true;
@@ -515,6 +521,32 @@ void report(void* context, const char* topic, const uint8_t* payload, size_t len
     const char* mode = light["mode"];
     if (!strcmp(node, "chamber_light") && mode) s.light = strcmp(mode, "off") ? 1 : 0;
     if (!strcmp(node, "chamber_light2")) c.secondLight = true;
+  }
+  // Door sensor (BambuHelper): H2 dual nozzle and P2S in "stat", X1C / X1E in home_flag; P1 / A1 have none.
+  const bool homeFlagDoor = c.conn.serial.startsWith("00M") || c.conn.serial.startsWith("03W");
+  if (homeFlagDoor && number(p["home_flag"]))
+    s.door = ((int64_t)p["home_flag"].as<double>() >> 23) & 1;
+  else if (!homeFlagDoor && (s.dualNozzle || c.conn.serial.startsWith("22E")) && p["stat"].is<const char*>())
+    s.door = (strtoull(p["stat"], nullptr, 16) & 0x00800000ULL) ? 1 : 0;
+  if (p["print_error"].is<uint32_t>()) {
+    const uint32_t pe = p["print_error"].as<uint32_t>();
+    if (pe != s.printError) s.printErrorFresh = c.printErrorSeen && pe;
+    s.printError = pe;
+    s.printErrorKnown = true;
+    c.printErrorSeen = true;
+  }
+  printerCancelTrack(s, stateBefore);
+  if (p["hms"].is<JsonArrayConst>()) {
+    uint64_t keys[32];
+    size_t n = 0;
+    for (JsonObjectConst e : p["hms"].as<JsonArrayConst>())
+      if (n < 32 && e["attr"].is<uint32_t>() && e["code"].is<uint32_t>())
+        keys[n++] = hmsKey(e["attr"].as<uint32_t>(), e["code"].as<uint32_t>());
+    HmsContext ctx;
+    ctx.doorShown = s.door >= 0;
+    ctx.ownCommandRecent = c.ctrlMs && millis() - c.ctrlMs < HMS_OWN_CMD_MS;
+    hmsReport(s, c.hmsBase, keys, n, ctx);
+    s.hmsKnown = true;
   }
   s.lastReportMs = millis();
   if (core) c.lastCore = s.lastReportMs;
@@ -614,6 +646,7 @@ void service(Session& c) {
     }
   }
   if (light >= 0) {
+    c.ctrlMs = millis() | 1;
     bool ok = sendLight(c, "chamber_light", light);
     if (c.secondLight || c.state.dualNozzle) ok = sendLight(c, "chamber_light2", light) && ok;
     if (!ok) failed(c, "Light publish failed");

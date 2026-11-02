@@ -685,7 +685,20 @@ void printerSync() {
   if (graceOver) s_prnGraceAt = 0;
   s_prnSeen = v;
   readPrinters();
+  printerEvents();
   for (TileRt& r : s_tiles) applyPrinterToTile(r);
+  printerToast();
+}
+
+// Under the photo frame only the printer events run (a new error or the bed
+// cooling wakes the deck); the tiles follow once the frame is gone.
+uint32_t s_prnWatchSeen = 0;
+void printerWatch() {
+  const uint32_t v = printersVersion();
+  if (v == s_prnWatchSeen) return;
+  s_prnWatchSeen = v;
+  readPrinters();
+  printerEvents();
 }
 
 String s_autoFrom;  // the page shown before an "auto" page took over
@@ -706,6 +719,12 @@ void autoNavTick() {
   if (i >= 0 && i != sh.active && !sh.valid[i] && !late) return;
   if (i >= 0 && i != sh.active) goToPage(s_autoTo);
   s_autoTo = "";
+}
+
+// Same slide for a printer error (printerEvents); the "auto" return stays as it was.
+void autoNavTo(const String& id) {
+  s_autoTo = id;
+  s_autoUntil = millis() + AUTO_WAIT_MS;
 }
 
 // A "when" tile or page whose condition flipped rebuilds the pages. A page
@@ -945,6 +964,7 @@ void deckTick() {
   if (compOwnsScreen()) return;
 
   if (frameActive()) {
+    printerWatch();
     frameTick();
     if (!compOwnsScreen()) {
       dailyBarSync();
@@ -1434,3 +1454,5 @@ bool uiPanelIsOpen() {
 }
 
 }  // namespace deck
+
+void deckPrinterSettingsChanged() { deckui::s_prnSeen = 0; }

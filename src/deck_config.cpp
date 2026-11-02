@@ -261,6 +261,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
     d.name = (const char*)(pv["name"] | "");
     d.ip = (const char*)(pv["ip"] | "");
     d.plug = (const char*)(pv["plug"] | "");
+    d.energy = (const char*)(pv["energy"] | "");
     d.ha = !strcmp(pv["source"] | "lan", "ha");
     d.serial = (const char*)(pv["serial"] | "");
     // The id names NVS keys ("s_<id>"): short and plain.
@@ -277,6 +278,10 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
     }
     if (d.plug.length() && !d.plug.startsWith("switch.") && !d.plug.startsWith("input_boolean.")) {
       if (err) *err = "printer '" + d.id + "' plug must be a switch or input_boolean";
+      return false;
+    }
+    if (d.energy.length() && !d.energy.startsWith("sensor.")) {
+      if (err) *err = "printer '" + d.id + "' energy must be a sensor";
       return false;
     }
     if (cfg.printers.size() >= MAX_PRINTERS) {

@@ -14,7 +14,7 @@ constexpr uint32_t RETRY_MS = 30000;  // a failed lookup is tried again after th
 enum Field : uint8_t {
   F_STATUS, F_STAGE, F_PROGRESS, F_REMAIN, F_LAYER, F_LAYERS, F_TASK, F_SPEED,
   F_NOZZLE, F_NOZZLE_T, F_LNOZ, F_LNOZ_T, F_RNOZ, F_RNOZ_T, F_BED, F_BED_T, F_CHAMBER,
-  F_ONLINE, F_LIGHT, F_WEIGHT, F_SIDE,
+  F_ONLINE, F_LIGHT, F_WEIGHT, F_SIDE, F_HMS, F_PERR, F_DOOR,
   F_HUM, F_ATEMP, F_DRY, F_TRAY,  // per AMS unit
   F_EXT,
 };
@@ -35,7 +35,8 @@ const KeyField kPrinterKeys[] = {
     {"bed_temp", "sensor", F_BED},              {"target_bed_temp", "sensor", F_BED_T},
     {"chamber_temp", "sensor", F_CHAMBER},      {"online", "binary_sensor", F_ONLINE},
     {"chamber_light", "light", F_LIGHT},        {"print_weight", "sensor", F_WEIGHT},
-    {"active_nozzle", "sensor", F_SIDE},
+    {"active_nozzle", "sensor", F_SIDE},        {"hms", "binary_sensor", F_HMS},
+    {"print_error", "binary_sensor", F_PERR},   {"door_open", "binary_sensor", F_DOOR},
 };
 const KeyField kAmsKeys[] = {
     {"humidity", "sensor", F_HUM},
@@ -110,6 +111,13 @@ struct Printer {
   bool jobMap = false;  // subtask_name's ams_mapping fills s.map, else print_weight does
   uint8_t weightCount = 0;
   uint16_t weight[PRN_MAP_MAX];
+  // hms attributes "N-Code" by N (1-based), and print_error's "code".
+  static constexpr uint8_t HMS_IDX = 24;
+  uint64_t hmsIdx[HMS_IDX + 1] = {};
+  int8_t hmsOn = -1, perrOn = -1;  // entity state, -1 = unavailable
+  uint32_t perrCode = 0, perrLast = 0;  // attribute, last available value
+  bool perrSeen = false, perrFresh = false;
+  HmsBaseline hmsBase;
 };
 
 Printer s_prn[PRN_MAX];
@@ -155,6 +163,11 @@ void resetState(Printer& p) {
   p.side = -1;
   p.jobMap = false;
   p.weightCount = 0;
+  memset(p.hmsIdx, 0, sizeof(p.hmsIdx));
+  p.hmsOn = p.perrOn = -1;
+  p.perrCode = p.perrLast = 0;
+  p.perrSeen = p.perrFresh = false;
+  p.hmsBase.reset();
 }
 
 void freeState(Printer& p) {
@@ -308,13 +321,75 @@ void lookupDone(uint32_t tag, bool ok, const HaRegEntry* list, size_t count, con
 
 // --- Live state -----------------------------------------------------------------
 
+bool unusable(const char* s) { return !s || !strcmp(s, "unavailable") || !strcmp(s, "unknown"); }
+
+// "HMS_0300_0100_0001_0007" / "0300_0100_0001_0007" -> key, 0 when malformed.
+uint64_t hmsCodeKey(const char* t) {
+  if (!strncmp(t, "HMS_", 4)) t += 4;
+  unsigned a, b, c, d;
+  char tail;
+  if (sscanf(t, "%4x_%4x_%4x_%4x%c", &a, &b, &c, &d, &tail) != 4) return 0;
+  return hmsKey((a << 16) | b, (c << 16) | d);
+}
+
+// hms: attributes "1-Code" .. "N-Code", with deltas for changed and removed keys.
+void hmsMap(Printer& p, const char* st, JsonObjectConst a, bool full, JsonArrayConst removed) {
+  PrinterState& s = *p.st;
+  auto index = [](const char* k) {
+    char* end;
+    const long n = strtol(k, &end, 10);
+    return n >= 1 && n <= Printer::HMS_IDX && !strcmp(end, "-Code") ? (int)n : 0;
+  };
+  if (full) memset(p.hmsIdx, 0, sizeof(p.hmsIdx));
+  for (JsonVariantConst k : removed)
+    if (const int n = index(k | "")) p.hmsIdx[n] = 0;
+  for (JsonPairConst kv : a)
+    if (const int n = index(kv.key().c_str())) p.hmsIdx[n] = hmsCodeKey(kv.value() | "");
+  if (st) p.hmsOn = unusable(st) ? -1 : !strcmp(st, "on");
+  // Unavailable is not "no errors": the baseline waits for a real report.
+  s.hmsKnown = p.hmsOn >= 0;
+  if (p.hmsOn < 0) { s.hmsCount = s.hmsTotal = 0; return; }
+  uint64_t keys[Printer::HMS_IDX];
+  size_t n = 0;
+  for (int i = 1; p.hmsOn && i <= Printer::HMS_IDX; i++)
+    if (p.hmsIdx[i]) keys[n++] = p.hmsIdx[i];
+  HmsContext ctx;
+  ctx.doorShown = s.door >= 0;
+  hmsReport(s, p.hmsBase, keys, n, ctx);
+}
+
+// print_error: state on/off, attribute "code" "0700_8006".
+void printErrorMap(Printer& p, const char* st, JsonObjectConst a, bool full, JsonArrayConst removed) {
+  PrinterState& s = *p.st;
+  if (full) p.perrCode = 0;
+  for (JsonVariantConst k : removed)
+    if (!strcmp(k | "", "code")) p.perrCode = 0;
+  if (!a.isNull() && a["code"].is<const char*>()) {
+    unsigned hi, lo;
+    char tail;
+    p.perrCode = sscanf(a["code"], "%4x_%4x%c", &hi, &lo, &tail) == 2 ? (hi << 16) | lo : 0;
+  }
+  if (st) p.perrOn = unusable(st) ? -1 : !strcmp(st, "on");
+  // Unavailable shows nothing; the value it comes back with is judged against the last real one.
+  s.printErrorKnown = p.perrOn >= 0;
+  if (p.perrOn < 0) {
+    s.printError = 0;
+    s.printErrorFresh = false;
+    return;
+  }
+  const uint32_t pe = p.perrOn ? p.perrCode : 0;
+  if (pe != p.perrLast) p.perrFresh = p.perrSeen && pe;
+  p.perrLast = pe;
+  p.perrSeen = true;
+  s.printError = pe;
+  s.printErrorFresh = p.perrFresh;
+}
+
 float num(const char* s) {
   char* end = nullptr;
   const float v = s ? strtof(s, &end) : NAN;
   return s && end != s && !*end && isfinite(v) ? v : NAN;
 }
-
-bool unusable(const char* s) { return !s || !strcmp(s, "unavailable") || !strcmp(s, "unknown"); }
 
 // "Bambu PLA Basic" -> "PLA Basic", "Generic PETG" -> "PETG", like tray_sub_brands.
 void trayName(char* out, size_t n, const char* name) {
@@ -448,6 +523,8 @@ void apply(Printer& p, Bind& b, JsonObjectConst ev, bool full) {
     else if (!strcmp(u, "d")) b.scale = 1440;
   }
   const float v = num(st);
+  char stateBefore[sizeof(s.gcodeState)];
+  strlcpy(stateBefore, s.gcodeState, sizeof(stateBefore));
   switch (b.field) {
     case F_STATUS:
       if (!st) break;
@@ -494,6 +571,15 @@ void apply(Printer& p, Bind& b, JsonObjectConst ev, bool full) {
       break;
     case F_LIGHT: if (st) s.light = !strcmp(st, "on") ? 1 : !strcmp(st, "off") ? 0 : -1; break;
     case F_WEIGHT: weightMap(p, a, full, removed); break;
+    case F_HMS: hmsMap(p, st, a, full, removed); break;
+    case F_PERR: printErrorMap(p, st, a, full, removed); break;
+    case F_DOOR: {
+      if (!st) break;
+      const bool had = s.door >= 0;
+      s.door = unusable(st) ? -1 : !strcmp(st, "on");
+      if (had != (s.door >= 0)) hmsMap(p, nullptr, JsonObjectConst(), false, JsonArrayConst());
+      break;
+    }
     case F_SIDE:
       if (!st) break;
       p.side = !strcmp(st, "left") ? 1 : !strcmp(st, "right") ? 0 : -1;
@@ -512,6 +598,7 @@ void apply(Printer& p, Bind& b, JsonObjectConst ev, bool full) {
       activeTray(p);
       break;
   }
+  if (b.field == F_STATUS || b.field == F_PERR) printerCancelTrack(s, stateBefore);
   if (p.online) s.lastReportMs = millis();
 }
 

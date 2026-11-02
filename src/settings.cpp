@@ -14,6 +14,7 @@ LedSettings ledSettings;
 AdvancedSettings advSettings = {};
 PresenceSettings presenceSettings;
 HapticSettings hapticSettings;
+PrinterSettings printerSettings;
 
 bool validFrameEvery(int minutes) {
   return minutes == 1 || minutes == 2 || minutes == 5 || minutes == 10 || minutes == 15 || minutes == 30;
@@ -189,6 +190,14 @@ void loadSettings() {
   dispSettings.fxPage = min<uint8_t>(prefs.getUChar("fxpage", 0), 4);
   dispSettings.fxCard = min<uint8_t>(prefs.getUChar("fxcard", 0), 3);
   advSettings.printers = prefs.getBool("prn", false);
+  printerSettings.errors = prefs.getBool("perr", true);
+  printerSettings.errorsAll = prefs.getBool("perrall", false);
+  printerSettings.errorWake = prefs.getBool("pwake", true);
+  printerSettings.coolAlert = prefs.getBool("pcool", true);
+  printerSettings.coolTemp = constrain(prefs.getUChar("pcoolt", 35), PRN_COOL_MIN, PRN_COOL_MAX);
+  printerSettings.kwhPrice = prefs.isKey("pkwh") ? prefs.getFloat("pkwh", 0) : 0;  // getFloat logs a missing key
+  if (!isfinite(printerSettings.kwhPrice) || printerSettings.kwhPrice < 0) printerSettings.kwhPrice = 0;
+  if (prefs.isKey("pcur")) prefs.getString("pcur", printerSettings.currency, sizeof(printerSettings.currency));
   if (prefs.getBytesLength("net") == sizeof(NetworkSettings))
     prefs.getBytes("net", &netSettings, sizeof(NetworkSettings));
   if (prefs.getBytesLength("backlight") == sizeof(BacklightSettings)) {
@@ -284,6 +293,13 @@ void saveSettings() {
   prefs.putUChar("fxpage", dispSettings.fxPage);
   prefs.putUChar("fxcard", dispSettings.fxCard);
   prefs.putBool("prn", advSettings.printers);
+  prefs.putBool("perr", printerSettings.errors);
+  prefs.putBool("perrall", printerSettings.errorsAll);
+  prefs.putBool("pwake", printerSettings.errorWake);
+  prefs.putBool("pcool", printerSettings.coolAlert);
+  prefs.putUChar("pcoolt", printerSettings.coolTemp);
+  prefs.putFloat("pkwh", printerSettings.kwhPrice);
+  prefs.putString("pcur", printerSettings.currency);
   prefs.putBytes("net", &netSettings, sizeof(NetworkSettings));
   prefs.putBytes("backlight", &backlightSettings, sizeof(BacklightSettings));
   prefs.putBytes("led", &ledSettings, sizeof(LedSettings));

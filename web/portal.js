@@ -406,6 +406,18 @@
     setCheck("mqttClearPass", false);
     setVal("mqttPrefix", mqtt.prefix || "homeassistant");
     window.snPrn = !!adv.printers;
+    {
+      const np = $("navPrinters");
+      if (np) np.classList.toggle("hidden", !(c.deck && adv.printers));
+      const pr = c.printers || {};
+      setCheck("prnErrors", pr.errors !== false);
+      setCheck("prnErrorsAll", !!pr.errorsAll);
+      setCheck("prnErrorWake", pr.errorWake !== false);
+      setCheck("prnCool", pr.coolAlert !== false);
+      setVal("prnCoolTemp", pr.coolTemp || 35);
+      setVal("prnKwhPrice", pr.kwhPrice ? String(pr.kwhPrice) : "");
+      setVal("prnCurrency", pr.currency || "");
+    }
     if (window.dkPrnSync) window.dkPrnSync();
     setVal("timeFormat", c.clock.use24h ? "24" : "12");
     setVal("timezone", c.clock.timezone || "");

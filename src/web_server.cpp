@@ -127,6 +127,8 @@ static void sendJsonMessage(int status, bool ok, const char* message,
   server.send(status, "application/json", out);
 }
 
+static void printerSettingsJson(JsonObject o);
+
 static long clampedArg(const char* name, long current, long minValue, long maxValue) {
   if (!server.hasArg(name)) return current;
   long value = server.arg(name).toInt();
@@ -236,6 +238,7 @@ static void handleApiConfig() {
   led["offlineOff"] = ledSettings.offlineOff != 0;
   led["entity"] = deckLedEntity();
   doc["advanced"]["printers"] = advSettings.printers;
+  printerSettingsJson(doc["printers"].to<JsonObject>());
   mqttConfigJson(doc["mqtt"].to<JsonObject>(), true);
   presenceJson(doc["presence"].to<JsonObject>());
   JsonArray ledPins = led["allowedPins"].to<JsonArray>();
@@ -366,6 +369,7 @@ static void handleConfigExport() {
   haptic["strength"] = hapticSettings.strength;
   haptic["pulseMs"] = hapticSettings.pulseMs;
   doc["advanced"]["printers"] = advSettings.printers;
+  printerSettingsJson(doc["printers"].to<JsonObject>());
   mqttConfigJson(doc["mqtt"].to<JsonObject>(), false);
   presenceJson(doc["presence"].to<JsonObject>());
 
@@ -448,6 +452,32 @@ static bool readBackupString(JsonObjectConst object, const char* key,
   out = value.as<const char*>();
   if (!out || strlen(out) > maxLength)
     return backupFieldError(error, path, "text is too long");
+  return true;
+}
+
+// Printers page settings, in /api/config and the backup.
+static void printerSettingsJson(JsonObject o) {
+  o["errors"] = printerSettings.errors;
+  o["errorsAll"] = printerSettings.errorsAll;
+  o["errorWake"] = printerSettings.errorWake;
+  o["coolAlert"] = printerSettings.coolAlert;
+  o["coolTemp"] = printerSettings.coolTemp;
+  o["kwhPrice"] = printerSettings.kwhPrice;
+  o["currency"] = printerSettings.currency;
+}
+
+// Price per kWh: "0.85" or "0,85", 0..100, empty = 0; false when malformed.
+static bool parsePrice(String v, float& out) {
+  v.trim();
+  v.replace(",", ".");
+  if (!v.length()) {
+    out = 0;
+    return true;
+  }
+  char* end = nullptr;
+  const float f = strtof(v.c_str(), &end);
+  if (!end || *end || !isfinite(f) || f < 0 || f > 100) return false;
+  out = f;
   return true;
 }
 
@@ -678,6 +708,27 @@ static void handleConfigImport() {
   bool nextPrinters = false;  // backups from before the Advanced page: the default
   JsonObjectConst advanced = root["advanced"].as<JsonObjectConst>();
   if (!advanced.isNull() && !advanced["printers"].isNull()) READ_BOOL(advanced, "printers", nextPrinters);
+  PrinterSettings nextPrn;  // older backups: the defaults
+  JsonObjectConst prnIn = root["printers"].as<JsonObjectConst>();
+  if (!prnIn.isNull()) {
+    READ_BOOL(prnIn, "errors", nextPrn.errors);
+    READ_BOOL(prnIn, "errorsAll", nextPrn.errorsAll);
+    READ_BOOL(prnIn, "errorWake", nextPrn.errorWake);
+    READ_BOOL(prnIn, "coolAlert", nextPrn.coolAlert);
+    READ_INT(prnIn, "coolTemp", PRN_COOL_MIN, PRN_COOL_MAX, nextPrn.coolTemp, uint8_t);
+    JsonVariantConst price = prnIn["kwhPrice"], cur = prnIn["currency"];
+    const float p = price.as<float>();
+    if (!price.isNull() && (!price.is<float>() || !isfinite(p) || p < 0 || p > 100)) {
+      sendJsonMessage(400, false, "printers.kwhPrice must be a number 0..100");
+      return;
+    }
+    if (!cur.isNull() && (!cur.is<const char*>() || strlen(cur.as<const char*>()) >= sizeof(nextPrn.currency))) {
+      sendJsonMessage(400, false, "printers.currency must be text of up to 7 bytes");
+      return;
+    }
+    nextPrn.kwhPrice = price.isNull() ? 0 : p;
+    strlcpy(nextPrn.currency, cur | "", sizeof(nextPrn.currency));
+  }
   PresenceSettings nextPresence;  // older backups: never sleeps
   JsonObjectConst presence = root["presence"].as<JsonObjectConst>();
   if (!presence.isNull()) {
@@ -762,6 +813,7 @@ static void handleConfigImport() {
   hapticSettings = nextHaptic;
   brightness = nextBrightness;
   advSettings.printers = nextPrinters;
+  printerSettings = nextPrn;
   presenceSettings = nextPresence;
   saveSettings();
   deckSetHeader(nextHeader);
@@ -928,6 +980,31 @@ static void handleHapticTest() {
     return;
   }
   sendJsonMessage(200, true, "Pulse sent.");
+}
+
+// Printers page: errors, bed cooled alert, energy price.
+static void handleSavePrinters() {
+  PrinterSettings next = printerSettings;
+  next.errors = server.hasArg("prnErrors");
+  next.errorsAll = server.hasArg("prnErrorsAll");
+  next.errorWake = server.hasArg("prnErrorWake");
+  next.coolAlert = server.hasArg("prnCool");
+  next.coolTemp = (uint8_t)clampedArg("prnCoolTemp", next.coolTemp, PRN_COOL_MIN, PRN_COOL_MAX);
+  if (!parsePrice(server.arg("prnKwhPrice"), next.kwhPrice)) {
+    sendJsonMessage(400, false, "Price per kWh must be a number from 0 to 100");
+    return;
+  }
+  String cur = server.arg("prnCurrency");
+  cur.trim();
+  if (cur.length() >= sizeof(next.currency)) {
+    sendJsonMessage(400, false, "Currency: up to 7 bytes");
+    return;
+  }
+  strlcpy(next.currency, cur.c_str(), sizeof(next.currency));
+  printerSettings = next;
+  saveSettings();
+  deckPrinterSettingsChanged();
+  sendJsonMessage(200, true, "Printer settings saved.");
 }
 
 // The card is mounted only at boot, so a change restarts.
@@ -2258,6 +2335,7 @@ void initWebServer() {
   server.on("/save/wallpapers", HTTP_POST, handleSaveWallpapers);
   server.on("/save/light", HTTP_POST, handleSaveLight);
   server.on("/save/advanced", HTTP_POST, handleSaveAdvanced);
+  server.on("/save/printers", HTTP_POST, handleSavePrinters);
   server.on("/led/preview", HTTP_POST, handleLedPreview);
   server.on("/haptic/test", HTTP_POST, handleHapticTest);
   server.on("/save/clock", HTTP_POST, handleSaveClock);
