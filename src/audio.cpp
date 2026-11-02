@@ -241,11 +241,17 @@ Clip* renderTone(uint16_t hz, uint16_t ms) {
   Clip* c = newClip(frames, SYNTH_RATE);
   if (!c) return nullptr;
   const uint32_t ramp = SYNTH_RATE * 5 / 1000;
+  // Recursive oscillator: sinf() of a growing argument took ~300 ms per second of tone.
+  const float w = 2.0f * (float)M_PI * hz / SYNTH_RATE, cw = cosf(w), sw = sinf(w);
+  float s = 0.0f, co = 1.0f;
   for (uint32_t i = 0; i < frames; i++) {
     float a = 1.0f;
     if (i < ramp) a = (float)i / ramp;
     else if (frames - i < ramp) a = (float)(frames - i) / ramp;
-    c->pcm[i] = (int16_t)(sinf(2.0f * (float)M_PI * hz * i / SYNTH_RATE) * 26000.0f * a);
+    c->pcm[i] = (int16_t)(s * 26000.0f * a);
+    const float ns = s * cw + co * sw;
+    co = co * cw - s * sw;
+    s = ns;
   }
   return c;
 }
