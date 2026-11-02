@@ -1455,6 +1455,17 @@ static void handleApiStatus() {
   doc["board"]   = BOARD_VARIANT;
   doc["ip"]      = WiFi.localIP().toString();
   doc["screen"]  = screenName(getScreenState());
+#if defined(BOARD_WIFI_ESP_HOSTED)
+  // The WiFi co-processor's firmware against the one this build expects.
+  if (hostedIsInitialized()) {
+    uint32_t a, b, c, x, y, z;
+    hostedGetSlaveVersion(&a, &b, &c);
+    hostedGetHostVersion(&x, &y, &z);
+    JsonObject co = doc["coprocessor"].to<JsonObject>();
+    co["firmware"] = String(a) + "." + b + "." + c;
+    co["expected"] = String(x) + "." + y + "." + z;
+  }
+#endif
   const PcSource* pc0 = pcSource("");
   doc["pc_online"] = pcAnyOnline();
   doc["pc_status"] = pc0 ? pc0->data.status : PC_STATUS_OK;

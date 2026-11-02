@@ -9,6 +9,10 @@
 #define BOARD_VARIANT "ws_p4_7b"
 #define BOARD_NAME "Waveshare_ESP32-P4-WIFI6-Touch-LCD-7B"
 
+// --- WiFi: ESP32-C6 over ESP-Hosted SDIO (CLK 18, CMD 19, D0-D3 14-17,
+// reset 54), the pins Arduino's esp32p4 variant already uses ---
+#define BOARD_WIFI_ESP_HOSTED 1
+
 // --- Display: MIPI-DSI video mode (deck_panel_dsi.cpp) ---
 #define BOARD_DISPLAY_MIPI_DSI 1
 #define BOARD_PANEL_W 1024
