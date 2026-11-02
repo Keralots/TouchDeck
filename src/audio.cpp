@@ -23,6 +23,9 @@ constexpr uint32_t AMP_SETTLE_MS = 30;
 constexpr uint32_t MAX_CLIP_FRAMES = 1024 * 1024;  // 2 MB of mono PCM
 constexpr uint32_t CACHE_MAX_BYTES = 256 * 1024;   // larger file clips load per play
 constexpr int FILE_CACHE = 3;
+// Playing outranks deck_build (15) on core 0, which otherwise starves the
+// 46 ms DMA ring during photo frame transitions; loading and synthesis stay low.
+constexpr UBaseType_t PRIO_WORK = 2, PRIO_PLAY = 17;
 
 struct Clip {
   int16_t* pcm;  // mono, PSRAM
@@ -445,7 +448,9 @@ void audioTask(void*) {
     bool owned;
     Clip* c = clipFor(r, owned);
     if (!c) continue;
+    vTaskPrioritySet(nullptr, PRIO_PLAY);
     playClip(c, r.gain, r.reqMs, buf);
+    vTaskPrioritySet(nullptr, PRIO_WORK);
     if (owned) freeClip(c);
   }
 }
@@ -453,7 +458,7 @@ void audioTask(void*) {
 bool startTask() {
   if (s_task) return true;
   // Internal stack: the LittleFS fallback reads flash, which a PSRAM stack must not do.
-  if (xTaskCreatePinnedToCore(audioTask, "audio", 4096, nullptr, 3, &s_task, 0) != pdPASS) {
+  if (xTaskCreatePinnedToCore(audioTask, "audio", 4096, nullptr, PRIO_WORK, &s_task, 0) != pdPASS) {
     s_task = nullptr;
     return false;
   }
