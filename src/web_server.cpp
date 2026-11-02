@@ -747,19 +747,19 @@ static void handleConfigImport() {
     strlcpy(nextPrn.currency, cur | "", sizeof(nextPrn.currency));
   }
   AudioSettings nextAudio;  // older backups: speaker off
-  JsonObjectConst audioIn = root["audio"].as<JsonObjectConst>();
-  if (!audioIn.isNull()) {
-    READ_BOOL(audioIn, "enabled", nextAudio.enabled);
-    READ_INT(audioIn, "volume", 0, 100, nextAudio.volume, uint8_t);
-    READ_BOOL(audioIn, "nightMute", nextAudio.nightMute);
-    READ_BOOL(audioIn, "click", nextAudio.click);
-    READ_BOOL(audioIn, "finished", nextAudio.finished);
-    READ_BOOL(audioIn, "error", nextAudio.error);
-    READ_BOOL(audioIn, "cooled", nextAudio.cooled);
+  JsonObjectConst audio = root["audio"].as<JsonObjectConst>();
+  if (!audio.isNull()) {
+    READ_BOOL(audio, "enabled", nextAudio.enabled);
+    READ_INT(audio, "volume", 0, 100, nextAudio.volume, uint8_t);
+    READ_BOOL(audio, "nightMute", nextAudio.nightMute);
+    READ_BOOL(audio, "click", nextAudio.click);
+    READ_BOOL(audio, "finished", nextAudio.finished);
+    READ_BOOL(audio, "error", nextAudio.error);
+    READ_BOOL(audio, "cooled", nextAudio.cooled);
     const char* const keys[] = {"fileFinished", "fileError", "fileCooled"};
     char* const targets[] = {nextAudio.fileFinished, nextAudio.fileError, nextAudio.fileCooled};
     for (int i = 0; i < 3; i++) {
-      const char* v = audioIn[keys[i]] | "";
+      const char* v = audio[keys[i]] | "";
       if (*v && !audioValidName(v)) {
         sendJsonMessage(400, false, "audio sound files must be .wav names");
         return;
@@ -1095,6 +1095,7 @@ static void handleAudioStop() {
 
 static File audioUpload;
 static String audioUploadError;
+static bool audioUploadDone;
 static uint64_t audioUploadRoom;
 static constexpr uint32_t AUDIO_MAX_UPLOAD = 4u * 1024 * 1024;
 static String audioUploadPath() { return String(audioDir()) + "/upload.up"; }
@@ -1104,6 +1105,7 @@ static void handleAudioUpload() {
   HTTPUpload& up = server.upload();
   if (up.status == UPLOAD_FILE_START) {
     audioUploadError = "";
+    audioUploadDone = false;
     if (audioUpload) audioUpload.close();
     if (!deck::wallOnSd() && !deck::deckFsReady()) audioUploadError = "file system not available";
     else if (!audioValidName(server.arg("n"))) audioUploadError = "the name must be letters, digits, - _ . and end in .wav";
@@ -1125,28 +1127,33 @@ static void handleAudioUpload() {
   } else if (up.status == UPLOAD_FILE_END || up.status == UPLOAD_FILE_ABORTED) {
     if (audioUpload) audioUpload.close();
     if (up.status == UPLOAD_FILE_ABORTED) audioUploadError = "upload aborted";
+    audioUploadDone = up.status == UPLOAD_FILE_END && !audioUploadError.length();
   }
 }
 
 static void handleAudioUploadFinish() {
   const String name = server.arg("n");
   String err = audioUploadError;
+  const bool done = audioUploadDone;
   audioUploadError = "";
-  if (!err.length() && !multipartRequest()) err = "expected a WAV file upload";
-  const String path = String(audioDir()) + "/" + name;
-  if (!err.length()) {
-    deck::wallFs().remove(path);
-    if (!deck::wallFs().rename(audioUploadPath(), path)) err = "could not store the file";
-  }
+  audioUploadDone = false;
+  if (!err.length() && (!multipartRequest() || !done)) err = "expected a WAV file upload";
+  if (!err.length() && !audioValidName(name)) err = "the name must be letters, digits, - _ . and end in .wav";
+  // The upload is checked before it replaces a stored sound of the same name.
   uint32_t rate, ms;
   uint8_t ch;
-  if (!err.length() && !audioProbe(name, rate, ch, ms, err)) deck::wallFs().remove(path);
+  if (!err.length()) audioProbeFile(audioUploadPath(), rate, ch, ms, err);
+  if (!err.length()) {
+    const String path = String(audioDir()) + "/" + name;
+    deck::wallFs().remove(path);
+    if (!deck::wallFs().rename(audioUploadPath(), path)) err = "could not store the file";
+    audioFilesChanged();
+  }
   if (err.length()) {
     deck::wallFs().remove(audioUploadPath());
     sendJsonMessage(400, false, err.c_str());
     return;
   }
-  audioFilesChanged();
   sendJsonMessage(200, true, "Sound stored.");
 }
 

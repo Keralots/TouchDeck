@@ -23,6 +23,7 @@ const char* audioDir();
 bool audioValidName(const String& name);
 // Opens a WAV and checks its header; ms = duration.
 bool audioProbe(const String& name, uint32_t& rate, uint8_t& channels, uint32_t& ms, String& err);
+bool audioProbeFile(const String& path, uint32_t& rate, uint8_t& channels, uint32_t& ms, String& err);
 // After an upload or delete: cached file clips are dropped.
 void audioFilesChanged();
 void audioStatusJson(JsonObject o);

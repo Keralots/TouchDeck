@@ -266,6 +266,8 @@ bool wavHeader(File& f, WavInfo& w, String& err) {
   bool haveFmt = false;
   while (f.read(h, 8) == 8) {
     const uint32_t sz = rd32(h + 4);
+    // 64-bit: a chunk size near 4 GB must not wrap the seek back.
+    const uint64_t next = (uint64_t)f.position() + sz + (sz & 1);
     if (!memcmp(h, "fmt ", 4) && sz >= 16) {
       if (f.read(h, 16) != 16) break;
       fmt = rd16(h);
@@ -273,7 +275,7 @@ bool wavHeader(File& f, WavInfo& w, String& err) {
       rate = rd32(h + 4);
       bits = rd16(h + 14);
       haveFmt = true;
-      if (!f.seek(f.position() + (sz - 16) + (sz & 1))) break;
+      if (next > f.size() || !f.seek((uint32_t)next)) break;
     } else if (!memcmp(h, "data", 4)) {
       if (!haveFmt) break;
       if ((fmt != 1 && fmt != 0xFFFE) || bits != 16 || (ch != 1 && ch != 2)) {
@@ -296,7 +298,7 @@ bool wavHeader(File& f, WavInfo& w, String& err) {
         return false;
       }
       return true;
-    } else if (!f.seek(f.position() + sz + (sz & 1))) {
+    } else if (next > f.size() || !f.seek((uint32_t)next)) {
       break;
     }
   }
@@ -390,8 +392,7 @@ Clip* clipFor(const Req& r, bool& owned) {
 }
 
 void playClip(const Clip* c, uint16_t gain, uint32_t reqMs, int16_t* buf) {
-  s_stop = false;
-  if (!openChannel(c->rate)) return;
+  if (s_stop || !openChannel(c->rate)) return;
   s_plays = s_plays + 1;
   s_playing = true;
   bool first = true;
@@ -424,7 +425,10 @@ void playClip(const Clip* c, uint16_t gain, uint32_t reqMs, int16_t* buf) {
 bool takeReq(Req& r) {
   portENTER_CRITICAL(&s_mux);
   const bool has = s_has;
-  if (has) r = s_req;
+  if (has) {
+    r = s_req;
+    s_stop = false;  // a stop after this point cancels this request, also while it loads
+  }
   s_has = false;
   portEXIT_CRITICAL(&s_mux);
   return has;
@@ -558,8 +562,8 @@ bool audioPlayTone(uint16_t hz, uint16_t ms, uint8_t vol) {
 void audioStop() {
   portENTER_CRITICAL(&s_mux);
   s_has = false;
-  portEXIT_CRITICAL(&s_mux);
   s_stop = true;
+  portEXIT_CRITICAL(&s_mux);
 }
 
 const char* audioDir() { return deck::wallOnSd() ? "/touchdeck/sound" : "/sound"; }
@@ -576,7 +580,11 @@ bool audioProbe(const String& name, uint32_t& rate, uint8_t& channels, uint32_t&
     err = "not a valid .wav name";
     return false;
   }
-  File f = deck::wallFs().open(filePath(name.c_str()), "r");
+  return audioProbeFile(filePath(name.c_str()), rate, channels, ms, err);
+}
+
+bool audioProbeFile(const String& path, uint32_t& rate, uint8_t& channels, uint32_t& ms, String& err) {
+  File f = deck::wallFs().open(path, "r");
   if (!f) {
     err = "file not found";
     return false;
