@@ -9,6 +9,8 @@
 
 #if defined(BOARD_IS_JC3248W535)
 #include "boards/jc3248w535.h"
+#elif defined(BOARD_IS_WS_P4_7B)
+#include "boards/ws_p4_7b.h"
 #else
 #error "No board selected: define BOARD_IS_<name> in the platformio.ini env"
 #endif

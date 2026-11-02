@@ -1,0 +1,12 @@
+{
+  "name": "es8311",
+  "version": "1.0.0",
+  "description": "Espressif ES8311 codec driver as shipped in the Waveshare ESP32-P4-WIFI6-Touch-LCD-7B Arduino examples (I2C through esp32-hal-i2c, bus 0 = Wire). Vendored unchanged.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/waveshareteam/ESP32-P4-WIFI6-Touch-LCD-7B"
+  },
+  "license": "Apache-2.0",
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}
