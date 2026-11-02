@@ -60,7 +60,7 @@ struct DisplaySettings {
   uint8_t  fxTouch, fxToggle, fxPage, fxCard;
 };
 
-// Screen sleep (portal Screen & light page); NVS scalars. Present = an entity
+// Screen sleep (portal Screen page); NVS scalars. Present = an entity
 // "on"/"home", (pc) any PC online, or (printing) a printer with a job.
 constexpr size_t MAX_PRESENCE_ENTITIES = 4;
 struct PresenceSettings {
@@ -94,7 +94,7 @@ struct PrinterSettings {
 };
 constexpr uint8_t PRN_COOL_MIN = 20, PRN_COOL_MAX = 80;
 
-// Vibration motor module on a GPIO (portal Screen & light page); NVS scalars.
+// Vibration motor module on a GPIO (portal Hardware page); NVS scalars.
 struct HapticSettings {
   bool enabled = false;
   uint8_t pin = 0;        // 0 = not chosen yet
@@ -104,6 +104,22 @@ struct HapticSettings {
 constexpr uint8_t HAPTIC_MIN_STRENGTH = 20;
 constexpr uint8_t HAPTIC_MIN_MS = 10;
 constexpr uint8_t HAPTIC_MAX_MS = 200;
+
+// NS4168 speaker (portal Hardware page); NVS scalars. A file name is a WAV in
+// audioDir(), "" = the built-in sound.
+constexpr size_t AUDIO_FILE_LEN = 40;
+struct AudioSettings {
+  bool enabled = false;
+  uint8_t volume = 70;     // 0..100
+  bool nightMute = true;   // silent while the screen's night schedule is active
+  bool click = false;      // tile taps
+  bool finished = true;    // print finished
+  bool error = true;       // new printer error
+  bool cooled = true;      // bed cooled after a print
+  char fileFinished[AUDIO_FILE_LEN] = "";
+  char fileError[AUDIO_FILE_LEN] = "";
+  char fileCooled[AUDIO_FILE_LEN] = "";
+};
 
 constexpr uint8_t THEME_MIDNIGHT = 0;
 constexpr uint8_t THEME_DAYLIGHT = 1;
@@ -135,6 +151,7 @@ extern LedSettings ledSettings;
 extern AdvancedSettings advSettings;
 extern PresenceSettings presenceSettings;
 extern HapticSettings hapticSettings;
+extern AudioSettings audioSettings;
 extern PrinterSettings printerSettings;
 
 bool validDailyMax(int count);

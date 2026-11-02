@@ -140,7 +140,8 @@
               <div class="nav-label">Configuration</div>
               <button type="button" class="nav-item" data-nav="display">Display</button
               ><button type="button" class="nav-item" data-nav="wallpapers">Wallpapers</button
-              ><button type="button" class="nav-item" data-nav="light">Screen &amp; light</button
+              ><button type="button" class="nav-item" data-nav="light">Screen</button
+              ><button type="button" class="nav-item" data-nav="hardware">Hardware</button
               ><button type="button" class="nav-item" data-nav="clock">Time</button>
             </div>
             <div class="nav-group">
@@ -756,7 +757,7 @@
                   <h2 class="card-title">Glass theme</h2>
                   <p class="field-hint" style="margin: 0 0 14px">
                     How the Glass background changes. The photo frame has its own interval in
-                    <a href="#" data-page="light">Screen &amp; light &gt; Sleep</a>.
+                    <a href="#" data-page="light">Screen &gt; Sleep</a>.
                   </p>
                   <div class="grid-2">
                     <div class="field">
@@ -797,14 +798,14 @@
 
             <section class="page" data-page="light">
               <div class="page-header">
-                <h1 class="page-h1">Screen &amp; light</h1>
-                <p class="page-lede">Screen brightness, the night schedule, sleep and the status LED.</p>
+                <h1 class="page-h1">Screen</h1>
+                <p class="page-lede">Screen brightness, the night schedule and sleep.</p>
               </div>
               <form
                 id="lightForm"
                 class="portal-form"
                 data-endpoint="/save/light"
-                data-save-label="Save screen &amp; light"
+                data-save-label="Save screen"
               >
                 <div class="card">
                   <div class="card-head">
@@ -997,6 +998,126 @@
                         /><span class="range-val" id="nightWakeLevelVal">--</span>
                       </div>
                     </div>
+                  </div>
+                </div>
+              </form>
+            </section>
+
+            <section class="page" data-page="hardware">
+              <div class="page-header">
+                <h1 class="page-h1">Hardware</h1>
+                <p class="page-lede">The speaker, a status LED and a vibration motor.</p>
+              </div>
+              <form
+                id="hardwareForm"
+                class="portal-form"
+                data-endpoint="/save/hardware"
+                data-save-label="Save hardware"
+              >
+                <div class="card" id="audioCard">
+                  <div class="card-head">
+                    <h2 class="card-title">Speaker</h2>
+                    <span class="tag" id="audioState">disabled</span>
+                  </div>
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="audioEnabled" name="audioEnabled" /><span class="check-box"></span
+                    ><span class="check-text"
+                      ><strong>Enable the speaker</strong
+                      ><span class="ct-hint"
+                        >Sounds for printer events and tile taps, through the board's built-in amplifier and a
+                        small speaker on its speaker connector.</span
+                      ></span
+                    ></label
+                  >
+                  <div class="subcard hidden" id="audioFields">
+                    <div class="field">
+                      <label class="field-label" for="audioVolume">Volume</label>
+                      <div class="range-row">
+                        <input type="range" id="audioVolume" name="audioVolume" min="0" max="100" step="5" /><span
+                          class="range-val"
+                          id="audioVolumeVal"
+                          >--</span
+                        >
+                      </div>
+                    </div>
+                    <div class="check-list">
+                      <label class="check-row"
+                        ><input type="checkbox" id="audioNight" name="audioNight" /><span class="check-box"></span
+                        ><span class="check-text"
+                          ><strong>Quiet at night</strong
+                          ><span class="ct-hint"
+                            >Silent while the night schedule on the <a href="#" data-page="light">Screen</a> page
+                            is active.</span
+                          ></span
+                        ></label
+                      ><label class="check-row"
+                        ><input type="checkbox" id="audioClick" name="audioClick" /><span class="check-box"></span
+                        ><span class="check-text"
+                          ><strong>Click on tile taps</strong
+                          ><span class="ct-hint">A short tick each time a tile is tapped or held.</span></span
+                        ></label
+                      >
+                    </div>
+                    <div class="audio-events">
+                      <div class="audio-event">
+                        <label class="check-row"
+                          ><input type="checkbox" id="audioFinished" name="audioFinished" /><span
+                            class="check-box"
+                          ></span
+                          ><span class="check-text"><strong>Print finished</strong></span></label
+                        >
+                        <div class="audio-pick">
+                          <select id="audioFileFinished" name="audioFileFinished" aria-label="Print finished sound"></select
+                          ><button type="button" class="btn" data-audio-test="finished">Test</button>
+                        </div>
+                      </div>
+                      <div class="audio-event">
+                        <label class="check-row"
+                          ><input type="checkbox" id="audioError" name="audioError" /><span class="check-box"></span
+                          ><span class="check-text"
+                            ><strong>Printer error</strong
+                            ><span class="ct-hint">New errors only, as set on the Printers page.</span></span
+                          ></label
+                        >
+                        <div class="audio-pick">
+                          <select id="audioFileError" name="audioFileError" aria-label="Printer error sound"></select
+                          ><button type="button" class="btn" data-audio-test="error">Test</button>
+                        </div>
+                      </div>
+                      <div class="audio-event">
+                        <label class="check-row"
+                          ><input type="checkbox" id="audioCooled" name="audioCooled" /><span class="check-box"></span
+                          ><span class="check-text"
+                            ><strong>Bed cooled</strong
+                            ><span class="ct-hint">With the bed cooled alert on the Printers page.</span></span
+                          ></label
+                        >
+                        <div class="audio-pick">
+                          <select id="audioFileCooled" name="audioFileCooled" aria-label="Bed cooled sound"></select
+                          ><button type="button" class="btn" data-audio-test="cooled">Test</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <span class="field-label">Your sounds</span>
+                      <div id="audioFiles" class="audio-files"></div>
+                      <input type="file" id="audioFile" accept=".wav,audio/wav,audio/x-wav" hidden />
+                      <div style="display: flex; gap: 8px; flex-wrap: wrap">
+                        <button type="button" class="btn" id="audioPick">Add a WAV file</button
+                        ><button type="button" class="btn" data-audio-test="click">Test click</button>
+                      </div>
+                      <p class="field-hint" id="audioFilesHint">
+                        16-bit PCM WAV, mono or stereo, 8 to 48 kHz, up to 4 MB. Test buttons play the picked sound
+                        at the volume above, before saving.
+                      </p>
+                    </div>
+                  </div>
+                  <div class="note">
+                    <span class="note-k">Storage</span
+                    ><span
+                      >Sounds are stored on the microSD card. Without a card they go to the internal flash, which
+                      has little room.</span
+                    >
                   </div>
                 </div>
                 <div class="card" id="ledCard">

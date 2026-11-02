@@ -8,6 +8,7 @@
 #include "pc_metrics.h"
 #include "led.h"
 #include "haptic.h"
+#include "audio.h"
 #include "config.h"
 #include "web_assets.h"
 #include "deck_ui.h"
@@ -166,6 +167,20 @@ static void presenceJson(JsonObject out) {
     if (id.length()) ids.add(id);
 }
 
+// Speaker settings, in /api/config and the backup.
+static void audioSettingsJson(JsonObject o) {
+  o["enabled"] = audioSettings.enabled;
+  o["volume"] = audioSettings.volume;
+  o["nightMute"] = audioSettings.nightMute;
+  o["click"] = audioSettings.click;
+  o["finished"] = audioSettings.finished;
+  o["error"] = audioSettings.error;
+  o["cooled"] = audioSettings.cooled;
+  o["fileFinished"] = audioSettings.fileFinished;
+  o["fileError"] = audioSettings.fileError;
+  o["fileCooled"] = audioSettings.fileCooled;
+}
+
 // An HA entity id as typed into the portal: domain.object, lowercase letters, digits, '_'.
 static bool validEntityId(const String& id) {
   const int dot = id.indexOf('.');
@@ -250,6 +265,7 @@ static void handleApiConfig() {
   haptic["pin"] = hapticSettings.pin;
   haptic["strength"] = hapticSettings.strength;
   haptic["pulseMs"] = hapticSettings.pulseMs;
+  audioSettingsJson(doc["audio"].to<JsonObject>());
 
   JsonObject clock = doc["clock"].to<JsonObject>();
   clock["use24h"] = netSettings.use24h;
@@ -368,6 +384,7 @@ static void handleConfigExport() {
   haptic["pin"] = hapticSettings.pin;
   haptic["strength"] = hapticSettings.strength;
   haptic["pulseMs"] = hapticSettings.pulseMs;
+  audioSettingsJson(doc["audio"].to<JsonObject>());
   doc["advanced"]["printers"] = advSettings.printers;
   printerSettingsJson(doc["printers"].to<JsonObject>());
   mqttConfigJson(doc["mqtt"].to<JsonObject>(), false);
@@ -729,6 +746,27 @@ static void handleConfigImport() {
     nextPrn.kwhPrice = price.isNull() ? 0 : p;
     strlcpy(nextPrn.currency, cur | "", sizeof(nextPrn.currency));
   }
+  AudioSettings nextAudio;  // older backups: speaker off
+  JsonObjectConst audioIn = root["audio"].as<JsonObjectConst>();
+  if (!audioIn.isNull()) {
+    READ_BOOL(audioIn, "enabled", nextAudio.enabled);
+    READ_INT(audioIn, "volume", 0, 100, nextAudio.volume, uint8_t);
+    READ_BOOL(audioIn, "nightMute", nextAudio.nightMute);
+    READ_BOOL(audioIn, "click", nextAudio.click);
+    READ_BOOL(audioIn, "finished", nextAudio.finished);
+    READ_BOOL(audioIn, "error", nextAudio.error);
+    READ_BOOL(audioIn, "cooled", nextAudio.cooled);
+    const char* const keys[] = {"fileFinished", "fileError", "fileCooled"};
+    char* const targets[] = {nextAudio.fileFinished, nextAudio.fileError, nextAudio.fileCooled};
+    for (int i = 0; i < 3; i++) {
+      const char* v = audioIn[keys[i]] | "";
+      if (*v && !audioValidName(v)) {
+        sendJsonMessage(400, false, "audio sound files must be .wav names");
+        return;
+      }
+      strlcpy(targets[i], v, AUDIO_FILE_LEN);
+    }
+  }
   PresenceSettings nextPresence;  // older backups: never sleeps
   JsonObjectConst presence = root["presence"].as<JsonObjectConst>();
   if (!presence.isNull()) {
@@ -815,6 +853,7 @@ static void handleConfigImport() {
   advSettings.printers = nextPrinters;
   printerSettings = nextPrn;
   presenceSettings = nextPresence;
+  audioSettings = nextAudio;
   saveSettings();
   deckSetHeader(nextHeader);
 
@@ -827,45 +866,8 @@ static void handleConfigImport() {
 // ---------------------------------------------------------------------------
 //  Save handlers
 // ---------------------------------------------------------------------------
-// Screen & light page: brightness, night schedule, sleep, status LED.
+// Screen page: brightness, night schedule, sleep.
 static void handleSaveLight() {
-  LedSettings nextLed = ledSettings;
-  nextLed.enabled = server.hasArg("ledEnabled") ? 1 : 0;
-  nextLed.pin = (uint8_t)clampedArg("ledPin", nextLed.pin, 0, 48);
-  nextLed.brightness = (uint8_t)clampedArg("ledBrightness", nextLed.brightness, 0, 255);
-  nextLed.nightEnabled = server.hasArg("ledNightEnabled") ? 1 : 0;
-  nextLed.nightBrightness =
-    (uint8_t)clampedArg("ledNightBrightness", nextLed.nightBrightness, 0, 255);
-  nextLed.nightStartMinute = minuteOfDayArg("ledNightStart", nextLed.nightStartMinute);
-  nextLed.nightEndMinute = minuteOfDayArg("ledNightEnd", nextLed.nightEndMinute);
-  nextLed.followDisplay = server.hasArg("ledFollowDisplay") ? 1 : 0;
-  nextLed.offlineOff = server.hasArg("ledOfflineOff") ? 1 : 0;
-  if (nextLed.enabled && !ledPinAllowed(nextLed.pin)) {
-    sendJsonMessage(400, false,
-                    "That LED GPIO is reserved, in use, or unsupported on this board.");
-    return;
-  }
-  HapticSettings nextHaptic = hapticSettings;
-  nextHaptic.enabled = server.hasArg("hapticEnabled");
-  nextHaptic.pin = (uint8_t)clampedArg("hapticPin", nextHaptic.pin, 0, 48);
-  nextHaptic.strength = (uint8_t)clampedArg("hapticStrength", nextHaptic.strength, HAPTIC_MIN_STRENGTH, 100);
-  nextHaptic.pulseMs = (uint8_t)clampedArg("hapticMs", nextHaptic.pulseMs, HAPTIC_MIN_MS, HAPTIC_MAX_MS);
-  if (nextHaptic.enabled && !ledPinAllowed(nextHaptic.pin)) {
-    sendJsonMessage(400, false,
-                    "That vibration motor GPIO is reserved, in use, or unsupported on this board.");
-    return;
-  }
-  if (nextHaptic.enabled && nextLed.enabled && nextHaptic.pin == nextLed.pin) {
-    sendJsonMessage(400, false, "The status LED and the vibration motor cannot share a GPIO.");
-    return;
-  }
-  String ledEntity = server.arg("ledEntity");
-  ledEntity.trim();
-  if (ledEntity.length() && !ledEntity.startsWith("input_boolean.") &&
-      !ledEntity.startsWith("input_number.") && !ledEntity.startsWith("light.")) {
-    sendJsonMessage(400, false, "The LED entity must be an input_boolean, input_number or light.");
-    return;
-  }
   PresenceSettings nextPresence;
   nextPresence.sleepMin = (uint16_t)clampedArg("sleepMin", presenceSettings.sleepMin, 0, 1440);
   nextPresence.dimPct = server.arg("sleepMode") == "dim" ? (uint8_t)clampedArg("sleepDim", 10, 1, 100) : 0;
@@ -903,21 +905,85 @@ static void handleSaveLight() {
     minuteOfDayArg("nightStart", backlightSettings.nightStartMinute);
   backlightSettings.nightEndMinute =
     minuteOfDayArg("nightEnd", backlightSettings.nightEndMinute);
+  presenceSettings = nextPresence;
+  saveSettings();
+  refreshBacklightControl();  // re-evaluates both night intervals
+  deckPresenceApply();
+  sendJsonMessage(200, true, "Screen settings applied.");
+}
+
+// Hardware page: status LED, vibration motor, speaker.
+static void handleSaveHardware() {
+  LedSettings nextLed = ledSettings;
+  nextLed.enabled = server.hasArg("ledEnabled") ? 1 : 0;
+  nextLed.pin = (uint8_t)clampedArg("ledPin", nextLed.pin, 0, 48);
+  nextLed.brightness = (uint8_t)clampedArg("ledBrightness", nextLed.brightness, 0, 255);
+  nextLed.nightEnabled = server.hasArg("ledNightEnabled") ? 1 : 0;
+  nextLed.nightBrightness =
+    (uint8_t)clampedArg("ledNightBrightness", nextLed.nightBrightness, 0, 255);
+  nextLed.nightStartMinute = minuteOfDayArg("ledNightStart", nextLed.nightStartMinute);
+  nextLed.nightEndMinute = minuteOfDayArg("ledNightEnd", nextLed.nightEndMinute);
+  nextLed.followDisplay = server.hasArg("ledFollowDisplay") ? 1 : 0;
+  nextLed.offlineOff = server.hasArg("ledOfflineOff") ? 1 : 0;
+  if (nextLed.enabled && !ledPinAllowed(nextLed.pin)) {
+    sendJsonMessage(400, false,
+                    "That LED GPIO is reserved, in use, or unsupported on this board.");
+    return;
+  }
+  HapticSettings nextHaptic = hapticSettings;
+  nextHaptic.enabled = server.hasArg("hapticEnabled");
+  nextHaptic.pin = (uint8_t)clampedArg("hapticPin", nextHaptic.pin, 0, 48);
+  nextHaptic.strength = (uint8_t)clampedArg("hapticStrength", nextHaptic.strength, HAPTIC_MIN_STRENGTH, 100);
+  nextHaptic.pulseMs = (uint8_t)clampedArg("hapticMs", nextHaptic.pulseMs, HAPTIC_MIN_MS, HAPTIC_MAX_MS);
+  if (nextHaptic.enabled && !ledPinAllowed(nextHaptic.pin)) {
+    sendJsonMessage(400, false,
+                    "That vibration motor GPIO is reserved, in use, or unsupported on this board.");
+    return;
+  }
+  if (nextHaptic.enabled && nextLed.enabled && nextHaptic.pin == nextLed.pin) {
+    sendJsonMessage(400, false, "The status LED and the vibration motor cannot share a GPIO.");
+    return;
+  }
+  String ledEntity = server.arg("ledEntity");
+  ledEntity.trim();
+  if (ledEntity.length() && !ledEntity.startsWith("input_boolean.") &&
+      !ledEntity.startsWith("input_number.") && !ledEntity.startsWith("light.")) {
+    sendJsonMessage(400, false, "The LED entity must be an input_boolean, input_number or light.");
+    return;
+  }
+  AudioSettings nextAudio = audioSettings;
+  nextAudio.enabled = server.hasArg("audioEnabled");
+  nextAudio.volume = (uint8_t)clampedArg("audioVolume", nextAudio.volume, 0, 100);
+  nextAudio.nightMute = server.hasArg("audioNight");
+  nextAudio.click = server.hasArg("audioClick");
+  nextAudio.finished = server.hasArg("audioFinished");
+  nextAudio.error = server.hasArg("audioError");
+  nextAudio.cooled = server.hasArg("audioCooled");
+  const char* const fields[] = {"audioFileFinished", "audioFileError", "audioFileCooled"};
+  char* const targets[] = {nextAudio.fileFinished, nextAudio.fileError, nextAudio.fileCooled};
+  for (int i = 0; i < 3; i++) {
+    const String v = server.arg(fields[i]);
+    if (v.length() && !audioValidName(v)) {
+      sendJsonMessage(400, false, "Pick a sound from the list.");
+      return;
+    }
+    strlcpy(targets[i], v.c_str(), AUDIO_FILE_LEN);
+  }
   ledSettings = nextLed;
   hapticSettings = nextHaptic;
-  presenceSettings = nextPresence;
+  audioSettings = nextAudio;
   if (!ledEntity.length()) ledSetHaLevel(LED_HA_NONE);  // the saved level replaces one set over MQTT
   saveSettings();
   initLed();
   initHaptic();
-  refreshBacklightControl();  // re-evaluates both night intervals
-  deckPresenceApply();
+  audioInit();
+  refreshBacklightControl();  // the LED's own night interval
   String err;
   if (!deckSetLedEntity(ledEntity, err)) {
     sendJsonMessage(500, false, ("Saved, but the LED entity was not stored: " + err).c_str());
     return;
   }
-  sendJsonMessage(200, true, "Screen and light settings applied.");
+  sendJsonMessage(200, true, "Hardware settings applied.");
 }
 
 static void handleSaveAdvanced() {
@@ -980,6 +1046,126 @@ static void handleHapticTest() {
     return;
   }
   sendJsonMessage(200, true, "Pulse sent.");
+}
+
+static bool multipartRequest();
+
+// Speaker: status and sound files, Test buttons, WAV upload and delete.
+static void handleAudioGet() {
+  JsonDocument doc;
+  audioStatusJson(doc["status"].to<JsonObject>());
+  doc["dir"] = audioDir();
+  doc["onSd"] = deck::wallOnSd();
+  doc["free"] = deck::wallFreeBytes();
+  audioFilesJson(doc["files"].to<JsonArray>());
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+static void handleAudioTest() {
+  const uint8_t vol = (uint8_t)clampedArg("vol", audioSettings.volume, 0, 100);
+  const String kind = server.arg("kind");
+  if (kind == "tone") {
+    if (!audioPlayTone((uint16_t)clampedArg("hz", 880, 50, 10000), (uint16_t)clampedArg("ms", 400, 10, 5000), vol)) {
+      sendJsonMessage(500, false, "The audio task did not start.");
+      return;
+    }
+    sendJsonMessage(200, true, "Playing.");
+    return;
+  }
+  static const char* const names[SND_COUNT] = {"finished", "error", "cooled", "click"};
+  int s = -1;
+  for (int i = 0; i < SND_COUNT; i++)
+    if (kind == names[i]) s = i;
+  String err;
+  if (s < 0) err = "unknown sound";
+  else if (!audioTest((AudioSound)s, vol, server.arg("file"), err)) {}
+  else {
+    sendJsonMessage(200, true, "Playing.");
+    return;
+  }
+  sendJsonMessage(400, false, err.c_str());
+}
+
+static void handleAudioStop() {
+  audioStop();
+  sendJsonMessage(200, true, "Stopped.");
+}
+
+static File audioUpload;
+static String audioUploadError;
+static uint64_t audioUploadRoom;
+static constexpr uint32_t AUDIO_MAX_UPLOAD = 4u * 1024 * 1024;
+static String audioUploadPath() { return String(audioDir()) + "/upload.up"; }
+
+static void handleAudioUpload() {
+  if (!multipartRequest()) return;
+  HTTPUpload& up = server.upload();
+  if (up.status == UPLOAD_FILE_START) {
+    audioUploadError = "";
+    if (audioUpload) audioUpload.close();
+    if (!deck::wallOnSd() && !deck::deckFsReady()) audioUploadError = "file system not available";
+    else if (!audioValidName(server.arg("n"))) audioUploadError = "the name must be letters, digits, - _ . and end in .wav";
+    else {
+      if (deck::wallOnSd()) deck::wallFs().mkdir("/touchdeck");
+      deck::wallFs().mkdir(audioDir());
+      deck::wallFs().remove(audioUploadPath());
+      audioUploadRoom = deck::wallFreeBytes();
+      audioUpload = deck::wallFs().open(audioUploadPath(), "w");
+      if (!audioUpload) audioUploadError = "cannot create the file";
+    }
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    esp_task_wdt_reset();
+    if (audioUploadError.length() || !audioUpload) return;
+    const uint32_t size = audioUpload.size() + up.currentSize;
+    if (size > AUDIO_MAX_UPLOAD) audioUploadError = "the file is larger than 4 MB";
+    else if (audioUploadRoom < deck::WALL_RESERVE + size) audioUploadError = "storage full";
+    else if (audioUpload.write(up.buf, up.currentSize) != up.currentSize) audioUploadError = "storage full";
+  } else if (up.status == UPLOAD_FILE_END || up.status == UPLOAD_FILE_ABORTED) {
+    if (audioUpload) audioUpload.close();
+    if (up.status == UPLOAD_FILE_ABORTED) audioUploadError = "upload aborted";
+  }
+}
+
+static void handleAudioUploadFinish() {
+  const String name = server.arg("n");
+  String err = audioUploadError;
+  audioUploadError = "";
+  if (!err.length() && !multipartRequest()) err = "expected a WAV file upload";
+  const String path = String(audioDir()) + "/" + name;
+  if (!err.length()) {
+    deck::wallFs().remove(path);
+    if (!deck::wallFs().rename(audioUploadPath(), path)) err = "could not store the file";
+  }
+  uint32_t rate, ms;
+  uint8_t ch;
+  if (!err.length() && !audioProbe(name, rate, ch, ms, err)) deck::wallFs().remove(path);
+  if (err.length()) {
+    deck::wallFs().remove(audioUploadPath());
+    sendJsonMessage(400, false, err.c_str());
+    return;
+  }
+  audioFilesChanged();
+  sendJsonMessage(200, true, "Sound stored.");
+}
+
+static void handleAudioDelete() {
+  const String name = server.arg("n");
+  if (!audioValidName(name) || !deck::wallFs().remove(String(audioDir()) + "/" + name)) {
+    sendJsonMessage(404, false, "sound not found");
+    return;
+  }
+  // Events that used it go back to the built-in sound.
+  bool changed = false;
+  for (char* f : {audioSettings.fileFinished, audioSettings.fileError, audioSettings.fileCooled})
+    if (name == f) {
+      f[0] = 0;
+      changed = true;
+    }
+  if (changed) saveSettings();
+  audioFilesChanged();
+  sendJsonMessage(200, true, changed ? "Sound deleted; its events use the built-in sound." : "Sound deleted.");
 }
 
 // Printers page: errors, bed cooled alert, energy price.
@@ -2334,10 +2520,16 @@ void initWebServer() {
   server.on("/api/sd/format", HTTP_POST, handleSdFormat);
   server.on("/save/wallpapers", HTTP_POST, handleSaveWallpapers);
   server.on("/save/light", HTTP_POST, handleSaveLight);
+  server.on("/save/hardware", HTTP_POST, handleSaveHardware);
   server.on("/save/advanced", HTTP_POST, handleSaveAdvanced);
   server.on("/save/printers", HTTP_POST, handleSavePrinters);
   server.on("/led/preview", HTTP_POST, handleLedPreview);
   server.on("/haptic/test", HTTP_POST, handleHapticTest);
+  server.on("/api/audio", HTTP_GET, handleAudioGet);
+  server.on("/api/audio/test", HTTP_POST, handleAudioTest);
+  server.on("/api/audio/stop", HTTP_POST, handleAudioStop);
+  server.on("/api/audio/upload", HTTP_POST, handleAudioUploadFinish, handleAudioUpload);
+  server.on("/api/audio/delete", HTTP_POST, handleAudioDelete);
   server.on("/save/clock", HTTP_POST, handleSaveClock);
   server.on("/save/network", HTTP_POST, handleSaveNetwork);
   server.on("/api/config", HTTP_GET, handleApiConfig);

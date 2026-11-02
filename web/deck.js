@@ -3095,7 +3095,7 @@
   function closePicker() {
     $("dkPicker").classList.remove("show");
   }
-  /* deck.json "led" is set on the Screen & light page (portal.js sets window.snLedEntity); keep this copy in step
+  /* deck.json "led" is set on the Hardware page (portal.js sets window.snLedEntity); keep this copy in step
    so a save from here does not bring back the old entity. */
   function ledSync() {
     if (!deck || window.snLedEntity === undefined) return;

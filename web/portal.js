@@ -91,8 +91,9 @@
       if (!confirm("Discard unsaved changes on this page?")) return false;
       if (!(await loadConfig())) return false;
     }
-    if (name !== "light") stopLedPreview();
-    if (name === "light") loadEntityLists();
+    if (name !== "hardware") stopLedPreview();
+    if (name === "light" || name === "hardware") loadEntityLists();
+    if (name === "hardware") loadAudio();
     qa(".page").forEach((p) => p.classList.toggle("active", p.dataset.page === name));
     qa(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
     const button = document.querySelector('.nav-item[data-nav="' + name + '"]');
@@ -161,6 +162,7 @@
     $("sleepDimVal").textContent = $("sleepDim").value + "%";
     $("hapticStrengthVal").textContent = $("hapticStrength").value + "%";
     $("hapticMsVal").textContent = $("hapticMs").value + " ms";
+    $("audioVolumeVal").textContent = $("audioVolume").value + "%";
   }
   [
     "brightness",
@@ -176,6 +178,7 @@
     "sleepDim",
     "hapticStrength",
     "hapticMs",
+    "audioVolume",
   ].forEach((id) => $(id).addEventListener("input", updateRangeLabels));
   function updateGlassFields() {
     const g = $("theme").value === "2";
@@ -280,6 +283,134 @@
   });
   ["ledBrightness", "ledPin"].forEach((id) => $(id).addEventListener("input", queueLedPreview));
 
+  // Speaker (Hardware page): sound pickers, Test buttons, WAV files.
+  const AUDIO_PICKS = ["audioFileFinished", "audioFileError", "audioFileCooled"];
+  let audioFiles = [];
+  function updateAudioFields() {
+    $("audioFields").classList.toggle("hidden", !$("audioEnabled").checked);
+  }
+  $("audioEnabled").addEventListener("change", updateAudioFields);
+  const audioPickValues = () => AUDIO_PICKS.map((id) => $(id).value);
+  function fillAudioPicks(values) {
+    AUDIO_PICKS.forEach((id, i) => {
+      const sel = $(id),
+        v = values[i] || "";
+      sel.innerHTML = "";
+      sel.add(new Option("Built-in", ""));
+      audioFiles.filter((f) => !f.error).forEach((f) => sel.add(new Option(f.name, f.name)));
+      if (v && !audioFiles.some((f) => f.name === v && !f.error)) sel.add(new Option(v + " (missing)", v));
+      sel.value = v;
+    });
+  }
+  function audioFileText(f) {
+    if (f.error) return f.error;
+    return (
+      (f.ms / 1000).toFixed(1) +
+      " s, " +
+      f.rate / 1000 +
+      " kHz " +
+      (f.channels === 2 ? "stereo" : "mono") +
+      ", " +
+      fmtBytes(f.size)
+    );
+  }
+  function renderAudioFiles() {
+    $("audioFiles").innerHTML = audioFiles.length
+      ? audioFiles
+          .map(
+            (f) =>
+              '<div class="audio-file"><span class="audio-file-name"><b>' +
+              esc(f.name) +
+              "</b><small>" +
+              esc(audioFileText(f)) +
+              '</small></span><span class="audio-file-btns">' +
+              (f.error ? "" : '<button type="button" class="btn" data-audio-play="' + esc(f.name) + '">Play</button>') +
+              '<button type="button" class="btn" data-audio-del="' +
+              esc(f.name) +
+              '">Delete</button></span></div>',
+          )
+          .join("")
+      : '<p class="field-hint">No sound files yet. The built-in sounds are used.</p>';
+  }
+  async function loadAudio(values) {
+    try {
+      const d = await getJson("/api/audio?t=" + Date.now());
+      audioFiles = d.files || [];
+      renderAudioFiles();
+      const was = populating;
+      populating = true;
+      fillAudioPicks(values || audioPickValues());
+      populating = was;
+      const st = d.status || {};
+      $("audioState").textContent = !(config && config.audio && config.audio.enabled)
+        ? "disabled"
+        : st.night_mute
+          ? "quiet (night)"
+          : "on";
+    } catch (e) {
+      showToast(e.message, true);
+    }
+  }
+  async function audioTest(kind, file) {
+    const fd = new URLSearchParams({ kind: kind, vol: $("audioVolume").value });
+    if (file) fd.append("file", file);
+    try {
+      await getJson("/api/audio/test", { method: "POST", body: fd });
+    } catch (e) {
+      showToast(e.message, true);
+    }
+  }
+  document.addEventListener("click", async (e) => {
+    const t = e.target.closest("[data-audio-test],[data-audio-play],[data-audio-del]");
+    if (!t) return;
+    if (t.dataset.audioTest) {
+      const k = t.dataset.audioTest,
+        pick = { finished: "audioFileFinished", error: "audioFileError", cooled: "audioFileCooled" }[k];
+      audioTest(k, pick ? $(pick).value : "");
+    } else if (t.dataset.audioPlay) {
+      audioTest("finished", t.dataset.audioPlay);
+    } else {
+      const name = t.dataset.audioDel;
+      if (!confirm("Delete " + name + "?")) return;
+      try {
+        const d = await getJson("/api/audio/delete", { method: "POST", body: new URLSearchParams({ n: name }) });
+        showToast(d.message || "Deleted", false);
+        if (config && config.audio)
+          ["fileFinished", "fileError", "fileCooled"].forEach((k) => {
+            if (config.audio[k] === name) config.audio[k] = "";
+          });
+        await loadAudio(audioPickValues().map((v) => (v === name ? "" : v)));
+      } catch (err) {
+        showToast(err.message, true);
+      }
+    }
+  });
+  $("audioPick").addEventListener("click", () => $("audioFile").click());
+  $("audioFile").addEventListener("change", async (e) => {
+    e.stopPropagation(); /* a picked file is an upload, not an unsaved form change */
+    const f = e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    const base = f.name
+      .toLowerCase()
+      .replace(/\.wave?$/, "")
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .slice(0, 35);
+    const name = (base || "sound") + ".wav";
+    const fd = new FormData();
+    fd.append("sound", f, name);
+    $("audioPick").disabled = true;
+    try {
+      const d = await getJson("/api/audio/upload?n=" + encodeURIComponent(name), { method: "POST", body: fd });
+      showToast(d.message || "Sound stored", false);
+      await loadAudio();
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      $("audioPick").disabled = false;
+    }
+  });
+
   function renderChips(target, metrics) {
     const el = $(target);
     if (!metrics || !metrics.length) {
@@ -376,6 +507,17 @@
     setVal("hapticMs", hp.pulseMs == null ? 40 : hp.pulseMs);
     $("hapticAllowedPins").textContent = $("ledAllowedPins").textContent;
     updateHapticFields();
+    const au = c.audio || {};
+    setCheck("audioEnabled", au.enabled);
+    setVal("audioVolume", au.volume == null ? 70 : au.volume);
+    setCheck("audioNight", au.nightMute !== false);
+    setCheck("audioClick", au.click);
+    setCheck("audioFinished", au.finished !== false);
+    setCheck("audioError", au.error !== false);
+    setCheck("audioCooled", au.cooled !== false);
+    fillAudioPicks([au.fileFinished, au.fileError, au.fileCooled]);
+    updateAudioFields();
+    $("audioState").textContent = au.enabled ? "on" : "disabled";
     setVal("ledEntity", l.entity || "");
     updateLedFields();
     window.snLedEntity = l.entity || "";

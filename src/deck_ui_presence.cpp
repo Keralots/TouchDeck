@@ -1,4 +1,4 @@
-// Deck UI: screen sleep and wake from presence (presenceSettings, Screen & light page).
+// Deck UI: screen sleep and wake from presence (presenceSettings, Screen page).
 #include "deck_ui_int.h"
 
 namespace deckui {

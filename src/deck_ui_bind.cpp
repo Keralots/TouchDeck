@@ -1054,6 +1054,7 @@ void tileEvent(lv_event_t* e) {
   // long press, which would run the tap action as well as the hold action.
   if (r.sliding) return;  // the press was a slider drag
   hapticTap();
+  audioClick();
   if (code == LV_EVENT_SHORT_CLICKED) requestAction(r, false);
   else if (code == LV_EVENT_LONG_PRESSED) requestAction(r, true);
 }

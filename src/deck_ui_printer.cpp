@@ -1352,6 +1352,7 @@ void printerEvents() {
     }
     if (t.seen && t.job && (finished || !strcmp(st, "FAILED"))) {
       t.cool = finished && printerSettings.coolAlert;
+      if (finished) audioEvent(SND_FINISHED);
       const float to = prnEnergyNow(def);
       const bool ok = t.energy.startHash == hash && isfinite(t.energy.start) && isfinite(to) && to >= t.energy.start;
       t.energy.last = ok ? to - t.energy.start : NAN;
@@ -1372,6 +1373,7 @@ void printerEvents() {
       snprintf(b, sizeof(b), "%s: the bed has cooled to %.0f\xC2\xB0", def.name.c_str(), s->bed);
       s_prnToast = b;
       printerToast();
+      audioEvent(SND_COOLED);
     }
     // A badge-worthy error that came after the baseline and was not announced yet.
     prnPrune(t, *s);
@@ -1386,8 +1388,10 @@ void printerEvents() {
       prnAnnounce(t, list[k].key());
       if (!fresh) fresh = &list[k];
     }
-    if (!fresh || !printerSettings.errorWake) continue;
+    if (!fresh) continue;
     Serial.printf("Printer %s: new error %08lX%08lX\n", def.id.c_str(), (unsigned long)fresh->attr, (unsigned long)fresh->code);
+    audioEvent(SND_ERROR);
+    if (!printerSettings.errorWake) continue;
     prnWake();
     for (int p = 0; p < s_count; p++)
       if (s_pages[p].def && s_pages[p].def->printer == def.id) {
