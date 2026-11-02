@@ -222,8 +222,14 @@ Clip* render(AudioSound s) {
   for (uint32_t i = 0; i < frames; i++) maxv = max(maxv, fabsf(acc[i]));
   Clip* c = newClip(frames, SYNTH_RATE);
   if (c) {
+    // The last notes still ring when the buffer ends; fade them out instead of cutting.
+    const uint32_t fade = min<uint32_t>(SYNTH_RATE * 30 / 1000, frames / 4);
     const float k = peak / maxv;
-    for (uint32_t i = 0; i < frames; i++) c->pcm[i] = (int16_t)lrintf(acc[i] * k);
+    for (uint32_t i = 0; i < frames; i++) {
+      const uint32_t left = frames - 1 - i;
+      const float g = left < fade ? (float)left / fade : 1.0f;
+      c->pcm[i] = (int16_t)lrintf(acc[i] * k * g);
+    }
   }
   heap_caps_free(acc);
   s_renderMs = millis() - t0;
