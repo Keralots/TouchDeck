@@ -18,18 +18,11 @@
 #include <time.h>
 #include <algorithm>
 #include <vector>
-#include "img_converters.h"
-#include "esp32s3/rom/tjpgd.h"
+#include "deck_jpeg.h"
+#include "deck_panel.h"
 
 namespace deck {
 namespace {
-
-// ROM TJpgDec can scale while it decodes (LVGL's copy is built without that).
-// Called by address (esp32s3.rom.ld) because LVGL defines the same names.
-using PrepareFn = JRESULT (*)(JDEC*, UINT (*)(JDEC*, BYTE*, UINT), void*, UINT, void*);
-using DecompFn = JRESULT (*)(JDEC*, UINT (*)(JDEC*, void*, JRECT*), BYTE);
-const PrepareFn romPrepare = (PrepareFn)0x40000858;
-const DecompFn romDecomp = (DecompFn)0x40000864;
 
 constexpr const char* API_URL =
     "https://fd.api.iris.microsoft.com/v4/api/selection?placement=88000820&bcnt=4&country=US&locale=en-US&fmt=json";
@@ -168,17 +161,15 @@ bool fetchApi(std::vector<Pick>& picks) {
   return true;
 }
 
-struct Decode {
+struct Download {
   NetworkClient* stream;
-  uint8_t* px;  // RGB888 at the decoded scale
-  int w, h;
-  uint32_t bytes, blocks;
+  uint32_t bytes;
 };
 
-UINT readInput(JDEC* jd, BYTE* buf, UINT n) {
-  Decode& d = *(Decode*)jd->device;
+size_t readInput(void* ctx, uint8_t* buf, size_t n) {
+  Download& d = *(Download*)ctx;
   uint8_t skip[64];
-  UINT got = 0;
+  size_t got = 0;
   uint32_t last = millis();
   while (got < n) {
     const size_t want = buf ? n - got : std::min<size_t>(n - got, sizeof(skip));
@@ -195,23 +186,6 @@ UINT readInput(JDEC* jd, BYTE* buf, UINT n) {
   }
   d.bytes += got;
   return got;
-}
-
-UINT writeOutput(JDEC* jd, void* bitmap, JRECT* rect) {
-  Decode& d = *(Decode*)jd->device;
-  const uint8_t* src = (const uint8_t*)bitmap;
-  const int rw = rect->right - rect->left + 1;
-  for (int y = rect->top; y <= rect->bottom; y++, src += rw * 3) {
-    if (y >= d.h) continue;
-    const int n = std::min(rw, d.w - (int)rect->left);
-    if (n > 0) memcpy(d.px + ((size_t)y * d.w + rect->left) * 3, src, n * 3);
-  }
-  // Let the core 0 idle task feed its watchdog during long decodes.
-  if ((++d.blocks & 255) == 0) {
-    sampleRam();
-    vTaskDelay(1);
-  }
-  return 1;
 }
 
 // Area average of one source row into tw pixels, starting at x0 with step fx.
@@ -249,10 +223,10 @@ bool resample(const uint8_t* src, int sw, int sh, uint8_t* dst, int tw, int th) 
       areaRow(src + (size_t)sy * sw * 3, sw, cx, fx, tw, row);
       for (int i = 0; i < tw * 3; i++) acc[i] += w * row[i];
     }
-    // ROM TJpgDec emits R, G, B; the esp32-camera encoder reads B, G, R.
+    // Decoded as R, G, B; out in the encoder's order.
     uint8_t* out = dst + (size_t)y * tw * 3;
     for (int i = 0; i < tw * 3; i++) {
-      const float v = acc[i - i % 3 + 2 - i % 3] / fy;
+      const float v = acc[JPEG_ENCODE_BGR ? i - i % 3 + 2 - i % 3 : i] / fy;
       out[i] = v <= 0 ? 0 : v >= 255 ? 255 : (uint8_t)(v + 0.5f);
     }
     if ((y & 15) == 15) vTaskDelay(1);
@@ -261,9 +235,7 @@ bool resample(const uint8_t* src, int sw, int sh, uint8_t* dst, int tw, int th) 
   return true;
 }
 
-size_t writeJpeg(void* arg, size_t, const void* data, size_t len) {
-  return ((File*)arg)->write((const uint8_t*)data, len);
-}
+size_t writeJpeg(void* arg, const uint8_t* data, size_t len) { return ((File*)arg)->write(data, len); }
 
 uint64_t fsFree() { return wallFreeBytes(); }
 
@@ -315,11 +287,12 @@ void clearDaily(bool portrait) {
   }
 }
 
-// Download, decode at 1/2^n scale, crop, resample, encode and store one picture.
+// Download, decode (at 1/2^n scale where the decoder can), crop, resample,
+// encode and store one picture.
 // False with log.error set; a network failure also sets *offline.
 bool fetchImage(const Pick& pick, const String& name, LogEntry& log, bool* offline) {
   const bool p = pick.portrait;
-  const int tw = p ? 320 : 480, th = p ? 480 : 320;
+  const int tw = screenW(p), th = screenH(p);
   WiFiClientSecure tls;
   tls.setCACert(ROOT_CA);
   HTTPClient http;
@@ -337,35 +310,21 @@ bool fetchImage(const Pick& pick, const String& name, LogEntry& log, bool* offli
     snprintf(log.error, sizeof(log.error), "HTTP %d", code);
     return false;
   }
-  Decode d = {http.getStreamPtr(), nullptr, 0, 0, 0, 0};
-  void* pool = heap_caps_malloc(4096, MALLOC_CAP_SPIRAM);
-  JDEC jd;
-  JRESULT r = pool ? romPrepare(&jd, readInput, pool, 4096, &d) : JDR_MEM1;
-  uint8_t scale = 0;
-  if (r == JDR_OK) {
-    while (scale < 3 && (int)(jd.width >> (scale + 1)) >= tw && (int)(jd.height >> (scale + 1)) >= th) scale++;
-    d.w = (jd.width + (1 << scale) - 1) >> scale;
-    d.h = (jd.height + (1 << scale) - 1) >> scale;
-    if (d.w < tw || d.h < th) r = JDR_FMT2;
-    else {
-      d.px = (uint8_t*)heap_caps_malloc((size_t)d.w * d.h * 3, MALLOC_CAP_SPIRAM);
-      r = d.px ? romDecomp(&jd, writeOutput, scale) : JDR_MEM1;
-    }
-  }
+  Download d = {http.getStreamPtr(), 0};
+  JpegImage img;
+  const JpegResult r = jpegDecode(readInput, &d, tw, th, img, sampleRam);
   http.end();
-  free(pool);
   log.bytesIn = d.bytes;
-  if (r != JDR_OK) {
-    free(d.px);
+  if (r != JPEG_OK) {
     strlcpy(log.error,
-            r == JDR_FMT3 ? "progressive JPEG" : r == JDR_FMT2 ? "picture too small"
-            : r == JDR_MEM1 ? "no PSRAM" : r == JDR_INP ? "download cut" : "bad JPEG",
+            r == JPEG_PROGRESSIVE ? "progressive JPEG" : r == JPEG_TOO_SMALL ? "picture too small"
+            : r == JPEG_NO_MEMORY ? "no PSRAM" : r == JPEG_CUT ? "download cut" : "bad JPEG",
             sizeof(log.error));
     return false;
   }
   uint8_t* out = (uint8_t*)heap_caps_malloc(tw * th * 3, MALLOC_CAP_SPIRAM);
-  const bool scaled = out && resample(d.px, d.w, d.h, out, tw, th);
-  free(d.px);
+  const bool scaled = out && resample(img.px, img.w, img.h, out, tw, th);
+  free(img.px);
   if (!scaled) {
     free(out);
     strlcpy(log.error, "no PSRAM", sizeof(log.error));
@@ -374,7 +333,7 @@ bool fetchImage(const Pick& pick, const String& name, LogEntry& log, bool* offli
   bool ok = false;
   for (int quality = 85; quality >= 60 && !ok; quality -= 10) {
     File f = wallFs().open(tempPath(), "w");
-    ok = f && fmt2jpg_cb(out, tw * th * 3, tw, th, PIXFORMAT_RGB888, quality, writeJpeg, &f);
+    ok = f && jpegEncode(out, tw, th, quality, writeJpeg, &f);
     log.bytesOut = f ? f.position() : 0;
     f.close();
     ok = ok && log.bytesOut <= WALL_MAX_JPEG;

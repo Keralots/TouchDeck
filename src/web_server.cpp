@@ -20,6 +20,7 @@
 #include "deck_mqtt.h"
 #include "deck_icons.h"
 #include "deck_wall.h"
+#include "deck_panel.h"
 #include "deck_daily.h"
 #include "deck_sys.h"
 #include "psram_json.h"
@@ -257,7 +258,7 @@ static void handleApiConfig() {
   mqttConfigJson(doc["mqtt"].to<JsonObject>(), true);
   presenceJson(doc["presence"].to<JsonObject>());
   JsonArray ledPins = led["allowedPins"].to<JsonArray>();
-  for (uint8_t pin = 0; pin <= 48; pin++) {
+  for (uint8_t pin = 0; pin <= GPIO_PIN_MAX; pin++) {
     if (ledPinAllowed(pin)) ledPins.add(pin);
   }
   JsonObject haptic = doc["haptic"].to<JsonObject>();
@@ -643,7 +644,7 @@ static void handleConfigImport() {
   READ_INT(backlight, "nightEndMinute", 0, 1439, nextBacklight.nightEndMinute, uint16_t);
 
   READ_BOOL(led, "enabled", nextLed.enabled);
-  READ_INT(led, "pin", 0, 48, nextLed.pin, uint8_t);
+  READ_INT(led, "pin", 0, GPIO_PIN_MAX, nextLed.pin, uint8_t);
   READ_INT(led, "brightness", 0, 255, nextLed.brightness, uint8_t);
   READ_BOOL(led, "nightEnabled", nextLed.nightEnabled);
   READ_INT(led, "nightBrightness", 0, 255, nextLed.nightBrightness, uint8_t);
@@ -658,8 +659,7 @@ static void handleConfigImport() {
   }
   READ_BOOL(led, "followDisplay", nextLed.followDisplay);
   READ_BOOL(led, "offlineOff", nextLed.offlineOff);
-  const bool sdPin = nextLed.pin >= 10 && nextLed.pin <= 13;
-  if (nextLed.enabled && (sdPin ? nextDisplay.sdCard : !ledPinAllowed(nextLed.pin))) {
+  if (nextLed.enabled && !ledPinAllowed(nextLed.pin, nextDisplay.sdCard)) {
     sendJsonMessage(400, false, "The backup uses an LED GPIO this board does not allow.");
     return;
   }
@@ -668,12 +668,11 @@ static void handleConfigImport() {
   JsonObjectConst haptic = root["haptic"].as<JsonObjectConst>();
   if (!haptic.isNull()) {
     READ_BOOL(haptic, "enabled", nextHaptic.enabled);
-    READ_INT(haptic, "pin", 0, 48, nextHaptic.pin, uint8_t);
+    READ_INT(haptic, "pin", 0, GPIO_PIN_MAX, nextHaptic.pin, uint8_t);
     READ_INT(haptic, "strength", HAPTIC_MIN_STRENGTH, 100, nextHaptic.strength, uint8_t);
     READ_INT(haptic, "pulseMs", HAPTIC_MIN_MS, HAPTIC_MAX_MS, nextHaptic.pulseMs, uint8_t);
-    const bool sdPin = nextHaptic.pin >= 10 && nextHaptic.pin <= 13;
     if (nextHaptic.enabled &&
-        ((sdPin ? nextDisplay.sdCard : !ledPinAllowed(nextHaptic.pin)) ||
+        (!ledPinAllowed(nextHaptic.pin, nextDisplay.sdCard) ||
          (nextLed.enabled && nextLed.pin == nextHaptic.pin))) {
       sendJsonMessage(400, false, "The backup uses a vibration motor GPIO this board does not allow.");
       return;
@@ -916,7 +915,7 @@ static void handleSaveLight() {
 static void handleSaveHardware() {
   LedSettings nextLed = ledSettings;
   nextLed.enabled = server.hasArg("ledEnabled") ? 1 : 0;
-  nextLed.pin = (uint8_t)clampedArg("ledPin", nextLed.pin, 0, 48);
+  nextLed.pin = (uint8_t)clampedArg("ledPin", nextLed.pin, 0, GPIO_PIN_MAX);
   nextLed.brightness = (uint8_t)clampedArg("ledBrightness", nextLed.brightness, 0, 255);
   nextLed.nightEnabled = server.hasArg("ledNightEnabled") ? 1 : 0;
   nextLed.nightBrightness =
@@ -932,7 +931,7 @@ static void handleSaveHardware() {
   }
   HapticSettings nextHaptic = hapticSettings;
   nextHaptic.enabled = server.hasArg("hapticEnabled");
-  nextHaptic.pin = (uint8_t)clampedArg("hapticPin", nextHaptic.pin, 0, 48);
+  nextHaptic.pin = (uint8_t)clampedArg("hapticPin", nextHaptic.pin, 0, GPIO_PIN_MAX);
   nextHaptic.strength = (uint8_t)clampedArg("hapticStrength", nextHaptic.strength, HAPTIC_MIN_STRENGTH, 100);
   nextHaptic.pulseMs = (uint8_t)clampedArg("hapticMs", nextHaptic.pulseMs, HAPTIC_MIN_MS, HAPTIC_MAX_MS);
   if (nextHaptic.enabled && !ledPinAllowed(nextHaptic.pin)) {
@@ -1018,7 +1017,7 @@ static void handleSaveAdvanced() {
 
 static void handleLedPreview() {
   const bool enabled = server.hasArg("ledEnabled");
-  const uint8_t pin = (uint8_t)clampedArg("ledPin", ledSettings.pin, 0, 48);
+  const uint8_t pin = (uint8_t)clampedArg("ledPin", ledSettings.pin, 0, GPIO_PIN_MAX);
   const uint8_t level =
     (uint8_t)clampedArg("ledBrightness", ledSettings.brightness, 0, 255);
   if (server.hasArg("stop")) {
@@ -1036,7 +1035,7 @@ static void handleLedPreview() {
 }
 
 static void handleHapticTest() {
-  const uint8_t pin = (uint8_t)clampedArg("hapticPin", hapticSettings.pin, 0, 48);
+  const uint8_t pin = (uint8_t)clampedArg("hapticPin", hapticSettings.pin, 0, GPIO_PIN_MAX);
   const uint8_t strength =
     (uint8_t)clampedArg("hapticStrength", hapticSettings.strength, HAPTIC_MIN_STRENGTH, 100);
   const uint8_t ms = (uint8_t)clampedArg("hapticMs", hapticSettings.pulseMs, HAPTIC_MIN_MS, HAPTIC_MAX_MS);
@@ -1207,11 +1206,10 @@ static void handleSaveSd() {
     sendJsonMessage(200, true, "No change.");
     return;
   }
-  const auto sdPin = [](uint8_t pin) { return pin >= 10 && pin <= 13; };
   const char* user = nullptr;
   uint8_t pin = 0;
-  if (on && ledSettings.enabled && sdPin(ledSettings.pin)) user = "status LED", pin = ledSettings.pin;
-  else if (on && hapticSettings.enabled && sdPin(hapticSettings.pin))
+  if (on && ledSettings.enabled && boardSdPin(ledSettings.pin)) user = "status LED", pin = ledSettings.pin;
+  else if (on && hapticSettings.enabled && boardSdPin(hapticSettings.pin))
     user = "vibration motor", pin = hapticSettings.pin;
   if (user) {
     const String msg = String("The ") + user + " uses GPIO " + pin +
@@ -1845,7 +1843,7 @@ static size_t wallBytes;
 static unsigned wallParts;
 static bool wallComplete;
 
-static const char* wallFile(bool portrait) { return deck::wallPath(portrait ? 320 : 480, portrait ? 480 : 320); }
+static const char* wallFile(bool portrait) { return deck::wallPath(deck::screenW(portrait), deck::screenH(portrait)); }
 
 static bool wallOrientation(bool& portrait) {
   const String o = server.arg("o");

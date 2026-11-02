@@ -7,10 +7,8 @@
 #define FW_VERSION          "1.2.3-beta"
 #define PRODUCT_NAME        "TouchDeck"
 
-// Board variant - reported to the portal and the OTA page.
-#ifndef BOARD_VARIANT
-#define BOARD_VARIANT       "jc3248w535"
-#endif
+// Board facts, BOARD_VARIANT (reported to the portal and the OTA page) among them.
+#include "board.h"
 
 // =============================================================================
 //  PC stats ingest (UDP push from the StatNode Companion)

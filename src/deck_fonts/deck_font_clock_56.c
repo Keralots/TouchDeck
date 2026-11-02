@@ -1,7 +1,6 @@
-/* Guition deck clock tile font: Montserrat Medium 56 px (SIL OFL 1.1),
+/* Deck clock tile font: Montserrat Medium 56 px (SIL OFL 1.1),
  * digits, colon and space only. Generated with lv_font_conv 1.5.3;
  * options below. */
-#if defined(BOARD_IS_JC3248W535)
 
 /*******************************************************************************
  * Size: 56 px
@@ -955,4 +954,3 @@ lv_font_t deck_font_clock_56 = {
 #endif /*#if DECK_FONT_CLOCK_56*/
 
 
-#endif  /* BOARD_IS_JC3248W535 */

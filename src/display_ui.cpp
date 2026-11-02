@@ -43,7 +43,7 @@ constexpr uint8_t PEEK_LEVEL = 26;
 constexpr uint32_t PEEK_MS = 60000;
 
 void setBacklight(uint8_t level) {
-  analogWrite(BACKLIGHT_PIN, level);
+  ledcWrite(BOARD_BACKLIGHT_PIN, level);
   lastAppliedBrightness = level;
 }
 
@@ -178,7 +178,8 @@ void initDisplay() {
   delay(500);
   if (!deckBegin(dispSettings.rotation)) Serial.println("Display: deck pipeline init FAILED");
   displayTick();  // the splash is on the panel before the light comes on
-  pinMode(BACKLIGHT_PIN, OUTPUT);
+  ledcAttach(BOARD_BACKLIGHT_PIN, BOARD_BACKLIGHT_FREQ, 8);
+  if (BOARD_BACKLIGHT_ACTIVE_LOW) ledcOutputInvert(BOARD_BACKLIGHT_PIN, true);
   setBacklight(brightness);
 }
 

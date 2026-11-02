@@ -3,7 +3,7 @@
 #include "settings.h"
 #include "display_ui.h"
 #include "pc_metrics.h"
-#include "soc/soc_caps.h"
+#include "board.h"
 
 // Which GPIO currently carries the PWM signal, or -1 when nothing is attached.
 // Kept separate from ledSettings.pin so a configuration change detaches the
@@ -23,28 +23,18 @@ static uint8_t previewBrightness = 0;
 // ---------------------------------------------------------------------------
 //  Pin deny-list
 // ---------------------------------------------------------------------------
-// Refuses a pin that would kill the display, touch, USB or boot; it does not
-// try to model which pins the board physically breaks out.
-bool ledPinAllowed(uint8_t pin) {
-  // GPIO 0 is the "unset" sentinel (LED_DEFAULT_PIN) and a strapping pin on
-  // every board here, so it is never a valid choice.
+// Refuses a pin that would kill the display, touch, USB or boot (the board
+// header's list); it does not model which pins the board breaks out.
+bool ledPinAllowed(uint8_t pin, bool sdCard) {
+  // GPIO 0 is the "unset" sentinel (LED_DEFAULT_PIN), never a valid choice.
   if (pin == 0) return false;
-  if (pin == BACKLIGHT_PIN) return false;
-  if (dispSettings.sdCard && pin >= 10 && pin <= 13) return false;  // microSD
-  // Guition JC3248W535 (AXS15231B QSPI 320x480)
-  if (pin == 21 || pin == 39 || pin == 40 ||
-      pin == 45 || pin == 47 || pin == 48) return false;  // display QSPI
-  if (pin == 38) return false;                // display TE
-  if (pin == 4 || pin == 8) return false;     // touch I2C
-  if (pin == 3) return false;                 // touch INT
-  if (pin == 5) return false;                 // battery sense ADC
-  if (pin == 2 || pin == 41 || pin == 42) return false;   // NS4168 I2S audio
-  if (pin == 19 || pin == 20) return false;   // USB CDC D-/D+
-  if (pin >= 26 && pin <= 37) return false;   // SPI flash + PSRAM (qio_opi)
+  if (boardPinReserved(pin, sdCard)) return false;
   // Pins the chip does not have (the S3 has no GPIO 22..25).
-  if (pin >= SOC_GPIO_PIN_COUNT || !((SOC_GPIO_VALID_OUTPUT_GPIO_MASK >> pin) & 1)) return false;
+  if (pin > GPIO_PIN_MAX || !((SOC_GPIO_VALID_OUTPUT_GPIO_MASK >> pin) & 1)) return false;
   return true;
 }
+
+bool ledPinAllowed(uint8_t pin) { return ledPinAllowed(pin, dispSettings.sdCard); }
 
 bool ledPinValid() {
   return ledSettings.enabled && ledPinAllowed(ledSettings.pin);

@@ -1,4 +1,6 @@
 #include "audio.h"
+#include "audio_hw.h"
+#include "board.h"
 #include "deck_sd.h"
 #include "display_ui.h"
 #include "settings.h"
@@ -10,10 +12,10 @@
 
 namespace {
 
-// Vendor pincfg.h (DEMO_MP3): NS4168 has no MCLK.
-constexpr gpio_num_t PIN_BCLK = GPIO_NUM_42;
-constexpr gpio_num_t PIN_WS = GPIO_NUM_2;
-constexpr gpio_num_t PIN_DOUT = GPIO_NUM_41;
+constexpr gpio_num_t PIN_MCLK = (gpio_num_t)BOARD_I2S_MCLK;  // -1 = unused
+constexpr gpio_num_t PIN_BCLK = (gpio_num_t)BOARD_I2S_BCLK;
+constexpr gpio_num_t PIN_WS = (gpio_num_t)BOARD_I2S_WS;
+constexpr gpio_num_t PIN_DOUT = (gpio_num_t)BOARD_I2S_DOUT;
 
 constexpr uint32_t SYNTH_RATE = 22050;
 constexpr size_t CHUNK = 256;  // frames per i2s_channel_write
@@ -95,6 +97,7 @@ bool IRAM_ATTR onSendOvf(i2s_chan_handle_t, i2s_event_data_t*, void*) {
 
 void closeChannel() {
   if (!s_tx) return;
+  audioHwStop();
   i2s_channel_disable(s_tx);
   i2s_del_channel(s_tx);
   s_tx = nullptr;
@@ -109,6 +112,7 @@ bool openChannel(uint32_t rate) {
     i2s_channel_disable(s_tx);
     err = i2s_channel_reconfig_std_clock(s_tx, &clk);
     if (err == ESP_OK) err = i2s_channel_enable(s_tx);
+    if (err == ESP_OK && !audioHwStart(rate)) err = ESP_ERR_NOT_SUPPORTED;
     if (err != ESP_OK) {
       s_lastErr = err;
       closeChannel();
@@ -133,7 +137,7 @@ bool openChannel(uint32_t rate) {
     .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(rate),
     .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
     .gpio_cfg = {
-      .mclk = I2S_GPIO_UNUSED,
+      .mclk = PIN_MCLK,
       .bclk = PIN_BCLK,
       .ws = PIN_WS,
       .dout = PIN_DOUT,
@@ -146,6 +150,10 @@ bool openChannel(uint32_t rate) {
   err = i2s_channel_init_std_mode(s_tx, &sc);
   if (err == ESP_OK) err = i2s_channel_register_event_callback(s_tx, &cbs, nullptr);
   if (err == ESP_OK) err = i2s_channel_enable(s_tx);
+  if (err == ESP_OK && !audioHwStart(rate)) {
+    err = ESP_ERR_NOT_SUPPORTED;
+    i2s_channel_disable(s_tx);
+  }
   if (err != ESP_OK) {
     s_lastErr = err;
     i2s_del_channel(s_tx);

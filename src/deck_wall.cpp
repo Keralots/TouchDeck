@@ -2,6 +2,7 @@
 #include "deck_wall.h"
 #include <src/misc/cache/instance/lv_image_cache.h>
 #include "deck_config.h"
+#include "deck_panel.h"
 #include <LittleFS.h>
 #include <esp_heap_caps.h>
 #include <esp_task_wdt.h>
@@ -555,7 +556,7 @@ bool wallLoadPicture(const char* path, int w, int h, uint16_t* pixels) {
 }
 
 bool wallValidateJpeg(const char* path, bool portrait) {
-  return jpegLoad(path, portrait ? 320 : 480, portrait ? 480 : 320, nullptr, nullptr, nullptr);
+  return jpegLoad(path, screenW(portrait), screenH(portrait), nullptr, nullptr, nullptr);
 }
 
 void wallInvalidateJobs() {
