@@ -18,7 +18,6 @@ const char kDefaultDeck[] PROGMEM = R"JSON({
   "theme": "midnight",
   "pages": [
     { "id": "desk", "name": "Desk",
-      "layouts": { "landscape": { "cols": 4, "rows": 3 } },
       "tiles": [
         { "id": "lamp", "type": "toggle", "entity": "light.desk_lamp", "label": "Desk lamp", "icon": "mdi:lightbulb",
           "pos": { "landscape": { "x": 0, "y": 0, "w": 2, "h": 1 } } },
@@ -36,7 +35,6 @@ const char kDefaultDeck[] PROGMEM = R"JSON({
           "tap": { "action": "page", "page": "pc" } }
       ] },
     { "id": "pc", "name": "PC",
-      "layouts": { "landscape": { "cols": 4, "rows": 3 } },
       "tiles": [
         { "id": "m1", "type": "metric", "metric": 1, "style": "chart",
           "pos": { "landscape": { "x": 0, "y": 0, "w": 2, "h": 1 } } },

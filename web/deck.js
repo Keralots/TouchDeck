@@ -2045,7 +2045,6 @@
       deck.pages.push({
         id: "p" + Date.now().toString(36),
         name: "New page",
-        layouts: { landscape: { cols: 4, rows: 3 } },
         tiles: [],
       });
       cur = pages().length - 1;

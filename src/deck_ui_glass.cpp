@@ -51,7 +51,7 @@ void lumaRange(const lv_image_dsc_t* img, lv_area_t a, int& lo, int& hi) {
   a.y1 = max<int32_t>(a.y1, 0);
   a.x2 = min<int32_t>(a.x2, w - 1);
   a.y2 = min<int32_t>(a.y2, h - 1);
-  uint16_t hist[256] = {};
+  uint32_t hist[256] = {};  // a large tile has over 65k samples
   uint32_t n = 0;
   const bool rgb565 = img->header.cf == LV_COLOR_FORMAT_RGB565;
   for (int y = a.y1; y <= a.y2; y += 2) {
