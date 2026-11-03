@@ -25,6 +25,7 @@
 #include "deck_sys.h"
 #include "psram_json.h"
 #include "crash_log.h"
+#include "coproc_update.h"
 #include <LittleFS.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
@@ -1448,6 +1449,17 @@ static const char* screenName(ScreenState s) {
   }
 }
 
+// POST /api/coprocessor/update - flash the WiFi co-processor with the
+// firmware this build expects; progress in /api/status, restarts when done.
+static void handleCoprocUpdate() {
+  const char* why = nullptr;
+  if (!coprocUpdateStart(&why)) {
+    sendJsonMessage(409, false, why);
+    return;
+  }
+  sendJsonMessage(200, true, "Co-processor update started. The deck restarts when it is done.");
+}
+
 static void handleApiStatus() {
   JsonDocument doc;
   doc["product"] = PRODUCT_NAME;
@@ -1464,6 +1476,9 @@ static void handleApiStatus() {
     JsonObject co = doc["coprocessor"].to<JsonObject>();
     co["firmware"] = String(a) + "." + b + "." + c;
     co["expected"] = String(x) + "." + y + "." + z;
+    co["update"] = coprocUpdateState();
+    co["progress"] = coprocUpdateProgress();
+    co["error"] = coprocUpdateError();
   }
 #endif
   const PcSource* pc0 = pcSource("");
@@ -2564,6 +2579,7 @@ void initWebServer() {
   server.on("/api/config/export", HTTP_GET, handleConfigExport);
   server.on("/api/config/import", HTTP_POST, handleConfigImport);
   server.on("/api/factory-reset", HTTP_POST, handleFactoryReset);  server.on("/api/status", HTTP_GET, handleApiStatus);
+  server.on("/api/coprocessor/update", HTTP_POST, handleCoprocUpdate);
   // /screen.bmp is what the StatNode Companion's preview fetches.
   server.on("/screen.bmp", HTTP_GET, handleLiveScreenshot);
   server.on("/screen_live.bmp", HTTP_GET, handleLiveScreenshot);

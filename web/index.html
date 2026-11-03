@@ -1600,6 +1600,31 @@
                   </div>
                 </dl>
               </div>
+              <div class="card hidden" id="coprocBox">
+                <h2 class="card-title">WiFi co-processor</h2>
+                <p class="maintenance-copy">
+                  WiFi runs on a separate chip with its own firmware, which has to match this TouchDeck
+                  build.
+                </p>
+                <dl class="facts">
+                  <div>
+                    <dt>Installed</dt>
+                    <dd id="coprocFw">--</dd>
+                  </div>
+                  <div>
+                    <dt>Expected</dt>
+                    <dd id="coprocWant">--</dd>
+                  </div>
+                </dl>
+                <p id="coprocState" class="field-hint" role="status"></p>
+                <div class="maintenance-actions">
+                  <button type="button" class="btn btn-accent hidden" id="coprocUpdate">Update co-processor</button>
+                </div>
+                <p class="field-hint">
+                  Downloads the matching firmware from Espressif and writes it over the WiFi link. Takes about
+                  a minute; keep the deck powered. It restarts when done.
+                </p>
+              </div>
               <div class="card" id="sdCardBox">
                 <h2 class="card-title">microSD card</h2>
                 <p class="maintenance-copy">
