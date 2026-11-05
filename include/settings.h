@@ -87,6 +87,7 @@ struct PrinterSettings {
   bool errors = true;      // badge, error card and alerts for HMS / print_error
   bool errorsAll = false;  // common codes too, not only fatal and serious
   bool errorWake = true;   // a new error wakes the deck and shows the printer page
+  bool follow = false;     // a print start shows the printer page, back once the bed has cooled
   bool coolAlert = true;   // after a print, say when the bed has cooled
   uint8_t coolTemp = 35;   // C
   float kwhPrice = 0;      // per kWh, 0 = energy without a cost

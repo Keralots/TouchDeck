@@ -477,6 +477,7 @@ static void printerSettingsJson(JsonObject o) {
   o["errors"] = printerSettings.errors;
   o["errorsAll"] = printerSettings.errorsAll;
   o["errorWake"] = printerSettings.errorWake;
+  o["follow"] = printerSettings.follow;
   o["coolAlert"] = printerSettings.coolAlert;
   o["coolTemp"] = printerSettings.coolTemp;
   o["kwhPrice"] = printerSettings.kwhPrice;
@@ -731,6 +732,7 @@ static void handleConfigImport() {
     READ_BOOL(prnIn, "errors", nextPrn.errors);
     READ_BOOL(prnIn, "errorsAll", nextPrn.errorsAll);
     READ_BOOL(prnIn, "errorWake", nextPrn.errorWake);
+    READ_BOOL(prnIn, "follow", nextPrn.follow);
     READ_BOOL(prnIn, "coolAlert", nextPrn.coolAlert);
     READ_INT(prnIn, "coolTemp", PRN_COOL_MIN, PRN_COOL_MAX, nextPrn.coolTemp, uint8_t);
     JsonVariantConst price = prnIn["kwhPrice"], cur = prnIn["currency"];
@@ -1181,6 +1183,7 @@ static void handleSavePrinters() {
   next.errors = server.hasArg("prnErrors");
   next.errorsAll = server.hasArg("prnErrorsAll");
   next.errorWake = server.hasArg("prnErrorWake");
+  next.follow = server.hasArg("prnFollow");
   next.coolAlert = server.hasArg("prnCool");
   next.coolTemp = (uint8_t)clampedArg("prnCoolTemp", next.coolTemp, PRN_COOL_MIN, PRN_COOL_MAX);
   if (!parsePrice(server.arg("prnKwhPrice"), next.kwhPrice)) {

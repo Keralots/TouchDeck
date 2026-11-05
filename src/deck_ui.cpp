@@ -731,6 +731,7 @@ void autoNavTo(const String& id) {
 // that goes while shown is left first (back where an "auto" switch came from).
 void whenSync() {
   whenTrack();
+  printerFollowTick();
   autoNavTick();
   if (!canRebuild() || compMode() != COMP_NONE) return;
   const String cur = activePageId();

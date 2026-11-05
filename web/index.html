@@ -280,35 +280,52 @@
                 data-save-label="Save printer settings"
               >
                 <div class="card">
+                  <h2 class="card-title">Printer page</h2>
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="prnFollow" name="prnFollow" /><span class="check-box"></span
+                    ><span class="check-text"
+                      ><strong>Show the printer page while it prints</strong
+                      ><span class="ct-hint"
+                        >A print start wakes the deck and slides it to that printer's page. When the print is
+                        over, the deck goes back to the page it showed before, a minute after the bed is down
+                        to the bed cooled temperature below, or 30 minutes after the print at the latest. If
+                        you leave the printer page yourself, it stays where you are.</span
+                      ></span
+                    ></label
+                  >
+                </div>
+                <div class="card">
                   <h2 class="card-title">Printer errors</h2>
-                  <label class="check-row standalone"
-                    ><input type="checkbox" id="prnErrors" name="prnErrors" /><span class="check-box"></span
-                    ><span class="check-text"
-                      ><strong>Show printer errors</strong
-                      ><span class="ct-hint"
-                        >HMS codes and print errors with Bambu's own text: an ERROR badge on the printer tile,
-                        and a tap on it lists them. Off: no badge, list or alerts.</span
-                      ></span
-                    ></label
-                  >
-                  <label class="check-row standalone"
-                    ><input type="checkbox" id="prnErrorsAll" name="prnErrorsAll" /><span class="check-box"></span
-                    ><span class="check-text"
-                      ><strong>Also common errors</strong
-                      ><span class="ct-hint"
-                        >Off: only fatal and serious errors raise the badge; common ones are still listed.</span
-                      ></span
-                    ></label
-                  >
-                  <label class="check-row standalone"
-                    ><input type="checkbox" id="prnErrorWake" name="prnErrorWake" /><span class="check-box"></span
-                    ><span class="check-text"
-                      ><strong>Wake the deck and show the printer on a new error</strong
-                      ><span class="ct-hint"
-                        >Errors already standing when the deck connects do not wake it.</span
-                      ></span
-                    ></label
-                  >
+                  <div class="check-list">
+                    <label class="check-row"
+                      ><input type="checkbox" id="prnErrors" name="prnErrors" /><span class="check-box"></span
+                      ><span class="check-text"
+                        ><strong>Show printer errors</strong
+                        ><span class="ct-hint"
+                          >HMS codes and print errors with Bambu's own text: an ERROR badge on the printer tile,
+                          and a tap on it lists them. Off: no badge, list or alerts.</span
+                        ></span
+                      ></label
+                    >
+                    <label class="check-row"
+                      ><input type="checkbox" id="prnErrorsAll" name="prnErrorsAll" /><span class="check-box"></span
+                      ><span class="check-text"
+                        ><strong>Also common errors</strong
+                        ><span class="ct-hint"
+                          >Off: only fatal and serious errors raise the badge; common ones are still listed.</span
+                        ></span
+                      ></label
+                    >
+                    <label class="check-row"
+                      ><input type="checkbox" id="prnErrorWake" name="prnErrorWake" /><span class="check-box"></span
+                      ><span class="check-text"
+                        ><strong>Wake the deck and show the printer on a new error</strong
+                        ><span class="ct-hint"
+                          >Errors already standing when the deck connects do not wake it.</span
+                        ></span
+                      ></label
+                    >
+                  </div>
                 </div>
                 <div class="card">
                   <h2 class="card-title">Bed cooled</h2>
