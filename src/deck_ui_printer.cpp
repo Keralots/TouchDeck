@@ -34,6 +34,9 @@ struct PrnTrack {
   String id;
   bool seen = false, job = false, cool = false, loaded = false;
   bool startLive = false;  // this session saw the job start (its name may follow the state)
+  bool follow = false;     // its print start showed the printer page (printerSettings.follow)
+  uint32_t endMs = 0;      // follow: when the job ended, 0 = still running
+  uint32_t cooledMs = 0;   // follow: when the bed was cool after the job, 0 = not yet
   PrnEnergy energy;
   uint64_t announced[PRN_ANNOUNCED];  // PrinterAlert::key(), oldest first
   uint8_t nAnnounced = 0;
@@ -1314,8 +1317,62 @@ void prnAnnounce(PrnTrack& t, uint64_t key) {
   t.announced[t.nAnnounced++] = key;
 }
 
-// Job start / end edges (energy, bed cooled alert) and new errors, tracked per
-// printer id. The first state seen after boot only sets the baseline.
+// The deck page bound to a printer id; empty when it has none built.
+String prnPageId(const String& id) {
+  for (int p = 0; p < s_count; p++)
+    if (s_pages[p].def && s_pages[p].def->printer == id) return s_pages[p].def->id;
+  return String();
+}
+
+String s_followFrom;  // the page shown before the first followed print start
+constexpr uint32_t FOLLOW_BACK_MS = 60000;
+constexpr uint32_t FOLLOW_MAX_MS = 30 * 60000;  // back even if the bed never gets that cool  // back even if the bed never gets that cool
+
+void prnFollowStart(PrnTrack& t) {
+  t.endMs = t.cooledMs = 0;
+  if (!printerSettings.follow) return;
+  const String to = prnPageId(t.id), cur = activePageId();
+  if (!to.length()) return;
+  prnWake();
+  if (to == cur) return;
+  bool other = false;
+  for (const PrnTrack& o : s_track) other |= &o != &t && o.follow;
+  if (!other) s_followFrom = cur;
+  t.follow = true;
+  autoNavTo(to);
+}
+
+// A followed print goes back a minute after its bed cooled (30 min after the
+// job at the latest), unless the user left the printer page; to a printer
+// still printing first.
+void printerFollowTick() {
+  bool any = false;
+  const uint32_t now = millis();
+  for (PrnTrack& t : s_track) {
+    if (!t.follow) continue;
+    const String pid = prnPageId(t.id);
+    const bool back = (t.cooledMs && now - t.cooledMs >= FOLLOW_BACK_MS) || (t.endMs && now - t.endMs >= FOLLOW_MAX_MS);
+    if (printerSettings.follow && pid.length() && !back) {
+      any = true;
+      continue;
+    }
+    t.follow = false;
+    if (!pid.length() || activePageId() != pid) continue;
+    String to = s_followFrom;
+    for (const PrnTrack& o : s_track) {
+      const String op = o.follow && !o.endMs ? prnPageId(o.id) : String();
+      if (op.length()) {
+        to = op;
+        break;
+      }
+    }
+    if (pageIndexOf(to) >= 0) autoNavTo(to);
+  }
+  if (!any) s_followFrom = "";
+}
+
+// Job start / end edges (energy, bed cooled alert, follow) and new errors,
+// tracked per printer id. The first state seen after boot only sets the baseline.
 void printerEvents() {
   for (size_t i = 0; i < s_cfg.printers.size() && i < MAX_PRINTERS; i++) {
     const PrinterDef& def = s_cfg.printers[i];
@@ -1346,6 +1403,7 @@ void printerEvents() {
       prnEnergySave(t);
       t.startLive = t.seen;
       t.cool = false;
+      if (t.seen) prnFollowStart(t);
     } else if (job && t.startLive && t.energy.startHash != hash) {
       t.energy.startHash = hash;
       prnEnergySave(t);
@@ -1365,6 +1423,9 @@ void printerEvents() {
     }
     t.seen = true;
     t.job = job;
+    if (t.follow && !job && !t.endMs) t.endMs = millis() | 1;
+    if (t.follow && !job && !t.cooledMs && !(isfinite(s->bed) && s->bed > printerSettings.coolTemp))
+      t.cooledMs = millis() | 1;
     if (t.cool && (!printerSettings.coolAlert || job)) t.cool = false;
     if (t.cool && isfinite(s->bed) && s->bed <= printerSettings.coolTemp) {
       t.cool = false;
@@ -1393,11 +1454,8 @@ void printerEvents() {
     audioEvent(SND_ERROR);
     if (!printerSettings.errorWake) continue;
     prnWake();
-    for (int p = 0; p < s_count; p++)
-      if (s_pages[p].def && s_pages[p].def->printer == def.id) {
-        autoNavTo(s_pages[p].def->id);
-        break;
-      }
+    const String pid = prnPageId(def.id);
+    if (pid.length()) autoNavTo(pid);
   }
 }
 

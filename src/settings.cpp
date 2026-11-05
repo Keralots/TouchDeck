@@ -194,6 +194,7 @@ void loadSettings() {
   printerSettings.errors = prefs.getBool("perr", true);
   printerSettings.errorsAll = prefs.getBool("perrall", false);
   printerSettings.errorWake = prefs.getBool("pwake", true);
+  printerSettings.follow = prefs.getBool("pfollow", false);
   printerSettings.coolAlert = prefs.getBool("pcool", true);
   printerSettings.coolTemp = constrain(prefs.getUChar("pcoolt", 35), PRN_COOL_MIN, PRN_COOL_MAX);
   printerSettings.kwhPrice = prefs.isKey("pkwh") ? prefs.getFloat("pkwh", 0) : 0;  // getFloat logs a missing key
@@ -308,6 +309,7 @@ void saveSettings() {
   prefs.putBool("perr", printerSettings.errors);
   prefs.putBool("perrall", printerSettings.errorsAll);
   prefs.putBool("pwake", printerSettings.errorWake);
+  prefs.putBool("pfollow", printerSettings.follow);
   prefs.putBool("pcool", printerSettings.coolAlert);
   prefs.putUChar("pcoolt", printerSettings.coolTemp);
   prefs.putFloat("pkwh", printerSettings.kwhPrice);

@@ -555,6 +555,7 @@
       setCheck("prnErrors", pr.errors !== false);
       setCheck("prnErrorsAll", !!pr.errorsAll);
       setCheck("prnErrorWake", pr.errorWake !== false);
+      setCheck("prnFollow", !!pr.follow);
       setCheck("prnCool", pr.coolAlert !== false);
       setVal("prnCoolTemp", pr.coolTemp || 35);
       setVal("prnKwhPrice", pr.kwhPrice ? String(pr.kwhPrice) : "");
