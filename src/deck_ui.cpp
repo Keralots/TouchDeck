@@ -520,10 +520,10 @@ void refreshOneSnapshot() {
     if (due(order[k]) && !sh.valid[order[k]]) pick = order[k];
   for (int p = 0; p < s_count && pick < 0; p++)
     if (due(p) && !sh.valid[p]) pick = p;
-  // A whole page snapshot stalls gliding charts for about 45 ms: while they
-  // glide, one image every few seconds, the oldest first so none is starved.
-  const bool gliding = now - s_sparkPaintMs < 1000;
-  if (pick < 0 && gliding) {
+  // A whole page snapshot stalls gliding charts and tile effects for about
+  // 45 ms: meanwhile, one image every few seconds, the oldest first so none is starved.
+  const bool busy = now - s_sparkPaintMs < 1000 || lv_anim_count_running() > 0;
+  if (pick < 0 && busy) {
     if (now - s_lastSnapMs < SPARK_SNAP_MS) return;
     for (int p = 0; p < s_count; p++)
       if (due(p) && (pick < 0 || (int32_t)(s_pages[p].snapMs - s_pages[pick].snapMs) < 0)) pick = p;
