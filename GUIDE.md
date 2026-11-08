@@ -41,7 +41,9 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 - **Pages & tiles:** Home Assistant address and token, the icon font, pages (Duplicate copies one as a plain page), tiles, entity and icon pickers (None leaves a tile without an icon; a name of just a space leaves it without a name, `"label": ""`), columns, and a grid editor: drag tiles to move them (dropped onto another tile, that tile jumps to the dragged one's old place if it fits there), resize from the corner (half-cell steps), separately for landscape and portrait.
 - **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper), the Glass look, animations, PC metric tile scales.
 - **Wallpapers:** pictures for the Glass theme and the photo frame: your own uploads, daily pictures the deck downloads from Windows Spotlight once a day, or both mixed. See [Wallpapers and microSD](#wallpapers-and-microsd).
-- **Screen & light:** day brightness and the night schedule, screen sleep and presence, the status LED and its Home Assistant entity.
+- **Printers:** Bambu Lab printers, their errors and alerts, the energy of a print. Shown once printers are turned on under Advanced. See [Bambu Lab printers](#bambu-lab-printers).
+- **Screen:** day brightness and the night schedule, screen sleep and presence.
+- **Hardware:** the speaker, the status LED and its Home Assistant entity, the vibration motor.
 - **Time:** 12/24 h clock and timezone.
 - **Network:** WiFi, hostname / mDNS, static IP.
 - **Advanced:** optional features, off by default: Bambu Lab printers and MQTT.
@@ -83,7 +85,7 @@ A page that goes away while it is shown always hands over to another page first;
 
 ## Screen sleep
 
-On the **Screen & light** page, the Sleep card sets the time without touch and without presence after which the screen fades out or dims (the night level still applies when it is lower), and what counts as presence:
+On the **Screen** page, the Sleep card sets the time without touch and without presence after which the screen fades out or dims (the night level still applies when it is lower), and what counts as presence:
 
 - Up to four Home Assistant entities (motion, occupancy, a person); one counts as present while its state is `on` or `home`. Optionally any PC sending metrics, and any printer preparing, printing or paused. Presence starting wakes the screen, also after Off in the quick panel.
 - A touch always wakes it; that first touch does nothing else. With a night brightness of 0 a touch lights the screen at 10% until a minute after the last touch.
@@ -93,7 +95,7 @@ On the **Screen & light** page, the Sleep card sets the time without touch and w
 
 The **Wallpapers** page (used by the Glass theme and the photo frame) picks the pictures: My pictures (uploaded in the portal, cropped in the browser), Daily (Windows Spotlight, downloaded by the deck at a set hour) or Both. Internal storage fits a few dozen pictures, and Daily replaces its set every day.
 
-With a microSD card in the slot, turn on **Maintenance > microSD card > Use the microSD card** (the deck restarts). It is off by default. Both galleries then live on the card under `/touchdeck/wall/` (`l`, `p` = own landscape / portrait, `dl`, `dp` = daily), Daily downloads up to 32 new pictures a day and keeps an archive (50 to 500 per orientation) from which the oldest are removed. Pinned pictures and the one on screen are never removed. The card must be FAT formatted; pictures already on internal storage stay there. The Display page shows how the card is connected: "SD 1-bit" is the normal mode, "SPI" is a slower fallback that a card left in from an older firmware uses until the deck is powered off and on.
+With a microSD card in the slot, turn on **Maintenance > microSD card > Use the microSD card** (the deck restarts). It is off by default. Both galleries then live on the card under `/touchdeck/wall/` (`l`, `p` = own landscape / portrait, `dl`, `dp` = daily), Daily downloads up to 32 new pictures a day and keeps an archive (50 to 500 per orientation) from which the oldest are removed. Pinned pictures and the one on screen are never removed. The card must be FAT formatted; pictures already on internal storage stay there. **Maintenance > microSD card** shows how the card is connected: "SD 1-bit" is the normal mode, "SPI" is a slower fallback that a card left in from an older firmware uses until the deck is powered off and on. When a card is not mounted, the same card shows why. If the card is found but its file system is not accepted, **Format card** erases it and creates one FAT partition the deck can read (copy anything you need off the card first).
 
 The companion's **Wallpapers** page does this on the PC, much faster than on the deck: it downloads Spotlight pictures into the daily archive (microSD only), or crops a folder of your photos and sends them to My pictures, skipping pictures the deck already has. The folder itself is only read.
 
@@ -205,7 +207,7 @@ The portal keeps `rows` when a tile is edited but has no editor for them yet; ad
 
 ## Bambu Lab printers
 
-Up to two Bambu Lab printers report to the deck over the LAN (MQTT over TLS, port 8883), so the printer needs LAN mode or LAN access turned on. Printers are off by default: turn them on under **Advanced**. Turned off again, the deck drops the printer connections and hides printer pages and tiles, but keeps their setup. In **Pages & tiles**, "Printers": add the printer's IP address, then store its serial number and LAN access code (both stay on the device and are never shown again). "Create printer page" adds a page with progress and time left on top, the nozzle, bed and chamber temperatures, the filament in use, the layer and the chamber light. An AMS page is stacked below it, with one tile per unit and an all-slots strip when a row is free.
+Up to two Bambu Lab printers report to the deck over the LAN (MQTT over TLS, port 8883), so the printer needs LAN mode or LAN access turned on. Printers are off by default: turn them on under **Advanced**. Turned off again, the deck drops the printer connections and hides printer pages and tiles, but keeps their setup. On the **Printers** page: add the printer's IP address, then store its serial number and LAN access code (both stay on the device and are never shown again). "Create printer page" adds a page with progress and time left on top, the nozzle, bed and chamber temperatures, the filament in use, the layer and the chamber light. An AMS page is stacked below it, with one tile per unit and an all-slots strip when a row is free.
 
 A printer that is already in Home Assistant through the [Bambu Lab integration](https://github.com/greghesp/ha-bambulab) can be read from there instead: set its source to "Home Assistant" and pick it from the list. No IP, serial or access code is needed, the printer does not need LAN mode, and the deck opens no connection to the printer (less RAM in use). The deck finds the printer's entities by their registry ids, so renamed entities and non-English installations work. Through Home Assistant the deck cannot tell which filaments a job uses in slicer order (only the slots from the integration's print weight) or which nozzle of a dual nozzle printer is active (it is inferred from the temperatures).
 
@@ -223,6 +225,15 @@ A page with `"printer": "h2c"` follows that printer. A printer tile is `{ "type"
 - `slots` shows every unit's slots in one colour strip, best at 4x1 or 2x1.
 - `summary` shows compact status, progress and time left on a normal page, best at 2x1. A tap opens the printer's first page when it is available; the tile shows Off while its printer is not powered.
 
+The rest of the **Printers** page:
+
+- **Printer page:** "Show the printer page while it prints" (off by default). A print start wakes the deck and slides it to that printer's page. When the print is over, the deck goes back to the page it showed before, a minute after the bed is down to the bed cooled temperature, or 30 minutes after the print at the latest. If you leave the printer page yourself, it stays where you are.
+- **Printer errors:** HMS codes and print errors with Bambu's own text, from both sources (LAN and Home Assistant). The hero tile shows an ERROR badge in the severity colour and the error on its job line; a tap lists every error with its module and code. Common errors are listed but raise the badge only with "Also common errors". "Wake the deck and show the printer on a new error" wakes the screen and slides to the printer's page; errors already standing when the deck connects never alert. A canceled print reads CANCELED, not FAILED, and an open door shows a DOOR OPEN badge next to the printer name.
+- **Bed cooled:** after a print the deck wakes with a message once the bed is down to the set temperature, so the print comes off the plate easily.
+- **Energy of a print:** give a printer an energy meter in the list above (a Home Assistant sensor counting kWh or Wh, such as a smart plug's total energy). After a print the hero shows what the print used, and its cost with a price per kWh and a currency. A deck restart during the print keeps the reading from the start.
+
+With the speaker on, a finished print, a new error and a cooled bed also play a sound, see [Speaker](#speaker).
+
 ## PC stats and control: TouchDeck Companion
 
 The companion runs on the PC, reads the sensors and pushes a JSON packet to UDP port `4210` of the device every second. It lives in [`TouchDeck-CompanionApp/`](TouchDeck-CompanionApp/); the Windows build is attached to each [release](https://github.com/Keralots/TouchDeck/releases) as `TouchDeckCompanion-<version>.exe`.
@@ -238,6 +249,12 @@ The companion UI opens at `http://127.0.0.1:8750`; point it at the device IP. Th
 - **Now playing:** "+ Add now playing" adds a 2x2 tile with cover art, title, artist, progress and previous/play/next controls. Smaller tiles show the track and tap to play or pause. Covers travel over TCP port `8751` on the PC (or an available port if busy), so allow the companion through the firewall. Covers require WiFi transport; playback controls also work over USB.
 - **Hotkeys:** the command "Hotkey" sends a key combination such as `ctrl+shift+m` (up to five keys: ctrl, shift, alt, win, a-z, 0-9, f1-f24 and named keys like enter, esc or pageup) to the PC's focused window, handy for app shortcuts bound to F13-F24. In deck.json: `{ "action": "pc", "cmd": "hotkey", "keys": "ctrl+shift+m" }`. Windows does not let it reach a window running as administrator unless the companion runs as administrator too. On Linux it uses `xdotool`, so X11 only.
 - **USB cable:** when the device is plugged into the PC, the companion finds it (Espressif USB serial, 303A:1001) and sends metrics and commands over the cable instead of WiFi. While it holds the port, USB flashing and the serial monitor cannot open it: use OTA, or set "USB cable" to Off.
+
+## Speaker
+
+The board has a built-in amplifier for a small speaker on its speaker connector. Turn it on under **Hardware > Speaker** (off by default) and set the volume; a very small speaker may need it at 100. It plays a sound when a print finishes, on a new printer error and when the bed has cooled (each one can be switched off), and optionally a short click on tile taps. "Quiet at night" keeps it silent during the screen's night schedule.
+
+Each event uses a built-in sound or your own: add a 16-bit PCM WAV (mono or stereo, 8 to 48 kHz, up to 4 MB) under "Your sounds". Sounds are stored on the microSD card when it is in use, otherwise in the internal flash, which has little room. A missing or broken file falls back to the built-in sound. The Test buttons play the picked sound at the set volume before saving.
 
 ## Status LED
 
