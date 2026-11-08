@@ -2256,7 +2256,9 @@
                 i +
                 '"><option value="toggle"' +
                 (t.type === "toggle" ? " selected" : "") +
-                '>Switch</option><option value="action"' +
+                ">" +
+                (d === "climate" ? "Thermostat" : "Switch") +
+                '</option><option value="action"' +
                 (t.type === "action" ? " selected" : "") +
                 '>Button</option><option value="sensor"' +
                 (t.type === "sensor" ? " selected" : "") +
