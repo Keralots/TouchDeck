@@ -204,6 +204,7 @@ struct QuickPanel {
   bool open;
   bool stale;
   uint32_t lastStatus;
+  int rssi;  // shown on the WiFi chip, 0 = none yet
 };
 
 constexpr int NAME_LINE_SP = -2;  // Montserrat's line height has room for accents

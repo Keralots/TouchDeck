@@ -61,15 +61,17 @@ void setChip(lv_obj_t* chip, const String& text, bool good) {
   qpMarkStale();
 }
 
-// Link status, every 2 s. RSSI is rounded so a jittery signal does not keep
-// invalidating the panel image.
+// Link status, every 2 s. RSSI moves in 5 dB steps and only once the signal
+// leaves the shown step: each change re-takes the panel image (~150 ms).
 void qpUpdateStatus(bool force) {
   if (!s_qp.box) return;
   const uint32_t now = millis();
   if (!force && now - s_qp.lastStatus < 2000) return;
   s_qp.lastStatus = now;
   const bool wifi = WiFi.status() == WL_CONNECTED;
-  const int rssi = wifi ? (WiFi.RSSI() / 5) * 5 : 0;
+  const int raw = wifi ? WiFi.RSSI() : 0;
+  if (!s_qp.rssi || abs(raw - s_qp.rssi) > 5) s_qp.rssi = (raw / 5) * 5;
+  const int rssi = s_qp.rssi;
   setChip(s_qp.wifi, wifi ? String(LV_SYMBOL_WIFI " ") + rssi + " dBm" : String(LV_SYMBOL_WIFI " offline"), wifi);
   const int pcs = pcOnlineCount();
   setChip(s_qp.pc, pcs > 1 ? String(pcs) + " PCs online" : pcs ? String("PC online") : String("PC offline"), pcs > 0);
