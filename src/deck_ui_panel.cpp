@@ -33,8 +33,7 @@ uint8_t& lightLevelRef() {
 
 void qpSyncValues() {
   if (!s_qp.box) return;
-  const bool night = nightBrightnessActive();
-  lv_label_set_text(s_qp.screenLbl, nightWakeActive() ? "Screen (night wake)" : night ? "Screen (night)" : "Screen");
+  lv_label_set_text(s_qp.screenLbl, nightWakeActive() || nightBrightnessActive() ? "Screen (night)" : "Screen");
   lv_slider_set_value(s_qp.screenSlider, screenLevelRef(), LV_ANIM_OFF);
   lv_label_set_text_fmt(s_qp.screenVal, "%d%%", (screenLevelRef() * 100 + 127) / 255);
   lv_label_set_text(s_qp.lightLbl, ledNightActive() ? "Light (night)" : "Light");
