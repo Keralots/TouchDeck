@@ -512,8 +512,12 @@ void refreshOneSnapshot() {
                         a + 1 < s_count && sh.col[a + 1] == c ? a + 1 : -1,
                         a > 0 && sh.col[a - 1] == c ? a - 1 : -1};
   // The shown page swipes from the live frame; only closing the panel slides
-  // off its image (showPanel marks it), so then it goes first.
-  auto due = [&](int p) { return p >= 0 && s_pages[p].stale && !s_pages[p].wallBake && (p != a || s_qp.open); };
+  // off its image (showPanel marks it), so then it goes first. Pages further
+  // away jump (goToPage), so their old image stands until they are neighbours.
+  auto near = [&](int p) { return p == a || p == order[0] || p == order[1] || p == order[2] || p == order[3]; };
+  auto due = [&](int p) {
+    return p >= 0 && s_pages[p].stale && !s_pages[p].wallBake && (p != a || s_qp.open) && (!sh.valid[p] || near(p));
+  };
   if (s_qp.open && due(a)) pick = a;
   // A page without an image cannot be swiped to at all.
   for (int k = 0; k < 4 && pick < 0; k++)
