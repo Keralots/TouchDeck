@@ -207,6 +207,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   const bool glass = s_theme == THEME_GLASS && wallBlur();
 
   lv_obj_t* t = lv_obj_create(grid);
+  lv_obj_set_size(t, 0, 0);  // the grid stretches it; LVGL's default 130 px would be fitted first
   lv_obj_set_grid_cell(t, LV_GRID_ALIGN_STRETCH, col, w, LV_GRID_ALIGN_STRETCH, row, h);
   lv_obj_remove_flag(t, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_radius(t, 16, 0);

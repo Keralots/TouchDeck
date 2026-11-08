@@ -8,6 +8,7 @@ namespace deckui {
 // Page images are refreshed one per pass, at most this often (each costs
 // ~40 ms of loop time at 480x320).
 constexpr uint32_t SNAP_SPACING_MS = 40;
+constexpr uint32_t NEAR_SNAP_MAX_MS = 30000;  // a neighbour image older than this is refreshed at once
 constexpr uint32_t PANEL_SNAP_MS = 5000;  // a stale panel image waits at most this long behind busy pages
 constexpr uint32_t STATS_MS = 10000;
 constexpr uint32_t SLIDE_MS = 280;
@@ -512,17 +513,24 @@ void refreshOneSnapshot() {
                         a + 1 < s_count && sh.col[a + 1] == c ? a + 1 : -1,
                         a > 0 && sh.col[a - 1] == c ? a - 1 : -1};
   // The shown page swipes from the live frame; only closing the panel slides
-  // off its image (showPanel marks it), so then it goes first.
-  auto due = [&](int p) { return p >= 0 && s_pages[p].stale && !s_pages[p].wallBake && (p != a || s_qp.open); };
+  // off its image (showPanel marks it), so then it goes first. Pages further
+  // away jump (goToPage), so their old image stands until they are neighbours.
+  auto near = [&](int p) { return p == a || p == order[0] || p == order[1] || p == order[2] || p == order[3]; };
+  auto due = [&](int p) {
+    return p >= 0 && s_pages[p].stale && !s_pages[p].wallBake && (p != a || s_qp.open) && (!sh.valid[p] || near(p));
+  };
   if (s_qp.open && due(a)) pick = a;
-  // A page without an image cannot be swiped to at all.
+  // A page without an image cannot be swiped to at all. Nor should a page
+  // just jumped next to show an image from when it was far (not refreshed).
+  const bool anim = lv_anim_count_running() > 0;
   for (int k = 0; k < 4 && pick < 0; k++)
-    if (due(order[k]) && !sh.valid[order[k]]) pick = order[k];
+    if (due(order[k]) && (!sh.valid[order[k]] || (!anim && now - s_pages[order[k]].snapMs > NEAR_SNAP_MAX_MS)))
+      pick = order[k];
   for (int p = 0; p < s_count && pick < 0; p++)
     if (due(p) && !sh.valid[p]) pick = p;
   // A whole page snapshot stalls gliding charts and tile effects for about
   // 45 ms: meanwhile, one image every few seconds, the oldest first so none is starved.
-  const bool busy = now - s_sparkPaintMs < 1000 || lv_anim_count_running() > 0;
+  const bool busy = now - s_sparkPaintMs < 1000 || anim;
   if (pick < 0 && busy) {
     if (now - s_lastSnapMs < SPARK_SNAP_MS) return;
     for (int p = 0; p < s_count; p++)

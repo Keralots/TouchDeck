@@ -204,6 +204,7 @@ struct QuickPanel {
   bool open;
   bool stale;
   uint32_t lastStatus;
+  int rssi;  // shown on the WiFi chip, 0 = none yet
 };
 
 constexpr int NAME_LINE_SP = -2;  // Montserrat's line height has room for accents
@@ -235,6 +236,8 @@ struct Spark {
   lv_draw_buf_t* buf;       // A8 coverage, the chart object's size; drawn in color
   int32_t key;              // glide step last painted, -1 = repaint
   bool painted;             // buf holds a chart (a repaint keeps the old one until then)
+  bool dirty;               // new data since the last paint
+  bool drawPaint;           // paint on the next draw: not gliding (another page, panel open)
   float paintLo, paintHi;
 };
 
@@ -378,7 +381,7 @@ lv_obj_t* makeRoot(int w, int h);
 uint32_t metricAccent(const TileDef& d);
 uint32_t metricChart(const TileDef& d);
 uint32_t tileText(const TileDef& d);
-void setText(lv_obj_t* l, const char* text);
+bool setText(lv_obj_t* l, const char* text);  // true when the text changed
 int lineH(const lv_font_t* f);
 int textH(const lv_font_t* f, int lines);
 void showObj(lv_obj_t* o, bool on);
@@ -427,7 +430,7 @@ void sparkFree(Spark* s);
 bool sparkRender(TileRt& r, uint32_t now, bool ease, uint32_t dtMs);
 void sparkDrawEvent(lv_event_t* e);
 void sparkSizeEvent(lv_event_t* e);
-void applyPcToTile(TileRt& r);
+bool applyPcToTile(TileRt& r);  // true when the tile changed
 lv_obj_t* makeRows(lv_obj_t* t, const TileDef& d);
 lv_obj_t* makeDetail(lv_obj_t* t, const TileDef& d);
 void makeMetricContent(TileRt& r, lv_obj_t* t);
