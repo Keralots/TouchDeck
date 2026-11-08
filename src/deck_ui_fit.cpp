@@ -27,8 +27,10 @@ uint32_t metricAccent(const TileDef& d) {
 uint32_t metricChart(const TileDef& d) { return d.hasChartColor ? d.chartColor : metricAccent(d); }
 uint32_t tileText(const TileDef& d) { return d.hasTextColor ? d.textColor : C_TEXT; }
 
-void setText(lv_obj_t* l, const char* text) {
-  if (strcmp(lv_label_get_text(l), text)) lv_label_set_text(l, text);
+bool setText(lv_obj_t* l, const char* text) {
+  if (!strcmp(lv_label_get_text(l), text)) return false;
+  lv_label_set_text(l, text);
+  return true;
 }
 
 // --- Tile fitting -----------------------------------------------------------------------
