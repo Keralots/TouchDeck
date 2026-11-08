@@ -79,6 +79,8 @@ A whole page can follow a condition the same way ("Page shown" in the page setti
 
 A page that goes away while it is shown always hands over to another page first; a slide waits until nothing is being touched and no card is open.
 
+**Home page** in the page settings (`"home": true`, one page only) is the page the deck starts on after power-on or a restart, and the one it falls back to when a shown page goes away with no page to go back to. The order of the pages does not change. While the home page is hidden (its condition does not hold, its printer is off) the first page takes its place.
+
 ## Screen sleep
 
 On the **Screen & light** page, the Sleep card sets the time without touch and without presence after which the screen fades out or dims (the night level still applies when it is lower), and what counts as presence:

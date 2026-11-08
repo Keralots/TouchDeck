@@ -315,6 +315,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
     if (!p.id.length()) p.id = "page" + String(cfg.pages.size() + 1);
     if (!parseWhen(pv["when"], p.when, err, "page '" + p.id + "'")) return false;
     p.autoShow = p.when.kind != WHEN_ALWAYS && (pv["auto"] | false);
+    p.home = pv["home"] | false;
     parseGrid(pv["layouts"]["landscape"], p.cols[ORIENT_LANDSCAPE], p.rows[ORIENT_LANDSCAPE]);
     parseGrid(pv["layouts"]["portrait"], p.cols[ORIENT_PORTRAIT], p.rows[ORIENT_PORTRAIT]);
     JsonArrayConst tiles = pv["tiles"].as<JsonArrayConst>();

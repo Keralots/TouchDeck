@@ -157,6 +157,13 @@ String activePageId() {
   return a >= 0 && a < s_count && s_pages[a].def ? s_pages[a].def->id : String();
 }
 
+// The page marked "home" while it is built, else the first page.
+int homePage() {
+  for (const PageDef& pd : s_cfg.pages)
+    if (pd.home) return max(pageIndexOf(pd.id), 0);
+  return 0;
+}
+
 void goToPage(const String& id) {
   if (frameActive() && !s_frameSync) stopGestures();
   for (int i = 0; i < s_count; i++) {
@@ -741,7 +748,8 @@ void whenSync() {
     if (pd.when.kind == WHEN_ALWAYS || whenWanted(pd) == pd.shown) continue;
     if (pd.shown && pd.id == cur) {
       int back = pageIndexOf(s_autoFrom);
-      if (back < 0 || back == sh.active) back = 0;
+      if (back < 0 || back == sh.active) back = homePage();
+      if (back == sh.active) back = 0;
       if (back != sh.active) {
         s_autoFrom = "";
         goToPage(s_pages[back].def->id);
@@ -845,6 +853,8 @@ bool deckBegin(uint8_t rotation) {
     }
   }
   haBegin();
+  for (const PageDef& pd : s_cfg.pages)
+    if (pd.home && !s_keepPage.length()) s_keepPage = pd.id;  // boot on it (first page while hidden)
   buildPages();
   touchBegin();
   Serial.printf("Deck: LVGL %d.%d.%d up, %d pages, %dx%d\n", LVGL_VERSION_MAJOR,

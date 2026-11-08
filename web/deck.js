@@ -2024,6 +2024,7 @@
             i +
             '">' +
             (stackedAt(ps, i) ? "&#8595; " : "") +
+            (p.home ? "&#8962; " : "") +
             esc(p.name || p.id) +
             "</button>",
         )
@@ -2162,7 +2163,10 @@
       '<label class="check-row standalone"><input type="checkbox" id="dkPStack"' +
       (stackedAt(ps, cur) ? " checked" : "") +
       (cur === 0 ? " disabled" : "") +
-      '><span class="check-box"></span><span class="check-text"><strong>Below the previous page</strong><span class="ct-hint">Stacked pages form one column: swipe up and down between them, left and right to the next column. Move left/right moves a column head with its column, or swaps a stacked page within its column.</span></span></label>';
+      '><span class="check-box"></span><span class="check-text"><strong>Below the previous page</strong><span class="ct-hint">Stacked pages form one column: swipe up and down between them, left and right to the next column. Move left/right moves a column head with its column, or swaps a stacked page within its column.</span></span></label>' +
+      '<label class="check-row standalone"><input type="checkbox" id="dkPHome"' +
+      (p.home ? " checked" : "") +
+      '><span class="check-box"></span><span class="check-text"><strong>Home page</strong><span class="ct-hint">The deck starts on this page after power-on or a restart, and falls back to it when a shown page goes away. Only one page is home; while it is hidden (a condition or a printer that is off) the first page takes its place.</span></span></label>';
     let g = "";
     for (let y = 0; y < r; y++)
       for (let x = 0; x < c; x++)
@@ -2415,6 +2419,12 @@
       renderTabs();
       renderPage();
     };
+    $("dkPHome").onchange = (e) => {
+      deck.pages.forEach((x) => delete x.home);
+      if (e.target.checked) p.home = true;
+      setDirty(true);
+      renderTabs();
+    };
     $("dkPLeft").disabled = !canMovePage(ps, cur, -1);
     $("dkPRight").disabled = !canMovePage(ps, cur, 1);
     $("dkPLeft").onclick = () => movePage(-1);
@@ -2425,7 +2435,7 @@
     $("dkPDup").title = $("dkPDup").disabled ? "The deck holds at most " + MAX_PAGES + " pages" : "";
     $("dkPDup").onclick = () => {
       const copy = JSON.parse(JSON.stringify(p));
-      ["group", "when", "auto", "printer"].forEach((k) => delete copy[k]);
+      ["group", "when", "auto", "printer", "home"].forEach((k) => delete copy[k]);
       copy.id = "p" + Date.now().toString(36);
       copy.name = (p.name || p.id) + " copy";
       let end = cur + 1;

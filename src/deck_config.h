@@ -228,6 +228,7 @@ struct PageDef {
   String printer;  // built only while this printer is powered
   WhenDef when;
   bool autoShow = false;  // "auto": slide here when it appears, back when it goes
+  bool home = false;      // "home": the page the deck starts on
   bool shown = true;      // runtime, as for tiles
   uint8_t cols[2] = {4, 3};
   uint8_t rows[2] = {3, 4};
