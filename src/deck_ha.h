@@ -58,6 +58,8 @@ struct HaEntity {
 };
 
 void haBegin();
+// Drop the connection until resumed (the daily download needs its RAM).
+void haPause(bool pause);
 // Replace the URL and/or token. An empty token keeps the stored one.
 void haSetCredentials(const String& url, const String& token);
 void haClearCredentials();

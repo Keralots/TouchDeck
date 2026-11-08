@@ -344,9 +344,23 @@ static bool serialPoll() {
   return parsed;
 }
 
+static bool s_paused = false;
+
+void pcMetricsPause(bool pause) {
+  if (pause == s_paused) return;
+  s_paused = pause;
+  if (pause) {
+    udp.stop();
+    return;
+  }
+  udp.begin(UDP_PORT);
+  for (int i = 0; i < MAX_PCS; i++)
+    if (pcSources[i].used) pcSources[i].data.lastReceived = millis();
+}
+
 bool pcMetricsHandle() {
   bool parsed = serialPoll();
-  int packetSize = udp.parsePacket();
+  int packetSize = s_paused ? 0 : udp.parsePacket();
   if (packetSize) {
     static char buffer[PC_PACKET_BUF_SIZE];
     // Reject oversize before reading so a truncated body is never parsed.
@@ -376,7 +390,7 @@ bool pcMetricsHandle() {
   // Liveness: drop to offline when no packet has arrived for the stale window.
   for (int i = 0; i < MAX_PCS; i++) {
     PcMetricData& d = pcSources[i].data;
-    if (pcSources[i].used && d.online && millis() - d.lastReceived > PC_STALE_TIMEOUT_MS) {
+    if (!s_paused && pcSources[i].used && d.online && millis() - d.lastReceived > PC_STALE_TIMEOUT_MS) {
       d.online = false;
       s_version++;
       Serial.printf("pc_metrics: PC '%s' offline (no packets within stale window)\n", pcSources[i].name);
