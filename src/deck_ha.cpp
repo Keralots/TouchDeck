@@ -605,6 +605,8 @@ void sendQueuedCalls() {
   }
 }
 
+volatile bool s_paused = false;
+
 void haTask(void*) {
   for (;;) {
     uint32_t credGen;
@@ -645,6 +647,15 @@ void haTask(void*) {
     }
     if (haLink() == HA_AUTH_FAILED) {
       vTaskDelay(pdMS_TO_TICKS(250));  // until the settings change
+      continue;
+    }
+    if (s_paused) {
+      if (s_started) {
+        s_ws.disconnect();
+        s_started = false;
+      }
+      setLink(HA_CONNECTING);
+      vTaskDelay(pdMS_TO_TICKS(250));
       continue;
     }
     if (!s_started) {
@@ -698,6 +709,8 @@ const char* haLinkName(HaLink s) {
   }
   return "?";
 }
+
+void haPause(bool pause) { s_paused = pause; }
 
 void haBegin() {
   if (s_lock) return;

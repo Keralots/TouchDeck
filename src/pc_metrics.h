@@ -80,6 +80,9 @@ extern PcSource* pcSources;
 
 // Start the UDP listener on UDP_PORT and load the known PCs.
 void pcMetricsBegin();
+// Close the UDP socket until resumed (the daily download needs its RAM); the
+// pause does not count as silence, so no PC goes offline because of it.
+void pcMetricsPause(bool pause);
 // Service the socket: parse any pending packet, refresh the online flags.
 // Returns true if a new packet was parsed this call.
 bool pcMetricsHandle();

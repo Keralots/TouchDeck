@@ -149,6 +149,8 @@ bool sameDiscovery(const MqttSnapshot& a, const MqttSnapshot& b) {
   return a.pages == b.pages && a.led == b.led && a.hostname == b.hostname && a.ip == b.ip;
 }
 
+volatile bool s_paused = false;
+
 void task(void*) {
   WiFiClient socket;
   PubSubClient mqtt(socket);
@@ -223,6 +225,19 @@ void task(void*) {
     }
     if (!cfg.enabled) {
       vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
+    if (s_paused) {
+      if (mqtt.connected()) {
+        mqtt.publish(availability.c_str(), "offline", true);
+        mqtt.disconnect();
+      }
+      socket.stop();
+      wasConnected = false;
+      retryAt = 0;
+      replay = configs = true;
+      status("connecting", "Paused for the daily download");
+      vTaskDelay(pdMS_TO_TICKS(250));
       continue;
     }
     if (WiFi.status() != WL_CONNECTED) {
@@ -328,6 +343,8 @@ bool mqttNormalize(MqttSettings& cfg, String& error) {
   }
   return true;
 }
+
+void mqttPause(bool pause) { s_paused = pause; }
 
 void mqttBegin() {
   Preferences prefs;
