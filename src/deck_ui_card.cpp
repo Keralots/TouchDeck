@@ -81,12 +81,42 @@ lv_obj_t* makeScrim() {
 
 // Thin line on the top edge while daily pictures download: swipes may hitch then.
 lv_obj_t* s_dailyBar = nullptr;
+lv_obj_t* s_dailyPill = nullptr;  // "Daily pictures 3 of 20, tap to skip"
+
+void dailySkipTap(lv_event_t*) {
+  deck::dailySkip();
+  hapticTap();
+}
 
 void dailyBarSync() {
   int done = 0, total = 0;
   if (!deck::dailyProgress(done, total) || !total) {
     if (s_dailyBar) lv_obj_add_flag(s_dailyBar, LV_OBJ_FLAG_HIDDEN);
+    if (s_dailyPill) lv_obj_add_flag(s_dailyPill, LV_OBJ_FLAG_HIDDEN);
     return;
+  }
+  // Home Assistant and MQTT are paused meanwhile: say why, and offer a way out.
+  if (!s_dailyPill) {
+    s_dailyPill = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_dailyPill);
+    lv_obj_set_size(s_dailyPill, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(s_dailyPill, lv_color_hex(0x2A2F38), 0);
+    lv_obj_set_style_bg_opa(s_dailyPill, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_dailyPill, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_pad_hor(s_dailyPill, 14, 0);
+    lv_obj_set_style_pad_ver(s_dailyPill, 7, 0);
+    lv_obj_set_style_text_color(s_dailyPill, lv_color_hex(0xE6E8EC), 0);
+    lv_obj_add_event_cb(s_dailyPill, dailySkipTap, LV_EVENT_CLICKED, nullptr);
+    lv_label_create(s_dailyPill);
+  }
+  char text[64];
+  snprintf(text, sizeof(text), "Daily pictures %d of %d, tap to skip", std::min(done + 1, total), total);
+  lv_obj_t* label = lv_obj_get_child(s_dailyPill, 0);
+  if (strcmp(lv_label_get_text(label), text)) lv_label_set_text(label, text);
+  lv_obj_align(s_dailyPill, LV_ALIGN_TOP_MID, 0, 8);
+  if (lv_obj_has_flag(s_dailyPill, LV_OBJ_FLAG_HIDDEN)) {
+    lv_obj_remove_flag(s_dailyPill, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_dailyPill);
   }
   if (!s_dailyBar) {
     s_dailyBar = lv_obj_create(lv_layer_top());
