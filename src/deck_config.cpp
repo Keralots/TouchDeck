@@ -422,7 +422,14 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         t.hasCrit = tv["crit"].is<float>() && isfinite(t.crit);
       }
       if (t.type == TILE_CLOCK || t.type == TILE_MEDIA) {
-        if (t.type == TILE_MEDIA) t.pc = (const char*)(tv["pc"] | "");
+        if (t.type == TILE_MEDIA) {
+          t.pc = (const char*)(tv["pc"] | "");
+          // entity = a Home Assistant player instead of a PC (#6).
+          if (t.entity.length() && !t.entity.startsWith("media_player.")) {
+            if (err) *err = where + ": now playing needs a media_player entity";
+            return false;
+          }
+        }
         p.tiles.push_back(t);
         continue;
       }

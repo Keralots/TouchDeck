@@ -142,6 +142,7 @@
     ents = null,
     entMap = {},
     entsErr = "",
+    domBefore = null,
     entsBusy = false,
     dirty = false,
     pickFor = -1,
@@ -1066,15 +1067,44 @@
       "</div>"
     );
   }
+  /* Now playing source: a PC (companion) or a Home Assistant media player (#6). */
+  function mediaSrcSel(t, i) {
+    const cur = pcOf(t);
+    let o = pcs.length
+      ? pcs
+          .map((x) => opt("pc:" + x.id, "PC: " + x.name + (x.online ? "" : " (offline)"), !t.entity && cur === x))
+          .join("")
+      : opt("pc:", "PC (companion)", !t.entity);
+    if (!t.entity && t.pc && !cur) o += opt("pc:" + t.pc, "Unknown PC", true);
+    return (
+      '<select data-ms="' +
+      i +
+      '">' +
+      o +
+      opt("ha", "Home Assistant player", !!t.entity) +
+      "</select>" +
+      (t.entity
+        ? '<button type="button" class="btn" data-e="' +
+          i +
+          '">' +
+          esc((entMap[t.entity] || {}).name || t.entity) +
+          "</button>"
+        : "")
+    );
+  }
   function mediaRow(t, i) {
     return (
       '<div class="dk-tile' +
       (i === sel ? " sel" : "") +
       '"><div class="dk-ic" style="background:' +
       (t.color || "#E6E8EC") +
-      '">PC</div><div class="dk-tmain"><b>Now playing</b><div class="dk-tsub">Cover, track and playback controls</div></div>' +
+      '">' +
+      (t.entity ? "HA" : "PC") +
+      '</div><div class="dk-tmain"><b>Now playing</b><div class="dk-tsub">' +
+      (t.entity ? "Track and playback controls from " + esc(t.entity) : "Cover, track and playback controls") +
+      "</div></div>" +
       '<div class="dk-tact">' +
-      pcSel(t, i) +
+      mediaSrcSel(t, i) +
       sizeSel(t, i) +
       '<button type="button" class="btn' +
       (i === more ? " on" : "") +
@@ -2725,6 +2755,23 @@
     el.querySelectorAll("[data-hst]").forEach(
       (x) => (x.onclick = () => testHttpSensor(p.tiles[+x.dataset.hst], +x.dataset.hst)),
     );
+    el.querySelectorAll("[data-ms]").forEach(
+      (x) =>
+        (x.onchange = () => {
+          const i = +x.dataset.ms,
+            t = p.tiles[i];
+          if (x.value === "ha") {
+            renderPage(); // the select shows the old source until a player is picked
+            openPicker(i);
+            return;
+          }
+          delete t.entity;
+          if (x.value.length > 3) t.pc = x.value.slice(3);
+          else delete t.pc;
+          setDirty(true);
+          renderPage();
+        }),
+    );
     $("dkAddMedia").onclick = () => {
       const t = { id: "np" + Date.now().toString(36), type: "media" };
       setSize(t, "2x2");
@@ -3128,6 +3175,11 @@
   }
   async function openPicker(i) {
     pickFor = i;
+    const pt = i >= 0 ? pages()[cur].tiles[i] : null;
+    if (pt && pt.type === "media") {
+      domBefore = dom; // only this picker is limited to players
+      dom = "media_player";
+    }
     $("dkQ").value = "";
     $("dkPicker").classList.add("show");
     renderDomains();
@@ -3139,6 +3191,10 @@
   }
   function closePicker() {
     $("dkPicker").classList.remove("show");
+    if (domBefore !== null) {
+      dom = domBefore;
+      domBefore = null;
+    }
   }
   /* deck.json "led" is set on the Hardware page (portal.js sets window.snLedEntity); keep this copy in step
    so a save from here does not bring back the old entity. */
@@ -3152,7 +3208,14 @@
     const p = pages()[cur];
     const type = autoType(domainOf(id));
     if (pickFor < 0) p.tiles.push({ id: "t" + Date.now().toString(36), type: type, entity: id });
-    else {
+    else if (p.tiles[pickFor].type === "media") {
+      if (domainOf(id) !== "media_player") {
+        alert("Now playing needs a media player (media_player.*).");
+        return;
+      }
+      p.tiles[pickFor].entity = id;
+      delete p.tiles[pickFor].pc;
+    } else {
       const t = p.tiles[pickFor];
       t.entity = id;
       t.type = type;

@@ -29,6 +29,8 @@ bool httpTestResult(uint32_t ticket, int& code, String& err, std::shared_ptr<cha
 
 // One cover job at a time, including a result waiting for the UI.
 bool httpArtFetch(IPAddress ip, uint16_t port, const char* id, int px);
+// Same, from a JPEG at an http:// URL (a Home Assistant player's picture).
+bool httpArtFetchJpeg(const String& url, const char* id, int px);
 // A finished job, including failure (pixels == nullptr). Caller owns pixels.
 bool httpArtTake(String& id, int& px, uint8_t*& pixels);
 
