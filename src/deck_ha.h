@@ -54,6 +54,13 @@ struct HaEntity {
   float tempStep = NAN;
   String hvacAction;        // "heating", "cooling", "idle"...
   String hvacModes;         // hvac_modes joined with ',' ("off,heat,cool")
+  // Media players: track, length and position in seconds (0 = unknown);
+  // the position was read at mediaPosAt (epoch, 0 = unknown).
+  String mediaTitle;
+  String mediaArtist;
+  int32_t mediaDuration = 0;
+  int32_t mediaPosition = 0;
+  time_t mediaPosAt = 0;
   uint32_t version = 0;     // bumps on every change of this entity
 };
 

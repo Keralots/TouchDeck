@@ -311,6 +311,27 @@ void clearClimate(HaEntity& e) {
   e.hvacModes = "";
 }
 
+bool historyEpoch(const char* s, time_t& epoch);
+
+void clearMedia(HaEntity& e) {
+  e.mediaTitle = "";
+  e.mediaArtist = "";
+  e.mediaDuration = e.mediaPosition = 0;
+  e.mediaPosAt = 0;
+}
+
+// True when k is a media attribute (absent or null clears it).
+bool mediaField(HaEntity& e, const char* k, JsonVariantConst v) {
+  if (!strcmp(k, "media_title")) e.mediaTitle = v.is<const char*>() ? (const char*)v : "";
+  else if (!strcmp(k, "media_artist")) e.mediaArtist = v.is<const char*>() ? (const char*)v : "";
+  else if (!strcmp(k, "media_duration")) e.mediaDuration = v.is<float>() ? (int32_t)lroundf(v.as<float>()) : 0;
+  else if (!strcmp(k, "media_position")) e.mediaPosition = v.is<float>() ? (int32_t)lroundf(v.as<float>()) : 0;
+  else if (!strcmp(k, "media_position_updated_at")) {
+    if (!v.is<const char*>() || !historyEpoch(v.as<const char*>(), e.mediaPosAt)) e.mediaPosAt = 0;
+  } else return false;
+  return true;
+}
+
 void entityFromAttrs(HaEntity& e, JsonObjectConst a) {
   if (a.isNull()) return;
   if (a["friendly_name"].is<const char*>()) e.name = (const char*)a["friendly_name"];
@@ -332,6 +353,7 @@ void entityFromAttrs(HaEntity& e, JsonObjectConst a) {
       e.level = kv.value().is<float>() ? (int)lroundf(kv.value().as<float>() * 100) : -1;
     } else if (float* f = climateField(e, k)) {
       *f = kv.value().is<float>() ? kv.value().as<float>() : NAN;  // null when off
+    } else if (mediaField(e, k, kv.value())) {
     } else if (!strcmp(k, "hvac_action")) {
       e.hvacAction = kv.value().is<const char*>() ? (const char*)kv.value() : "";
     } else if (!strcmp(k, "hvac_modes")) {
@@ -385,6 +407,7 @@ void applyEvent(JsonObjectConst ev) {
     e.level = -1;
     e.numMin = e.numMax = e.numStep = NAN;
     clearClimate(e);
+    clearMedia(e);
     entityFromAttrs(e, kv.value()["a"].as<JsonObjectConst>());
     e.version++;
     changed = true;
@@ -406,6 +429,7 @@ void applyEvent(JsonObjectConst ev) {
                !strcmp(key, "volume_level"))
         e.level = -1;
       else if (float* f = climateField(e, key)) *f = NAN;
+      else if (mediaField(e, key, JsonVariantConst())) {}
       else if (!strcmp(key, "hvac_action")) e.hvacAction = "";
       else if (!strcmp(key, "hvac_modes")) e.hvacModes = "";
       else if (!strcmp(key, "icon")) e.icon = "";

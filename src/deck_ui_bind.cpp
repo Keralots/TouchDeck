@@ -514,10 +514,15 @@ void setSliderFill(TileRt& r, float frac) {
 // Pull the latest HA state into one tile's widgets.
 void applyHaToTile(TileRt& r, bool force) {
   const TileDef& d = *r.def;
-  if (d.type == TILE_MEDIA || d.http.enabled || !d.entity.length()) return;
+  if (d.http.enabled || !d.entity.length()) return;
   HaEntity e;
   if (!haGetEntity(d.entity, e)) return;
   if (!force && e.version == r.haVersion) return;
+  if (d.type == TILE_MEDIA) {
+    r.haVersion = e.version;
+    applyMedia(r);
+    return;
+  }
   if (e.version != r.haVersion)
     if (Wish* w = findWish(d.entity)) rememberLevel(*w, e);
   r.haVersion = e.version;

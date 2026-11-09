@@ -535,7 +535,7 @@ void pcSync(bool force) {
   if (!force && pcVersion() == s_pcSeen) return;
   s_pcSeen = pcVersion();
   for (TileRt& r : s_tiles) {
-    if (r.def->type == TILE_MEDIA) applyMedia(r);
+    if (r.def->type == TILE_MEDIA && !r.def->entity.length()) applyMedia(r);
     if (r.def->tap.kind == ACT_PC) applyPcStateToTile(r);
     if (r.def->type == TILE_METRIC && applyPcToTile(r)) markPageStale(r.page);
   }

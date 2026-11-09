@@ -4,6 +4,45 @@
 namespace deckui {
 
 // --- Now playing ----------------------------------------------------------------------
+// What the tile shows: from a PC (companion) or, with an entity, from a Home
+// Assistant media_player (#6).
+struct MediaNow {
+  bool available = false;
+  bool playing = false;
+  String title, artist, art;  // art: companion cover id, "" = none
+  time_t t0 = 0;              // track start while playing, 0 = unknown
+  int32_t pos = 0, dur = 0;   // seconds; pos is used while paused
+};
+
+MediaNow mediaNow(const TileDef& d) {
+  MediaNow m;
+  if (d.entity.length()) {
+    HaEntity e;
+    if (!haGetEntity(d.entity, e) || !e.known || e.state == "unavailable" || e.state == "unknown" ||
+        e.state == "off")
+      return m;
+    m.available = true;
+    m.playing = e.state == "playing";
+    m.title = e.mediaTitle;
+    m.artist = e.mediaArtist;
+    m.dur = e.mediaDuration;
+    m.pos = e.mediaPosition;
+    if (m.playing && e.mediaPosAt) m.t0 = e.mediaPosAt - e.mediaPosition;
+    return m;
+  }
+  const PcState* st = pcStateOf(pcSource(d.pc));
+  if (!st || st->media < 0) return m;
+  m.available = true;
+  m.playing = st->media == PC_MEDIA_PLAYING;
+  m.title = st->title;
+  m.artist = st->artist;
+  m.art = st->art;
+  m.t0 = st->t0;
+  m.pos = st->pos;
+  m.dur = st->dur;
+  return m;
+}
+
 void mediaGlyph(lv_obj_t* label, const char* name, const char* fallback, int px) {
   const uint32_t cp = iconCodepoint(name);
   const lv_font_t* font = cp ? iconFont(px, cp) : nullptr;
@@ -23,15 +62,14 @@ void mediaSetArt(TileRt& r, const std::shared_ptr<MediaArt>& art) {
 }
 
 void mediaProgress(TileRt& r) {
-  const PcState* st = pcStateOf(pcSource(r.def->pc));
+  const MediaNow m = mediaNow(*r.def);
   const time_t now = time(nullptr);
-  const bool visible = r.mediaFull && st && st->media >= 0 && st->dur > 0 && now >= 1609459200 &&
-                       (st->media != PC_MEDIA_PLAYING || st->t0 > 0);
+  const bool visible = r.mediaFull && m.available && m.dur > 0 && now >= 1609459200 && (!m.playing || m.t0 > 0);
   bool changed = visible == lv_obj_has_flag(r.viz, LV_OBJ_FLAG_HIDDEN);
   showObj(r.viz, visible);
   if (visible) {
-    const int64_t elapsed = st->media == PC_MEDIA_PLAYING ? (int64_t)now - st->t0 : st->pos;
-    const int value = (int)(std::max((int64_t)0, std::min(elapsed, (int64_t)st->dur)) * 1000 / st->dur);
+    const int64_t elapsed = m.playing ? (int64_t)now - m.t0 : m.pos;
+    const int value = (int)(std::max((int64_t)0, std::min(elapsed, (int64_t)m.dur)) * 1000 / m.dur);
     if (value != lv_bar_get_value(r.viz)) {
       lv_bar_set_value(r.viz, value, LV_ANIM_OFF);
       changed = true;
@@ -41,9 +79,9 @@ void mediaProgress(TileRt& r) {
 }
 
 void mediaCover(TileRt& r) {
-  const PcSource* pc = pcSource(r.def->pc);
-  const PcState* st = pcStateOf(pc);
-  const String wanted = st && st->media >= 0 && r.coverPx ? String(st->art) : String();
+  const PcSource* pc = r.def->entity.length() ? nullptr : pcSource(r.def->pc);
+  const MediaNow m = mediaNow(*r.def);
+  const String wanted = m.available && r.coverPx ? m.art : String();
   if (wanted != r.artWanted || (r.art && r.art->px != r.coverPx)) {
     r.artWanted = wanted;
     r.artAttempt = 0;
@@ -65,15 +103,14 @@ void mediaCover(TileRt& r) {
 }
 
 void applyMedia(TileRt& r) {
-  const PcState* st = pcStateOf(pcSource(r.def->pc));
-  const bool available = st && st->media >= 0;
-  const char* title = available && st->title[0] ? st->title : "Nothing playing";
-  const char* artist = available ? st->artist : "";
-  const uint32_t cp = available && st->media == PC_MEDIA_PLAYING ? 1 : 0;
+  const MediaNow m = mediaNow(*r.def);
+  const char* title = m.available && m.title.length() ? m.title.c_str() : "Nothing playing";
+  const char* artist = m.available ? m.artist.c_str() : "";
+  const uint32_t cp = m.playing ? 1 : 0;
   bool changed = strcmp(lv_label_get_text(r.name), title) || strcmp(lv_label_get_text(r.sub), artist);
   setText(r.name, title);
   setText(r.sub, artist);
-  const lv_opa_t opacity = available ? LV_OPA_COVER : LV_OPA_50;
+  const lv_opa_t opacity = m.available ? LV_OPA_COVER : LV_OPA_50;
   if (lv_obj_get_style_opa(r.obj, LV_PART_MAIN) != opacity) {
     lv_obj_set_style_opa(r.obj, opacity, 0);
     changed = true;
@@ -108,8 +145,7 @@ void mediaArtTick() {
   }
   for (TileRt& r : s_tiles) {
     if (r.def->type != TILE_MEDIA || r.coverPx != px) continue;
-    const PcState* st = pcStateOf(pcSource(r.def->pc));
-    if (!st || st->media < 0 || id != st->art) continue;
+    if (mediaNow(*r.def).art != id) continue;
     r.artWanted = id;
     r.artAttempt = millis() ? millis() : 1;
     if (art) mediaSetArt(r, art);
@@ -124,6 +160,13 @@ void mediaEvent(lv_event_t* e) {
   if (button == 3 && r.mediaFull) return;
   hapticTap();
   audioClick();
+  if (r.def->entity.length()) {
+    static const char* const services[] = {"media_previous_track", "media_play_pause", "media_next_track",
+                                           "media_play_pause"};
+    if (!haCallService("media_player", services[button], r.def->entity, ""))
+      deckToastShow("Home Assistant is not connected", 2200);
+    return;
+  }
   static const char* const cmds[] = {"media_prev", "media_play_pause", "media_next", "media_play_pause"};
   String err;
   if (!pcSendCommand(r.def->pc, cmds[button], err)) deckToastShow(err.c_str(), 2200);
