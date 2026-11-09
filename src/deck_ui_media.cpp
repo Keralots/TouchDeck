@@ -9,10 +9,26 @@ namespace deckui {
 struct MediaNow {
   bool available = false;
   bool playing = false;
-  String title, artist, art;  // art: companion cover id, "" = none
+  String title, artist, art;  // art: cover id, "" = none
+  String picture;             // HA entity_picture
   time_t t0 = 0;              // track start while playing, 0 = unknown
   int32_t pos = 0, dur = 0;   // seconds; pos is used while paused
 };
+
+// The proxy token in entity_picture rotates; the cover id must not.
+String pictureId(const String& picture) {
+  String key = picture;
+  const int t = key.indexOf("token=");
+  if (t >= 0) {
+    const int end = key.indexOf('&', t);
+    key.remove(t, end < 0 ? key.length() - t : end - t + 1);
+  }
+  uint32_t h = 2166136261u;
+  for (size_t i = 0; i < key.length(); i++) h = (h ^ (uint8_t)key[i]) * 16777619u;
+  char id[9];
+  snprintf(id, sizeof(id), "%08x", (unsigned)h);
+  return id;
+}
 
 MediaNow mediaNow(const TileDef& d) {
   MediaNow m;
@@ -28,6 +44,8 @@ MediaNow mediaNow(const TileDef& d) {
     m.dur = e.mediaDuration;
     m.pos = e.mediaPosition;
     if (m.playing && e.mediaPosAt) m.t0 = e.mediaPosAt - e.mediaPosition;
+    m.picture = e.mediaPicture;
+    if (m.picture.length()) m.art = pictureId(m.picture);
     return m;
   }
   const PcState* st = pcStateOf(pcSource(d.pc));
@@ -79,7 +97,8 @@ void mediaProgress(TileRt& r) {
 }
 
 void mediaCover(TileRt& r) {
-  const PcSource* pc = r.def->entity.length() ? nullptr : pcSource(r.def->pc);
+  const bool ha = r.def->entity.length();
+  const PcSource* pc = ha ? nullptr : pcSource(r.def->pc);
   const MediaNow m = mediaNow(*r.def);
   const String wanted = m.available && r.coverPx ? m.art : String();
   if (wanted != r.artWanted || (r.art && r.art->px != r.coverPx)) {
@@ -94,8 +113,17 @@ void mediaCover(TileRt& r) {
       return;
     }
   }
-  if (!pc || pc->viaSerial || !pc->artPort || (r.artAttempt && millis() - r.artAttempt < 10000)) return;
-  if (httpArtFetch(pc->ip, pc->artPort, wanted.c_str(), r.coverPx)) {
+  if (r.artAttempt && millis() - r.artAttempt < 10000) return;
+  bool queued;
+  if (ha) {
+    if (wanted == r.artFailed && millis() - r.artAttempt < 120000) return;
+    queued = httpArtFetchJpeg(m.picture.startsWith("/") ? haBaseUrl() + m.picture : m.picture, wanted.c_str(),
+                              r.coverPx);
+  } else {
+    if (!pc || pc->viaSerial || !pc->artPort) return;
+    queued = httpArtFetch(pc->ip, pc->artPort, wanted.c_str(), r.coverPx);
+  }
+  if (queued) {
     for (TileRt& other : s_tiles)
       if (other.def->type == TILE_MEDIA && other.artWanted == wanted && other.coverPx == r.coverPx)
         other.artAttempt = millis() ? millis() : 1;
@@ -149,6 +177,7 @@ void mediaArtTick() {
     r.artWanted = id;
     r.artAttempt = millis() ? millis() : 1;
     if (art) mediaSetArt(r, art);
+    else if (r.def->entity.length()) r.artFailed = id;
   }
 }
 

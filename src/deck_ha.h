@@ -58,6 +58,7 @@ struct HaEntity {
   // the position was read at mediaPosAt (epoch, 0 = unknown).
   String mediaTitle;
   String mediaArtist;
+  String mediaPicture;      // entity_picture: usually /api/media_player_proxy/...?token=
   int32_t mediaDuration = 0;
   int32_t mediaPosition = 0;
   time_t mediaPosAt = 0;
@@ -102,6 +103,8 @@ using HaRegDone = void (*)(uint32_t tag, bool ok, const HaRegEntry* list, size_t
 // lookup is already queued.
 bool haRegistryLookup(const String& tmpl, uint32_t tag, HaRegDone done);
 
+// "http://host:port" of the configured Home Assistant, "" when not set up.
+String haBaseUrl();
 // Renders a template through /api/template. Blocking, loop task only.
 bool haRenderTemplate(const String& tmpl, String& out, String& err);
 // Copy of one entity. False when the id is not in the subscribed set.

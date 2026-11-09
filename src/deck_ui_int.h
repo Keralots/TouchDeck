@@ -127,6 +127,7 @@ struct TileRt {
   std::shared_ptr<MediaArt> art;
   String artWanted;
   uint32_t artAttempt;
+  String artFailed;       // HA cover that failed (PNG, network): retried after 2 min
   int16_t coverPx;
   bool mediaFull;
   // Glass auto text: the colour picked from the picture under the tile.
