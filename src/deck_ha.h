@@ -58,7 +58,8 @@ struct HaEntity {
   // the position was read at mediaPosAt (epoch, 0 = unknown).
   String mediaTitle;
   String mediaArtist;
-  String mediaPicture;      // entity_picture: usually /api/media_player_proxy/...?token=
+  String mediaPicture;      // entity_picture_local, else entity_picture (/api/media_player_proxy/...)
+  String mediaPictureRemote;  // entity_picture when the local one is set (may be https)
   int32_t mediaDuration = 0;
   int32_t mediaPosition = 0;
   time_t mediaPosAt = 0;

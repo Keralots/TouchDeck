@@ -44,7 +44,9 @@ MediaNow mediaNow(const TileDef& d) {
     m.dur = e.mediaDuration;
     m.pos = e.mediaPosition;
     if (m.playing && e.mediaPosAt) m.t0 = e.mediaPosAt - e.mediaPosition;
-    m.picture = e.mediaPicture;
+    // A remotely accessible image puts its own URL in entity_picture and the
+    // HA proxy path in entity_picture_local.
+    m.picture = e.mediaPicture.length() ? e.mediaPicture : e.mediaPictureRemote;
     if (m.picture.length()) m.art = pictureId(m.picture);
     return m;
   }
@@ -117,8 +119,13 @@ void mediaCover(TileRt& r) {
   bool queued;
   if (ha) {
     if (wanted == r.artFailed && millis() - r.artAttempt < 120000) return;
-    queued = httpArtFetchJpeg(m.picture.startsWith("/") ? haBaseUrl() + m.picture : m.picture, wanted.c_str(),
-                              r.coverPx);
+    const String url = m.picture.startsWith("/") ? haBaseUrl() + m.picture : m.picture;
+    if (!url.startsWith("http://")) {  // https or no HA address: back off like a failed cover
+      r.artFailed = wanted;
+      r.artAttempt = millis() ? millis() : 1;
+      return;
+    }
+    queued = httpArtFetchJpeg(url, wanted.c_str(), r.coverPx);
   } else {
     if (!pc || pc->viaSerial || !pc->artPort) return;
     queued = httpArtFetch(pc->ip, pc->artPort, wanted.c_str(), r.coverPx);

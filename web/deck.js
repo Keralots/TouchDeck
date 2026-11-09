@@ -142,6 +142,7 @@
     ents = null,
     entMap = {},
     entsErr = "",
+    domBefore = null,
     entsBusy = false,
     dirty = false,
     pickFor = -1,
@@ -3175,7 +3176,10 @@
   async function openPicker(i) {
     pickFor = i;
     const pt = i >= 0 ? pages()[cur].tiles[i] : null;
-    if (pt && pt.type === "media") dom = "media_player";
+    if (pt && pt.type === "media") {
+      domBefore = dom; // only this picker is limited to players
+      dom = "media_player";
+    }
     $("dkQ").value = "";
     $("dkPicker").classList.add("show");
     renderDomains();
@@ -3187,6 +3191,10 @@
   }
   function closePicker() {
     $("dkPicker").classList.remove("show");
+    if (domBefore !== null) {
+      dom = domBefore;
+      domBefore = null;
+    }
   }
   /* deck.json "led" is set on the Hardware page (portal.js sets window.snLedEntity); keep this copy in step
    so a save from here does not bring back the old entity. */

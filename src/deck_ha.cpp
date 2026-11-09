@@ -317,6 +317,7 @@ void clearMedia(HaEntity& e) {
   e.mediaTitle = "";
   e.mediaArtist = "";
   e.mediaPicture = "";
+  e.mediaPictureRemote = "";
   e.mediaDuration = e.mediaPosition = 0;
   e.mediaPosAt = 0;
 }
@@ -325,7 +326,8 @@ void clearMedia(HaEntity& e) {
 bool mediaField(HaEntity& e, const char* k, JsonVariantConst v) {
   if (!strcmp(k, "media_title")) e.mediaTitle = v.is<const char*>() ? (const char*)v : "";
   else if (!strcmp(k, "media_artist")) e.mediaArtist = v.is<const char*>() ? (const char*)v : "";
-  else if (!strcmp(k, "entity_picture")) e.mediaPicture = v.is<const char*>() ? (const char*)v : "";
+  else if (!strcmp(k, "entity_picture")) e.mediaPictureRemote = v.is<const char*>() ? (const char*)v : "";
+  else if (!strcmp(k, "entity_picture_local")) e.mediaPicture = v.is<const char*>() ? (const char*)v : "";
   else if (!strcmp(k, "media_duration")) e.mediaDuration = v.is<float>() ? (int32_t)lroundf(v.as<float>()) : 0;
   else if (!strcmp(k, "media_position")) e.mediaPosition = v.is<float>() ? (int32_t)lroundf(v.as<float>()) : 0;
   else if (!strcmp(k, "media_position_updated_at")) {
