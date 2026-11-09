@@ -896,21 +896,77 @@ bool haTakeFailure(String& entity, String& message) {
 namespace {
 
 const char* const LIST_PATH = "/ha_entities.json";
+const char* const LIST_TMP = "/ha_entities.json.tmp";
 constexpr size_t MAX_BODY = 4 * 1024 * 1024;
+
+// Entities per template page. HA caps template output at 256 KB (#5); a page
+// that still exceeds it is retried at half the size.
+#ifndef HA_LIST_PAGE
+#define HA_LIST_PAGE 500
+#endif
+constexpr size_t LIST_PAGE_MIN = 25;
 
 // Rendered by Home Assistant itself, so the device never parses the full
 // /api/states JSON: one record per entity, fields split by 0x1F, records by
-// 0x1E (neither can appear in a name), already sorted. This is the complete
-// request body: the separators must reach HA as \u001f escapes, because a
-// raw control character inside a JSON string is invalid (and ArduinoJson
-// would write it raw).
-const char kListRequest[] =
-    "{\"template\":\""
-    "{% for s in states|sort(attribute='entity_id') %}"
-    "{{ s.entity_id }}\\u001f{{ s.name }}\\u001f{{ s.state }}\\u001f"
-    "{{ s.attributes.icon|default('') }}\\u001f"
-    "{{ s.attributes.unit_of_measurement|default('') }}\\u001e"
-    "{% endfor %}\"}";
+// 0x1E (neither can appear in a name), sorted, the page after `after`. The
+// separators must reach HA as \u001f escapes, because a raw control
+// character inside a JSON string is invalid (and ArduinoJson would write it raw).
+String listRequest(const String& after, size_t page) {
+  String r = "{\"template\":\"{% for s in (states|selectattr('entity_id','>','";
+  r += after;
+  r += "')|sort(attribute='entity_id'))[:";
+  r += String((unsigned)page);
+  r += "] %}"
+       "{{ s.entity_id }}\\u001f{{ s.name }}\\u001f{{ s.state }}\\u001f"
+       "{{ s.attributes.icon|default('') }}\\u001f"
+       "{{ s.attributes.unit_of_measurement|default('') }}\\u001e"
+       "{% endfor %}\"}";
+  return r;
+}
+
+// The list goes to flash while it is fetched, never whole into RAM:
+// {"updated":epoch,"entities":[...],"count":n}.
+struct ListFile {
+  File f;
+  size_t count = 0;
+  bool ok = false;
+  bool begin(String& err) {
+    count = 0;
+    if (!deckFsReady() || !(f = LittleFS.open(LIST_TMP, "w"))) {
+      err = "cannot write the entity list to flash";
+      return false;
+    }
+    const time_t now = time(nullptr);
+    ok = f.print("{\"updated\":" + String((uint32_t)(now > 1609459200 ? now : 0)) + ",\"entities\":[") > 0;
+    return true;
+  }
+  // objs: comma-separated objects, n of them.
+  void add(const String& objs, size_t n) {
+    if (!n) return;
+    if (count) ok = ok && f.print(',') == 1;
+    ok = ok && f.print(objs) == objs.length();
+    count += n;
+  }
+  void abort() {
+    if (f) f.close();
+    LittleFS.remove(LIST_TMP);
+  }
+  bool finish(String& err) {
+    ok = ok && f.print("],\"count\":" + String((unsigned)count) + "}") > 0;
+    f.close();
+    if (!ok) {
+      LittleFS.remove(LIST_TMP);
+      err = "flash is full, the entity list does not fit";
+      return false;
+    }
+    LittleFS.remove(LIST_PATH);
+    if (!LittleFS.rename(LIST_TMP, LIST_PATH)) {
+      err = "cannot write the entity list to flash";
+      return false;
+    }
+    return true;
+  }
+};
 
 // Whole response body into a PSRAM buffer (caller frees). Parsing straight
 // off the socket reads byte by byte and big answers hit the read timeout.
@@ -988,11 +1044,11 @@ void appendJsonString(String& o, const char* s, size_t n) {
   o += '"';
 }
 
-// Template answer -> [{"id","name","state","icon","unit"}, ...]
-void recordsToJson(const char* body, size_t len, String& out, size_t& count) {
+// Template answer -> {"id","name","state","icon","unit"},... (no brackets);
+// last = id of the final record.
+void recordsToJson(const char* body, size_t len, String& out, size_t& count, String& last) {
   out = "";
   out.reserve(len + len / 3 + 64);
-  out += '[';
   count = 0;
   const char* p = body;
   const char* end = body + len;
@@ -1014,6 +1070,7 @@ void recordsToJson(const char* body, size_t len, String& out, size_t& count) {
         if (count) out += ',';
         out += '{';
         any = true;
+        last = String(f, fe - f);
       }
       if (field < 3 || fe > f) {  // icon and unit only when set
         if (field) out += ',';
@@ -1030,7 +1087,6 @@ void recordsToJson(const char* body, size_t len, String& out, size_t& count) {
       count++;
     }
   }
-  out += ']';
 }
 
 bool openHa(HTTPClient& http, const char* path, String& token, String& err) {
@@ -1215,6 +1271,7 @@ String historyEscape(const String& text) {
 struct HistoryStream {
   WiFiClient* in;
   uint32_t deadline;
+  bool feedWdt = false;  // loop task only: other tasks are not subscribed
   bool timedOut = false;
   int back = -1;
   size_t pos = 0, len = 0;
@@ -1226,6 +1283,7 @@ struct HistoryStream {
       return c;
     }
     while (pos >= len) {
+      if (feedWdt) esp_task_wdt_reset();
       if ((int32_t)(millis() - deadline) >= 0) {
         timedOut = true;
         return -1;
@@ -1384,12 +1442,15 @@ void historyTask(void*) {
   }
 }
 
-bool fetchViaTemplate(String& out, size_t& count, String& err) {
+// One template page. code = HTTP status, 0 when the request never got one.
+bool templatePage(const String& after, size_t page, String& objs, size_t& n, String& last, int& code,
+                  String& err) {
   HTTPClient http;
   String token;
+  code = 0;
   if (!openHa(http, "/api/template", token, err)) return false;
   http.addHeader("Content-Type", "application/json");
-  const int code = http.POST((uint8_t*)kListRequest, sizeof(kListRequest) - 1);
+  code = http.POST(listRequest(after, page));
   if (code != 200) {
     err = code == 401 ? String("token rejected") : String("template answered ") + code;
     if (code > 0) err += ": " + http.getString().substring(0, 160);
@@ -1401,15 +1462,44 @@ bool fetchViaTemplate(String& out, size_t& count, String& err) {
   const bool ok = readBody(http, body, len, err);
   http.end();
   if (!ok) return false;
-  recordsToJson(body, len, out, count);
+  recordsToJson(body, len, objs, n, last);
   heap_caps_free(body);
   return true;
 }
 
-// Fallback when the template endpoint is not available to this token. Slow
-// on a big installation (ArduinoJson 7 deduplicates strings linearly, ~10 s
-// for 1400 entities), but correct.
-bool fetchViaStates(String& out, size_t& count, String& err) {
+bool fetchViaTemplate(ListFile& lf, String& err) {
+  String after, objs, last;
+  size_t page = HA_LIST_PAGE;
+  for (unsigned pages = 0; pages < 1000; pages++) {
+    size_t n = 0;
+    int code;
+    if (!templatePage(after, page, objs, n, last, code, err)) {
+      if (code == 400 && page / 2 >= LIST_PAGE_MIN) {
+        page /= 2;
+        Serial.printf("HA: template page refused (%s), %u per page\n", err.c_str(), (unsigned)page);
+        continue;
+      }
+      return false;
+    }
+    lf.add(objs, n);
+    esp_task_wdt_reset();
+    if (n < page) return true;
+    // The id goes back into the template as a quoted string.
+    if (last <= after || last.indexOf('\'') >= 0 || last.indexOf('\\') >= 0) {
+      err = "unexpected entity id " + last;
+      return false;
+    }
+    after = last;
+  }
+  err = "the entity list does not end";
+  return false;
+}
+
+// Fallback when the template endpoint is not available to this token.
+// Parsed one entity at a time off the socket: a whole big /api/states in one
+// document took over 30 s (ArduinoJson deduplicates strings linearly) and
+// tripped the loop watchdog (#5).
+bool fetchViaStates(ListFile& lf, String& err) {
   HTTPClient http;
   String token;
   if (!openHa(http, "/api/states", token, err)) return false;
@@ -1419,77 +1509,62 @@ bool fetchViaStates(String& out, size_t& count, String& err) {
     http.end();
     return false;
   }
-  char* body = nullptr;
-  size_t len = 0;
-  const bool ok = readBody(http, body, len, err);
-  http.end();
-  if (!ok) return false;
-  JsonDocument filter(psram());
-  filter[0]["entity_id"] = true;
-  filter[0]["state"] = true;
-  filter[0]["attributes"]["friendly_name"] = true;
-  filter[0]["attributes"]["icon"] = true;
-  filter[0]["attributes"]["unit_of_measurement"] = true;
-  JsonDocument doc(psram());
-  // const char*: a mutable buffer would be parsed in place (zero-copy) and the
-  // strings would dangle once it is freed below.
-  const DeserializationError de =
-      deserializeJson(doc, (const char*)body, len, DeserializationOption::Filter(filter));
-  heap_caps_free(body);
-  if (de) {
-    err = String("bad answer: ") + de.c_str();
-    return false;
-  }
-  out = "[";
-  count = 0;
-  for (JsonObjectConst o : doc.as<JsonArrayConst>()) {
-    const char* id = o["entity_id"] | "";
-    const char* name = o["attributes"]["friendly_name"] | "";
-    const char* state = o["state"] | "";
-    if (count) out += ',';
-    out += "{\"id\":";
-    appendJsonString(out, id, strlen(id));
-    out += ",\"name\":";
-    appendJsonString(out, name, strlen(name));
-    out += ",\"state\":";
-    appendJsonString(out, state, strlen(state));
-    const char* icon = o["attributes"]["icon"] | "";
+  HistoryStream s{http.getStreamPtr(), millis() + 60000};
+  s.feedWdt = true;
+  JsonDocument filter(psram()), doc(psram());
+  filter["entity_id"] = true;
+  filter["state"] = true;
+  filter["attributes"]["friendly_name"] = true;
+  filter["attributes"]["icon"] = true;
+  filter["attributes"]["unit_of_measurement"] = true;
+  String objs;
+  size_t n = 0;
+  bool valid = s.next() == '[';
+  int c = valid ? s.next() : -1;
+  while (valid && c != ']') {
+    s.back = c;
+    if (deserializeJson(doc, s, DeserializationOption::Filter(filter))) {
+      valid = false;
+      break;
+    }
+    const char* id = doc["entity_id"] | "";
+    const char* name = doc["attributes"]["friendly_name"] | "";
+    const char* state = doc["state"] | "";
+    if (n) objs += ',';
+    objs += "{\"id\":";
+    appendJsonString(objs, id, strlen(id));
+    objs += ",\"name\":";
+    appendJsonString(objs, name, strlen(name));
+    objs += ",\"state\":";
+    appendJsonString(objs, state, strlen(state));
+    const char* icon = doc["attributes"]["icon"] | "";
     if (*icon) {
-      out += ",\"icon\":";
-      appendJsonString(out, icon, strlen(icon));
+      objs += ",\"icon\":";
+      appendJsonString(objs, icon, strlen(icon));
     }
-    const char* unit = o["attributes"]["unit_of_measurement"] | "";
+    const char* unit = doc["attributes"]["unit_of_measurement"] | "";
     if (*unit) {
-      out += ",\"unit\":";
-      appendJsonString(out, unit, strlen(unit));
+      objs += ",\"unit\":";
+      appendJsonString(objs, unit, strlen(unit));
     }
-    out += '}';
-    count++;
+    objs += '}';
+    if (++n == 64) {
+      lf.add(objs, n);
+      objs = "";
+      n = 0;
+      vTaskDelay(1);
+    }
+    c = s.next();
+    if (c == ',') c = s.next();
+    else if (c != ']') valid = false;
   }
-  out += ']';
-  return true;  // unsorted; the portal sorts
-}
-
-bool storeList(const String& listJson, size_t count, String& doc) {
-  const time_t now = time(nullptr);
-  doc = "{\"updated\":";
-  doc += String((uint32_t)(now > 1609459200 ? now : 0));
-  doc += ",\"count\":";
-  doc += String((unsigned)count);
-  doc += ",\"entities\":";
-  doc += listJson;
-  doc += '}';
-  if (!deckFsReady()) return false;
-  File f = LittleFS.open("/ha_entities.json.tmp", "w");
-  if (!f) return false;
-  const size_t n = f.print(doc);
-  f.close();
-  if (n != doc.length()) {
-    LittleFS.remove("/ha_entities.json.tmp");
+  http.end();
+  if (!valid) {
+    err = s.timedOut ? "Home Assistant answered too slowly" : "bad answer from Home Assistant";
     return false;
   }
-  LittleFS.remove(LIST_PATH);
-  return LittleFS.rename("/ha_entities.json.tmp", LIST_PATH);
+  lf.add(objs, n);
+  return true;  // unsorted; the portal sorts
 }
 
 }  // namespace
@@ -1568,32 +1643,25 @@ bool haRenderTemplate(const String& tmpl, String& out, String& err) {
   return true;
 }
 
-bool haFetchEntityList(String& outJson, bool refresh, String& err) {
-  if (!refresh && deckFsReady() && LittleFS.exists(LIST_PATH)) {
-    File f = LittleFS.open(LIST_PATH, "r");
-    if (f) {
-      outJson = f.readString();
-      f.close();
-      if (outJson.length()) return true;
+bool haRefreshEntityList(String& err) {
+  const uint32_t t0 = millis();
+  ListFile lf;
+  if (!lf.begin(err)) return false;
+  String why;
+  if (!fetchViaTemplate(lf, why)) {
+    Serial.printf("HA: template list failed (%s), falling back to /api/states\n", why.c_str());
+    lf.abort();
+    if (!lf.begin(err)) return false;
+    if (!fetchViaStates(lf, err)) {
+      lf.abort();
+      return false;
     }
   }
-  if (!refresh) {
-    // Nothing cached yet: answer with an empty list, the portal offers the
-    // update button. Fetching implicitly here would surprise with a long wait.
-    outJson = "{\"updated\":0,\"count\":0,\"entities\":[]}";
-    return true;
-  }
-  const uint32_t t0 = millis();
-  String list;
-  size_t count = 0;
-  String why;
-  if (!fetchViaTemplate(list, count, why)) {
-    Serial.printf("HA: template list failed (%s), falling back to /api/states\n", why.c_str());
-    if (!fetchViaStates(list, count, err)) return false;
-  }
-  if (!storeList(list, count, outJson)) Serial.println("HA: could not cache the entity list");
+  const size_t count = lf.count;
+  if (!lf.finish(err)) return false;
+  File f = LittleFS.open(LIST_PATH, "r");
   Serial.printf("HA: entity list updated, %u entities, %u bytes, %u ms\n", (unsigned)count,
-                (unsigned)outJson.length(), (unsigned)(millis() - t0));
+                f ? (unsigned)f.size() : 0, (unsigned)(millis() - t0));
   return true;
 }
 

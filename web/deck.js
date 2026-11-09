@@ -81,7 +81,7 @@
   document.body.insertAdjacentHTML(
     "beforeend",
     `<div class="dk-modal" id="dkPicker"><div class="dk-sheet"><div class="dk-head">
-<div class="dk-row"><input type="text" id="dkQ" placeholder="Search by name or entity id" autocomplete="off" style="flex:1"><button type="button" class="btn" id="dkPickClose">Close</button></div>
+<div class="dk-row"><input type="text" id="dkQ" placeholder="Search, or type a full entity id" autocomplete="off" style="flex:1"><button type="button" class="btn" id="dkPickClose">Close</button></div>
 <div class="dk-chips" id="dkDomains"></div>
 <div class="dk-status"><span id="dkListInfo">-</span><button type="button" class="btn" id="dkListUpdate" style="margin-left:auto;padding:5px 10px">Update from HA</button></div></div>
 <div class="dk-list" id="dkEnts"></div></div></div>
@@ -141,6 +141,8 @@
     cur = 0,
     ents = null,
     entMap = {},
+    entsErr = "",
+    entsBusy = false,
     dirty = false,
     pickFor = -1,
     dom = "",
@@ -3009,18 +3011,41 @@
       (refresh ? "Fetching the entity list from Home Assistant..." : "Loading...") +
       "</p>";
     $("dkListUpdate").disabled = true;
+    entsBusy = true;
     try {
       setList(await api("/api/ha/entities" + (refresh ? "?refresh=1" : "")));
+      entsErr = "";
       if (deck) {
         renderPage();
       }
     } catch (e) {
+      entsErr = e.message;
       $("dkEnts").innerHTML =
+        typedRow() +
         '<p class="dk-empty">' + esc(e.message) + "<br>Check the Home Assistant settings above.</p>";
+      bindEnts();
       throw e;
     } finally {
+      entsBusy = false;
       $("dkListUpdate").disabled = false;
     }
+  }
+  /* A full entity id typed in the search can be used without the list (#5). */
+  function typedRow() {
+    const q = $("dkQ").value.trim().toLowerCase();
+    if (!/^[a-z0-9_]+\.[a-z0-9_]+$/.test(q) || entMap[q]) return "";
+    return (
+      '<div class="dk-ent" data-id="' +
+      esc(q) +
+      '"><div><b>Use ' +
+      esc(q) +
+      "</b><small>not on the list from Home Assistant</small></div></div>"
+    );
+  }
+  function bindEnts() {
+    $("dkEnts")
+      .querySelectorAll("[data-id]")
+      .forEach((r) => (r.onclick = () => pick(r.dataset.id)));
   }
   $("dkListUpdate").onclick = async () => {
     try {
@@ -3045,10 +3070,16 @@
       );
   }
   function renderEnts() {
-    if (!ents) return;
-    if (!ents.length) {
+    if (entsBusy) return;
+    if (!ents || !ents.length) {
       $("dkEnts").innerHTML =
-        '<p class="dk-empty">No entity list on the device yet. Press "Update from HA".</p>';
+        typedRow() +
+        '<p class="dk-empty">' +
+        (entsErr
+          ? esc(entsErr) + "<br>Check the Home Assistant settings above."
+          : 'No entity list on the device yet. Press "Update from HA".') +
+        "<br>Or type a full entity id, for example light.kitchen.</p>";
+      bindEnts();
       return;
     }
     const q = $("dkQ").value.trim().toLowerCase();
@@ -3069,7 +3100,8 @@
       list = list.slice().sort((a, b) => pri(a) - pri(b));
     }
     const shown = list.slice(0, 250);
-    $("dkEnts").innerHTML = shown.length
+    const typed = typedRow();
+    const rows = shown.length
       ? shown
           .map(
             (e) =>
@@ -3088,10 +3120,11 @@
         (list.length > shown.length
           ? '<p class="dk-empty">' + (list.length - shown.length) + " more - refine the search</p>"
           : "")
-      : '<p class="dk-empty">Nothing matches.</p>';
-    $("dkEnts")
-      .querySelectorAll("[data-id]")
-      .forEach((r) => (r.onclick = () => pick(r.dataset.id)));
+      : typed
+        ? ""
+        : '<p class="dk-empty">Nothing matches.</p>';
+    $("dkEnts").innerHTML = typed + rows;
+    bindEnts();
   }
   async function openPicker(i) {
     pickFor = i;

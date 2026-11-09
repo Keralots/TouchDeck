@@ -5,7 +5,7 @@
 // (in small batches, because the WebSocket library drops frames over 15 KB),
 // call_service, heartbeat and reconnect. Entity state lands in a small store
 // the UI reads by polling haStoreVersion(). The entity picker in the portal
-// uses haFetchEntityList(): a list Home Assistant renders itself through
+// uses haRefreshEntityList(): a list Home Assistant renders itself through
 // /api/template (id, name, state, icon, unit), kept on flash and refreshed
 // only when the user asks.
 //
@@ -132,11 +132,11 @@ bool haTakeCallResult(uint32_t id, HaCallResult& result);
 // show. False when none is pending.
 bool haTakeFailure(String& entity, String& message);
 
-// Portal entity picker: {"updated": epoch, "count": n, "entities":
-// [{"id","name","state","icon","unit"}]}. Served from a copy on flash
-// (/ha_entities.json); refresh = fetch it from Home Assistant first (a
-// blocking call of about a second, loop task only).
-bool haFetchEntityList(String& outJson, bool refresh, String& err);
+// Portal entity picker: {"updated": epoch, "entities":
+// [{"id","name","state","icon","unit"}], "count": n}, kept on flash
+// (/ha_entities.json). Refresh fetches it from Home Assistant in pages
+// (blocking, a second or a few, loop task only).
+bool haRefreshEntityList(String& err);
 // Where that copy lives, for streaming it straight from flash.
 const char* haEntityListPath();
 
