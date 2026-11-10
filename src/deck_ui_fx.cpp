@@ -710,16 +710,18 @@ bool cardPicBuf() {
 
 // The card's picture for the compositor. Only while no morph reads the buffer.
 bool snapCard(lv_obj_t* card) {
-  if (compMode() != COMP_NONE) return false;
+  if (compMode() != COMP_NONE && !compMorphWaiting()) return false;
   if (!cardPicBuf()) return false;
   lv_obj_update_layout(card);
   if (!lv_snapshot_reshape_draw_buf(card, s_cardPic)) return false;
   return lv_snapshot_take_to_draw_buf(card, LV_COLOR_FORMAT_RGB565, s_cardPic) == LV_RESULT_OK;
 }
 
+Src cardPic() { return {(const uint16_t*)s_cardPic->data, (uint16_t)(s_cardPic->header.stride / 2), true}; }
+
 MorphScene cardScene(lv_obj_t* card) {
   MorphScene m = {};
-  m.card = {(const uint16_t*)s_cardPic->data, (uint16_t)(s_cardPic->header.stride / 2), true};
+  m.card = cardPic();
   m.cw = (int16_t)lv_obj_get_width(card);
   m.ch = (int16_t)lv_obj_get_height(card);
   m.ghost = lv_color_to_u16(lv_color_hex(C_PANEL));
@@ -803,19 +805,20 @@ void fxTileOn(TileRt& r, bool wasOn) {
 }
 
 // Calm: the compositor flies the card picture out of the tile over the
-// dimmed page. Water: it reveals the card in a circle from the finger. Then
-// LVGL's frame with the real card takes over.
-void fxCardOpen(lv_obj_t* card, int tileIdx) {
-  const FxCard kind = s_openFx = fx().card;
-  if (tileIdx >= 0 && tileIdx < (int)s_tiles.size()) s_revealAt = touchPoint(s_tiles[tileIdx]);
-  lv_obj_t* t = kind != CARD_NONE ? visibleTile(tileIdx) : nullptr;
-  if (!t || !card) return;
-  if (!snapCard(card)) return;
-  MorphScene m = cardScene(card);
+// dimmed page. Water: it reveals the card in a circle from the finger. Glass:
+// the card rises as a sheet. Then LVGL's frame with the real card takes over.
+// card: its picture is in s_cardPic, false when it comes later.
+bool beginOpen(lv_obj_t* t, FrameRect to, int r1, bool card) {
+  const FxCard kind = s_openFx;
+  MorphScene m = {};
+  if (card) m.card = cardPic();
+  m.cw = to.w;
+  m.ch = to.h;
+  m.ghost = lv_color_to_u16(lv_color_hex(C_PANEL));
   m.from = rectOf(t);
-  m.to = rectOf(card);
+  m.to = to;
   m.r0 = (int16_t)lv_obj_get_style_radius(t, LV_PART_MAIN);
-  m.r1 = (int16_t)lv_obj_get_style_radius(card, LV_PART_MAIN);
+  m.r1 = (int16_t)r1;
   m.dim = 2;  // the scrim fades in with the card
   m.open = true;
   if (kind == CARD_REVEAL) {
@@ -824,7 +827,29 @@ void fxCardOpen(lv_obj_t* card, int tileIdx) {
     m.cy = (int16_t)s_revealAt.y;
   }
   m.sheet = kind == CARD_SHEET;
-  compBeginMorph(m, kind == CARD_REVEAL ? REVEAL_MS : kind == CARD_SHEET ? SHEET_MS : MORPH_MS, ++s_gen);
+  return compBeginMorph(m, kind == CARD_REVEAL ? REVEAL_MS : kind == CARD_SHEET ? SHEET_MS : MORPH_MS, ++s_gen);
+}
+
+// Before the card is built, so the tap is answered at once: the scrim fades
+// in while openModal works. to: where the card will be, r1: its corner radius.
+void fxCardOpenBegin(int tileIdx, FrameRect to, int r1) {
+  const FxCard kind = s_openFx = fx().card;
+  if (tileIdx >= 0 && tileIdx < (int)s_tiles.size()) s_revealAt = touchPoint(s_tiles[tileIdx]);
+  lv_obj_t* t = kind != CARD_NONE ? visibleTile(tileIdx) : nullptr;
+  // Without room for the picture the card opens plainly.
+  if (t && compMode() == COMP_NONE && cardPicBuf()) beginOpen(t, to, r1, false);
+}
+
+// The card is built: its picture starts the animation begun above, or the
+// whole animation when the compositor was busy then.
+void fxCardOpen(lv_obj_t* card, int tileIdx) {
+  if (compMorphWaiting()) {
+    if (snapCard(card)) compMorphCard(cardPic());
+    else compCancel();
+    return;
+  }
+  lv_obj_t* t = s_openFx != CARD_NONE ? visibleTile(tileIdx) : nullptr;
+  if (t && snapCard(card)) beginOpen(t, rectOf(card), lv_obj_get_style_radius(card, LV_PART_MAIN), true);
 }
 
 void fxCardClose(lv_obj_t* card, int tileIdx) {
