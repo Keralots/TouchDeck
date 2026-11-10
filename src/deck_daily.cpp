@@ -111,6 +111,10 @@ uint32_t s_scheduledDay = 0;
 int s_tries = 0;
 bool s_holding = false;  // printer sessions closed for this run
 volatile bool s_skip = false;
+// The run's task. On the card its stack is in PSRAM (no flash access there),
+// and such a task is deleted by the loop task once it has parked itself.
+TaskHandle_t s_task = nullptr;
+bool s_taskCaps = false;
 
 template <typename F>
 void update(F f) {
@@ -577,7 +581,9 @@ void runTask(void*) {
     s.totalMs = millis() - s.startMs;
     strlcpy(s.step, "Done", sizeof(s.step));
   });
+  const bool caps = s_taskCaps;
   s_finished = true;
+  if (caps) vTaskSuspend(nullptr);
   vTaskDelete(nullptr);
 }
 
@@ -627,7 +633,7 @@ void pauseClients(bool pause) {
 bool dailyStart() {
   if (!s_status) s_status = (Status*)heap_caps_calloc(1, sizeof(Status), MALLOC_CAP_SPIRAM);
   // A printer session leaves too little internal RAM for a second TLS session.
-  if (!s_status || (!wallOnSd() && !deckFsReady()) || !WiFi.isConnected() || printersBusy() ||
+  if (!s_status || s_finished || (!wallOnSd() && !deckFsReady()) || !WiFi.isConnected() || printersBusy() ||
       (wallOnSd() && time(nullptr) < 1700000000)) return false;
   bool busy;
   portENTER_CRITICAL(&s_mux);
@@ -644,12 +650,25 @@ bool dailyStart() {
   }
   portEXIT_CRITICAL(&s_mux);
   if (busy) return false;
-  // Internal stack: LittleFS writes disable the PSRAM cache.
+  // LittleFS writes disable the PSRAM cache, so only a run on the card may
+  // have its stack there; internal RAM often has no 8 KB block left.
   s_skip = false;
   pauseClients(true);
-  if (xTaskCreatePinnedToCore(runTask, "deck_daily", 8192, nullptr, 1, nullptr, 0) != pdPASS) {
+  s_taskCaps = wallOnSd();
+  const BaseType_t made =
+      s_taskCaps ? xTaskCreatePinnedToCoreWithCaps(runTask, "deck_daily", 8192, nullptr, 1, &s_task, 0, MALLOC_CAP_SPIRAM)
+                 : xTaskCreatePinnedToCore(runTask, "deck_daily", 8192, nullptr, 1, &s_task, 0);
+  if (made != pdPASS) {
+    s_taskCaps = false;
     pauseClients(false);
-    update([](Status& s) { s.running = false; });
+    update([](Status& s) {
+      s.running = false;
+      strlcpy(s.step, "Not started", sizeof(s.step));
+      strlcpy(s.error, "Not enough memory to start", sizeof(s.error));
+    });
+    // Counts as a failed run: the poll would otherwise retry every 10 s for good.
+    s_tries++;
+    s_retryAtMs = millis() + RETRY_MS;
     return false;
   }
   s_replan = false;
@@ -736,6 +755,11 @@ void dailyPoll() {
       if (wallDaily()) wallGalleryChanged(p);
     }
   if (s_finished) {
+    if (s_taskCaps) {
+      if (eTaskGetState(s_task) != eSuspended) return;  // still on its way out
+      vTaskDeleteWithCaps(s_task);
+      s_taskCaps = false;
+    }
     s_finished = false;
     portENTER_CRITICAL(&s_mux);
     const bool stored = s_status->got[0] + s_status->got[1] > 0;
