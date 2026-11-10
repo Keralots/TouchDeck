@@ -899,6 +899,12 @@ bool beginOpen(lv_obj_t* t, FrameRect to, int r1, bool card) {
   return compBeginMorph(m, kind == CARD_REVEAL ? REVEAL_MS : kind == CARD_SHEET ? SHEET_MS : MORPH_MS, ++s_gen);
 }
 
+// Only with no card open and the compositor idle; the next card allocates it again.
+void fxCardPicFree() {
+  if (s_cardPic) lv_draw_buf_destroy(s_cardPic);
+  s_cardPic = nullptr;
+}
+
 // Before the card is built, so the tap is answered at once: the scrim fades
 // in while openModal works. to: where the card will be, r1: its corner radius.
 void fxCardOpenBegin(int tileIdx, FrameRect to, int r1) {

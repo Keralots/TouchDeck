@@ -52,7 +52,8 @@ bool wallNext(bool portrait);
 void wallGalleryChanged(bool portrait);
 void wallInvalidateJobs();
 // Poll/start work, then commit only after the UI has stopped gestures.
-bool wallPoll(int w, int h, bool idle, bool canSwitch);
+// makeRoom: called before a job starts, to free PSRAM the UI can rebuild.
+bool wallPoll(int w, int h, bool idle, bool canSwitch, void (*makeRoom)() = nullptr);
 void wallCommit();
 // The automatic change interval starts again (the photo frame covered the wallpaper).
 void wallRestartTimer();

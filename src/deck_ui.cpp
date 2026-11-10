@@ -595,7 +595,13 @@ void tickWallpaper() {
   const bool idle = millis() - touchLastActivity() >= WALL_IDLE_MS;
   bool baking = false;
   for (int i = 0; i < s_count; i++) baking |= s_pages[i].wallBake;
-  if (wallPoll(logicalW(), logicalH(), idle, safe && !baking)) {
+  // A job starts only when safe: no card is open, so its two screen sized
+  // buffers can make room for the new wallpaper.
+  auto makeRoom = [] {
+    cardUnderFree();
+    fxCardPicFree();
+  };
+  if (wallPoll(logicalW(), logicalH(), idle, safe && !baking, makeRoom)) {
     stopGestures();
     for (int i = 0; i < s_count; i++) s_pages[i].stale = true;
     // A touch may have started while the compositor was being quiesced.
