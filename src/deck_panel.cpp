@@ -39,6 +39,7 @@ constexpr int64_t TE_STALE_US = 50000;
 constexpr int64_t TE_ANIM_LEAD_US = 6000;
 // Use a build-relative lead when recent TE timing is unavailable.
 constexpr int64_t ANIM_LEAD_US = 8000;
+constexpr int64_t SCRIM_IN_US = 50000;  // the scrim's fade for a card begun before its picture
 
 spi_device_handle_t s_dev = nullptr;
 uint16_t* s_fb[2] = {nullptr, nullptr};
@@ -106,6 +107,9 @@ struct State {
   PageFx pageFx = PAGE_SLIDE;  // of this strip
   MorphScene morph = {};
   uint32_t morphHoldGen = 0;
+  bool morphEarly = false;    // begun without the card picture
+  bool morphStill = false;    // ... and the scrim's last frame is out
+  int64_t morphCardUs = 0;    // when the picture arrived
   uint32_t holdGen = UINT32_MAX;
   bool landedPending = false;
   int8_t landed = 0;
@@ -549,6 +553,10 @@ void emitSheetRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) 
 
 void emitMorphRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) {
   const MorphScene& m = f.morph;
+  if (!m.card.px) {  // begun early, no picture yet: the page under the scrim
+    shadeAny(d, step, m.base.px + ly * m.base.stride + x0, n, m.base.swap, f.base8);
+    return;
+  }
   if (m.reveal) {
     emitRevealRow(f, ly, x0, n, d, step);
     return;
@@ -1203,8 +1211,17 @@ bool decide(Frame& f) {
   }
   if (!have && s.mode == COMP_ANIM && s.kind == KIND_MORPH) {
     const int64_t t = frameTime - s.t0;
-    const bool last = t >= (int64_t)s.durUs;
-    const float p = last ? 1.0f : t <= 0 ? 0.0f : easeOutCubic((float)t / (float)s.durUs);
+    // Begun early: the scrim fades in from the tap, the card's own animation
+    // runs from the moment its picture arrives (tc).
+    const bool early = s.morphEarly, waiting = !s.morph.card.px;
+    const int64_t tc = !early ? t : waiting ? 0 : frameTime - s.morphCardUs;
+    const bool last = !waiting && tc >= (int64_t)s.durUs;
+    const float u = last ? 1.0f : tc <= 0 ? 0.0f : (float)tc / (float)s.durUs;
+    const float p = last ? 1.0f : easeOutCubic(u);
+    // Waiting with the scrim done: no frames, the loop needs both cores.
+    const bool still = waiting && t >= SCRIM_IN_US + TE_PERIOD_US;
+    const bool skip = still && s.morphStill;
+    s.morphStill = still;
     if (last) {
       s.mode = COMP_HOLD;
       s.holdGen = s.morphHoldGen;
@@ -1229,28 +1246,28 @@ bool decide(Frame& f) {
     f.wo5 = (uint32_t)lroundf(shown * 32);
     // The scrim comes in with the card and goes with it, while the card is
     // small: the steps in between shade every base pixel.
-    const float scrim = f.morph.dim != 2 ? 0 : f.morph.open ? clamp01(p / .5f) : 1 - clamp01((p - .5f) / .5f);
+    const float scrim = f.morph.dim != 2 ? 0
+                      : early        ? clamp01((float)t / (float)SCRIM_IN_US)
+                      : f.morph.open ? clamp01(p / .5f) : 1 - clamp01((p - .5f) / .5f);
     f.base8 = 8 - (uint32_t)lroundf(4 * scrim);
     if (f.morph.reveal) {
       // Out to the card's farthest corner; closing starts slowly (ease in).
       const float dx = (float)std::max(std::abs(f.morph.cx - b.x), std::abs(b.x + b.w - f.morph.cx));
       const float dy = (float)std::max(std::abs(f.morph.cy - b.y), std::abs(b.y + b.h - f.morph.cy));
-      const float u = last ? 1.0f : t <= 0 ? 0.0f : (float)t / (float)s.durUs;
       const float q = f.morph.open ? p : 1 - u * u * u;
       f.wr = (int16_t)lroundf((sqrtf(dx * dx + dy * dy) + 1) * q);
     }
     if (f.morph.sheet) {
       // Up from below the screen with a small overshoot; down again with an ease in.
-      const float u = last ? 1.0f : t <= 0 ? 0.0f : (float)t / (float)s.durUs;
       const float y0 = (float)(h - b.y);
       const float y = !f.morph.open ? y0 * u * u
                     : u < .72f     ? y0 + (-7 - y0) * easeOutCubic(u / .72f)
                                    : -7 + 7 * ((u - .72f) / .28f) * ((u - .72f) / .28f) * (3 - 2 * (u - .72f) / .28f);
       f.wy = (int16_t)(b.y + lroundf(y));
     }
-    have = true;
+    have = !skip;
   }
-  if (!have && (s.mode == COMP_DRAG || s.mode == COMP_ANIM)) {
+  if (!have && s.kind != KIND_MORPH && (s.mode == COMP_DRAG || s.mode == COMP_ANIM)) {
     int off = s.off;
     if (s.mode == COMP_ANIM) {
       const int64_t t = frameTime - s.t0;
@@ -1632,7 +1649,7 @@ bool compBeginDrag(const Src& a, const Src& b, int off, int pageA, bool vertical
 void panelSetPageFx(PageFx fx) { s_pageFx = fx; }
 
 bool compBeginMorph(const MorphScene& m, uint32_t durMs, uint32_t holdGen) {
-  if (!m.card.px || m.cw <= 0 || m.ch <= 0) return false;
+  if ((!m.card.px && !m.open) || m.cw <= 0 || m.ch <= 0) return false;
   bool ok = false;
   portENTER_CRITICAL(&s_mux);
   if (s.mode == COMP_NONE && s.lvLatest >= 0) {
@@ -1646,6 +1663,9 @@ bool compBeginMorph(const MorphScene& m, uint32_t durMs, uint32_t holdGen) {
     const int latest = s.lvPending ? s.lvIdx : s.lvLatest;
     if (!s.morph.base.px) s.morph.base = {s_fb[latest], (uint16_t)w, true, (uint16_t)h};
     s.morphHoldGen = holdGen;
+    s.morphEarly = !m.card.px;
+    s.morphStill = false;
+    s.morphCardUs = 0;
     s.t0 = esp_timer_get_time();
     s.durUs = durMs ? durMs * 1000u : 1u;
     s.landing = 0;
@@ -1655,6 +1675,22 @@ bool compBeginMorph(const MorphScene& m, uint32_t durMs, uint32_t holdGen) {
   portEXIT_CRITICAL(&s_mux);
   if (ok && s_task) xTaskNotifyGive(s_task);
   return ok;
+}
+
+bool compMorphWaiting() {
+  portENTER_CRITICAL(&s_mux);
+  const bool w = s.kind == KIND_MORPH && s.mode == COMP_ANIM && !s.morph.card.px;
+  portEXIT_CRITICAL(&s_mux);
+  return w;
+}
+
+void compMorphCard(const Src& card) {
+  portENTER_CRITICAL(&s_mux);
+  if (s.kind == KIND_MORPH && s.mode == COMP_ANIM && !s.morph.card.px) {
+    s.morph.card = card;
+    s.morphCardUs = esp_timer_get_time();
+  }
+  portEXIT_CRITICAL(&s_mux);
 }
 
 bool compBeginPanel(const Src& panel, const Src& page, int off) {
