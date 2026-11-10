@@ -236,22 +236,21 @@ bool loadFile(uint8_t* r, uint8_t* g, uint8_t* b, int w, int h, int step) {
 }
 
 // One box pass of radius r along rows or columns, edges clamped, rounded.
-// Three passes come close to a gaussian. ss, ds: bytes between two pixels in
-// src and dst (3 = one channel of an interleaved picture).
-void boxPass(const uint8_t* src, int ss, uint8_t* dst, int ds, int w, int h, bool vertical, int r) {
+// Three passes come close to a gaussian.
+void boxPass(const uint8_t* src, uint8_t* dst, int w, int h, bool vertical, int r) {
   const int n = 2 * r + 1;
   const uint32_t inv = 0xFFFFFFFFu / n + 1;  // exact x / n as (x * inv) >> 32 for these sums
   auto avg = [inv](uint32_t s) { return (uint8_t)(((uint64_t)s * inv) >> 32); };
   if (!vertical) {
     for (int l = 0; l < h; l++) {
-      const uint8_t* s = src + l * w * ss;
-      uint8_t* d = dst + l * w * ds;
+      const uint8_t* s = src + l * w;
+      uint8_t* d = dst + l * w;
       uint32_t sum = n / 2;
-      for (int i = -r; i <= r; i++) sum += s[(i < 0 ? 0 : i >= w ? w - 1 : i) * ss];
+      for (int i = -r; i <= r; i++) sum += s[i < 0 ? 0 : i >= w ? w - 1 : i];
       for (int i = 0; i < w; i++) {
-        d[i * ds] = avg(sum);
+        d[i] = avg(sum);
         const int add = i + r + 1, sub = i - r;
-        sum += s[(add >= w ? w - 1 : add) * ss] - s[(sub < 0 ? 0 : sub) * ss];
+        sum += s[add >= w ? w - 1 : add] - s[sub < 0 ? 0 : sub];
       }
     }
     return;
@@ -263,28 +262,74 @@ void boxPass(const uint8_t* src, int ss, uint8_t* dst, int ds, int w, int h, boo
     const int cols = std::min(STRIP, w - x0);
     for (int c = 0; c < cols; c++) sum[c] = n / 2;
     for (int i = -r; i <= r; i++) {
-      const uint8_t* s = src + ((i < 0 ? 0 : i >= h ? h - 1 : i) * w + x0) * ss;
-      for (int c = 0; c < cols; c++) sum[c] += s[c * ss];
+      const uint8_t* s = src + (i < 0 ? 0 : i >= h ? h - 1 : i) * w + x0;
+      for (int c = 0; c < cols; c++) sum[c] += s[c];
     }
     for (int i = 0; i < h; i++) {
-      uint8_t* d = dst + (i * w + x0) * ds;
+      uint8_t* d = dst + i * w + x0;
       const int add = i + r + 1, sub = i - r;
-      const uint8_t* a = src + ((add >= h ? h - 1 : add) * w + x0) * ss;
-      const uint8_t* b = src + ((sub < 0 ? 0 : sub) * w + x0) * ss;
+      const uint8_t* a = src + (add >= h ? h - 1 : add) * w + x0;
+      const uint8_t* b = src + (sub < 0 ? 0 : sub) * w + x0;
       for (int c = 0; c < cols; c++) {
-        d[c * ds] = avg(sum[c]);
-        sum[c] += a[c * ss] - b[c * ss];
+        d[c] = avg(sum[c]);
+        sum[c] += a[c] - b[c];
       }
     }
   }
 }
 
-// Blur one channel in place (step bytes apart; tmp: a w * h scratch plane).
-void blurPlane(uint8_t* p, uint8_t* tmp, int w, int h, int r, int step = 1) {
+// Blur one plane in place (tmp: scratch of the same size).
+void blurPlane(uint8_t* p, uint8_t* tmp, int w, int h, int r) {
   if (r <= 0) return;
   for (int pass = 0; pass < 3; pass++) {
-    boxPass(p, step, tmp, 1, w, h, false, r);
-    boxPass(tmp, 1, p, step, w, h, true, r);
+    boxPass(p, tmp, w, h, false, r);
+    boxPass(tmp, p, w, h, true, r);
+  }
+  if (esp_task_wdt_status(nullptr) == ESP_OK) esp_task_wdt_reset();
+}
+
+// Blur one channel of an interleaved picture in place (step bytes apart),
+// same result as blurPlane. scratch: max(w, 32 * h) bytes.
+void blurChannel(uint8_t* p, int step, int w, int h, int r, uint8_t* scratch) {
+  if (r <= 0) return;
+  const int n = 2 * r + 1;
+  const uint32_t inv = 0xFFFFFFFFu / n + 1;
+  auto avg = [inv](uint32_t s) { return (uint8_t)(((uint64_t)s * inv) >> 32); };
+  constexpr int STRIP = 32;
+  uint32_t sum[STRIP];
+  for (int pass = 0; pass < 3; pass++) {
+    for (int l = 0; l < h; l++) {
+      uint8_t* s = p + (size_t)l * w * step;
+      uint32_t rowSum = n / 2;
+      for (int i = -r; i <= r; i++) rowSum += s[(i < 0 ? 0 : i >= w ? w - 1 : i) * step];
+      for (int i = 0; i < w; i++) {
+        scratch[i] = avg(rowSum);
+        const int add = i + r + 1, sub = i - r;
+        rowSum += s[(add >= w ? w - 1 : add) * step] - s[(sub < 0 ? 0 : sub) * step];
+      }
+      for (int i = 0; i < w; i++) s[i * step] = scratch[i];
+    }
+    for (int x0 = 0; x0 < w; x0 += STRIP) {
+      const int cols = std::min(STRIP, w - x0);
+      auto row = [&](int y) { return p + ((size_t)(y < 0 ? 0 : y >= h ? h - 1 : y) * w + x0) * step; };
+      for (int c = 0; c < cols; c++) sum[c] = n / 2;
+      for (int i = -r; i <= r; i++) {
+        const uint8_t* s = row(i);
+        for (int c = 0; c < cols; c++) sum[c] += s[c * step];
+      }
+      for (int i = 0; i < h; i++) {
+        uint8_t* d = scratch + i * cols;
+        const uint8_t *a = row(i + r + 1), *b = row(i - r);
+        for (int c = 0; c < cols; c++) {
+          d[c] = avg(sum[c]);
+          sum[c] += a[c * step] - b[c * step];
+        }
+      }
+      for (int i = 0; i < h; i++) {
+        uint8_t* d = row(i);
+        for (int c = 0; c < cols; c++) d[c * step] = scratch[i * cols + c];
+      }
+    }
   }
   if (esp_task_wdt_status(nullptr) == ESP_OK) esp_task_wdt_reset();
 }
@@ -301,10 +346,10 @@ bool prepareImage(WallJob& job) {
   const int w = job.w, h = job.h;
   const size_t n = (size_t)w * h;
   // Decoded straight into the blurred picture (b, g, r bytes) and blurred
-  // there: with both printer pages up there is no room for separate planes.
+  // there: a new wallpaper takes what the old one frees, PSRAM has no more.
   job.sharp = (uint16_t*)heap_caps_malloc(n * 2, MALLOC_CAP_SPIRAM);
   job.blurred = (uint8_t*)heap_caps_malloc(n * 3, MALLOC_CAP_SPIRAM);
-  uint8_t* tmp = (uint8_t*)heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
+  uint8_t* tmp = (uint8_t*)heap_caps_malloc(std::max(w, 32 * h), MALLOC_CAP_SPIRAM);
   if (!job.sharp || !job.blurred || !tmp) {
     Serial.println("Deck: wallpaper PSRAM allocation failed");
     free(tmp);
@@ -329,7 +374,7 @@ bool prepareImage(WallJob& job) {
       const int i = (y * w + x) * 3;
       job.sharp[y * w + x] = wallDither565(r[i] * keep >> 8, g[i] * keep >> 8, b[i] * keep >> 8, x, y);
     }
-  for (int c = 0; c < 3; c++) blurPlane(job.blurred + c, tmp, w, h, job.blur, 3);
+  for (int c = 0; c < 3; c++) blurChannel(job.blurred + c, 3, w, h, job.blur, tmp);
   free(tmp);
   Serial.printf("Deck: wallpaper %s decode %lu ms, dim+blur %lu ms\n",
                 jpeg ? job.name : loaded ? "legacy" : "gradient",
