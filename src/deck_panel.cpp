@@ -33,8 +33,11 @@ constexpr uint32_t SPI_HZ = 40000000;  // 80 MHz corrupts the image on this pane
 // The write (15.4 ms) is slower than the scan, so a frame that starts later
 // than this after the TE rising edge is overtaken near the bottom.
 constexpr int64_t TE_LATE_US = 900;
-// Animation frames are sampled this far ahead of the build so the offset
-// matches the moment the frame is actually on the glass.
+constexpr int64_t TE_PERIOD_US = 16390;
+constexpr int64_t TE_STALE_US = 50000;
+// Sample composed animations a fixed distance past the next TE edge.
+constexpr int64_t TE_ANIM_LEAD_US = 6000;
+// Use a build-relative lead when recent TE timing is unavailable.
 constexpr int64_t ANIM_LEAD_US = 8000;
 
 spi_device_handle_t s_dev = nullptr;
@@ -1146,7 +1149,11 @@ inline uint8_t dotsAlphaAt(int64_t now) {
 bool decide(Frame& f) {
   bool have = false;
   bool give = false;
+  portENTER_CRITICAL(&s_teMux);
+  const int64_t te = s_teUs;
+  portEXIT_CRITICAL(&s_teMux);
   const int64_t now = esp_timer_get_time();
+  const int64_t frameTime = te && now - te <= 2 * TE_PERIOD_US ? te + TE_PERIOD_US + TE_ANIM_LEAD_US : now + ANIM_LEAD_US;
   portENTER_CRITICAL(&s_mux);
   const uint8_t rot = s_rot;
   int w, h;
@@ -1177,7 +1184,7 @@ bool decide(Frame& f) {
     }
   }
   if (!have && !s_quiescing && s.mode == COMP_FRAME) {
-    const int64_t elapsed = now + ANIM_LEAD_US - s.t0;
+    const int64_t elapsed = frameTime - s.t0;
     f.comp = true;
     f.kind = KIND_FRAME;
     f.scene = s.scene;
@@ -1195,7 +1202,7 @@ bool decide(Frame& f) {
     have = true;
   }
   if (!have && s.mode == COMP_ANIM && s.kind == KIND_MORPH) {
-    const int64_t t = now + ANIM_LEAD_US - s.t0;
+    const int64_t t = frameTime - s.t0;
     const bool last = t >= (int64_t)s.durUs;
     const float p = last ? 1.0f : t <= 0 ? 0.0f : easeOutCubic((float)t / (float)s.durUs);
     if (last) {
@@ -1246,7 +1253,7 @@ bool decide(Frame& f) {
   if (!have && (s.mode == COMP_DRAG || s.mode == COMP_ANIM)) {
     int off = s.off;
     if (s.mode == COMP_ANIM) {
-      const int64_t t = now + ANIM_LEAD_US - s.t0;
+      const int64_t t = frameTime - s.t0;
       if (t >= (int64_t)s.durUs) {
         off = s.toOff;
         s.mode = s.landing ? COMP_HOLD : COMP_NONE;
@@ -1476,6 +1483,18 @@ void panelShare(void (*fn)(void* ctx, int lo, int hi), void* ctx, int n, int bat
     }
     s_jobState.store(0);
   }
+}
+
+uint32_t panelFrameClockMs() {
+  portENTER_CRITICAL(&s_teMux);
+  const int64_t te = s_teUs;
+  portEXIT_CRITICAL(&s_teMux);
+  const int64_t now = esp_timer_get_time();
+  const uint32_t ms = (uint32_t)((te && now - te <= TE_STALE_US ? te + TE_PERIOD_US : now) / 1000);
+  // Clamp a backward prediction when TE resumes, including across millis wrap.
+  static uint32_t lastMs = ms;
+  if ((int32_t)(ms - lastMs) > 0) lastMs = ms;
+  return lastMs;
 }
 
 bool panelBegin(uint8_t rotation) {
