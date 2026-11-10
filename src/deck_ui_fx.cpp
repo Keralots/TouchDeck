@@ -696,16 +696,22 @@ FrameRect rectOf(lv_obj_t* o) {
   return {(int16_t)a.x1, (int16_t)a.y1, (int16_t)lv_area_get_width(&a), (int16_t)lv_area_get_height(&a)};
 }
 
-// The card's picture for the compositor. Only while no morph reads the buffer.
-bool snapCard(lv_obj_t* card) {
-  if (compMode() != COMP_NONE) return false;
+// The screen sized buffer for the card's picture. A snapshot reshapes it to
+// the card, so its room is data_size, not the header.
+bool cardPicBuf() {
   const uint32_t w = logicalW(), h = logicalH();
-  if (s_cardPic && s_cardPic->header.w * s_cardPic->header.h < w * h) {
+  if (s_cardPic && s_cardPic->data_size < w * h * 2) {
     lv_draw_buf_destroy(s_cardPic);
     s_cardPic = nullptr;
   }
   if (!s_cardPic) s_cardPic = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
-  if (!s_cardPic) return false;
+  return s_cardPic != nullptr;
+}
+
+// The card's picture for the compositor. Only while no morph reads the buffer.
+bool snapCard(lv_obj_t* card) {
+  if (compMode() != COMP_NONE) return false;
+  if (!cardPicBuf()) return false;
   lv_obj_update_layout(card);
   if (!lv_snapshot_reshape_draw_buf(card, s_cardPic)) return false;
   return lv_snapshot_take_to_draw_buf(card, LV_COLOR_FORMAT_RGB565, s_cardPic) == LV_RESULT_OK;
