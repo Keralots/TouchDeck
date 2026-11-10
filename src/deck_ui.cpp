@@ -1,5 +1,6 @@
 // Guition JC3248W535 deck UI. See deck_ui.h for the threading contract.
 #include "deck_ui_int.h"
+#include <src/misc/lv_anim_private.h>  // lv_anim_enable_vsync_mode
 #include "deck_mqtt.h"
 #include "psram_json.h"
 
@@ -90,7 +91,7 @@ int s_zonesPage = -1;     // page the zones were taken from
 bool s_zonesDirty = true;  // tiles rebuilt or moved: take them again
 
 // --- LVGL glue ---------------------------------------------------------------------
-uint32_t tickCb() { return millis(); }
+uint32_t tickCb() { return panelFrameClockMs(); }
 
 // Posted LVGL frames whose framebuffer the flush task has not released yet.
 int s_lvOut = 0;
@@ -834,6 +835,14 @@ bool deckBegin(uint8_t rotation) {
                          LV_DISPLAY_RENDER_MODE_DIRECT);
   lv_display_set_flush_cb(s_disp, flushCb);
   lv_display_set_flush_wait_cb(s_disp, flushWaitCb);
+
+  // Timers run newest first: recreate animation before adding input,
+  // so each pass reads input, advances animations, then draws.
+  lv_anim_enable_vsync_mode(true);
+  lv_anim_enable_vsync_mode(false);
+  // The tick moves once per TE edge, by 16 or 17 ms: a shorter period fires on every step.
+  lv_timer_set_period(lv_anim_get_timer(), 10);
+  lv_timer_set_period(lv_display_get_refr_timer(s_disp), 10);
 
   s_indev = lv_indev_create();
   lv_indev_set_type(s_indev, LV_INDEV_TYPE_POINTER);
