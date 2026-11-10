@@ -151,25 +151,78 @@ void touchDone(lv_anim_t* a) {
 }
 
 // --- Touch: water drop (Water) -------------------------------------------------------------
-// Box children: three rings 140 ms apart, then the splash at the finger.
-void dropStep(void* var, int32_t v) {
-  lv_obj_t* box = (lv_obj_t*)var;
-  const float ms = (float)v * DROP_MS / P;
-  for (int i = 0; i < 4; i++) {
-    lv_obj_t* o = lv_obj_get_child(box, i);
-    int cx, cy, size;
-    unpack(lv_obj_get_user_data(o), cx, cy, size);
-    if (i == 3) {
-      const float t = clamp01(ms / SPLASH_MS);
-      placeCircle(o, cx, cy, LV_MAX(2, (int)(size * (.2f + 1.6f * t))));
-      lv_obj_set_style_bg_opa(o, (lv_opa_t)(220 * (1 - t)), 0);
-      continue;
+// One A8 image over the tile, painted per frame: three rings 140 ms apart,
+// then the splash at the finger. The tile's corners are cut in the image
+// (a clip layer with bordered circles cost over a frame).
+struct Drop {
+  lv_draw_buf_t* buf;
+  uint8_t* corner;  // coverage of the tile's top left corner, cr x cr
+  int16_t w, h, cx, cy, cr;
+  float size;  // the rings' last diameter
+};
+
+void dropFree(Drop* q) {
+  if (q->buf) lv_draw_buf_destroy(q->buf);
+  heap_caps_free(q->corner);
+  delete q;
+}
+
+void dropDelete(lv_event_t* e) { dropFree((Drop*)lv_event_get_user_data(e)); }
+
+// Adds a ring between the radii in and out (a disc when in <= 0). Edges are
+// smoothed with d ~ (d2 + R2) / 2R, no root per pixel.
+void dropShape(Drop& q, float out, float in, int alpha) {
+  if (alpha <= 0 || out < 1) return;
+  const int reach = (int)out + 1;
+  const int x0 = LV_MAX(0, q.cx - reach), x1 = LV_MIN(q.w - 1, q.cx + reach);
+  const int y0 = LV_MAX(0, q.cy - reach), y1 = LV_MIN(q.h - 1, q.cy + reach);
+  const float o2 = out * out, i2 = in * in, ko = .5f / out, ki = in > .5f ? .5f / in : 0;
+  const int hi2 = (int)((out + .5f) * (out + .5f)) + 1;
+  const int lo2 = in > 1 ? (int)((in - .5f) * (in - .5f)) : -1;
+  const int cr = q.cr;
+  int wo = 0, wi = 0;  // the row's half widths: outer edge, empty middle
+  for (int y = y0; y <= y1; y++) {
+    uint8_t* row = q.buf->data + y * q.buf->header.stride;
+    const int ey = y < cr ? y : y >= q.h - cr ? q.h - 1 - y : -1;
+    const int dy2 = (y - q.cy) * (y - q.cy);
+    if (dy2 > hi2) continue;
+    while ((wo + 1) * (wo + 1) + dy2 <= hi2) wo++;
+    while (wo > 0 && wo * wo + dy2 > hi2) wo--;
+    while (wi * wi + dy2 < lo2) wi++;
+    while (wi > 0 && (wi - 1) * (wi - 1) + dy2 >= lo2) wi--;
+    // Left and right of the empty middle; one run when the row has none.
+    for (int side = 0; side < (wi > 0 ? 2 : 1); side++) {
+      const int a0 = LV_MAX(x0, wi > 0 && side ? q.cx + wi : q.cx - wo);
+      const int a1 = LV_MIN(x1, wi > 0 && !side ? q.cx - wi : q.cx + wo);
+      int dx = a0 - q.cx, d2 = dx * dx + dy2;
+      for (int x = a0; x <= a1; x++, d2 += 2 * dx + 1, dx++) {
+        float c = clamp01(.5f - ((float)d2 - o2) * ko);
+        if (ki > 0) c *= clamp01(.5f + ((float)d2 - i2) * ki);
+        int a = (int)(alpha * c);
+        if (ey >= 0) {
+          const int ex = x < cr ? x : x >= q.w - cr ? q.w - 1 - x : -1;
+          if (ex >= 0) a = a * q.corner[ey * cr + ex] / 255;
+        }
+        if (a > 0) row[x] = (uint8_t)(row[x] + a - row[x] * a / 255);
+      }
     }
+  }
+}
+
+void dropStep(void* var, int32_t v) {
+  lv_obj_t* img = (lv_obj_t*)var;
+  Drop& q = *(Drop*)lv_obj_get_user_data(img);
+  const float ms = (float)v * DROP_MS / P;
+  memset(q.buf->data, 0, (size_t)q.buf->header.stride * q.h);
+  for (int i = 0; i < 3; i++) {
     const float t = clamp01((ms - i * DROP_GAP_MS) / DROP_RING_MS);
     const float a = t < .08f ? t / .08f : 1 - (t - .08f) / .92f;
-    placeCircle(o, cx, cy, LV_MAX(2, (int)(size * easeOut(t))));
-    lv_obj_set_style_border_opa(o, (lv_opa_t)(t > 0 ? 180 * a : 0), 0);
+    const float out = q.size * easeOut(t) / 2;
+    dropShape(q, out, out - (i < 2 ? 2 : 1), (int)(180 * a));
   }
+  const float t = clamp01(ms / SPLASH_MS);
+  dropShape(q, 12 * (.2f + 1.6f * t) / 2, 0, (int)(220 * (1 - t)));
+  lv_obj_invalidate(img);
 }
 
 void touchRing(TileRt& r, lv_point_t p, int rad) {
@@ -182,22 +235,38 @@ void touchRing(TileRt& r, lv_point_t p, int rad) {
 }
 
 void touchDrop(TileRt& r, lv_point_t p, int rad) {
-  lv_area_t tc;
+  lv_area_t tc, cc;
   lv_obj_get_coords(r.obj, &tc);
-  const lv_color_t c = s_theme == THEME_DAYLIGHT ? lv_obj_get_style_text_color(r.obj, LV_PART_MAIN)
-                                                 : lv_color_hex(0xDCF5FF);
-  lv_obj_t* box = r.fx = tileBox(r);
-  const int x = p.x - tc.x1, y = p.y - tc.y1;
-  for (int i = 0; i < 3; i++) {
-    lv_obj_t* o = circle(box, x, y, rad * 17 / 10);
-    lv_obj_set_style_border_width(o, i < 2 ? 2 : 1, 0);
-    lv_obj_set_style_border_color(o, c, 0);
-    lv_obj_set_style_border_opa(o, LV_OPA_TRANSP, 0);
+  lv_obj_get_content_coords(r.obj, &cc);
+  Drop* q = new Drop();
+  q->w = (int16_t)lv_area_get_width(&tc);
+  q->h = (int16_t)lv_area_get_height(&tc);
+  q->cx = (int16_t)(p.x - tc.x1);
+  q->cy = (int16_t)(p.y - tc.y1);
+  q->size = rad * 1.7f;
+  q->cr = (int16_t)LV_MIN(lv_obj_get_style_radius(r.obj, LV_PART_MAIN), LV_MIN(q->w, q->h) / 2);
+  q->buf = lv_draw_buf_create(q->w, q->h, LV_COLOR_FORMAT_A8, 0);
+  q->corner = q->cr > 0 ? (uint8_t*)heap_caps_malloc((size_t)q->cr * q->cr, MALLOC_CAP_SPIRAM) : nullptr;
+  if (!q->buf || (q->cr > 0 && !q->corner)) {
+    dropFree(q);
+    return;
   }
-  lv_obj_t* s = circle(box, x, y, 12);
-  lv_obj_set_style_bg_color(s, c, 0);
-  lv_obj_set_style_bg_opa(s, LV_OPA_TRANSP, 0);
-  startAnim(box, dropStep, DROP_MS, lv_anim_path_linear, touchDone);
+  for (int y = 0; y < q->cr; y++)
+    for (int x = 0; x < q->cr; x++) {
+      const float dx = q->cr - x - .5f, dy = q->cr - y - .5f;
+      q->corner[y * q->cr + x] = (uint8_t)(255 * clamp01(q->cr + .5f - sqrtf(dx * dx + dy * dy)));
+    }
+  lv_obj_t* img = r.fx = lv_image_create(r.obj);
+  lv_obj_add_flag(img, (lv_obj_flag_t)(LV_OBJ_FLAG_IGNORE_LAYOUT | LV_OBJ_FLAG_FLOATING));
+  lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_user_data(img, q);
+  lv_obj_add_event_cb(img, dropDelete, LV_EVENT_DELETE, q);
+  lv_obj_set_pos(img, tc.x1 - cc.x1, tc.y1 - cc.y1);
+  lv_obj_set_style_image_recolor(img, s_theme == THEME_DAYLIGHT ? lv_obj_get_style_text_color(r.obj, LV_PART_MAIN)
+                                                                : lv_color_hex(0xDCF5FF), 0);
+  dropStep(img, 0);
+  lv_image_set_src(img, q->buf);
+  startAnim(img, dropStep, DROP_MS, lv_anim_path_linear, touchDone);
 }
 
 // --- On/off: pop and halo (Calm) -----------------------------------------------------------
