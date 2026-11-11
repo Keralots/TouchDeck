@@ -4,6 +4,7 @@
 
 namespace deckui {
 
+constexpr uint32_t VIZ_FRAME_MS = 20;    // bars tick
 constexpr float VIZ_FALL_PER_S = 2.2f;   // bar drop, tile heights per second
 constexpr float VIZ_PEAK_FALL_PER_S = 0.7f;
 constexpr uint32_t VIZ_PEAK_HOLD_MS = 400;
@@ -35,9 +36,7 @@ struct VizRt {
 };
 
 static uint32_t s_vizSerial = 0;
-static uint32_t s_vizLastTick = 0, s_vizLastPaint = 0, s_scopeMs = 0;
-static bool s_vizDirty = false;
-static bool s_vizMeasuring = false;
+static uint32_t s_vizLastTick = 0, s_scopeMs = 0;
 
 void vizFree(VizRt* v) {
   if (!v) return;
@@ -138,7 +137,7 @@ static bool vizStep(TileRt& r, uint32_t now, uint32_t dtMs) {
     v.full = true;
   }
   if (!changed && !v.full) return false;
-  if (v.full || !vizPartial) {
+  if (v.full) {
     v.full = false;
     lv_obj_invalidate(r.viz);
     return true;
@@ -301,17 +300,16 @@ static bool vizShowing() {
 void vizTick() {
   const uint32_t now = millis();
   const uint32_t serial = vizSerial();
-  const bool barsDue = now - s_vizLastTick >= vizFrameMs;
+  const bool barsDue = now - s_vizLastTick >= VIZ_FRAME_MS;
   const bool scopeDue = serial != s_vizSerial && now - s_scopeMs >= SCOPE_MIN_MS;
   if (!barsDue && !scopeDue) return;
   uint32_t dt = 0;
   if (barsDue) {
     dt = std::min<uint32_t>(now - s_vizLastTick, 200);
     // Fixed steps, so loop jitter does not stretch the frame period.
-    s_vizLastTick = now - s_vizLastTick < 2 * vizFrameMs ? s_vizLastTick + vizFrameMs : now;
+    s_vizLastTick = now - s_vizLastTick < 2 * VIZ_FRAME_MS ? s_vizLastTick + VIZ_FRAME_MS : now;
   }
   if (!vizShowing()) return;
-  if (serial - s_vizSerial > 1 && s_vizSerial) vizStats.superseded += serial - s_vizSerial - 1;
   s_vizSerial = serial;
   if (scopeDue) s_scopeMs = now;
   bool painted = false;
@@ -319,63 +317,7 @@ void vizTick() {
     if (!r.vz || r.page != sh.active) continue;
     if (r.vz->scope ? scopeStep(r, now) : barsDue && vizStep(r, now, dt)) painted = true;
   }
-  if (!painted) return;
-  const bool fed = vizRxMs() && now - vizRxMs() < VIZ_STALE_MS;
-  if (fed && s_vizLastPaint && now - s_vizLastPaint < 1000 && now - s_vizLastPaint > vizStats.tickGapMax)
-    vizStats.tickGapMax = now - s_vizLastPaint;
-  s_vizLastPaint = now;
-  vizStats.ticks++;
-  s_vizDirty = true;
-  s_sparkPaintMs = now;  // like a gliding chart: other pages snapshot rarely meanwhile
+  if (painted) s_sparkPaintMs = now;  // like a gliding chart: other pages snapshot rarely meanwhile
 }
-
-bool vizTakeDirty() {
-  const bool d = s_vizDirty;
-  s_vizDirty = false;
-  return d;
-}
-
-void vizNoteHandler(uint32_t us) {
-  vizStats.lvUsSum += us;
-  vizStats.lvCalls++;
-  if (us > vizStats.lvUsMax) vizStats.lvUsMax = us;
-}
-
-bool vizMeasuring() { return s_vizMeasuring; }
 
 }  // namespace deckui
-
-// Spike stats: viz counters plus the panel's frame counters since the last reset.
-void deckVizStats(String& out, bool reset) {
-  using namespace deckui;
-  static PanelStats acc = {};
-  static uint32_t t0 = millis();
-  const PanelStats p = panelTakeStats();
-  acc.frames += p.frames;
-  acc.compFrames += p.compFrames;
-  acc.teLate += p.teLate;
-  acc.lvDropped += p.lvDropped;
-  acc.flushUsMax = std::max(acc.flushUsMax, p.flushUsMax);
-  acc.gapMaxUs = std::max(acc.gapMaxUs, p.gapMaxUs);
-  const uint32_t ms = millis() - t0;
-  char buf[512];
-  snprintf(buf, sizeof(buf),
-           "{\"ms\":%u,\"packets\":%u,\"superseded\":%u,\"ticks\":%u,\"lvCalls\":%u,\"lvUsAvg\":%u,"
-           "\"lvUsMax\":%u,\"tickGapMax\":%u,\"rxGapMax\":%u,\"frames\":%u,\"comp\":%u,\"teLate\":%u,"
-           "\"lvDrop\":%u,\"flushUsMax\":%u,\"gapMaxUs\":%u,\"frameMs\":%u,\"snapUsMax\":%u,"
-           "\"peak\":%u,\"sound\":%s}",
-           (unsigned)ms, (unsigned)vizStats.packets, (unsigned)vizStats.superseded, (unsigned)vizStats.ticks,
-           (unsigned)vizStats.lvCalls, (unsigned)(vizStats.lvCalls ? vizStats.lvUsSum / vizStats.lvCalls : 0),
-           (unsigned)vizStats.lvUsMax, (unsigned)vizStats.tickGapMax, (unsigned)vizStats.rxGapMax,
-           (unsigned)acc.frames, (unsigned)acc.compFrames, (unsigned)acc.teLate, (unsigned)acc.lvDropped,
-           (unsigned)acc.flushUsMax, (unsigned)acc.gapMaxUs, (unsigned)vizFrameMs, (unsigned)s_snapUsMax,
-           (unsigned)vizPeak(), vizSoundOn() ? "true" : "false");
-  out = buf;
-  if (reset) {
-    s_vizMeasuring = true;
-    vizStats = {};
-    acc = {};
-    s_snapUsMax = 0;
-    t0 = millis();
-  }
-}

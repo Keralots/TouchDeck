@@ -3,6 +3,7 @@
 #include <src/misc/lv_anim_private.h>  // lv_anim_enable_vsync_mode
 #include "deck_mqtt.h"
 #include "psram_json.h"
+#include "deck_viz.h"
 
 namespace deckui {
 
@@ -811,11 +812,51 @@ void frameCatchUp() {
   s_frameSync = false;
 }
 
+// Bench timing for GET /api/deck/perf.
+enum PerfPart { PP_WEB, PP_PC, PP_OTHER, PP_WHEN, PP_PCSYNC, PP_MEDIA, PP_ANIM, PP_LV, PP_SNAP, PP_N };
+const char* const PERF_COLS = "ms,web,pc,other,when,pcsync,media,anim,lv,snap";
+struct PerfRow {
+  uint32_t ms;
+  uint32_t us[PP_N];
+};
+constexpr int PERF_ROWS = 256;
+PerfRow* s_perfRows = nullptr;  // PSRAM ring, allocated by the first read
+int s_perfHead = 0, s_perfCount = 0;
+uint32_t s_perfLost = 0, s_perfMinUs = 25000, s_perfPasses = 0, s_perfPassMax = 0;
+PanelStats s_perfPanel = {};
+
+// Every panelTakeStats goes through here, so the serial log and the bench share the counters.
+PanelStats takePanelStats() {
+  const PanelStats p = panelTakeStats();
+  s_perfPanel.frames += p.frames;
+  s_perfPanel.compFrames += p.compFrames;
+  s_perfPanel.teLate += p.teLate;
+  s_perfPanel.teTimeouts += p.teTimeouts;
+  s_perfPanel.lvDropped += p.lvDropped;
+  s_perfPanel.flushUsMax = std::max(s_perfPanel.flushUsMax, p.flushUsMax);
+  s_perfPanel.gapMaxUs = std::max(s_perfPanel.gapMaxUs, p.gapMaxUs);
+  return p;
+}
+
+void perfPass(const uint32_t (&us)[PP_N]) {
+  uint32_t total = 0;
+  for (uint32_t u : us) total += u;
+  s_perfPasses++;
+  s_perfPassMax = std::max(s_perfPassMax, total);
+  if (!s_perfRows || total < s_perfMinUs) return;
+  if (s_perfCount == PERF_ROWS) s_perfLost++;
+  else s_perfCount++;
+  PerfRow& r = s_perfRows[s_perfHead];
+  s_perfHead = (s_perfHead + 1) % PERF_ROWS;
+  r.ms = millis();
+  memcpy(r.us, us, sizeof(r.us));
+}
+
 void logStats() {
   const uint32_t now = millis();
-  if (now - s_lastStats < STATS_MS || vizMeasuring()) return;  // GET /api/deck/viz owns the counters
+  if (now - s_lastStats < STATS_MS) return;
   s_lastStats = now;
-  const PanelStats p = panelTakeStats();
+  const PanelStats p = takePanelStats();
   if (!p.frames && !s_waitTimeouts) return;
   Serial.printf("Deck: frames=%u comp=%u flush=%u/%uus build=%uus te_late=%u te_to=%u "
                 "lv_drop=%u gap_max=%uus wait_to=%u snap_max=%uus int_free=%u\n",
@@ -1014,6 +1055,13 @@ void deckTick() {
     return;
   }
 
+  uint32_t us[PP_N] = {deckPerfWebUs, deckPerfPcUs};
+  uint32_t t = micros();
+  const auto lap = [&](PerfPart p) {
+    const uint32_t n = micros();
+    us[p] += n - t;
+    t = n;
+  };
   if (s_ed.pending != EditState::P_NONE) edFinish();
   tickWallpaper();
   dailyBarSync();
@@ -1023,24 +1071,68 @@ void deckTick() {
   haSync();
   httpSync();
   printerSync();
+  lap(PP_OTHER);
   whenSync();
+  lap(PP_WHEN);
   pcCmdSync();
   pairSync();
   pcSync(false);
+  lap(PP_PCSYNC);
   mediaArtTick();
   pcVolumeTick();
+  lap(PP_MEDIA);
   if (!systemScreen) {
     sparkTick();
     heroTick();
     vizTick();
   }
   syncSwipeZones();
-  const bool vizPainted = vizTakeDirty();
-  const uint32_t lvT0 = micros();
+  lap(PP_ANIM);
   lv_timer_handler();
-  if (vizPainted) vizNoteHandler(micros() - lvT0);
+  lap(PP_LV);
   if (!systemScreen) refreshOneSnapshot();
+  lap(PP_SNAP);
   logStats();
+  perfPass(us);
+}
+
+uint32_t deckPerfWebUs = 0, deckPerfPcUs = 0;
+
+void deckPerfJson(String& out, uint32_t minUs) {
+  static uint32_t t0 = millis(), viz0 = vizSerial();
+  takePanelStats();
+  const PanelStats& p = s_perfPanel;
+  const uint32_t ms = millis() - t0;
+  char b[400];
+  snprintf(b, sizeof(b),
+           "{\"ms\":%u,\"frames\":%u,\"fps\":%.1f,\"comp\":%u,\"teLate\":%u,\"teTimeouts\":%u,\"lvDrop\":%u,"
+           "\"flushUsMax\":%u,\"gapMaxUs\":%u,\"passes\":%u,\"passUsMax\":%u,\"vizPackets\":%u,\"vizPeak\":%u,"
+           "\"sound\":%s,\"minUs\":%u,\"lost\":%u,\"cols\":\"%s\",\"rows\":[",
+           (unsigned)ms, (unsigned)p.frames, ms ? p.frames * 1000.0f / ms : 0.0f, (unsigned)p.compFrames,
+           (unsigned)p.teLate, (unsigned)p.teTimeouts, (unsigned)p.lvDropped, (unsigned)p.flushUsMax,
+           (unsigned)p.gapMaxUs, (unsigned)s_perfPasses, (unsigned)s_perfPassMax, (unsigned)(vizSerial() - viz0),
+           (unsigned)vizPeak(), vizSoundOn() ? "true" : "false", (unsigned)s_perfMinUs, (unsigned)s_perfLost,
+           PERF_COLS);
+  out = b;
+  out.reserve(out.length() + s_perfCount * 64 + 4);
+  for (int i = 0; i < s_perfCount; i++) {
+    const PerfRow& r = s_perfRows[(s_perfHead - s_perfCount + i + PERF_ROWS) % PERF_ROWS];
+    out += i ? ",[" : "[";
+    out += r.ms;
+    for (uint32_t u : r.us) {
+      out += ',';
+      out += u;
+    }
+    out += ']';
+  }
+  out += "]}";
+  if (!s_perfRows) s_perfRows = (PerfRow*)heap_caps_malloc(PERF_ROWS * sizeof(PerfRow), MALLOC_CAP_SPIRAM);
+  s_perfHead = s_perfCount = 0;
+  s_perfLost = s_perfPasses = s_perfPassMax = 0;
+  s_perfMinUs = minUs;
+  s_perfPanel = {};
+  t0 = millis();
+  viz0 = vizSerial();
 }
 
 void deckToast(const char* text) {

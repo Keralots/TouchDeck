@@ -423,9 +423,6 @@ void makeVizContent(TileRt& r, lv_obj_t* t);
 void fitViz(TileRt& r, int cw, int ch);
 void vizDrawEvent(lv_event_t* e);
 void vizTick();
-bool vizTakeDirty();
-void vizNoteHandler(uint32_t us);
-bool vizMeasuring();
 
 // deck_ui_printer.cpp
 void readPrinters();

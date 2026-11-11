@@ -1,10 +1,6 @@
 #include "deck_viz.h"
 #include <algorithm>
 
-VizStats vizStats = {};
-uint32_t vizFrameMs = 20;
-bool vizPartial = true;
-
 static uint8_t s_bands[VIZ_BANDS];
 static uint8_t s_wave[VIZ_WAVE_POINTS];
 static bool s_hasWave = false;
@@ -35,10 +31,8 @@ bool vizIngest(const uint8_t* buf, int len) {
     s_loudMs = now;
     s_loud = true;
   }
-  if (s_rxMs && now - s_rxMs < 1000 && now - s_rxMs > vizStats.rxGapMax) vizStats.rxGapMax = now - s_rxMs;
   s_rxMs = now;
   s_serial++;
-  vizStats.packets++;
   return true;
 }
 

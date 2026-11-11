@@ -17,16 +17,3 @@ uint32_t vizSerial();  // bumps per accepted packet
 uint8_t vizPeak();     // loudest band of the latest packet
 // The PC plays sound, with hysteresis (see deck_viz.cpp). No packets = silence.
 bool vizSoundOn();
-
-// Spike instrumentation (GET /api/deck/viz).
-struct VizStats {
-  uint32_t packets;      // accepted
-  uint32_t superseded;   // replaced before a tick showed them
-  uint32_t ticks;        // viz frames that changed a bar
-  uint32_t lvUsSum, lvUsMax, lvCalls;  // lv_timer_handler after a viz invalidate
-  uint32_t tickGapMax;   // longest ms between viz frames while fed
-  uint32_t rxGapMax;     // longest ms between packets while fed
-};
-extern VizStats vizStats;
-extern uint32_t vizFrameMs;  // tick period, overridable for the spike
-extern bool vizPartial;      // invalidate only the moved rows (else the whole tile)

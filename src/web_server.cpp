@@ -21,7 +21,6 @@
 #include "deck_icons.h"
 #include "deck_wall.h"
 #include "deck_daily.h"
-#include "deck_viz.h"
 #include "deck_sys.h"
 #include "psram_json.h"
 #include "crash_log.h"
@@ -2162,12 +2161,11 @@ static void handleWallsNext() {
   sendJsonMessage(200, true, "Wallpaper queued.");
 }
 
-// Visualizer spike: GET reads the counters, ?reset=1 starts a window, ?frame=ms sets the tick.
-static void handleVizStats() {
-  if (server.hasArg("partial")) vizPartial = server.arg("partial") == "1";
-  if (server.hasArg("frame")) vizFrameMs = (uint32_t)constrain(server.arg("frame").toInt(), 8, 200);
+// GET /api/deck/perf[?min=ms] - bench hook: counters since the last read, then
+// a new window that keeps the loop passes slower than min (default 25 ms).
+static void handlePerf() {
   String out;
-  deckVizStats(out, server.arg("reset") == "1");
+  deckPerfJson(out, (uint32_t)constrain(server.hasArg("min") ? server.arg("min").toInt() : 25, 1, 1000) * 1000);
   server.send(200, "application/json", out);
 }
 
@@ -2593,7 +2591,7 @@ void initWebServer() {
   server.on("/api/deck/daily/run", HTTP_POST, handleDailyRun);
   server.on("/api/deck/wallpaper/remove", HTTP_POST, handleWallRemove);
   server.on("/api/deck/bench", HTTP_POST, handleDeckBench);
-  server.on("/api/deck/viz", HTTP_GET, handleVizStats);
+  server.on("/api/deck/perf", HTTP_GET, handlePerf);
   server.on("/api/deck/frame", HTTP_GET, handleFrameGet);
   server.on("/api/deck/frame", HTTP_POST, handleFramePost);
   server.on("/api/deck/prefs", HTTP_POST, handleDeckPrefs);
