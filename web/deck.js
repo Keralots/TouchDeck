@@ -351,6 +351,8 @@
         ["", "Always"],
         ["pc-on", "Only while the PC is on"],
         ["pc-off", "Only while the PC is off"],
+        ["sound-on", "Only while the PC plays sound"],
+        ["sound-off", "Only while the PC is silent"],
         ["entity", "Only while an entity is in a state"],
       ]
         .map((o) => opt(o[0], o[1], k === o[0]))
@@ -1613,6 +1615,7 @@
     const w = t.when;
     if (w === "pc-on" || w === "pc-off")
       return { k: "pc:" + ((isPcCmd(t) ? t.tap.pc : t.pc) || ""), neg: w === "pc-off" };
+    if (w === "sound-on" || w === "sound-off") return { k: "sound", neg: w === "sound-off" };
     if (w && typeof w === "object") {
       const s = String(w.state || ""),
         n = s[0] === "!";
@@ -1640,7 +1643,8 @@
           if (k.startsWith("pc:")) {
             const pc = pcs.find((x) => x.id === k.slice(3)) || (k === "pc:" && pcs[0]);
             nm = pc ? pc.name : "PC";
-          } else nm = k.slice(2).replace("=", " is ");
+          } else if (k === "sound") nm = "PC sound";
+          else nm = k.slice(2).replace("=", " is ");
           const on = pv[k] !== false,
             yes = k.startsWith("pc:") ? ["On", "Off"] : ["Yes", "No"];
           return (
@@ -1677,7 +1681,9 @@
       ? ""
       : (k === "entity"
           ? "The state as Home Assistant reports it (on, off, home, playing...). Hidden until it is known."
-          : "The PC counts as off about a minute after its companion goes quiet.") +
+          : k.startsWith("sound")
+            ? "Needs the companion's Audio visualizer switch. Sound counts after 2 s, silence after 30 s."
+            : "The PC counts as off about a minute after its companion goes quiet.") +
         " Its cell is free otherwise: another tile with the opposite condition can take it. Switch the Preview above the grid to place it.";
     let h =
       '<div class="field">' +
@@ -1689,6 +1695,8 @@
         ["", "Always"],
         ["pc-on", "Only while the PC is on"],
         ["pc-off", "Only while the PC is off"],
+        ["sound-on", "Only while the PC plays sound"],
+        ["sound-off", "Only while the PC is silent"],
         ["entity", "Only while an entity is in a state"],
       ]
         .map((o) => opt(o[0], o[1], k === o[0]))

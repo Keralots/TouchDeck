@@ -362,12 +362,14 @@ void deckVizStats(String& out, bool reset) {
   snprintf(buf, sizeof(buf),
            "{\"ms\":%u,\"packets\":%u,\"superseded\":%u,\"ticks\":%u,\"lvCalls\":%u,\"lvUsAvg\":%u,"
            "\"lvUsMax\":%u,\"tickGapMax\":%u,\"rxGapMax\":%u,\"frames\":%u,\"comp\":%u,\"teLate\":%u,"
-           "\"lvDrop\":%u,\"flushUsMax\":%u,\"gapMaxUs\":%u,\"frameMs\":%u,\"snapUsMax\":%u}",
+           "\"lvDrop\":%u,\"flushUsMax\":%u,\"gapMaxUs\":%u,\"frameMs\":%u,\"snapUsMax\":%u,"
+           "\"peak\":%u,\"sound\":%s}",
            (unsigned)ms, (unsigned)vizStats.packets, (unsigned)vizStats.superseded, (unsigned)vizStats.ticks,
            (unsigned)vizStats.lvCalls, (unsigned)(vizStats.lvCalls ? vizStats.lvUsSum / vizStats.lvCalls : 0),
            (unsigned)vizStats.lvUsMax, (unsigned)vizStats.tickGapMax, (unsigned)vizStats.rxGapMax,
            (unsigned)acc.frames, (unsigned)acc.compFrames, (unsigned)acc.teLate, (unsigned)acc.lvDropped,
-           (unsigned)acc.flushUsMax, (unsigned)acc.gapMaxUs, (unsigned)vizFrameMs, (unsigned)s_snapUsMax);
+           (unsigned)acc.flushUsMax, (unsigned)acc.gapMaxUs, (unsigned)vizFrameMs, (unsigned)s_snapUsMax,
+           (unsigned)vizPeak(), vizSoundOn() ? "true" : "false");
   out = buf;
   if (reset) {
     s_vizMeasuring = true;

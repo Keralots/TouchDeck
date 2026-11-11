@@ -189,6 +189,8 @@ bool parseWhen(JsonVariantConst v, WhenDef& w, String* err, const String& where)
     const char* s = v.as<const char*>();
     if (!strcmp(s, "pc-on")) w.kind = WHEN_PC_ON;
     else if (!strcmp(s, "pc-off")) w.kind = WHEN_PC_OFF;
+    else if (!strcmp(s, "sound-on")) w.kind = WHEN_SOUND_ON;
+    else if (!strcmp(s, "sound-off")) w.kind = WHEN_SOUND_OFF;
     else {
       if (err) *err = where + ": unknown when '" + s + "'";
       return false;

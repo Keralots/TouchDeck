@@ -85,6 +85,8 @@
 //   "pc-on" | "pc-off": the tile's PC (its "pc" command or metric PC, else
 //     the first known one) is online / offline. Offline counts after a grace
 //     period, so a companion restart does not reshuffle the page.
+//   "sound-on" | "sound-off": a companion streams audio to the visualizer
+//     (on after 2 s of sound, off after 30 s of silence).
 //   { "entity": "switch.pc", "state": "on" }: the HA state equals "state";
 //     "!on" = differs. Hidden until Home Assistant reports the entity.
 // A page takes "when" too (its PC is the first known one) and "auto": true:
@@ -136,7 +138,7 @@ enum ActionKind : uint8_t {
   ACT_PC,            // {pc, cmd}: a command to a paired PC's companion
 };
 enum ConfirmMode : uint8_t { CONFIRM_NONE = 0, CONFIRM_OFF, CONFIRM_ALWAYS };
-enum WhenKind : uint8_t { WHEN_ALWAYS = 0, WHEN_PC_ON, WHEN_PC_OFF, WHEN_ENTITY };
+enum WhenKind : uint8_t { WHEN_ALWAYS = 0, WHEN_PC_ON, WHEN_PC_OFF, WHEN_ENTITY, WHEN_SOUND_ON, WHEN_SOUND_OFF };
 
 struct WhenDef {
   WhenKind kind = WHEN_ALWAYS;

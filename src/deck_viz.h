@@ -14,6 +14,9 @@ const uint8_t* vizBands();
 const uint8_t* vizWave();
 uint32_t vizRxMs();
 uint32_t vizSerial();  // bumps per accepted packet
+uint8_t vizPeak();     // loudest band of the latest packet
+// The PC plays sound, with hysteresis (see deck_viz.cpp). No packets = silence.
+bool vizSoundOn();
 
 // Spike instrumentation (GET /api/deck/viz).
 struct VizStats {
