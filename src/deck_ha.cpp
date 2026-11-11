@@ -328,7 +328,13 @@ bool mediaField(HaEntity& e, const char* k, JsonVariantConst v) {
   else if (!strcmp(k, "media_artist")) e.mediaArtist = v.is<const char*>() ? (const char*)v : "";
   else if (!strcmp(k, "entity_picture")) e.mediaPictureRemote = v.is<const char*>() ? (const char*)v : "";
   else if (!strcmp(k, "entity_picture_local")) e.mediaPicture = v.is<const char*>() ? (const char*)v : "";
-  else if (!strcmp(k, "media_duration")) e.mediaDuration = v.is<float>() ? (int32_t)lroundf(v.as<float>()) : 0;
+  else if (!strcmp(k, "source")) e.mediaSource = v.is<const char*>() ? (const char*)v : "";
+  else if (!strcmp(k, "source_list")) {
+    e.mediaInputs = "";
+    for (JsonVariantConst s : v.as<JsonArrayConst>())
+      if (s.is<const char*>()) e.mediaInputs += String('\n') + s.as<const char*>();
+    if (e.mediaInputs.length()) e.mediaInputs += '\n';
+  } else if (!strcmp(k, "media_duration")) e.mediaDuration = v.is<float>() ? (int32_t)lroundf(v.as<float>()) : 0;
   else if (!strcmp(k, "media_position")) e.mediaPosition = v.is<float>() ? (int32_t)lroundf(v.as<float>()) : 0;
   else if (!strcmp(k, "media_position_updated_at")) {
     if (!v.is<const char*>() || !historyEpoch(v.as<const char*>(), e.mediaPosAt)) e.mediaPosAt = 0;

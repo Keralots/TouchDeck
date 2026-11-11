@@ -130,6 +130,14 @@ struct TileRt {
   String artFailed;       // HA cover that failed (PNG, network): retried after 2 min
   int16_t coverPx;
   bool mediaFull;
+  bool mediaVol;          // the volume row is shown
+  bool mediaHa;           // the HA player is the source (auto tiles switch it)
+  uint8_t mediaPx;        // transport icon size
+  lv_obj_t* mediaDisc;    // accent disc behind play on bigger tiles
+  lv_obj_t* volButtons[2];
+  lv_obj_t* volBar;
+  int8_t volWant;         // last level asked for, the base for quick taps
+  uint32_t volAt;
   // Glass auto text: the colour picked from the picture under the tile.
   uint32_t autoText;
   bool hasAuto;
@@ -397,8 +405,7 @@ void fitEvent(lv_event_t* e);
 
 // deck_ui_media.cpp
 void mediaGlyph(lv_obj_t* label, const char* name, const char* fallback, int px);
-void mediaProgress(TileRt& r);
-void mediaCover(TileRt& r);
+void mediaTick(TileRt& r);
 void applyMedia(TileRt& r);
 void mediaArtTick();
 void mediaEvent(lv_event_t* e);

@@ -318,14 +318,51 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
       lv_obj_set_style_radius(button, 8, 0);
       lv_obj_set_style_bg_color(button, lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
       lv_obj_set_style_bg_opa(button, LV_OPA_50, LV_STATE_PRESSED);
+      if (i == 1) {
+        r.mediaDisc = lv_obj_create(button);
+        lv_obj_remove_style_all(r.mediaDisc);
+        lv_obj_remove_flag(r.mediaDisc, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+        lv_obj_set_style_radius(r.mediaDisc, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(r.mediaDisc, lv_color_hex(accent), 0);
+        lv_obj_set_style_bg_opa(r.mediaDisc, LV_OPA_COVER, 0);
+        showObj(r.mediaDisc, false);
+      }
       r.mediaIcons[i] = lv_label_create(button);
       mediaGlyph(r.mediaIcons[i], icons[i], fallback[i], 24);
       lv_obj_center(r.mediaIcons[i]);
-      lv_obj_add_event_cb(button, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 4 + i));
+      lv_obj_add_event_cb(button, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 8 + i));
     }
+    r.volBar = lv_bar_create(t);
+    lv_obj_remove_style_all(r.volBar);
+    lv_obj_remove_flag(r.volBar, LV_OBJ_FLAG_CLICKABLE);
+    lv_bar_set_range(r.volBar, 0, 100);
+    lv_obj_set_style_bg_color(r.volBar, lv_color_hex(C_TRACK), 0);
+    lv_obj_set_style_bg_opa(r.volBar, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(r.volBar, lv_color_hex(accent), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(r.volBar, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(r.volBar, 3, 0);
+    lv_obj_set_style_radius(r.volBar, 3, LV_PART_INDICATOR);
+    showObj(r.volBar, false);
+    static const char* const volIcons[] = {"volume-minus", "volume-plus"};
+    static const char* const volFallback[] = {"-", "+"};
+    for (int i = 0; i < 2; i++) {
+      lv_obj_t* button = r.volButtons[i] = lv_obj_create(t);
+      lv_obj_remove_style_all(button);
+      lv_obj_remove_flag(button, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_EVENT_BUBBLE));
+      lv_obj_set_style_radius(button, 8, 0);
+      lv_obj_set_style_bg_color(button, lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
+      lv_obj_set_style_bg_opa(button, LV_OPA_50, LV_STATE_PRESSED);
+      lv_obj_t* icon = lv_label_create(button);
+      mediaGlyph(icon, volIcons[i], volFallback[i], 24);
+      lv_obj_center(icon);
+      showObj(button, false);
+      lv_obj_add_event_cb(button, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 8 + 4 + i));
+    }
+    r.volWant = -1;
+    r.iconCp = 2;  // force the first play glyph
     s_tiles.push_back(r);
     applyMedia(s_tiles.back());
-    lv_obj_add_event_cb(t, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 4 + 3));
+    lv_obj_add_event_cb(t, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 8 + 3));
     lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
     return;
   }

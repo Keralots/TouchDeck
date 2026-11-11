@@ -649,10 +649,7 @@ void updateHeaders() {
   const uint32_t now = millis();
   if (now - s_lastClockCheck < 1000) return;
   s_lastClockCheck = now;
-  for (TileRt& r : s_tiles) if (r.def->type == TILE_MEDIA) {
-    mediaProgress(r);
-    mediaCover(r);
-  }
+  for (TileRt& r : s_tiles) if (r.def->type == TILE_MEDIA) mediaTick(r);
   const int wifi = WiFi.status() == WL_CONNECTED ? 1 : 0;
   if (wifi != s_lastWifi) {
     s_lastWifi = wifi;
