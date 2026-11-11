@@ -78,7 +78,7 @@ bool mediaChoose(TileRt& r) {
   const bool was = r.mediaHa;
   if (!r.def->mediaAuto) {
     r.mediaHa = r.def->entity.length() > 0;
-  } else {
+  } else if (!r.volHeld) {  // a held volume pill keeps its source
     const MediaNow ha = haNow(*r.def), pc = pcNow(*r.def);
     if (pc.playing) r.mediaHa = false;
     else if (ha.playing && !ha.fromInput) r.mediaHa = true;
@@ -105,8 +105,7 @@ void mediaSetArt(TileRt& r, const std::shared_ptr<MediaArt>& art) {
   markPageStale(r.page);
 }
 
-void mediaProgress(TileRt& r) {
-  const MediaNow m = mediaNow(r);
+void mediaProgress(TileRt& r, const MediaNow& m) {
   const time_t now = time(nullptr);
   const bool visible = r.mediaFull && m.available && m.dur > 0 && now >= 1609459200 && (!m.playing || m.t0 > 0);
   bool changed = visible == lv_obj_has_flag(r.viz, LV_OBJ_FLAG_HIDDEN);
@@ -122,10 +121,9 @@ void mediaProgress(TileRt& r) {
   if (changed) markPageStale(r.page);
 }
 
-void mediaCover(TileRt& r) {
+void mediaCover(TileRt& r, const MediaNow& m) {
   const bool ha = r.mediaHa;
   const PcSource* pc = ha ? nullptr : pcSource(r.def->pc);
-  const MediaNow m = mediaNow(r);
   const String wanted = m.available && r.coverPx ? m.art : String();
   if (wanted != r.artWanted || (r.art && r.art->px != r.coverPx)) {
     r.artWanted = wanted;
@@ -191,8 +189,9 @@ void mediaVolume(TileRt& r, const MediaNow& m) {
 
 // Once a second: progress and a cover that may be due.
 void mediaTick(TileRt& r) {
-  mediaProgress(r);
-  mediaCover(r);
+  const MediaNow m = mediaNow(r);
+  mediaProgress(r, m);
+  mediaCover(r, m);
 }
 
 // The HA level goes through the shared wish, the PC level through the slider
@@ -269,10 +268,7 @@ void mediaVolEvent(lv_event_t* e) {
 }
 
 void applyMedia(TileRt& r) {
-  if (mediaChoose(r)) {
-    mediaVolEnd(r);
-    r.iconCp = 2;
-  }
+  if (mediaChoose(r)) r.iconCp = 2;
   const MediaNow m = mediaNow(r);
   const char* title = m.available && m.title.length() ? m.title.c_str() : "Nothing playing";
   const char* artist = m.available ? m.artist.c_str() : "";
@@ -290,8 +286,8 @@ void applyMedia(TileRt& r) {
     r.iconCp = cp;
     changed = true;
   }
-  mediaCover(r);
-  mediaProgress(r);
+  mediaCover(r, m);
+  mediaProgress(r, m);
   mediaVolume(r, m);
   if (changed) markPageStale(r.page);
 }

@@ -146,6 +146,7 @@
     entsBusy = false,
     dirty = false,
     pickFor = -1,
+    pickAuto = false,
     dom = "",
     pcm = [],
     ori = null,
@@ -2778,15 +2779,16 @@
             return;
           }
           if (x.value.startsWith("auto:")) {
-            t.auto = true;
+            if (t.entity) t.auto = true; // else the picker sets it with the player
             if (x.value.length > 5) t.pc = x.value.slice(5);
             else delete t.pc;
             setDirty(true);
             renderPage();
-            if (!t.entity) openPicker(i);
+            if (!t.entity) openPicker(i, true);
             return;
           }
           if (x.value === "ha") {
+            delete t.auto;
             renderPage(); // the select shows the old source until a player is picked
             openPicker(i);
             return;
@@ -3200,8 +3202,9 @@
     $("dkEnts").innerHTML = typed + rows;
     bindEnts();
   }
-  async function openPicker(i) {
+  async function openPicker(i, auto) {
     pickFor = i;
+    pickAuto = !!auto;
     const pt = i >= 0 ? pages()[cur].tiles[i] : null;
     if (pt && pt.type === "media") {
       domBefore = dom; // only this picker is limited to players
@@ -3241,6 +3244,7 @@
         return;
       }
       p.tiles[pickFor].entity = id;
+      if (pickAuto) p.tiles[pickFor].auto = true;
       if (!p.tiles[pickFor].auto) delete p.tiles[pickFor].pc;
     } else {
       const t = p.tiles[pickFor];

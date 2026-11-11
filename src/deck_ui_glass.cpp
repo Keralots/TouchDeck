@@ -187,6 +187,18 @@ bool bakeGlass(Page& p) {
   lv_canvas_set_draw_buf(cv, top);
   lv_area_t rc;
   lv_obj_get_coords(p.root, &rc);
+  const uint32_t count = lv_obj_get_child_count(p.grid);
+  std::vector<lv_opa_t> opa(count);
+  for (uint32_t i = 0; i < count; i++) {
+    lv_obj_t* t = lv_obj_get_child(p.grid, i);
+    lv_area_t tc;
+    lv_obj_get_coords(t, &tc);
+    lv_area_move(&tc, -rc.x1, -rc.y1);
+    TileRt* tr = tileOf(t);
+    const AutoPick pk = autoPick(tr, tc);
+    if (tr) applyAutoPick(*tr, pk);
+    opa[i] = pk.opa;
+  }
   for (int y0 = 0; y0 < h; y0 += BAND) {
     const int rows = LV_MIN(BAND, h - y0);
     lv_draw_buf_clear(top, nullptr);
@@ -194,15 +206,12 @@ bool bakeGlass(Page& p) {
     lv_canvas_init_layer(cv, &layer);
     const lv_area_t band = {0, 0, w - 1, rows - 1};
     const lv_area_t all = {0, -y0, w - 1, h - 1 - y0};  // the whole picture, seen from the band
-    for (uint32_t i = 0; i < lv_obj_get_child_count(p.grid); i++) {
+    for (uint32_t i = 0; i < count; i++) {
       lv_obj_t* t = lv_obj_get_child(p.grid, i);
       lv_area_t tc;
       lv_obj_get_coords(t, &tc);
-      lv_area_move(&tc, -rc.x1, -rc.y1);
+      lv_area_move(&tc, -rc.x1, -rc.y1 - y0);
       TileRt* tr = tileOf(t);
-      const AutoPick pk = autoPick(tr, tc);
-      if (tr && !y0) applyAutoPick(*tr, pk);
-      lv_area_move(&tc, 0, -y0);
       if (tc.y2 < 0 || tc.y1 >= rows) continue;
       const lv_area_t clip = {LV_MAX(tc.x1, 0), LV_MAX(tc.y1, 0), LV_MIN(tc.x2, w - 1), LV_MIN(tc.y2, rows - 1)};
       const int r = lv_obj_get_style_radius(t, LV_PART_MAIN);
@@ -218,7 +227,7 @@ bool bakeGlass(Page& p) {
       lv_draw_rect_dsc_init(&rd);
       rd.radius = r;
       rd.bg_color = lv_color_hex(tr ? tileBg(*tr->def) : C_TILE);
-      rd.bg_opa = pk.opa;
+      rd.bg_opa = opa[i];
       rd.border_color = lv_color_hex(GLASS_BORDER_COLOR);
       rd.border_opa = GLASS_BORDER_OPA;
       rd.border_width = GLASS_BORDER_WIDTH;

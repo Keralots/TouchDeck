@@ -1080,6 +1080,7 @@ bool pcVolHeld() { return (int32_t)(millis() - s_pcVol.holdUntil) < 0; }
 
 // Now playing tile: ask for a level, and the level still asked for (-1 = none).
 void pcVolumeAsk(const String& pc, int pct) {
+  if (s_pcVol.pc != pc) s_pcVol.sent = -1;
   s_pcVol.pc = pc;
   s_pcVol.want = pct;
   s_pcVol.holdUntil = millis() + PC_VOL_HOLD_MS;
@@ -1121,6 +1122,7 @@ void pcVolumeDrag(TileRt& r, lv_event_code_t code, const lv_point_t& p) {
     if (fabsf(f - r.slValue) < 0.005f) return;
     r.slValue = f;
     setSliderFill(r, f);
+    if (s_pcVol.pc != tilePcId(*r.def)) s_pcVol.sent = -1;
     s_pcVol.pc = tilePcId(*r.def);
     s_pcVol.want = (int)lroundf(f * 100);
     if (!r.def->sub.length()) lv_label_set_text(r.sub, (String(s_pcVol.want) + "%").c_str());
