@@ -318,6 +318,8 @@ void clearMedia(HaEntity& e) {
   e.mediaArtist = "";
   e.mediaPicture = "";
   e.mediaPictureRemote = "";
+  e.mediaSource = "";
+  e.mediaInputs = "";
   e.mediaDuration = e.mediaPosition = 0;
   e.mediaPosAt = 0;
 }

@@ -580,9 +580,9 @@ void runTask(void*) {
     s.running = false;
     s.totalMs = millis() - s.startMs;
     strlcpy(s.step, "Done", sizeof(s.step));
+    s_finished = true;  // with running, so no start slips in before the reap
   });
   const bool caps = s_taskCaps;
-  s_finished = true;
   if (caps) vTaskSuspend(nullptr);
   vTaskDelete(nullptr);
 }
@@ -633,11 +633,11 @@ void pauseClients(bool pause) {
 bool dailyStart() {
   if (!s_status) s_status = (Status*)heap_caps_calloc(1, sizeof(Status), MALLOC_CAP_SPIRAM);
   // A printer session leaves too little internal RAM for a second TLS session.
-  if (!s_status || s_finished || (!wallOnSd() && !deckFsReady()) || !WiFi.isConnected() || printersBusy() ||
+  if (!s_status || (!wallOnSd() && !deckFsReady()) || !WiFi.isConnected() || printersBusy() ||
       (wallOnSd() && time(nullptr) < 1700000000)) return false;
   bool busy;
   portENTER_CRITICAL(&s_mux);
-  busy = s_status->running;
+  busy = s_status->running || s_finished;
   if (!busy) {
     memset(s_status, 0, sizeof(Status));
     s_status->running = true;
