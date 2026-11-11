@@ -19,6 +19,7 @@ import pc_control
 import pc_state
 from art_server import ART
 import serial_link
+import audio_spectrum
 import udp_stream
 import server as srv
 
@@ -69,6 +70,7 @@ def gui_quit():
     _stop.set()
     pc_state.STATE.stop()
     ART.stop()
+    audio_spectrum.stop_all()
     if _serial_link is not None:
         _serial_link.stop()
     if _httpd is not None:
@@ -394,6 +396,7 @@ def run(core, start_hidden=False, notify_startup=False):
                      name="pc-control").start()
     _serial_link = serial_link.SerialLink(_state, _stop)
     _serial_link.start()
+    audio_spectrum.ensure(_state.get_config())  # visualizer tiles, if enabled
     threading.Thread(target=_monitor_loop, daemon=True, name="monitor").start()
     threading.Thread(target=srv.watch_pairing, args=(core, _state, _stop), daemon=True,
                      name="pair-watch").start()
@@ -431,4 +434,5 @@ def run(core, start_hidden=False, notify_startup=False):
     _stop.set()
     pc_state.STATE.stop()
     ART.stop()
+    audio_spectrum.stop_all()
     _serial_link.stop()

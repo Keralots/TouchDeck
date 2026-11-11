@@ -62,6 +62,7 @@ if exist dist  rmdir /s /q dist
   --hidden-import pc_control ^
   --hidden-import pc_state ^
   --hidden-import art_server ^
+  --hidden-import audio_spectrum ^
   --hidden-import winrt.windows.storage.streams ^
   --hidden-import pycaw.pycaw ^
   --hidden-import comtypes.stream ^
@@ -78,6 +79,8 @@ if exist dist  rmdir /s /q dist
   --collect-all pythonnet ^
   --collect-all pystray ^
   --collect-all PIL ^
+  --collect-all soundcard ^
+  --collect-all numpy ^
   --hidden-import clr ^
   --hidden-import wmi ^
   --hidden-import pythoncom ^

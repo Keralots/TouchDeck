@@ -13,6 +13,10 @@ pystray         # System-tray icon for background / autostart mode
 pillow          # Tray icon image (used by pystray)
 pywebview       # Native window hosting the local web UI (Edge WebView2 backend)
 
+# Optional, audio for visualizer tiles (WASAPI loopback)
+numpy
+soundcard
+
 # Optional, PC state on tiles
 pycaw
 comtypes
