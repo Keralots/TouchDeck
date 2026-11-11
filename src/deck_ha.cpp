@@ -744,8 +744,9 @@ void haBegin() {
   if (s_lock) return;
   s_lock = xSemaphoreCreateMutex();
   loadCredentials();
-  // Core 0 with the WiFi stack; the display pipeline owns core 1.
-  xTaskCreatePinnedToCore(haTask, "deck_ha", 8192, nullptr, 4, nullptr, 0);
+  // Core 0 with the WiFi stack; the display pipeline owns core 1. Stack in
+  // PSRAM: this task never touches flash (credentials load above).
+  xTaskCreatePinnedToCoreWithCaps(haTask, "deck_ha", 8192, nullptr, 4, nullptr, 0, MALLOC_CAP_SPIRAM);
 }
 
 void haSetCredentials(const String& url, const String& token) {

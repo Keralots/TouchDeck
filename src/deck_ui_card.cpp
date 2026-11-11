@@ -52,6 +52,14 @@ void coverFill() {
   }
 }
 
+// Only with no card open; the next card allocates it again.
+void cardUnderFree() {
+  if (s_modalUnder || !s_underBuf) return;
+  lv_image_cache_drop(s_underBuf);
+  lv_draw_buf_destroy(s_underBuf);
+  s_underBuf = nullptr;
+}
+
 // fill false: the caller runs coverFill before LVGL draws again.
 bool coverPage(bool fill) {
   const int w = logicalW(), h = logicalH();

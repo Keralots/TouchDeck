@@ -366,6 +366,8 @@ extern lv_obj_t* s_modalCard;
 extern int s_modalTile;
 extern int8_t s_confirmHold;
 bool modalShown();
+void cardUnderFree();
+void fxCardPicFree();
 void setModalOpen(bool open);
 void deckToastShow(const char* text, uint32_t holdMs);
 void dailyBarSync();
