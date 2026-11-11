@@ -10,6 +10,8 @@ constexpr int VIZ_WAVE_POINTS = 128;
 bool vizIngest(const uint8_t* buf, int len);
 // Latest bands (always readable) and when they arrived (0 = never).
 const uint8_t* vizBands();
+// Latest waveform (128 samples centred on 128), null when the companion sends none.
+const uint8_t* vizWave();
 uint32_t vizRxMs();
 uint32_t vizSerial();  // bumps per accepted packet
 

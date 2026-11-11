@@ -432,6 +432,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
             return false;
           }
         }
+        if (t.type == TILE_VIZ) t.vizScope = !strcmp(tv["style"] | "bars", "scope");
         p.tiles.push_back(t);
         continue;
       }

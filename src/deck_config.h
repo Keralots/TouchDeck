@@ -211,6 +211,7 @@ struct TileDef {
   uint8_t amsUnit = 1;    // PS_AMS: 1-based position in the reported units
   bool pcVolume = false;  // TILE_SLIDER: "control": "pc-volume"
   bool mediaAuto = false;  // TILE_MEDIA: "auto": the PC or the HA player, whichever plays
+  bool vizScope = false;   // TILE_VIZ: "style": "scope" (waveform) instead of bars
   WhenDef when;
   bool shown = true;  // runtime: "when" as the pages were last built
 };
