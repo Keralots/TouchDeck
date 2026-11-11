@@ -334,31 +334,24 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     }
     r.volBar = lv_bar_create(t);
     lv_obj_remove_style_all(r.volBar);
-    lv_obj_remove_flag(r.volBar, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(r.volBar, LV_OBJ_FLAG_CLICKABLE);
+    for (lv_event_code_t c : {LV_EVENT_PRESSED, LV_EVENT_PRESSING, LV_EVENT_SHORT_CLICKED, LV_EVENT_LONG_PRESSED,
+                              LV_EVENT_LONG_PRESSED_REPEAT, LV_EVENT_RELEASED, LV_EVENT_PRESS_LOST})
+      lv_obj_add_event_cb(r.volBar, mediaVolEvent, c, (void*)(uintptr_t)idx);
     lv_bar_set_range(r.volBar, 0, 100);
     lv_obj_set_style_bg_color(r.volBar, lv_color_hex(C_TRACK), 0);
     lv_obj_set_style_bg_opa(r.volBar, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(r.volBar, lv_color_hex(accent), LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(r.volBar, LV_OPA_COVER, LV_PART_INDICATOR);
-    lv_obj_set_style_radius(r.volBar, 3, 0);
-    lv_obj_set_style_radius(r.volBar, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(r.volBar, 14, 0);
+    lv_obj_set_style_clip_corner(r.volBar, true, 0);
     showObj(r.volBar, false);
     static const char* const volIcons[] = {"volume-minus", "volume-plus"};
     static const char* const volFallback[] = {"-", "+"};
     for (int i = 0; i < 2; i++) {
-      lv_obj_t* button = r.volButtons[i] = lv_obj_create(t);
-      lv_obj_remove_style_all(button);
-      lv_obj_remove_flag(button, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_EVENT_BUBBLE));
-      lv_obj_set_style_radius(button, 8, 0);
-      lv_obj_set_style_bg_color(button, lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
-      lv_obj_set_style_bg_opa(button, LV_OPA_50, LV_STATE_PRESSED);
-      lv_obj_t* icon = lv_label_create(button);
-      mediaGlyph(icon, volIcons[i], volFallback[i], 24);
-      lv_obj_center(icon);
-      showObj(button, false);
-      lv_obj_add_event_cb(button, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 8 + 4 + i));
+      r.volIcons[i] = lv_label_create(r.volBar);
+      mediaGlyph(r.volIcons[i], volIcons[i], volFallback[i], 24);
     }
-    r.volWant = -1;
     r.iconCp = 2;  // force the first play glyph
     s_tiles.push_back(r);
     applyMedia(s_tiles.back());

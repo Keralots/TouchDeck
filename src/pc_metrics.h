@@ -63,7 +63,7 @@ struct PcSource {
   bool     used;
   char     id[17];
   char     name[24];
-  IPAddress ip;          // where its last packet came from
+  IPAddress ip;          // where its last packet came from; over USB the "ip" it names, else 0
   uint16_t cmdPort;      // its command listener ("cmd_port"), 0 = none
   uint16_t artPort;      // cover HTTP server, 0 = unavailable
   bool     viaSerial;    // its latest packet came over the USB cable

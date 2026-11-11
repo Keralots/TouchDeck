@@ -151,7 +151,7 @@ void mediaCover(TileRt& r) {
     }
     queued = httpArtFetchJpeg(url, wanted.c_str(), r.coverPx);
   } else {
-    if (!pc || pc->viaSerial || !pc->artPort) return;
+    if (!pc || !pc->artPort || !(uint32_t)pc->ip) return;
     queued = httpArtFetch(pc->ip, pc->artPort, wanted.c_str(), r.coverPx);
   }
   if (queued) {
@@ -161,33 +161,116 @@ void mediaCover(TileRt& r) {
   }
 }
 
+// The level the finger asked for stands until the source reports it.
+int mediaVolShown(const TileRt& r, const MediaNow& m) {
+  if (r.mediaHa) {
+    const Wish* w = findWish(r.def->entity);
+    return w && w->level.active ? (int)lroundf(w->level.value * 100) : m.vol;
+  }
+  const int want = pcVolWanted(r.def->pc);
+  return want >= 0 ? want : m.vol;
+}
+
 void mediaVolume(TileRt& r, const MediaNow& m) {
   const bool visible = r.mediaVol && m.available && m.vol >= 0;
   bool changed = visible == lv_obj_has_flag(r.volBar, LV_OBJ_FLAG_HIDDEN);
+  if (changed) s_zonesDirty = true;
   showObj(r.volBar, visible);
-  for (lv_obj_t* b : r.volButtons) showObj(b, visible);
-  const bool held = r.volWant >= 0 && millis() - r.volAt < 2000;
-  const int value = held ? r.volWant : m.vol;
+  const int value = mediaVolShown(r, m);
   if (visible && value != lv_bar_get_value(r.volBar)) {
     lv_bar_set_value(r.volBar, value, LV_ANIM_OFF);
+    // Each icon takes the on-accent colour once the fill is under it.
+    for (int i = 0; i < 2; i++) {
+      if (value >= (i ? 85 : 20)) lv_obj_set_style_text_color(r.volIcons[i], lv_color_hex(C_TEXT_ON), 0);
+      else lv_obj_remove_local_style_prop(r.volIcons[i], LV_STYLE_TEXT_COLOR, 0);
+    }
     changed = true;
   }
   if (changed) markPageStale(r.page);
 }
 
-// Once a second: progress, a cover that may be due, and the volume a tap held.
+// Once a second: progress and a cover that may be due.
 void mediaTick(TileRt& r) {
   mediaProgress(r);
   mediaCover(r);
-  if (r.volWant >= 0 && millis() - r.volAt >= 2000) {
-    r.volWant = -1;
-    mediaVolume(r, mediaNow(r));
+}
+
+// The HA level goes through the shared wish, the PC level through the slider
+// tile's throttle.
+void mediaVolSet(TileRt& r, int pct, bool dragging) {
+  if (r.mediaHa) {
+    setWish(r.def->entity, true, pct / 100.0f, dragging);
+    return;
   }
+  pcVolumeAsk(r.def->pc, pct);
+  mediaVolume(r, mediaNow(r));
+}
+
+void mediaVolEnd(TileRt& r) {
+  if (!r.volHeld) return;
+  r.volHeld = false;
+  if (r.def->entity.length()) releaseLevel(r.def->entity);
+}
+
+// The volume pill: a drag along it moves the level from where it was (like a
+// slider tile), a tap on its upper or lower half steps to the next 5 %, and
+// holding a half keeps moving the level.
+void mediaVolEvent(lv_event_t* e) {
+  const size_t idx = (size_t)(uintptr_t)lv_event_get_user_data(e);
+  if (idx >= s_tiles.size()) return;
+  TileRt& r = s_tiles[idx];
+  const lv_event_code_t code = lv_event_get_code(e);
+  if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+    mediaVolEnd(r);
+    return;
+  }
+  lv_point_t p;
+  lv_indev_get_point(lv_indev_active(), &p);
+  lv_area_t a;
+  lv_obj_get_coords(r.volBar, &a);
+  const bool upright = lv_area_get_height(&a) > lv_area_get_width(&a);
+  const int len = max(1, (int)(upright ? lv_area_get_height(&a) : lv_area_get_width(&a)));
+  const int at = upright ? a.y2 - p.y : p.x - a.x1;  // along the pill from its quiet end
+  if (code == LV_EVENT_PRESSED) {
+    r.sliding = false;  // stays set after the release: RELEASED comes before SHORT_CLICKED
+    r.slX0 = at;
+    return;
+  }
+  const int base = mediaVolShown(r, mediaNow(r));
+  if (base < 0) return;
+  const bool can = r.mediaHa ? haLink() == HA_CONNECTED : pcIsOnline(r.def->pc);
+  if (code == LV_EVENT_PRESSING) {
+    if (!r.sliding) {
+      if (!can || r.volHeld || abs(at - r.slX0) < 8) return;
+      r.sliding = r.volHeld = true;
+      r.slX0 = at;
+      r.slFrac0 = r.slValue = base / 100.0f;
+      if (r.mediaHa) holdLevel(r.def->entity, r.slFrac0);
+    }
+    const float f = constrain(r.slFrac0 + (at - r.slX0) / (float)len, 0.0f, 1.0f);
+    if (lroundf(f * 100) == lroundf(r.slValue * 100)) return;
+    r.slValue = f;
+    mediaVolSet(r, (int)lroundf(f * 100), true);
+    return;
+  }
+  if (r.sliding) return;
+  const bool tap = code == LV_EVENT_SHORT_CLICKED, up = at * 2 >= len;
+  if (!can) {
+    if (tap) deckToastShow(r.mediaHa ? "Home Assistant is not connected" : "The PC is offline", 2200);
+    return;
+  }
+  if (tap || !r.volHeld) {
+    hapticTap();
+    audioClick();
+  }
+  if (!tap) r.volHeld = true;
+  const int want = constrain(tap ? (up ? base / 5 * 5 + 5 : (base + 4) / 5 * 5 - 5) : base + (up ? 2 : -2), 0, 100);
+  if (want != base) mediaVolSet(r, want, !tap);
 }
 
 void applyMedia(TileRt& r) {
   if (mediaChoose(r)) {
-    r.volWant = -1;
+    mediaVolEnd(r);
     r.iconCp = 2;
   }
   const MediaNow m = mediaNow(r);
@@ -249,25 +332,6 @@ void mediaEvent(lv_event_t* e) {
   if (button == 3 && r.mediaFull) return;
   hapticTap();
   audioClick();
-  if (button >= 4) {
-    const MediaNow m = mediaNow(r);
-    const bool held = r.volWant >= 0 && millis() - r.volAt < 2000;
-    const int base = held ? r.volWant : m.vol;
-    if (base < 0) return;
-    const int want = constrain((base + (button == 5 ? 5 : -5)) / 5 * 5, 0, 100);
-    r.volWant = (int8_t)want;
-    r.volAt = millis();
-    mediaVolume(r, m);
-    bool ok;
-    String err = "Home Assistant is not connected";
-    if (r.mediaHa)
-      ok = haCallService("media_player", "volume_set", r.def->entity,
-                         "{\"volume_level\":" + String(want / 100.0f, 2) + "}");
-    else
-      ok = pcSendCommand(r.def->pc, ("volume_set:" + String(want)).c_str(), err);
-    if (!ok) deckToastShow(err.c_str(), 2200);
-    return;
-  }
   if (r.mediaHa) {
     static const char* const services[] = {"media_previous_track", "media_play_pause", "media_next_track",
                                            "media_play_pause"};
@@ -284,18 +348,18 @@ void mediaEvent(lv_event_t* e) {
 // under the transport on tall tiles, beside it on wide ones.
 void fitMedia(TileRt& r, int cw, int ch) {
   r.mediaFull = cw >= 150 && ch >= 112;
-  const int rowH = r.mediaFull ? constrain(ch * 3 / 10, 34, 52) : 0, volH = 40;
+  const int rowH = r.mediaFull ? constrain(ch * 3 / 10, 34, 52) : 0;
   const bool wide = r.mediaFull && cw >= 300;
-  const bool below = r.mediaFull && !wide && ch - rowH - volH - 18 >= 80;
-  r.mediaVol = wide || below;
-  const int rowY = ch - rowH - (below ? volH + 4 : 0);
+  const int rowY = ch - rowH;
   const int topH = r.mediaFull ? rowY - 14 : ch;
-  // Tall room: a big cover centred over a one-line title and artist, else the
-  // cover beside the text.
+  // Tall room: a big cover with the volume beside it, over a one-line title
+  // and artist. Else the cover beside the text.
+  constexpr int PILL = 52, GAP = 10;
   const int side = cw >= 150 && topH >= 40 ? min(200, min(topH, cw * 3 / 8)) : 0;
   const int stackText = lineH(&deck_font_20) + 4 + lineH(&deck_font_12);
-  const int stacked = r.mediaFull ? min(200, min(cw, topH - stackText - 8)) : 0;
-  const bool stack = stacked >= 90 && stacked >= side * 3 / 2;
+  const int stacked = r.mediaFull && !wide ? min(200, min(cw - PILL - GAP, topH - stackText - 8)) : 0;
+  const bool stack = stacked >= 90;
+  r.mediaVol = wide || stack;
   const int cover = stack ? stacked : side;
   if (r.coverPx != cover) {
     mediaSetArt(r, {});
@@ -312,8 +376,13 @@ void fitMedia(TileRt& r, int cw, int ch) {
   lv_obj_set_style_text_align(r.sub, align, 0);
   if (stack) {
     const int y = max(0, (topH - cover - 8 - stackText) / 2);
+    const int x = (cw - cover - GAP - PILL) / 2;
     lv_obj_set_size(r.chip, cover, cover);
-    lv_obj_set_pos(r.chip, (cw - cover) / 2, y);
+    lv_obj_set_pos(r.chip, x, y);
+    lv_obj_set_pos(r.volBar, x + cover + GAP, y);
+    lv_obj_set_size(r.volBar, PILL, cover);
+    lv_obj_align(r.volIcons[0], LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_align(r.volIcons[1], LV_ALIGN_TOP_MID, 0, 10);
     lv_obj_set_pos(r.name, 0, y + cover + 8);
     lv_obj_set_size(r.name, cw, lineH(font));
     lv_obj_set_pos(r.sub, 0, y + cover + 8 + lineH(font) + 4);
@@ -359,15 +428,14 @@ void fitMedia(TileRt& r, int cw, int ch) {
   } else {
     lv_obj_remove_local_style_prop(r.mediaIcons[1], LV_STYLE_TEXT_COLOR, 0);
   }
-  if (r.mediaVol) {
-    const int vx = wide ? tw + 8 : 0, vw = cw - vx, vy = wide ? rowY : ch - volH, vh = wide ? rowH : volH;
-    const int bw = min(56, vw / 4);
-    lv_obj_set_pos(r.volButtons[0], vx, vy);
-    lv_obj_set_pos(r.volButtons[1], cw - bw, vy);
-    for (lv_obj_t* b : r.volButtons) lv_obj_set_size(b, bw, vh);
-    lv_obj_set_pos(r.volBar, vx + bw + 4, vy + vh / 2 - 3);
-    lv_obj_set_size(r.volBar, max(1, vw - 2 * bw - 8), 6);
+  if (wide) {
+    const int h = min(rowH, 44);
+    lv_obj_set_pos(r.volBar, tw + 12, rowY + (rowH - h) / 2);
+    lv_obj_set_size(r.volBar, cw - tw - 12, h);
+    lv_obj_align(r.volIcons[0], LV_ALIGN_LEFT_MID, 10, 0);
+    lv_obj_align(r.volIcons[1], LV_ALIGN_RIGHT_MID, -10, 0);
   }
+  s_zonesDirty = true;
   applyMedia(r);
 }
 

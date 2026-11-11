@@ -134,10 +134,9 @@ struct TileRt {
   bool mediaHa;           // the HA player is the source (auto tiles switch it)
   uint8_t mediaPx;        // transport icon size
   lv_obj_t* mediaDisc;    // accent disc behind play on bigger tiles
-  lv_obj_t* volButtons[2];
-  lv_obj_t* volBar;
-  int8_t volWant;         // last level asked for, the base for quick taps
-  uint32_t volAt;
+  lv_obj_t* volBar;       // volume pill: bar, drag and tap target in one
+  lv_obj_t* volIcons[2];  // minus and plus on it
+  bool volHeld;           // a drag or a held half is moving the level
   // Glass auto text: the colour picked from the picture under the tile.
   uint32_t autoText;
   bool hasAuto;
@@ -348,6 +347,9 @@ const char* actionVerb(const TileRt& r, const TileAction& a);
 void requestAction(TileRt& r, bool hold);
 void tileEvent(lv_event_t* e);
 bool pcVolHeld();
+void pcVolumeAsk(const String& pc, int pct);
+int pcVolWanted(const String& pc);
+bool pcIsOnline(const String& id);
 void pcVolumeTick();
 void sliderEvent(lv_event_t* e);
 
@@ -409,6 +411,8 @@ void mediaTick(TileRt& r);
 void applyMedia(TileRt& r);
 void mediaArtTick();
 void mediaEvent(lv_event_t* e);
+void mediaVolEvent(lv_event_t* e);
+extern bool s_zonesDirty;
 void fitMedia(TileRt& r, int cw, int ch);
 void fitClock(TileRt& r, int cw, int ch);
 

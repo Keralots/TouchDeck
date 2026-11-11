@@ -201,7 +201,8 @@ static void parsePacket(const char* json, IPAddress from, bool serial) {
   PcSource* pc = sourceForPacket(doc["pc_id"] | "", doc["pc_name"] | "");
   if (!pc) return;
   pc->viaSerial = serial;
-  if (!serial) pc->ip = from;
+  // Over USB the companion names its LAN address: covers still come over WiFi.
+  if (!serial || !pc->ip.fromString(doc["ip"] | "")) pc->ip = from;
   pc->cmdPort = doc["cmd_port"] | 0;
   pc->artPort = (uint16_t)constrain(doc["art_port"] | 0, 0, 65535);
   // A few nonces per packet, so quick taps (volume) need not wait for the next one.
