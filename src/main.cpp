@@ -4,6 +4,7 @@
 // on the deck pages (deck_ui); the PC companion pushes V2.1 JSON to UDP :4210.
 #include <Arduino.h>
 #include <esp_task_wdt.h>
+#include <esp_heap_caps.h>
 #include "config.h"
 #include "display_ui.h"
 #include "settings.h"
@@ -36,6 +37,8 @@ void setup() {
   Serial.println(PRODUCT_NAME " " FW_VERSION " boot");
   Serial.printf("Reset reason: %d\n", (int)esp_reset_reason());
   crashLogBegin();
+  // The core keeps mallocs up to 4 KB internal; 128 B doubles free internal RAM.
+  heap_caps_malloc_extmem_enable(128);
 
   loadSettings();
   deck::wallStorageBegin();
