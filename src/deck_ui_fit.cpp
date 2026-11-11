@@ -551,6 +551,7 @@ void fitTile(TileRt& r) {
   if (r.def->type == TILE_METRIC || (r.def->type == TILE_SENSOR && r.def->style == METRIC_CHART)) fitMetric(r, cw, ch);
   else if (r.def->type == TILE_MEDIA) fitMedia(r, cw, ch);
   else if (r.def->type == TILE_CLOCK) fitClock(r, cw, ch);
+  else if (r.def->type == TILE_VIZ) fitViz(r, cw, ch);
   else if (r.def->type == TILE_PRINTER) fitPrinter(r, cw, ch);
   else if (r.def->type == TILE_SENSOR) fitSensor(r, cw, ch);
   else fitButton(r, cw, ch);

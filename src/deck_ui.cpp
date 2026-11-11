@@ -419,6 +419,7 @@ void destroyPages(bool keepGlass = false) {
     r.art.reset();
     if (r.pts) lv_free(r.pts);
     sparkFree(r.spark);
+    vizFree(r.vz);
     prnFxFree(r.pfx);
   }
   s_tiles.clear();
@@ -812,7 +813,7 @@ void frameCatchUp() {
 
 void logStats() {
   const uint32_t now = millis();
-  if (now - s_lastStats < STATS_MS) return;
+  if (now - s_lastStats < STATS_MS || vizMeasuring()) return;  // GET /api/deck/viz owns the counters
   s_lastStats = now;
   const PanelStats p = panelTakeStats();
   if (!p.frames && !s_waitTimeouts) return;
@@ -1031,9 +1032,13 @@ void deckTick() {
   if (!systemScreen) {
     sparkTick();
     heroTick();
+    vizTick();
   }
   syncSwipeZones();
+  const bool vizPainted = vizTakeDirty();
+  const uint32_t lvT0 = micros();
   lv_timer_handler();
+  if (vizPainted) vizNoteHandler(micros() - lvT0);
   if (!systemScreen) refreshOneSnapshot();
   logStats();
 }
@@ -1297,7 +1302,8 @@ bool deckTestTap(const String& tileId, bool hold) {
   if (frameActive()) return false;
   if (s_ed.root) return false;
   for (TileRt& r : s_tiles) {
-    if (r.def->id != tileId || r.def->type == TILE_METRIC || r.def->type == TILE_CLOCK || r.def->type == TILE_MEDIA) continue;
+    if (r.def->id != tileId || r.def->type == TILE_METRIC || r.def->type == TILE_CLOCK || r.def->type == TILE_MEDIA ||
+        r.def->type == TILE_VIZ) continue;
     const TileAction& a = hold ? r.def->hold : r.def->tap;
     if (a.kind == ACT_PC) return false;  // PC commands require a real touch.
     requestAction(r, hold);

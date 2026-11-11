@@ -21,6 +21,7 @@
 #include "deck_icons.h"
 #include "deck_wall.h"
 #include "deck_daily.h"
+#include "deck_viz.h"
 #include "deck_sys.h"
 #include "psram_json.h"
 #include "crash_log.h"
@@ -2161,6 +2162,15 @@ static void handleWallsNext() {
   sendJsonMessage(200, true, "Wallpaper queued.");
 }
 
+// Visualizer spike: GET reads the counters, ?reset=1 starts a window, ?frame=ms sets the tick.
+static void handleVizStats() {
+  if (server.hasArg("partial")) vizPartial = server.arg("partial") == "1";
+  if (server.hasArg("frame")) vizFrameMs = (uint32_t)constrain(server.arg("frame").toInt(), 8, 200);
+  String out;
+  deckVizStats(out, server.arg("reset") == "1");
+  server.send(200, "application/json", out);
+}
+
 static void handleFrameGet() {
   JsonDocument doc;
   deckFrameJson(doc.to<JsonObject>());
@@ -2583,6 +2593,7 @@ void initWebServer() {
   server.on("/api/deck/daily/run", HTTP_POST, handleDailyRun);
   server.on("/api/deck/wallpaper/remove", HTTP_POST, handleWallRemove);
   server.on("/api/deck/bench", HTTP_POST, handleDeckBench);
+  server.on("/api/deck/viz", HTTP_GET, handleVizStats);
   server.on("/api/deck/frame", HTTP_GET, handleFrameGet);
   server.on("/api/deck/frame", HTTP_POST, handleFramePost);
   server.on("/api/deck/prefs", HTTP_POST, handleDeckPrefs);

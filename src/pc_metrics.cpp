@@ -13,6 +13,7 @@
 #include <mbedtls/md.h>
 #include <vector>
 #include "improv_setup.h"
+#include "deck_viz.h"
 
 PcSource* pcSources = nullptr;
 
@@ -361,22 +362,25 @@ void pcMetricsPause(bool pause) {
 
 bool pcMetricsHandle() {
   bool parsed = serialPoll();
-  int packetSize = s_paused ? 0 : udp.parsePacket();
-  if (packetSize) {
+  // Spectrum packets come ~50/s: drain a few per pass so a stalled loop shows
+  // the newest audio, not a backlog.
+  for (int n = 0; n < 8 && !s_paused; n++) {
+    const int packetSize = udp.parsePacket();
+    if (!packetSize) break;
     static char buffer[PC_PACKET_BUF_SIZE];
     // Reject oversize before reading so a truncated body is never parsed.
     if (packetSize > (int)sizeof(buffer) - 1) {
       Serial.printf("pc_metrics: packet %d bytes exceeds buffer %d, discarding\n",
                     packetSize, (int)sizeof(buffer));
       udp.flush();
-    } else {
-      int len = udp.read(buffer, sizeof(buffer) - 1);
-      if (len > 0) {
-        buffer[len] = '\0';
-        parsePacket(buffer, udp.remoteIP(), false);
-        parsed = true;
-      }
+      continue;
     }
+    int len = udp.read(buffer, sizeof(buffer) - 1);
+    if (len <= 0) continue;
+    if (vizIngest((const uint8_t*)buffer, len)) continue;
+    buffer[len] = '\0';
+    parsePacket(buffer, udp.remoteIP(), false);
+    parsed = true;
   }
 
   for (size_t i = 0; i < s_pending.size();) {

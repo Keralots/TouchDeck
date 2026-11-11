@@ -47,6 +47,8 @@ void deckReloadWallpaper(bool fileChanged);
 // Bench hook (/api/deck/bench): render the shown page into its page image n
 // times and time it.
 bool deckBenchRender(int n, uint32_t& avgUs, uint32_t& maxUs);
+// Visualizer spike counters as JSON; reset starts a new window.
+void deckVizStats(String& out, bool reset);
 // Portal save: validate, store /deck.json and rebuild the pages in place.
 bool deckApplyConfig(const String& text, String& err);
 // Portal upload: load the MDI font stored at uploaded, keep it as the icon
