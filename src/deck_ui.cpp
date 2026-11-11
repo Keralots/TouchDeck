@@ -440,9 +440,12 @@ void syncSwipeZones() {
     lv_area_t root;
     lv_obj_get_coords(s_pages[a].root, &root);
     for (const TileRt& r : s_tiles) {
-      if (r.page != a || !r.fill || n == MAX_PAGE_TILES) continue;
+      // A slider tile, or the volume row of a Now playing tile.
+      const bool vol = r.def->type == TILE_MEDIA && r.volBar && !lv_obj_has_flag(r.volBar, LV_OBJ_FLAG_HIDDEN);
+      if (r.page != a || (!r.fill && !vol) || n == MAX_PAGE_TILES) continue;
       lv_area_t t;
       lv_obj_get_coords(r.obj, &t);
+      if (vol) lv_obj_get_coords(r.volBar, &t);
       z[n++] = {(int16_t)(t.x1 - root.x1), (int16_t)(t.y1 - root.y1), (int16_t)(t.x2 - root.x1),
                 (int16_t)(t.y2 - root.y1)};
     }
@@ -649,10 +652,7 @@ void updateHeaders() {
   const uint32_t now = millis();
   if (now - s_lastClockCheck < 1000) return;
   s_lastClockCheck = now;
-  for (TileRt& r : s_tiles) if (r.def->type == TILE_MEDIA) {
-    mediaProgress(r);
-    mediaCover(r);
-  }
+  for (TileRt& r : s_tiles) if (r.def->type == TILE_MEDIA) mediaTick(r);
   const int wifi = WiFi.status() == WL_CONNECTED ? 1 : 0;
   if (wifi != s_lastWifi) {
     s_lastWifi = wifi;

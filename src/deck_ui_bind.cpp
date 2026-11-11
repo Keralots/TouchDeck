@@ -1078,6 +1078,16 @@ PcVolume s_pcVol;
 
 bool pcVolHeld() { return (int32_t)(millis() - s_pcVol.holdUntil) < 0; }
 
+// Now playing tile: ask for a level, and the level still asked for (-1 = none).
+void pcVolumeAsk(const String& pc, int pct) {
+  s_pcVol.pc = pc;
+  s_pcVol.want = pct;
+  s_pcVol.holdUntil = millis() + PC_VOL_HOLD_MS;
+  s_pcVol.reapply = true;
+}
+
+int pcVolWanted(const String& pc) { return pcVolHeld() && s_pcVol.pc == pc ? s_pcVol.want : -1; }
+
 void pcVolumeTick() {
   const uint32_t now = millis();
   if (s_pcVol.want >= 0 && s_pcVol.want != s_pcVol.sent && now - s_pcVol.sentMs >= LEVEL_GAP_MS) {
@@ -1094,6 +1104,7 @@ void pcVolumeTick() {
     s_pcVol.want = s_pcVol.sent = -1;
     for (TileRt& r : s_tiles)
       if (r.def->pcVolume && !r.sliding) applyPcStateToTile(r);
+      else if (r.def->type == TILE_MEDIA && !r.mediaHa) applyMedia(r);
   }
 }
 

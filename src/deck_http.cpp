@@ -292,51 +292,38 @@ void run(const Job& j, int& code, String& err, String* body) {
   http.end();
 }
 
-constexpr size_t ART_JPEG_MAX = 2 * 1024 * 1024;
+constexpr int ART_JPEG_MAX = 2 * 1024 * 1024;
 
-// Whole JPEG into PSRAM (caller frees), with or without a Content-Length.
-uint8_t* downloadArt(const String& url, size_t& len) {
-  WiFiClient client;
-  HTTPClient http;
-  http.setConnectTimeout(3000);
-  http.setTimeout(3000);
-  http.setReuse(false);
-  http.useHTTP10(true);
-  uint8_t* body = nullptr;
-  len = 0;
-  if (http.begin(client, url) && http.GET() == 200) {
-    const int declared = http.getSize();
-    size_t cap = declared > 0 ? (size_t)declared : 256 * 1024;
-    if (cap <= ART_JPEG_MAX) body = (uint8_t*)heap_caps_malloc(cap, MALLOC_CAP_SPIRAM);
-    WiFiClient* stream = http.getStreamPtr();
-    const uint32_t started = millis();
-    while (body && stream && millis() - started < 8000 && (declared <= 0 || len < cap)) {
-      const int available = stream->available();
-      if (available > 0) {
-        if (len == cap) {
-          uint8_t* grown = cap * 2 <= ART_JPEG_MAX ? (uint8_t*)heap_caps_realloc(body, cap * 2, MALLOC_CAP_SPIRAM) : nullptr;
-          if (!grown) break;
-          body = grown;
-          cap *= 2;
-        }
-        const int n = stream->read(body + len, min(cap - len, (size_t)available));
-        if (n <= 0) break;
-        len += n;
-      } else {
-        if (!stream->connected()) break;
-        delay(5);
-      }
+// The JPEG is decoded straight off the socket (JPEGDEC only reads forward), so
+// a cover of several hundred KB takes no PSRAM of its own.
+struct ArtStream {
+  WiFiClient* in;
+  uint32_t deadline;
+};
+
+int32_t artRead(JPEGFILE* f, uint8_t* out, int32_t want) {
+  ArtStream& s = *(ArtStream*)f->fHandle;
+  int32_t done = 0;
+  want = min(want, f->iSize - f->iPos);
+  while (done < want && (int32_t)(millis() - s.deadline) < 0) {
+    const int n = s.in->read(out + done, want - done);
+    if (n > 0) {
+      done += n;
+    } else {
+      if (!s.in->available() && !s.in->connected()) break;
+      delay(5);
     }
-    if (body && declared > 0 && len != (size_t)declared) len = 0;
   }
-  http.end();
-  if (!len) {
-    heap_caps_free(body);
-    body = nullptr;
-  }
-  return body;
+  f->iPos += done;
+  return done;
 }
 
+int32_t artSeek(JPEGFILE* f, int32_t pos) {
+  uint8_t skipped[256];
+  while (f->iPos < pos)
+    if (artRead(f, skipped, min((int32_t)sizeof(skipped), pos - f->iPos)) <= 0) break;
+  return f->iPos;
+}
 struct ArtImage {
   uint16_t* px;
   int w, h;
@@ -352,13 +339,13 @@ int artDraw(JPEGDRAW* d) {
 
 // JPEG -> px x px RGB565: decoded at the smallest scale that still covers px
 // (progressive JPEGs only as their 1/8 DC image), centre square, box-scaled.
-uint8_t* decodeArt(uint8_t* jpeg, size_t len, int px) {
+uint8_t* decodeArt(ArtStream& jpeg, int size, int px) {
   void* mem = heap_caps_malloc(sizeof(JPEGDEC), MALLOC_CAP_SPIRAM);  // ~18 KB
   if (!mem) return nullptr;
   JPEGDEC* dec = new (mem) JPEGDEC();
   ArtImage img = {nullptr, 0, 0};
   uint16_t* out = nullptr;
-  if (dec->openRAM(jpeg, (int)len, artDraw)) {
+  if (dec->open(&jpeg, size, nullptr, artRead, artSeek, artDraw)) {
     int div = 8;
     if (dec->getJPEGType() == JPEG_MODE_BASELINE) {
       const int side = min(dec->getWidth(), dec->getHeight());
@@ -401,10 +388,19 @@ void fetchArt(const Job& j) {
   uint8_t* pixels = nullptr;
   const size_t bytes = j.artPx * j.artPx * 2;
   if (j.artJpeg && WiFi.status() == WL_CONNECTED) {
-    size_t len = 0;
-    uint8_t* jpeg = downloadArt(j.a.url, len);
-    if (jpeg) pixels = decodeArt(jpeg, len, j.artPx);
-    heap_caps_free(jpeg);
+    WiFiClient client;
+    HTTPClient http;
+    http.setConnectTimeout(3000);
+    http.setTimeout(3000);
+    http.setReuse(false);
+    http.useHTTP10(true);
+    if (http.begin(client, j.a.url) && http.GET() == 200) {
+      // Without a Content-Length the stream simply ends.
+      const int declared = http.getSize();
+      ArtStream in = {http.getStreamPtr(), millis() + 8000};
+      if (in.in && declared <= ART_JPEG_MAX) pixels = decodeArt(in, declared > 0 ? declared : ART_JPEG_MAX, j.artPx);
+    }
+    http.end();
   } else if (WiFi.status() == WL_CONNECTED) {
     WiFiClient client;
     HTTPClient http;

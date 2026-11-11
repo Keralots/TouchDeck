@@ -1067,21 +1067,27 @@
       "</div>"
     );
   }
-  /* Now playing source: a PC (companion) or a Home Assistant media player (#6). */
+  /* Now playing source: a PC (companion), a Home Assistant media player (#6),
+     or auto: whichever of the two plays. */
   function mediaSrcSel(t, i) {
-    const cur = pcOf(t);
+    const cur = pcOf(t),
+      auto = !!(t.entity && t.auto);
     let o = pcs.length
       ? pcs
           .map((x) => opt("pc:" + x.id, "PC: " + x.name + (x.online ? "" : " (offline)"), !t.entity && cur === x))
           .join("")
       : opt("pc:", "PC (companion)", !t.entity);
     if (!t.entity && t.pc && !cur) o += opt("pc:" + t.pc, "Unknown PC", true);
+    o += opt("ha", "Home Assistant player", !!t.entity && !auto);
+    o += pcs.length
+      ? pcs.map((x) => opt("auto:" + x.id, "Auto: PC " + x.name + " or HA player", auto && cur === x)).join("")
+      : opt("auto:", "Auto: PC or HA player", auto);
+    if (auto && t.pc && !cur) o += opt("auto:" + t.pc, "Auto: unknown PC or HA player", true);
     return (
       '<select data-ms="' +
       i +
       '">' +
       o +
-      opt("ha", "Home Assistant player", !!t.entity) +
       "</select>" +
       (t.entity
         ? '<button type="button" class="btn" data-e="' +
@@ -1099,9 +1105,13 @@
       '"><div class="dk-ic" style="background:' +
       (t.color || "#E6E8EC") +
       '">' +
-      (t.entity ? "HA" : "PC") +
+      (t.entity ? (t.auto ? "A" : "HA") : "PC") +
       '</div><div class="dk-tmain"><b>Now playing</b><div class="dk-tsub">' +
-      (t.entity ? "Track and playback controls from " + esc(t.entity) : "Cover, track and playback controls") +
+      (t.entity
+        ? t.auto
+          ? "The PC or " + esc(t.entity) + ", whichever plays (the PC when both do)"
+          : "Track and playback controls from " + esc(t.entity)
+        : "Cover, track and playback controls") +
       "</div></div>" +
       '<div class="dk-tact">' +
       mediaSrcSel(t, i) +
@@ -2760,12 +2770,29 @@
         (x.onchange = () => {
           const i = +x.dataset.ms,
             t = p.tiles[i];
+          if (x.value === "ha" && t.entity) {
+            delete t.auto;
+            delete t.pc;
+            setDirty(true);
+            renderPage();
+            return;
+          }
+          if (x.value.startsWith("auto:")) {
+            t.auto = true;
+            if (x.value.length > 5) t.pc = x.value.slice(5);
+            else delete t.pc;
+            setDirty(true);
+            renderPage();
+            if (!t.entity) openPicker(i);
+            return;
+          }
           if (x.value === "ha") {
             renderPage(); // the select shows the old source until a player is picked
             openPicker(i);
             return;
           }
           delete t.entity;
+          delete t.auto;
           if (x.value.length > 3) t.pc = x.value.slice(3);
           else delete t.pc;
           setDirty(true);
@@ -3214,7 +3241,7 @@
         return;
       }
       p.tiles[pickFor].entity = id;
-      delete p.tiles[pickFor].pc;
+      if (!p.tiles[pickFor].auto) delete p.tiles[pickFor].pc;
     } else {
       const t = p.tiles[pickFor];
       t.entity = id;

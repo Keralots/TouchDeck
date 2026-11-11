@@ -61,6 +61,8 @@ struct HaEntity {
   String mediaPicture;      // entity_picture_local, else entity_picture (/api/media_player_proxy/...)
   String mediaPictureRemote;  // entity_picture when the local one is set (may be https)
   int32_t mediaDuration = 0;
+  String mediaSource;       // playing one of mediaInputs = fed by another device
+  String mediaInputs;       // source_list as "\nA\nB\n"
   int32_t mediaPosition = 0;
   time_t mediaPosAt = 0;
   uint32_t version = 0;     // bumps on every change of this entity
