@@ -89,6 +89,7 @@ portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 Shared sh;
 int s_zonesPage = -1;     // page the zones were taken from
 bool s_zonesDirty = true;  // tiles rebuilt or moved: take them again
+static bool s_prnPagesUp = false;  // a printer page is built: no automatic wallpaper change
 
 // --- LVGL glue ---------------------------------------------------------------------
 uint32_t tickCb() { return panelFrameClockMs(); }
@@ -313,10 +314,12 @@ void buildPages() {
   s_tiles.reserve(64);
   whenApply();
   int keep = -1;
+  s_prnPagesUp = false;
   for (const PageDef& pd : s_cfg.pages) {
     if (s_count >= MAX_PAGES) break;
     if (pd.printer.length() && !printerPowered(pd.printer)) continue;
     if (!pd.shown) continue;
+    if (pd.printer.length()) s_prnPagesUp = true;
     if (s_keepPage.length() && pd.id == s_keepPage) keep = s_count;
     addTilesPage(pd);
   }
@@ -593,6 +596,8 @@ void tickWallpaper() {
                     !touchIsDown() && !s_qp.open && !s_modalCard && !s_ed.root &&
                     s_ed.pending == EditState::P_NONE && compMode() == COMP_NONE && !sh.owned;
   const bool idle = millis() - touchLastActivity() >= WALL_IDLE_MS;
+  // Printer pages leave too little PSRAM for a reliable change, so no rotation.
+  const bool rotate = !s_prnPagesUp;
   bool baking = false;
   for (int i = 0; i < s_count; i++) baking |= s_pages[i].wallBake;
   // A job starts only when safe: no card is open, so its two screen sized
@@ -601,11 +606,12 @@ void tickWallpaper() {
     cardUnderFree();
     fxCardPicFree();
   };
-  if (wallPoll(logicalW(), logicalH(), idle, safe && !baking, makeRoom)) {
+  if (wallPoll(logicalW(), logicalH(), idle, safe && !baking, rotate, makeRoom)) {
     stopGestures();
     for (int i = 0; i < s_count; i++) s_pages[i].stale = true;
     // A touch may have started while the compositor was being quiesced.
-    if (!wallPoll(logicalW(), logicalH(), millis() - touchLastActivity() >= WALL_IDLE_MS, !touchIsDown())) return;
+    if (!wallPoll(logicalW(), logicalH(), millis() - touchLastActivity() >= WALL_IDLE_MS, !touchIsDown(), rotate))
+      return;
     wallCommit();
     for (int i = 0; i < s_count; i++) s_pages[i].wallBake = true;
     bakeWallpaperPage(sh.active);

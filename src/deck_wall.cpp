@@ -682,12 +682,12 @@ void wallGalleryChanged(bool portrait) {
   wallRequest(portrait, next);
 }
 
-bool wallPoll(int w, int h, bool idle, bool canSwitch, void (*makeRoom)()) {
+bool wallPoll(int w, int h, bool idle, bool canSwitch, bool rotate, void (*makeRoom)()) {
   const bool p = w < h;
   const uint32_t now = millis();
   if (jobState() == JOB_READY) {
     if (s_job.epoch != s_epoch || s_job.requestId != s_requestId[p] || s_job.settings != settingsKey() ||
-        s_job.w != w || s_job.h != h || !s_job.ok) {
+        s_job.w != w || s_job.h != h || !s_job.ok || (s_job.automatic && !rotate)) {
       if (!s_job.ok) s_retryMs = now;
       discardJob();
     } else {
@@ -699,9 +699,10 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch, void (*makeRoom)()) {
   if (jobState() != JOB_IDLE || dispSettings.theme != THEME_GLASS || !canSwitch) return false;
   if (s_retryMs && now - s_retryMs < 30000) return false;
   initGallery(p);
+  if (s_request[p] && s_automatic[p] && !rotate) s_request[p] = false;
   if (s_request[p] && s_automatic[p] && !idle) return false;
   if (!s_request[p]) {
-    if (!idle || !dispSettings.wallEvery || now - s_changedMs < (uint32_t)dispSettings.wallEvery * 60000)
+    if (!rotate || !idle || !dispSettings.wallEvery || now - s_changedMs < (uint32_t)dispSettings.wallEvery * 60000)
       return false;
     if (now - s_scanMs < 1000) return false;
     s_scanMs = now;
