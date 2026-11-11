@@ -137,6 +137,7 @@ struct TileRt {
   lv_obj_t* volBar;       // volume pill: bar, drag and tap target in one
   lv_obj_t* volIcons[2];  // minus and plus on it
   bool volHeld;           // a drag or a held half is moving the level
+  struct VizRt* vz;        // visualizer tiles: bar levels
   // Glass auto text: the colour picked from the picture under the tile.
   uint32_t autoText;
   bool hasAuto;
@@ -416,6 +417,13 @@ extern bool s_zonesDirty;
 void fitMedia(TileRt& r, int cw, int ch);
 void fitClock(TileRt& r, int cw, int ch);
 
+// deck_ui_viz.cpp
+void vizFree(VizRt* v);
+void makeVizContent(TileRt& r, lv_obj_t* t);
+void fitViz(TileRt& r, int cw, int ch);
+void vizDrawEvent(lv_event_t* e);
+void vizTick();
+
 // deck_ui_printer.cpp
 void readPrinters();
 bool printersJobActive();
@@ -464,6 +472,7 @@ void markPageStale(int page);
 bool snapPage(int page);
 extern uint32_t s_gen;  // UI generation, see compSetHoldGen
 uint32_t tileBg(const TileDef& d);
+uint32_t tileAccent(const TileDef& def);
 int tileTint(const TileDef& d);
 uint32_t onTextColor(const TileDef& def, bool glass);
 void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, int w, int h);

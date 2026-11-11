@@ -85,6 +85,8 @@
 //   "pc-on" | "pc-off": the tile's PC (its "pc" command or metric PC, else
 //     the first known one) is online / offline. Offline counts after a grace
 //     period, so a companion restart does not reshuffle the page.
+//   "sound-on" | "sound-off": a companion streams audio to the visualizer
+//     (on after 2 s of sound, off after 30 s of silence).
 //   { "entity": "switch.pc", "state": "on" }: the HA state equals "state";
 //     "!on" = differs. Hidden until Home Assistant reports the entity.
 // A page takes "when" too (its PC is the first known one) and "auto": true:
@@ -122,7 +124,7 @@ constexpr int ORIENT_PORTRAIT = 1;
 constexpr int MAX_DECK_PAGES = 8;
 constexpr int MAX_PAGE_TILES = 24;
 
-enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER, TILE_CLOCK, TILE_PRINTER, TILE_MEDIA };
+enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER, TILE_CLOCK, TILE_PRINTER, TILE_MEDIA, TILE_VIZ };
 enum PrinterShow : uint8_t { PS_HERO = 0, PS_NOZZLE, PS_BED, PS_CHAMBER, PS_FILAMENT, PS_LAYER, PS_LIGHT, PS_AMS, PS_SLOTS, PS_SUMMARY };
 constexpr int MAX_PRINTERS = 2;
 enum MetricStyle : uint8_t { METRIC_NUMBER = 0, METRIC_CHART, METRIC_BAR };
@@ -136,7 +138,7 @@ enum ActionKind : uint8_t {
   ACT_PC,            // {pc, cmd}: a command to a paired PC's companion
 };
 enum ConfirmMode : uint8_t { CONFIRM_NONE = 0, CONFIRM_OFF, CONFIRM_ALWAYS };
-enum WhenKind : uint8_t { WHEN_ALWAYS = 0, WHEN_PC_ON, WHEN_PC_OFF, WHEN_ENTITY };
+enum WhenKind : uint8_t { WHEN_ALWAYS = 0, WHEN_PC_ON, WHEN_PC_OFF, WHEN_ENTITY, WHEN_SOUND_ON, WHEN_SOUND_OFF };
 
 struct WhenDef {
   WhenKind kind = WHEN_ALWAYS;
@@ -211,6 +213,7 @@ struct TileDef {
   uint8_t amsUnit = 1;    // PS_AMS: 1-based position in the reported units
   bool pcVolume = false;  // TILE_SLIDER: "control": "pc-volume"
   bool mediaAuto = false;  // TILE_MEDIA: "auto": the PC or the HA player, whichever plays
+  bool vizScope = false;   // TILE_VIZ: "style": "scope" (waveform) instead of bars
   WhenDef when;
   bool shown = true;  // runtime: "when" as the pages were last built
 };

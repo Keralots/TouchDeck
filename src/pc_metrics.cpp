@@ -13,6 +13,7 @@
 #include <mbedtls/md.h>
 #include <vector>
 #include "improv_setup.h"
+#include "deck_viz.h"
 
 PcSource* pcSources = nullptr;
 
@@ -83,11 +84,19 @@ static void loadKnown() {
   }
 }
 
+static QueueHandle_t s_lineQ = nullptr;  // "@TD " payloads (heap copies) for the loop
+static void serialTask(void*);
+static void arenaBegin();
+
 void pcMetricsBegin() {
   pcSources = (PcSource*)heap_caps_calloc(MAX_PCS, sizeof(PcSource), MALLOC_CAP_SPIRAM);
   if (!pcSources) pcSources = (PcSource*)calloc(MAX_PCS, sizeof(PcSource));
   for (int i = 0; i < MAX_PCS; i++) pcSources[i].data.status = PC_STATUS_OK;
   loadKnown();
+  arenaBegin();
+  s_lineQ = xQueueCreate(4, sizeof(char*));
+  if (!s_lineQ || xTaskCreatePinnedToCore(serialTask, "pc_serial", 3072, nullptr, 1, nullptr, 0) != pdPASS)
+    Serial.println("pc_metrics: no USB reader task, the cable carries no metrics");
   udp.begin(UDP_PORT);
   Serial.printf("pc_metrics: UDP listening on port %u\n", (unsigned)UDP_PORT);
 }
@@ -187,9 +196,56 @@ static void handleAck(JsonDocument& doc) {
   }
 }
 
+// Bump allocator for the once-a-second packet document: the heap costs about
+// a millisecond per packet. Blocks carry their size in front; nothing is freed.
+struct PacketArena : ArduinoJson::Allocator {
+  uint8_t* base = nullptr;
+  uint8_t* last = nullptr;
+  size_t cap = 0, used = 0;
+  void* allocate(size_t n) override {
+    n = (n + 3) & ~(size_t)3;
+    if (used + 4 + n > cap) return nullptr;
+    memcpy(base + used, &n, 4);
+    last = base + used + 4;
+    used += 4 + n;
+    return last;
+  }
+  void deallocate(void*) override {}
+  void* reallocate(void* p, size_t n) override {
+    if (!p) return allocate(n);
+    n = (n + 3) & ~(size_t)3;
+    uint32_t old;
+    memcpy(&old, (uint8_t*)p - 4, 4);
+    if (p == last) {  // the newest block grows or shrinks in place
+      const size_t start = (uint8_t*)p - base;
+      if (start + n > cap) return nullptr;
+      memcpy((uint8_t*)p - 4, &n, 4);
+      used = start + n;
+      return p;
+    }
+    if (n <= old) return p;
+    void* q = allocate(n);
+    if (q) memcpy(q, p, old);
+    return q;
+  }
+};
+static PacketArena s_arena;
+constexpr size_t PACKET_ARENA_BYTES = 8192;  // a 1.4 KB packet takes 3.2 KB
+
+static void arenaBegin() {
+  s_arena.base = (uint8_t*)heap_caps_malloc(PACKET_ARENA_BYTES, MALLOC_CAP_SPIRAM);
+  s_arena.cap = s_arena.base ? PACKET_ARENA_BYTES : 0;
+}
+
 static void parsePacket(const char* json, IPAddress from, bool serial) {
-  JsonDocument doc;
+  s_arena.used = 0;
+  s_arena.last = nullptr;
+  JsonDocument doc(&s_arena);
   DeserializationError err = deserializeJson(doc, json);
+  if (err == DeserializationError::NoMemory) {  // no arena, or a packet too rich for it
+    doc = JsonDocument();
+    err = deserializeJson(doc, json);
+  }
   if (err) {
     Serial.printf("pc_metrics: JSON parse error: %s\n", err.c_str());
     return;
@@ -313,33 +369,54 @@ static void parsePacket(const char* json, IPAddress from, bool serial) {
 
 // USB cable: the companion writes "@TD <json>" lines (the same JSON as UDP)
 // between the device's log lines; "@TD {"hello":1}" asks who is there.
-static char s_line[PC_PACKET_BUF_SIZE];
-static size_t s_lineLen = 0;
-static bool s_lineOver = false;
+// Read on a core 0 task (the core's RX costs ~3 us a byte); the loop parses.
+static void serialTask(void*) {
+  static char line[PC_PACKET_BUF_SIZE];
+  size_t len = 0;
+  bool over = false;
+  uint8_t chunk[256];
+  for (;;) {
+    if (improvSetupActive()) {  // Improv owns the port in setup mode
+      vTaskDelay(pdMS_TO_TICKS(50));
+      continue;
+    }
+    const size_t got = Serial.read(chunk, sizeof(chunk));
+    if (!got) {
+      vTaskDelay(pdMS_TO_TICKS(4));
+      continue;
+    }
+    for (size_t i = 0; i < got; i++) {
+      const char c = (char)chunk[i];
+      if (c != '\n') {
+        if (len < sizeof(line) - 1) line[len++] = c;
+        else over = true;
+        continue;
+      }
+      if (len && line[len - 1] == '\r') len--;
+      line[len] = 0;
+      const bool ours = !over && len > 4 && !strncmp(line, "@TD ", 4);
+      const size_t n = len - 4;
+      len = 0;
+      over = false;
+      if (!ours) continue;
+      if (!strncmp(line + 4, "{\"hello\":", 9)) {
+        Serial.printf("\n@TD {\"hello\":\"%s\",\"fw\":\"%s\"}\n", PRODUCT_NAME, FW_VERSION);
+        continue;
+      }
+      char* copy = (char*)heap_caps_malloc(n + 1, MALLOC_CAP_SPIRAM);
+      if (!copy) continue;
+      memcpy(copy, line + 4, n + 1);
+      if (xQueueSend(s_lineQ, &copy, 0) != pdTRUE) heap_caps_free(copy);
+    }
+  }
+}
 
 static bool serialPoll() {
-  if (improvSetupActive()) return false;  // Improv owns the port in setup mode
   bool parsed = false;
-  int budget = 4096;  // bytes per loop pass, so a flood cannot stall the UI
-  while (budget-- > 0 && Serial.available() > 0) {
-    const int c = Serial.read();
-    if (c < 0) break;
-    if (c != '\n') {
-      if (s_lineLen < sizeof(s_line) - 1) s_line[s_lineLen++] = (char)c;
-      else s_lineOver = true;
-      continue;
-    }
-    if (s_lineLen && s_line[s_lineLen - 1] == '\r') s_lineLen--;
-    s_line[s_lineLen] = 0;
-    const bool ours = !s_lineOver && s_lineLen > 4 && !strncmp(s_line, "@TD ", 4);
-    s_lineLen = 0;
-    s_lineOver = false;
-    if (!ours) continue;
-    if (!strncmp(s_line + 4, "{\"hello\":", 9)) {
-      Serial.printf("\n@TD {\"hello\":\"%s\",\"fw\":\"%s\"}\n", PRODUCT_NAME, FW_VERSION);
-      continue;
-    }
-    parsePacket(s_line + 4, IPAddress(), true);
+  char* payload;
+  while (s_lineQ && xQueueReceive(s_lineQ, &payload, 0) == pdTRUE) {
+    parsePacket(payload, IPAddress(), true);
+    heap_caps_free(payload);
     parsed = true;
   }
   return parsed;
@@ -361,22 +438,25 @@ void pcMetricsPause(bool pause) {
 
 bool pcMetricsHandle() {
   bool parsed = serialPoll();
-  int packetSize = s_paused ? 0 : udp.parsePacket();
-  if (packetSize) {
+  // Spectrum packets come ~50/s: drain a few per pass so a stalled loop shows
+  // the newest audio, not a backlog.
+  for (int n = 0; n < 8 && !s_paused; n++) {
+    const int packetSize = udp.parsePacket();
+    if (!packetSize) break;
     static char buffer[PC_PACKET_BUF_SIZE];
     // Reject oversize before reading so a truncated body is never parsed.
     if (packetSize > (int)sizeof(buffer) - 1) {
       Serial.printf("pc_metrics: packet %d bytes exceeds buffer %d, discarding\n",
                     packetSize, (int)sizeof(buffer));
       udp.flush();
-    } else {
-      int len = udp.read(buffer, sizeof(buffer) - 1);
-      if (len > 0) {
-        buffer[len] = '\0';
-        parsePacket(buffer, udp.remoteIP(), false);
-        parsed = true;
-      }
+      continue;
     }
+    int len = udp.read(buffer, sizeof(buffer) - 1);
+    if (len <= 0) continue;
+    if (vizIngest((const uint8_t*)buffer, len)) continue;
+    buffer[len] = '\0';
+    parsePacket(buffer, udp.remoteIP(), false);
+    parsed = true;
   }
 
   for (size_t i = 0; i < s_pending.size();) {

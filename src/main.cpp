@@ -7,6 +7,7 @@
 #include <esp_heap_caps.h>
 #include "config.h"
 #include "display_ui.h"
+#include "deck_ui.h"
 #include "settings.h"
 #include "wifi_manager.h"
 #include "web_server.h"
@@ -78,8 +79,12 @@ void setup() {
 void loop() {
   esp_task_wdt_reset();
   handleWiFi();
+  uint32_t t = micros();
   handleWebServer();
+  deckPerfWebUs = micros() - t;
+  t = micros();
   pcMetricsHandle();
+  deckPerfPcUs = micros() - t;
 
   // Finish boot/connect transitions.
   ScreenState s = getScreenState();

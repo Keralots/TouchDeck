@@ -47,6 +47,11 @@ void deckReloadWallpaper(bool fileChanged);
 // Bench hook (/api/deck/bench): render the shown page into its page image n
 // times and time it.
 bool deckBenchRender(int n, uint32_t& avgUs, uint32_t& maxUs);
+// Visualizer spike counters as JSON; reset starts a new window.
+// Bench timing (GET /api/deck/perf): panel counters since the last read and the
+// loop passes slower than minUs, split by part. Rows are kept after a first read.
+void deckPerfJson(String& out, uint32_t minUs);
+extern uint32_t deckPerfWebUs, deckPerfPcUs;  // set by loop() before deckTick
 // Portal save: validate, store /deck.json and rebuild the pages in place.
 bool deckApplyConfig(const String& text, String& err);
 // Portal upload: load the MDI font stored at uploaded, keep it as the icon

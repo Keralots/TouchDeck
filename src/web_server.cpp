@@ -2161,6 +2161,14 @@ static void handleWallsNext() {
   sendJsonMessage(200, true, "Wallpaper queued.");
 }
 
+// GET /api/deck/perf[?min=ms] - bench hook: counters since the last read, then
+// a new window that keeps the loop passes slower than min (default 25 ms).
+static void handlePerf() {
+  String out;
+  deckPerfJson(out, (uint32_t)constrain(server.hasArg("min") ? server.arg("min").toInt() : 25, 1, 1000) * 1000);
+  server.send(200, "application/json", out);
+}
+
 static void handleFrameGet() {
   JsonDocument doc;
   deckFrameJson(doc.to<JsonObject>());
@@ -2583,6 +2591,7 @@ void initWebServer() {
   server.on("/api/deck/daily/run", HTTP_POST, handleDailyRun);
   server.on("/api/deck/wallpaper/remove", HTTP_POST, handleWallRemove);
   server.on("/api/deck/bench", HTTP_POST, handleDeckBench);
+  server.on("/api/deck/perf", HTTP_GET, handlePerf);
   server.on("/api/deck/frame", HTTP_GET, handleFrameGet);
   server.on("/api/deck/frame", HTTP_POST, handleFramePost);
   server.on("/api/deck/prefs", HTTP_POST, handleDeckPrefs);

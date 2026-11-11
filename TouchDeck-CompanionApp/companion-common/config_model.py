@@ -119,6 +119,7 @@ def normalize_config(config):
     out["serial_port"] = str(out.get("serial_port") or "auto").strip()[:64] or "auto"
     out.setdefault("udp_port", 4210)
     out.setdefault("update_interval", 3)
+    out["audio_viz"] = bool(out.get("audio_viz", False))  # stream audio to visualizer tiles
     out.setdefault("metrics", [])
     # Identifies this PC to the device (several PCs can feed one TouchDeck).
     pc_id = str(out.get("pc_id") or "")

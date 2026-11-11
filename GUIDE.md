@@ -74,6 +74,7 @@ In **Pages & tiles**, a tile's "more options" has "Show": Always, Only while the
 ```
 
 - `"pc-on"` / `"pc-off"` follow the tile's own PC (the PC of its command or metric, otherwise the first known PC). The PC counts as off about a minute after its companion stops sending, so a companion restart does not rearrange the page; it counts as on again with the first packet.
+- `"sound-on"` / `"sound-off"` follow the audio a companion streams for the visualizer (its Audio visualizer switch must be on). Sound counts after 2 s without a break, so a notification sound does not count; silence counts after 30 s, so a pause between tracks does not rearrange the page.
 - `{ "entity": ..., "state": ... }` compares the state Home Assistant reports (`on`, `off`, `home`, `playing`...); a leading `!` means "is not". The tile stays hidden until Home Assistant has reported the entity; while Home Assistant is unreachable the last known state stands.
 
 A whole page can follow a condition the same way ("Page shown" in the page settings; its PC is the first known one). With "Switch to it when it appears" (`"auto": true`) the deck slides to the page when the condition starts to hold, for example a PC stats page when the PC comes on, and back to the page shown before when it stops:
