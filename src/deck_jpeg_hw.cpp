@@ -13,6 +13,7 @@ namespace {
 
 constexpr size_t MAX_FILE = 8 * 1024 * 1024;
 constexpr int TIMEOUT_MS = 2000;
+constexpr int STRIP_ROWS = 16;
 
 // Progressive (SOF2) pictures are not supported by the decoder: look for the
 // frame header among the segments before the scan.
@@ -51,12 +52,10 @@ uint8_t* readAll(JpegReadFn read, void* ctx, size_t& len) {
 
 }  // namespace
 
-JpegResult jpegDecode(JpegReadFn read, void* ctx, int minW, int minH, JpegImage& out, void (*tick)()) {
-  out = {};
+JpegResult jpegDecode(JpegReadFn read, void* readCtx, int minW, int minH, const JpegSink& sink) {
   size_t len = 0;
-  uint8_t* file = readAll(read, ctx, len);
+  uint8_t* file = readAll(read, readCtx, len);
   if (!file) return JPEG_NO_MEMORY;
-  if (tick) tick();
   if (len < 4 || file[0] != 0xFF || file[1] != 0xD8) {
     free(file);
     return len ? JPEG_BAD : JPEG_CUT;
@@ -104,12 +103,18 @@ JpegResult jpegDecode(JpegReadFn read, void* ctx, int minW, int minH, JpegImage&
     return JPEG_BAD;
   }
   // Rows padded to the aligned width: pack them.
-  const size_t row = (size_t)info.width * 3;
-  if (got >= (size_t)aw * info.height * 3 && aw != info.width)
-    for (uint32_t y = 1; y < info.height; y++) memmove(px + y * row, px + (size_t)y * aw * 3, row);
-  out.px = px;
-  out.w = info.width;
-  out.h = info.height;
+  const int w = info.width, h = info.height;
+  const size_t row = (size_t)w * 3;
+  if (got >= (size_t)aw * h * 3 && aw != (uint32_t)w)
+    for (int y = 1; y < h; y++) memmove(px + y * row, px + (size_t)y * aw * 3, row);
+  // Handed over in full-width strips, so the sink needs no full-size copy.
+  if (!sink.begin(sink.ctx, w, h, STRIP_ROWS)) {
+    free(px);
+    return JPEG_NO_MEMORY;
+  }
+  for (int y = 0; y < h; y += STRIP_ROWS)
+    sink.block(sink.ctx, 0, y, w - 1, std::min(y + STRIP_ROWS, h) - 1, px + y * row);
+  free(px);
   return JPEG_OK;
 }
 

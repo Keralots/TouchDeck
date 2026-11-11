@@ -1,1 +1,1 @@
-bf8b18e5dedbb2d0b25f593554c7e7667c0d370f8bf141c6a739e1386b6aa8ee  TouchDeck-v1.2.2-full.bin
+20ed62f8cf95f5cce9bd26f31cb9837ebb9b92ec156812d3d5fe8280f8815254  TouchDeck-v1.2.3-full.bin

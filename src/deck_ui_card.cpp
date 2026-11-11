@@ -40,7 +40,28 @@ bool modalShown() { return s_modalCard != nullptr; }
 lv_obj_t* s_modalUnder = nullptr;
 lv_draw_buf_t* s_underBuf = nullptr;  // kept once used
 
-bool coverPage() {
+// The cover's picture: the last frame at half brightness, as the compositor dims.
+void coverFill() {
+  if (!s_underBuf) return;
+  const int w = logicalW(), h = logicalH();
+  const uint16_t* fb = lastFrame();
+  for (int y = 0; y < h; y++) {
+    uint16_t* d = (uint16_t*)(s_underBuf->data + y * s_underBuf->header.stride);
+    const uint16_t* s = fb + y * w;
+    for (int x = 0; x < w; x++) d[x] = (s[x] >> 1) & 0x7BEF;
+  }
+}
+
+// Only with no card open; the next card allocates it again.
+void cardUnderFree() {
+  if (s_modalUnder || !s_underBuf) return;
+  lv_image_cache_drop(s_underBuf);
+  lv_draw_buf_destroy(s_underBuf);
+  s_underBuf = nullptr;
+}
+
+// fill false: the caller runs coverFill before LVGL draws again.
+bool coverPage(bool fill) {
   const int w = logicalW(), h = logicalH();
   if (s_underBuf && (s_underBuf->header.w != w || s_underBuf->header.h != h)) {
     lv_draw_buf_destroy(s_underBuf);
@@ -49,12 +70,7 @@ bool coverPage() {
   if (!s_underBuf) s_underBuf = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
   if (!s_underBuf) return false;
   lv_image_cache_drop(s_underBuf);
-  const uint16_t* fb = lastFrame();
-  for (int y = 0; y < h; y++) {
-    uint16_t* d = (uint16_t*)(s_underBuf->data + y * s_underBuf->header.stride);
-    const uint16_t* s = fb + y * w;
-    for (int x = 0; x < w; x++) d[x] = (s[x] >> 1) & 0x7BEF;  // half, as the compositor dims
-  }
+  if (fill) coverFill();
   s_modalUnder = lv_image_create(lv_screen_active());
   lv_obj_add_flag(s_modalUnder, (lv_obj_flag_t)(LV_OBJ_FLAG_IGNORE_LAYOUT | LV_OBJ_FLAG_FLOATING));
   lv_obj_remove_flag(s_modalUnder, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
@@ -69,24 +85,54 @@ bool coverPage() {
 void onModalScrim(lv_event_t*);
 
 // The scrim for a card: transparent over the covered page, else half black.
-lv_obj_t* makeScrim() {
+lv_obj_t* makeScrim(bool fill = true) {
   lv_obj_t* s = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s);
   lv_obj_set_size(s, logicalW(), logicalH());
   lv_obj_set_style_bg_color(s, lv_color_black(), 0);
-  lv_obj_set_style_bg_opa(s, coverPage() ? LV_OPA_TRANSP : LV_OPA_50, 0);
+  lv_obj_set_style_bg_opa(s, coverPage(fill) ? LV_OPA_TRANSP : LV_OPA_50, 0);
   lv_obj_add_event_cb(s, onModalScrim, LV_EVENT_CLICKED, nullptr);
   return s;
 }
 
 // Thin line on the top edge while daily pictures download: swipes may hitch then.
 lv_obj_t* s_dailyBar = nullptr;
+lv_obj_t* s_dailyPill = nullptr;  // "Daily pictures 3 of 20, tap to skip"
+
+void dailySkipTap(lv_event_t*) {
+  deck::dailySkip();
+  hapticTap();
+}
 
 void dailyBarSync() {
   int done = 0, total = 0;
   if (!deck::dailyProgress(done, total) || !total) {
     if (s_dailyBar) lv_obj_add_flag(s_dailyBar, LV_OBJ_FLAG_HIDDEN);
+    if (s_dailyPill) lv_obj_add_flag(s_dailyPill, LV_OBJ_FLAG_HIDDEN);
     return;
+  }
+  // Home Assistant and MQTT are paused meanwhile: say why, and offer a way out.
+  if (!s_dailyPill) {
+    s_dailyPill = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_dailyPill);
+    lv_obj_set_size(s_dailyPill, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(s_dailyPill, lv_color_hex(0x2A2F38), 0);
+    lv_obj_set_style_bg_opa(s_dailyPill, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_dailyPill, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_pad_hor(s_dailyPill, 14, 0);
+    lv_obj_set_style_pad_ver(s_dailyPill, 7, 0);
+    lv_obj_set_style_text_color(s_dailyPill, lv_color_hex(0xE6E8EC), 0);
+    lv_obj_add_event_cb(s_dailyPill, dailySkipTap, LV_EVENT_CLICKED, nullptr);
+    lv_label_create(s_dailyPill);
+  }
+  char text[64];
+  snprintf(text, sizeof(text), "Daily pictures %d of %d, tap to skip", std::min(done + 1, total), total);
+  lv_obj_t* label = lv_obj_get_child(s_dailyPill, 0);
+  if (strcmp(lv_label_get_text(label), text)) lv_label_set_text(label, text);
+  lv_obj_align(s_dailyPill, LV_ALIGN_TOP_MID, 0, 8);
+  if (lv_obj_has_flag(s_dailyPill, LV_OBJ_FLAG_HIDDEN)) {
+    lv_obj_remove_flag(s_dailyPill, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_dailyPill);
   }
   if (!s_dailyBar) {
     s_dailyBar = lv_obj_create(lv_layer_top());
@@ -551,8 +597,6 @@ void openModal(int tileIdx) {
   const bool graph = d.type == TILE_SENSOR && haKnown && he.known && haNumericState(he.state, hv);
   const bool climate = entityDomain(d.entity) == "climate" && !d.http.enabled;
 
-  s_modalScrim = makeScrim();
-
   const int cw = w - 40 < 380 ? w - 40 : 380;
   int ch = graph ? (light ? 304 : 284) : light ? 236 : 196;
   // Climate: +/- row (52), info line, mode chips when it has several modes.
@@ -561,6 +605,9 @@ void openModal(int tileIdx) {
     for (int i = 0, n = he.hvacModes.length(); i < n; i++) nModes += i == 0 || he.hvacModes[i] == ',';
   if (climate) ch = 74 + 52 + 8 + lv_font_get_line_height(&deck_font_14) + 10 +
                     (nModes > 1 ? 46 : 0) + 10 + 44 + 16;
+  fxCardOpenBegin(tileIdx, {(int16_t)((w - cw) / 2), (int16_t)((h - ch) / 2), (int16_t)cw, (int16_t)ch}, 22);
+
+  s_modalScrim = makeScrim(false);  // filled below, while the animation runs
   lv_obj_t* c = lv_obj_create(lv_layer_top());
   s_modalCard = c;
   lv_obj_remove_style_all(c);
@@ -681,6 +728,7 @@ void openModal(int tileIdx) {
   refreshModal();
   s_modalBuilding = false;
   fxCardOpen(c, tileIdx);
+  coverFill();
   // The history reply lands on core 0; HA waits for the animation started above.
   if (s_modalChart) refreshModal();
 }

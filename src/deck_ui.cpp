@@ -1,5 +1,6 @@
 // Guition JC3248W535 deck UI. See deck_ui.h for the threading contract.
 #include "deck_ui_int.h"
+#include <src/misc/lv_anim_private.h>  // lv_anim_enable_vsync_mode
 #include "deck_mqtt.h"
 #include "psram_json.h"
 
@@ -8,6 +9,7 @@ namespace deckui {
 // Page images are refreshed one per pass, at most this often (each costs
 // ~40 ms of loop time at 480x320).
 constexpr uint32_t SNAP_SPACING_MS = 40;
+constexpr uint32_t NEAR_SNAP_MAX_MS = 30000;  // a neighbour image older than this is refreshed at once
 constexpr uint32_t PANEL_SNAP_MS = 5000;  // a stale panel image waits at most this long behind busy pages
 constexpr uint32_t STATS_MS = 10000;
 constexpr uint32_t SLIDE_MS = 280;
@@ -87,9 +89,10 @@ portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 Shared sh;
 int s_zonesPage = -1;     // page the zones were taken from
 bool s_zonesDirty = true;  // tiles rebuilt or moved: take them again
+static bool s_prnPagesUp = false;  // a printer page is built: no automatic wallpaper change
 
 // --- LVGL glue ---------------------------------------------------------------------
-uint32_t tickCb() { return millis(); }
+uint32_t tickCb() { return panelFrameClockMs(); }
 
 // Posted LVGL frames whose framebuffer the flush task has not released yet.
 int s_lvOut = 0;
@@ -155,6 +158,13 @@ int pageIndexOf(const String& id) {
 String activePageId() {
   const int a = sh.active;
   return a >= 0 && a < s_count && s_pages[a].def ? s_pages[a].def->id : String();
+}
+
+// The page marked "home" while it is built, else the first page.
+int homePage() {
+  for (const PageDef& pd : s_cfg.pages)
+    if (pd.home) return max(pageIndexOf(pd.id), 0);
+  return 0;
 }
 
 void goToPage(const String& id) {
@@ -304,10 +314,12 @@ void buildPages() {
   s_tiles.reserve(64);
   whenApply();
   int keep = -1;
+  s_prnPagesUp = false;
   for (const PageDef& pd : s_cfg.pages) {
     if (s_count >= MAX_PAGES) break;
     if (pd.printer.length() && !printerPowered(pd.printer)) continue;
     if (!pd.shown) continue;
+    if (pd.printer.length()) s_prnPagesUp = true;
     if (s_keepPage.length() && pd.id == s_keepPage) keep = s_count;
     addTilesPage(pd);
   }
@@ -428,9 +440,12 @@ void syncSwipeZones() {
     lv_area_t root;
     lv_obj_get_coords(s_pages[a].root, &root);
     for (const TileRt& r : s_tiles) {
-      if (r.page != a || !r.fill || n == MAX_PAGE_TILES) continue;
+      // A slider tile, or the volume row of a Now playing tile.
+      const bool vol = r.def->type == TILE_MEDIA && r.volBar && !lv_obj_has_flag(r.volBar, LV_OBJ_FLAG_HIDDEN);
+      if (r.page != a || (!r.fill && !vol) || n == MAX_PAGE_TILES) continue;
       lv_area_t t;
       lv_obj_get_coords(r.obj, &t);
+      if (vol) lv_obj_get_coords(r.volBar, &t);
       z[n++] = {(int16_t)(t.x1 - root.x1), (int16_t)(t.y1 - root.y1), (int16_t)(t.x2 - root.x1),
                 (int16_t)(t.y2 - root.y1)};
     }
@@ -505,18 +520,25 @@ void refreshOneSnapshot() {
                         a + 1 < s_count && sh.col[a + 1] == c ? a + 1 : -1,
                         a > 0 && sh.col[a - 1] == c ? a - 1 : -1};
   // The shown page swipes from the live frame; only closing the panel slides
-  // off its image (showPanel marks it), so then it goes first.
-  auto due = [&](int p) { return p >= 0 && s_pages[p].stale && !s_pages[p].wallBake && (p != a || s_qp.open); };
+  // off its image (showPanel marks it), so then it goes first. Pages further
+  // away jump (goToPage), so their old image stands until they are neighbours.
+  auto near = [&](int p) { return p == a || p == order[0] || p == order[1] || p == order[2] || p == order[3]; };
+  auto due = [&](int p) {
+    return p >= 0 && s_pages[p].stale && !s_pages[p].wallBake && (p != a || s_qp.open) && (!sh.valid[p] || near(p));
+  };
   if (s_qp.open && due(a)) pick = a;
-  // A page without an image cannot be swiped to at all.
+  // A page without an image cannot be swiped to at all. Nor should a page
+  // just jumped next to show an image from when it was far (not refreshed).
+  const bool anim = lv_anim_count_running() > 0;
   for (int k = 0; k < 4 && pick < 0; k++)
-    if (due(order[k]) && !sh.valid[order[k]]) pick = order[k];
+    if (due(order[k]) && (!sh.valid[order[k]] || (!anim && now - s_pages[order[k]].snapMs > NEAR_SNAP_MAX_MS)))
+      pick = order[k];
   for (int p = 0; p < s_count && pick < 0; p++)
     if (due(p) && !sh.valid[p]) pick = p;
-  // A whole page snapshot stalls gliding charts for about 45 ms: while they
-  // glide, one image every few seconds, the oldest first so none is starved.
-  const bool gliding = now - s_sparkPaintMs < 1000;
-  if (pick < 0 && gliding) {
+  // A whole page snapshot stalls gliding charts and tile effects for about
+  // 45 ms: meanwhile, one image every few seconds, the oldest first so none is starved.
+  const bool busy = now - s_sparkPaintMs < 1000 || anim;
+  if (pick < 0 && busy) {
     if (now - s_lastSnapMs < SPARK_SNAP_MS) return;
     for (int p = 0; p < s_count; p++)
       if (due(p) && (pick < 0 || (int32_t)(s_pages[p].snapMs - s_pages[pick].snapMs) < 0)) pick = p;
@@ -577,13 +599,22 @@ void tickWallpaper() {
                     !touchIsDown() && !s_qp.open && !s_modalCard && !s_ed.root &&
                     s_ed.pending == EditState::P_NONE && compMode() == COMP_NONE && !sh.owned;
   const bool idle = millis() - touchLastActivity() >= WALL_IDLE_MS;
+  // Printer pages leave too little PSRAM for a reliable change, so no rotation.
+  const bool rotate = !s_prnPagesUp;
   bool baking = false;
   for (int i = 0; i < s_count; i++) baking |= s_pages[i].wallBake;
-  if (wallPoll(logicalW(), logicalH(), idle, safe && !baking)) {
+  // A job starts only when safe: no card is open, so its two screen sized
+  // buffers can make room for the new wallpaper.
+  auto makeRoom = [] {
+    cardUnderFree();
+    fxCardPicFree();
+  };
+  if (wallPoll(logicalW(), logicalH(), idle, safe && !baking, rotate, makeRoom)) {
     stopGestures();
     for (int i = 0; i < s_count; i++) s_pages[i].stale = true;
     // A touch may have started while the compositor was being quiesced.
-    if (!wallPoll(logicalW(), logicalH(), millis() - touchLastActivity() >= WALL_IDLE_MS, !touchIsDown())) return;
+    if (!wallPoll(logicalW(), logicalH(), millis() - touchLastActivity() >= WALL_IDLE_MS, !touchIsDown(), rotate))
+      return;
     wallCommit();
     for (int i = 0; i < s_count; i++) s_pages[i].wallBake = true;
     bakeWallpaperPage(sh.active);
@@ -621,10 +652,7 @@ void updateHeaders() {
   const uint32_t now = millis();
   if (now - s_lastClockCheck < 1000) return;
   s_lastClockCheck = now;
-  for (TileRt& r : s_tiles) if (r.def->type == TILE_MEDIA) {
-    mediaProgress(r);
-    mediaCover(r);
-  }
+  for (TileRt& r : s_tiles) if (r.def->type == TILE_MEDIA) mediaTick(r);
   const int wifi = WiFi.status() == WL_CONNECTED ? 1 : 0;
   if (wifi != s_lastWifi) {
     s_lastWifi = wifi;
@@ -741,7 +769,8 @@ void whenSync() {
     if (pd.when.kind == WHEN_ALWAYS || whenWanted(pd) == pd.shown) continue;
     if (pd.shown && pd.id == cur) {
       int back = pageIndexOf(s_autoFrom);
-      if (back < 0 || back == sh.active) back = 0;
+      if (back < 0 || back == sh.active) back = homePage();
+      if (back == sh.active) back = 0;
       if (back != sh.active) {
         s_autoFrom = "";
         goToPage(s_pages[back].def->id);
@@ -819,6 +848,14 @@ bool deckBegin(uint8_t rotation) {
   lv_display_set_flush_cb(s_disp, flushCb);
   lv_display_set_flush_wait_cb(s_disp, flushWaitCb);
 
+  // Timers run newest first: recreate animation before adding input,
+  // so each pass reads input, advances animations, then draws.
+  lv_anim_enable_vsync_mode(true);
+  lv_anim_enable_vsync_mode(false);
+  // The tick moves once per TE edge, by 16 or 17 ms: a shorter period fires on every step.
+  lv_timer_set_period(lv_anim_get_timer(), 10);
+  lv_timer_set_period(lv_display_get_refr_timer(s_disp), 10);
+
   s_indev = lv_indev_create();
   lv_indev_set_type(s_indev, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(s_indev, indevRead);
@@ -845,6 +882,8 @@ bool deckBegin(uint8_t rotation) {
     }
   }
   haBegin();
+  for (const PageDef& pd : s_cfg.pages)
+    if (pd.home && !s_keepPage.length()) s_keepPage = pd.id;  // boot on it (first page while hidden)
   buildPages();
   touchBegin();
   Serial.printf("Deck: LVGL %d.%d.%d up, %d pages, %dx%d\n", LVGL_VERSION_MAJOR,

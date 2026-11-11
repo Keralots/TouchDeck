@@ -1,10 +1,12 @@
 // Guition deck: HTTP tile actions. See deck_http.h.
 #include "deck_http.h"
 #include <HTTPClient.h>
+#include <JPEGDEC.h>
 #include <WiFi.h>
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
 #include <algorithm>
+#include <new>
 #include <ctype.h>
 
 namespace deck {
@@ -17,6 +19,7 @@ struct Job {
   bool sensor = false;
   String artId;
   int artPx = 0;
+  bool artJpeg = false;  // a JPEG to decode (Home Assistant), else raw RGB565 (companion)
 };
 
 QueueHandle_t s_jobs = nullptr;
@@ -289,10 +292,116 @@ void run(const Job& j, int& code, String& err, String* body) {
   http.end();
 }
 
+constexpr int ART_JPEG_MAX = 2 * 1024 * 1024;
+
+// The JPEG is decoded straight off the socket (JPEGDEC only reads forward), so
+// a cover of several hundred KB takes no PSRAM of its own.
+struct ArtStream {
+  WiFiClient* in;
+  uint32_t deadline;
+};
+
+int32_t artRead(JPEGFILE* f, uint8_t* out, int32_t want) {
+  ArtStream& s = *(ArtStream*)f->fHandle;
+  int32_t done = 0;
+  want = min(want, f->iSize - f->iPos);
+  while (done < want && (int32_t)(millis() - s.deadline) < 0) {
+    const int n = s.in->read(out + done, want - done);
+    if (n > 0) {
+      done += n;
+    } else {
+      if (!s.in->available() && !s.in->connected()) break;
+      delay(5);
+    }
+  }
+  f->iPos += done;
+  return done;
+}
+
+int32_t artSeek(JPEGFILE* f, int32_t pos) {
+  uint8_t skipped[256];
+  while (f->iPos < pos)
+    if (artRead(f, skipped, min((int32_t)sizeof(skipped), pos - f->iPos)) <= 0) break;
+  return f->iPos;
+}
+struct ArtImage {
+  uint16_t* px;
+  int w, h;
+};
+
+int artDraw(JPEGDRAW* d) {
+  ArtImage& o = *(ArtImage*)d->pUser;
+  for (int y = 0; y < d->iHeight && d->y + y < o.h; y++)
+    for (int x = 0; x < d->iWidthUsed && d->x + x < o.w; x++)
+      o.px[(d->y + y) * o.w + d->x + x] = d->pPixels[y * d->iWidth + x];
+  return 1;
+}
+
+// JPEG -> px x px RGB565: decoded at the smallest scale that still covers px
+// (progressive JPEGs only as their 1/8 DC image), centre square, box-scaled.
+uint8_t* decodeArt(ArtStream& jpeg, int size, int px) {
+  void* mem = heap_caps_malloc(sizeof(JPEGDEC), MALLOC_CAP_SPIRAM);  // ~18 KB
+  if (!mem) return nullptr;
+  JPEGDEC* dec = new (mem) JPEGDEC();
+  ArtImage img = {nullptr, 0, 0};
+  uint16_t* out = nullptr;
+  if (dec->open(&jpeg, size, nullptr, artRead, artSeek, artDraw)) {
+    int div = 8;
+    if (dec->getJPEGType() == JPEG_MODE_BASELINE) {
+      const int side = min(dec->getWidth(), dec->getHeight());
+      div = 1;
+      while (div < 8 && side / (div * 2) >= px) div *= 2;
+    }
+    img.w = dec->getWidth() / div;
+    img.h = dec->getHeight() / div;
+    img.px = img.w > 0 && img.h > 0 ? (uint16_t*)heap_caps_calloc(img.w * img.h, 2, MALLOC_CAP_SPIRAM) : nullptr;
+    dec->setUserPointer(&img);
+    if (img.px && dec->decode(0, 0, div == 1 ? 0 : div) &&
+        (out = (uint16_t*)heap_caps_malloc(px * px * 2, MALLOC_CAP_SPIRAM))) {
+      const int side = min(img.w, img.h), ox = (img.w - side) / 2, oy = (img.h - side) / 2;
+      for (int y = 0; y < px; y++) {
+        const int y0 = oy + y * side / px, y1 = max(y0 + 1, oy + (y + 1) * side / px);
+        for (int x = 0; x < px; x++) {
+          const int x0 = ox + x * side / px, x1 = max(x0 + 1, ox + (x + 1) * side / px);
+          uint32_t r = 0, g = 0, b = 0, n = 0;
+          for (int sy = y0; sy < y1; sy++)
+            for (int sx = x0; sx < x1; sx++) {
+              const uint16_t c = img.px[sy * img.w + sx];
+              r += c >> 11;
+              g += (c >> 5) & 63;
+              b += c & 31;
+              n++;
+            }
+          out[y * px + x] = (uint16_t)((r / n) << 11 | (g / n) << 5 | (b / n));
+        }
+      }
+    }
+    dec->close();
+  }
+  heap_caps_free(img.px);
+  dec->~JPEGDEC();
+  heap_caps_free(mem);
+  return (uint8_t*)out;
+}
+
 void fetchArt(const Job& j) {
   uint8_t* pixels = nullptr;
   const size_t bytes = j.artPx * j.artPx * 2;
-  if (WiFi.status() == WL_CONNECTED) {
+  if (j.artJpeg && WiFi.status() == WL_CONNECTED) {
+    WiFiClient client;
+    HTTPClient http;
+    http.setConnectTimeout(3000);
+    http.setTimeout(3000);
+    http.setReuse(false);
+    http.useHTTP10(true);
+    if (http.begin(client, j.a.url) && http.GET() == 200) {
+      // Without a Content-Length the stream simply ends.
+      const int declared = http.getSize();
+      ArtStream in = {http.getStreamPtr(), millis() + 8000};
+      if (in.in && declared <= ART_JPEG_MAX) pixels = decodeArt(in, declared > 0 ? declared : ART_JPEG_MAX, j.artPx);
+    }
+    http.end();
+  } else if (WiFi.status() == WL_CONNECTED) {
     WiFiClient client;
     HTTPClient http;
     http.setConnectTimeout(3000);
@@ -397,6 +506,22 @@ bool httpArtFetch(IPAddress ip, uint16_t port, const char* id, int px) {
   j->artId = id;
   j->artPx = px;
   j->a.url = "http://" + ip.toString() + ":" + String(port) + "/art?id=" + id + "&s=" + String(px);
+  s_artBusy = xQueueSend(s_jobs, &j, 0) == pdTRUE;
+  if (!s_artBusy) delete j;
+  const bool queued = s_artBusy;
+  xSemaphoreGive(s_lock);
+  return queued;
+}
+
+bool httpArtFetchJpeg(const String& url, const char* id, int px) {
+  if (!url.startsWith("http://") || !id || !*id || px < 32 || px > 200 || !ensureTask()) return false;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (s_artBusy) { xSemaphoreGive(s_lock); return false; }
+  Job* j = new Job{};
+  j->artId = id;
+  j->artPx = px;
+  j->artJpeg = true;
+  j->a.url = url;
   s_artBusy = xQueueSend(s_jobs, &j, 0) == pdTRUE;
   if (!s_artBusy) delete j;
   const bool queued = s_artBusy;

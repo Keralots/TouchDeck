@@ -229,6 +229,13 @@ bool sendFrame(const Frame& f, Frame& next, bool backToBack) {
 
 }  // namespace
 
+int64_t transportLastSyncUs() {
+  portENTER_CRITICAL(&s_teMux);
+  const int64_t te = s_teUs;
+  portEXIT_CRITICAL(&s_teMux);
+  return te;
+}
+
 bool transportBegin() {
   gpio_reset_pin((gpio_num_t)PIN_CS);
   gpio_set_direction((gpio_num_t)PIN_CS, GPIO_MODE_OUTPUT);

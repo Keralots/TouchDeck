@@ -1683,9 +1683,12 @@ static void handleHaForget() {
 
 // GET /api/ha/entities[?refresh=1] - picker list, cached on flash.
 static void handleHaEntities() {
-  String out, err;
-  const bool refresh = server.arg("refresh") == "1";
-  if (!refresh && deck::deckFsReady() && LittleFS.exists(deck::haEntityListPath())) {
+  String err;
+  if (server.arg("refresh") == "1" && !deck::haRefreshEntityList(err)) {
+    sendJsonMessage(502, false, err.c_str());
+    return;
+  }
+  if (deck::deckFsReady() && LittleFS.exists(deck::haEntityListPath())) {
     // Straight from flash: loading 160 KB into a String first took seconds.
     File f = LittleFS.open(deck::haEntityListPath(), "r");
     if (f) {
@@ -1695,11 +1698,8 @@ static void handleHaEntities() {
       return;
     }
   }
-  if (!deck::haFetchEntityList(out, refresh, err)) {
-    sendJsonMessage(502, false, err.c_str());
-    return;
-  }
-  server.send(200, "application/json", out);
+  // Nothing fetched yet: the portal offers the update button.
+  server.send(200, "application/json", "{\"updated\":0,\"count\":0,\"entities\":[]}");
 }
 
 // WebServer hands a non-form POST body to a route's upload callback too, where

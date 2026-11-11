@@ -313,6 +313,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
     if (!p.id.length()) p.id = "page" + String(cfg.pages.size() + 1);
     if (!parseWhen(pv["when"], p.when, err, "page '" + p.id + "'")) return false;
     p.autoShow = p.when.kind != WHEN_ALWAYS && (pv["auto"] | false);
+    p.home = pv["home"] | false;
     parseGrid(pv["layouts"]["landscape"], p.cols[ORIENT_LANDSCAPE], p.rows[ORIENT_LANDSCAPE]);
     parseGrid(pv["layouts"]["portrait"], p.cols[ORIENT_PORTRAIT], p.rows[ORIENT_PORTRAIT]);
     JsonArrayConst tiles = pv["tiles"].as<JsonArrayConst>();
@@ -419,7 +420,15 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         t.hasCrit = tv["crit"].is<float>() && isfinite(t.crit);
       }
       if (t.type == TILE_CLOCK || t.type == TILE_MEDIA) {
-        if (t.type == TILE_MEDIA) t.pc = (const char*)(tv["pc"] | "");
+        if (t.type == TILE_MEDIA) {
+          t.pc = (const char*)(tv["pc"] | "");
+          // entity = a Home Assistant player instead of a PC (#6).
+          t.mediaAuto = t.entity.length() && (tv["auto"] | false);
+          if (t.entity.length() && !t.entity.startsWith("media_player.")) {
+            if (err) *err = where + ": now playing needs a media_player entity";
+            return false;
+          }
+        }
         p.tiles.push_back(t);
         continue;
       }

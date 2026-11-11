@@ -201,7 +201,8 @@ static void parsePacket(const char* json, IPAddress from, bool serial) {
   PcSource* pc = sourceForPacket(doc["pc_id"] | "", doc["pc_name"] | "");
   if (!pc) return;
   pc->viaSerial = serial;
-  if (!serial) pc->ip = from;
+  // Over USB the companion names its LAN address: covers still come over WiFi.
+  if (!serial || !pc->ip.fromString(doc["ip"] | "")) pc->ip = from;
   pc->cmdPort = doc["cmd_port"] | 0;
   pc->artPort = (uint16_t)constrain(doc["art_port"] | 0, 0, 65535);
   // A few nonces per packet, so quick taps (volume) need not wait for the next one.
@@ -344,9 +345,23 @@ static bool serialPoll() {
   return parsed;
 }
 
+static bool s_paused = false;
+
+void pcMetricsPause(bool pause) {
+  if (pause == s_paused) return;
+  s_paused = pause;
+  if (pause) {
+    udp.stop();
+    return;
+  }
+  udp.begin(UDP_PORT);
+  for (int i = 0; i < MAX_PCS; i++)
+    if (pcSources[i].used) pcSources[i].data.lastReceived = millis();
+}
+
 bool pcMetricsHandle() {
   bool parsed = serialPoll();
-  int packetSize = udp.parsePacket();
+  int packetSize = s_paused ? 0 : udp.parsePacket();
   if (packetSize) {
     static char buffer[PC_PACKET_BUF_SIZE];
     // Reject oversize before reading so a truncated body is never parsed.
@@ -376,7 +391,7 @@ bool pcMetricsHandle() {
   // Liveness: drop to offline when no packet has arrived for the stale window.
   for (int i = 0; i < MAX_PCS; i++) {
     PcMetricData& d = pcSources[i].data;
-    if (pcSources[i].used && d.online && millis() - d.lastReceived > PC_STALE_TIMEOUT_MS) {
+    if (!s_paused && pcSources[i].used && d.online && millis() - d.lastReceived > PC_STALE_TIMEOUT_MS) {
       d.online = false;
       s_version++;
       Serial.printf("pc_metrics: PC '%s' offline (no packets within stale window)\n", pcSources[i].name);

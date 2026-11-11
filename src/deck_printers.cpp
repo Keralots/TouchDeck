@@ -17,6 +17,7 @@ constexpr uint32_t HA_GRACE_MS = 60000;
 struct Power {
   String id;
   bool on = false;
+  bool known = false;  // the plug state was read from HA at least once
 };
 std::vector<Power> s_power;  // printers handed to deck_bambu (they have secrets)
 
@@ -57,7 +58,10 @@ void printersApply(const DeckConfig& cfg) {
   for (const String& id : ids) {
     Power p{id, false};
     for (const Power& old : s_power)
-      if (old.id == id) p.on = old.on && printerPowered(id);
+      if (old.id == id) {
+        p.on = old.on && printerPowered(id);
+        p.known = old.known;
+      }
     next.push_back(p);
   }
   s_power = next;
@@ -92,8 +96,12 @@ bool printersPowerSync(const DeckConfig& cfg) {
     bool on = pw->on;
     HaEntity e;
     if (!d.plug.length() || haMissing) on = true;
-    else if (haUp && haGetEntity(d.plug, e) && e.known) on = e.state == "on";
-    else if (!haUp && millis() > HA_GRACE_MS) on = true;
+    else if (haUp && haGetEntity(d.plug, e) && e.known) {
+      on = e.state == "on";
+      pw->known = true;
+    }
+    // HA down: a plug seen before keeps its state; a LAN printer never seen is tried.
+    else if (!haUp && !pw->known && !d.ha && millis() > HA_GRACE_MS) on = true;
     if (on != pw->on) {
       pw->on = on;
       if (d.ha) printerHaPower(d.id, on);

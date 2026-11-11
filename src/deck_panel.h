@@ -39,6 +39,10 @@ struct Src {
 // Backlight is left alone. Returns false if a buffer could not be allocated.
 bool panelBegin(uint8_t rotation);
 
+// Next TE edge on the millis() time base, or current time when TE is stale.
+// Monotonic across wrap; called only by the loop task.
+uint32_t panelFrameClockMs();
+
 // fn(ctx, lo, hi) over 0..n in batches, shared with a helper on core 0 when it
 // is free. Returns when all batches are done.
 void panelShare(void (*fn)(void* ctx, int lo, int hi), void* ctx, int n, int batch);
@@ -143,7 +147,11 @@ struct MorphScene {
 };
 // After the last frame the screen holds until LVGL has a frame of generation
 // >= holdGen (one already posted counts).
+// Opening may begin before the card is drawn (card.px null): the scrim fades
+// in at once, the card's animation starts on compMorphCard.
 bool compBeginMorph(const MorphScene& m, uint32_t durMs, uint32_t holdGen);
+bool compMorphWaiting();
+void compMorphCard(const Src& card);
 CompMode compMode();
 // True while LVGL must not render (drag or animation in progress).
 bool compOwnsScreen();

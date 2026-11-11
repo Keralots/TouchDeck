@@ -514,10 +514,15 @@ void setSliderFill(TileRt& r, float frac) {
 // Pull the latest HA state into one tile's widgets.
 void applyHaToTile(TileRt& r, bool force) {
   const TileDef& d = *r.def;
-  if (d.type == TILE_MEDIA || d.http.enabled || !d.entity.length()) return;
+  if (d.http.enabled || !d.entity.length()) return;
   HaEntity e;
   if (!haGetEntity(d.entity, e)) return;
   if (!force && e.version == r.haVersion) return;
+  if (d.type == TILE_MEDIA) {
+    r.haVersion = e.version;
+    applyMedia(r);
+    return;
+  }
   if (e.version != r.haVersion)
     if (Wish* w = findWish(d.entity)) rememberLevel(*w, e);
   r.haVersion = e.version;
@@ -1073,6 +1078,17 @@ PcVolume s_pcVol;
 
 bool pcVolHeld() { return (int32_t)(millis() - s_pcVol.holdUntil) < 0; }
 
+// Now playing tile: ask for a level, and the level still asked for (-1 = none).
+void pcVolumeAsk(const String& pc, int pct) {
+  if (s_pcVol.pc != pc) s_pcVol.sent = -1;
+  s_pcVol.pc = pc;
+  s_pcVol.want = pct;
+  s_pcVol.holdUntil = millis() + PC_VOL_HOLD_MS;
+  s_pcVol.reapply = true;
+}
+
+int pcVolWanted(const String& pc) { return pcVolHeld() && s_pcVol.pc == pc ? s_pcVol.want : -1; }
+
 void pcVolumeTick() {
   const uint32_t now = millis();
   if (s_pcVol.want >= 0 && s_pcVol.want != s_pcVol.sent && now - s_pcVol.sentMs >= LEVEL_GAP_MS) {
@@ -1089,6 +1105,7 @@ void pcVolumeTick() {
     s_pcVol.want = s_pcVol.sent = -1;
     for (TileRt& r : s_tiles)
       if (r.def->pcVolume && !r.sliding) applyPcStateToTile(r);
+      else if (r.def->type == TILE_MEDIA && !r.mediaHa) applyMedia(r);
   }
 }
 
@@ -1105,6 +1122,7 @@ void pcVolumeDrag(TileRt& r, lv_event_code_t code, const lv_point_t& p) {
     if (fabsf(f - r.slValue) < 0.005f) return;
     r.slValue = f;
     setSliderFill(r, f);
+    if (s_pcVol.pc != tilePcId(*r.def)) s_pcVol.sent = -1;
     s_pcVol.pc = tilePcId(*r.def);
     s_pcVol.want = (int)lroundf(f * 100);
     if (!r.def->sub.length()) lv_label_set_text(r.sub, (String(s_pcVol.want) + "%").c_str());

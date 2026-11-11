@@ -124,15 +124,13 @@ void sparkPaint(Spark& s, float right) {
 // Repaint when the glide moved a quarter of a pixel or the axis moved; true
 // when it painted. ease moves the glide and the axis on by dtMs; without it
 // both jump to where they should be.
-bool sparkRender(TileRt& r, uint32_t now, bool ease, uint32_t dtMs) {
-  Spark& s = *r.spark;
-  if (lv_obj_has_flag(r.viz, LV_OBJ_FLAG_HIDDEN)) return false;
-  const int w = lv_obj_get_width(r.viz), h = lv_obj_get_height(r.viz);
+// sparkStep paints into buf without invalidating, so the draw event can use it.
+bool sparkStep(Spark& s, int w, int h, uint32_t now, bool ease, uint32_t dtMs) {
   if (w < 8 || h < 8 || w > SPARK_MAX_W) return false;
   if (!s.buf || s.buf->header.w != w || s.buf->header.h != h) {
     if (s.buf) lv_draw_buf_destroy(s.buf);
     s.buf = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_A8, 0);
-    s.key = -1;
+    s.dirty = true;
     s.painted = false;
     if (!s.buf) return false;
   }
@@ -155,21 +153,33 @@ bool sparkRender(TileRt& r, uint32_t now, bool ease, uint32_t dtMs) {
   if (s.n > SPARK_SPAN) s.off = std::max(s.off, (float)(SPARK_SPAN + 1 - s.n));  // left edge on data
   const int32_t key = (int32_t)floorf(s.off * (float)(w - 1) / SPARK_SPAN * 4);
   const float tol = (s.hi - s.lo) / 400;
-  if (key == s.key && fabsf(s.viewLo - s.paintLo) <= tol && fabsf(s.viewHi - s.paintHi) <= tol) return false;
+  if (!s.dirty && key == s.key && fabsf(s.viewLo - s.paintLo) <= tol && fabsf(s.viewHi - s.paintHi) <= tol)
+    return false;
   sparkPaint(s, (float)(s.n - 1) + s.off);
   s.painted = true;
+  s.dirty = false;
   s.key = key;
   s.paintLo = s.viewLo;
   s.paintHi = s.viewHi;
+  return true;
+}
+
+bool sparkRender(TileRt& r, uint32_t now, bool ease, uint32_t dtMs) {
+  if (lv_obj_has_flag(r.viz, LV_OBJ_FLAG_HIDDEN)) return false;
+  if (!sparkStep(*r.spark, lv_obj_get_width(r.viz), lv_obj_get_height(r.viz), now, ease, dtMs)) return false;
   lv_obj_invalidate(r.viz);
   return true;
 }
 
 void sparkDrawEvent(lv_event_t* e) {
-  const Spark* s = (const Spark*)lv_event_get_user_data(e);
+  Spark* s = (Spark*)lv_event_get_user_data(e);
   lv_obj_t* o = lv_event_get_target_obj(e);
   lv_area_t a;
   lv_obj_get_coords(o, &a);
+  // Charts off screen paint here, when a snapshot or a swipe draws them.
+  if (s->dirty && s->drawPaint && s->buf && lv_area_get_width(&a) == (int32_t)s->buf->header.w &&
+      lv_area_get_height(&a) == (int32_t)s->buf->header.h)
+    sparkStep(*s, lv_area_get_width(&a), lv_area_get_height(&a), millis(), false, 0);
   if (!s->buf || !s->painted || lv_area_get_width(&a) != (int32_t)s->buf->header.w ||
       lv_area_get_height(&a) != (int32_t)s->buf->header.h)
     return;
@@ -193,13 +203,17 @@ float sparkSample(const SlotHistory& hs, int i, float prev) {
 }
 
 // Take a packet's new sample (or the whole history after a gap) into the
-// tile's chart and aim its axis.
-void sparkFeed(TileRt& r, const PcSource& pc, const SlotHistory& hs, int n, float scale, bool autoRate,
+// tile's chart and aim its axis. True when the chart changed.
+bool sparkFeed(TileRt& r, const PcSource& pc, const SlotHistory& hs, int n, float scale, bool autoRate,
                uint32_t accent) {
   Spark& s = *r.spark;
+  const uint8_t wasN = s.n;
+  const float wasLo = s.lo, wasHi = s.hi;
+  bool fed = false;
   if (!n) {
     s.n = 0;
   } else if (hs.head != s.head || hs.count != s.cnt || !s.n) {
+    fed = true;
     const uint32_t dt = pc.data.sampleMs - s.rxMs;
     if (s.rxMs && dt >= 150 && dt <= 10000) s.gapMs = (s.gapMs * 3 + dt) / 4;
     s.rxMs = pc.data.sampleMs;
@@ -233,31 +247,44 @@ void sparkFeed(TileRt& r, const PcSource& pc, const SlotHistory& hs, int n, floa
     s.lo = lo - pad;
     s.hi = hi + pad;
   }
+  if (!fed && s.n == wasN && s.lo == wasLo && s.hi == wasHi && s.color == accent) return false;
   s.color = accent;
-  s.key = -1;
-  // The shown page glides in deckTick; anything else is painted once per packet.
-  if (r.page != sh.active || !sparkGliding()) sparkRender(r, millis(), false, 0);
+  s.dirty = true;
+  // The shown page glides in deckTick; other pages paint when drawn (sparkDrawEvent).
+  s.drawPaint = r.page != sh.active || !sparkGliding();
+  if (r.page == sh.active && s.drawPaint) lv_obj_invalidate(r.viz);
+  return true;
 }
 
-// Pull the latest companion packet into one metric tile.
-void applyPcToTile(TileRt& r) {
+// A style change refreshes the whole tile, so only on a change.
+bool setOpa(lv_obj_t* o, lv_opa_t opa) {
+  if (lv_obj_get_style_opa(o, LV_PART_MAIN) == opa) return false;
+  lv_obj_set_style_opa(o, opa, 0);
+  return true;
+}
+
+// Pull the latest companion packet into one metric tile. True when it changed.
+bool applyPcToTile(TileRt& r) {
   const TileDef& d = *r.def;
   const PcSource* pc = pcSource(d.pc);
   const PcMetric* m = pcMetricFind(pc, d.metric);
+  bool changed = false;
   if (!m) {
-    setText(r.sub, "--");
-    setText(r.unit, "");
-    if (!d.label.length()) setText(r.name, pc ? (String(pc->name) + " offline").c_str() : "PC offline");
-    lv_obj_set_style_opa(r.obj, LV_OPA_50, 0);
-    return;
+    changed |= setText(r.sub, "--");
+    changed |= setText(r.unit, "");
+    if (!d.label.length())
+      changed |= setText(r.name, pc ? (String(pc->name) + " offline").c_str() : "PC offline");
+    return setOpa(r.obj, LV_OPA_50) || changed;
   }
-  lv_obj_set_style_opa(r.obj, LV_OPA_COVER, 0);
-  if (!d.label.length()) setText(r.name, m->name);
+  changed |= setOpa(r.obj, LV_OPA_COVER);
+  bool text = false;
+  if (!d.label.length()) text |= setText(r.name, m->name);
   MetricText mt;
   formatMetricText(*m, m->value, mt);
-  setText(r.sub, mt.value);
-  setText(r.unit, mt.unit);
-  fitValue(r);
+  text |= setText(r.sub, mt.value);
+  text |= setText(r.unit, mt.unit);
+  if (text) fitValue(r);
+  changed |= text;
 
   const SlotHistory& hs = pc->hist[d.metric <= MAX_METRICS ? d.metric : 0];
   const int n = hs.metricId == d.metric ? hs.count : 0;
@@ -273,14 +300,24 @@ void applyPcToTile(TileRt& r) {
   if (warn != r.warn) {
     r.warn = warn;
     lv_obj_set_style_text_color(r.sub, lv_color_hex(warn ? C_WARN : tileTextRt(r)), 0);
+    changed = true;
   }
   const uint32_t accent = warn ? C_WARN : metricChart(d);
   if (r.viz && d.style == METRIC_BAR) {
-    lv_bar_set_value(r.viz, (int32_t)constrain(pct, 0.0f, 100.0f), LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(r.viz, lv_color_hex(accent), LV_PART_INDICATOR);
+    const int32_t v = (int32_t)constrain(pct, 0.0f, 100.0f);
+    if (lv_bar_get_value(r.viz) != v) {
+      lv_bar_set_value(r.viz, v, LV_ANIM_OFF);
+      changed = true;
+    }
+    const lv_color_t c = lv_color_hex(accent);
+    if (!lv_color_eq(lv_obj_get_style_bg_color(r.viz, LV_PART_INDICATOR), c)) {
+      lv_obj_set_style_bg_color(r.viz, c, LV_PART_INDICATOR);
+      changed = true;
+    }
   } else if (r.spark) {
-    sparkFeed(r, *pc, hs, n, scale, autoRate, accent);
+    changed |= sparkFeed(r, *pc, hs, n, scale, autoRate, accent);
   }
+  return changed;
 }
 
 lv_obj_t* makeRows(lv_obj_t* t, const TileDef& d) {
@@ -498,11 +535,9 @@ void pcSync(bool force) {
   if (!force && pcVersion() == s_pcSeen) return;
   s_pcSeen = pcVersion();
   for (TileRt& r : s_tiles) {
-    if (r.def->type == TILE_MEDIA) applyMedia(r);
+    if (r.def->type == TILE_MEDIA && (!r.def->entity.length() || r.def->mediaAuto)) applyMedia(r);
     if (r.def->tap.kind == ACT_PC) applyPcStateToTile(r);
-    if (r.def->type != TILE_METRIC) continue;
-    applyPcToTile(r);
-    markPageStale(r.page);
+    if (r.def->type == TILE_METRIC && applyPcToTile(r)) markPageStale(r.page);
   }
 }
 

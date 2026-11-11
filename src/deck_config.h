@@ -213,6 +213,7 @@ struct TileDef {
   uint8_t nozzle = 0;     // PS_NOZZLE: 0 = right / only, 1 = left
   uint8_t amsUnit = 1;    // PS_AMS: 1-based position in the reported units
   bool pcVolume = false;  // TILE_SLIDER: "control": "pc-volume"
+  bool mediaAuto = false;  // TILE_MEDIA: "auto": the PC or the HA player, whichever plays
   WhenDef when;
   bool shown = true;  // runtime: "when" as the pages were last built
 };
@@ -231,6 +232,7 @@ struct PageDef {
   String printer;  // built only while this printer is powered
   WhenDef when;
   bool autoShow = false;  // "auto": slide here when it appears, back when it goes
+  bool home = false;      // "home": the page the deck starts on
   bool shown = true;      // runtime, as for tiles
   uint8_t cols[2] = {BOARD_GRID_LANDSCAPE_COLS, BOARD_GRID_PORTRAIT_COLS};
   uint8_t rows[2] = {BOARD_GRID_LANDSCAPE_ROWS, BOARD_GRID_PORTRAIT_ROWS};

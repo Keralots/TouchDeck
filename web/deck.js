@@ -81,7 +81,7 @@
   document.body.insertAdjacentHTML(
     "beforeend",
     `<div class="dk-modal" id="dkPicker"><div class="dk-sheet"><div class="dk-head">
-<div class="dk-row"><input type="text" id="dkQ" placeholder="Search by name or entity id" autocomplete="off" style="flex:1"><button type="button" class="btn" id="dkPickClose">Close</button></div>
+<div class="dk-row"><input type="text" id="dkQ" placeholder="Search, or type a full entity id" autocomplete="off" style="flex:1"><button type="button" class="btn" id="dkPickClose">Close</button></div>
 <div class="dk-chips" id="dkDomains"></div>
 <div class="dk-status"><span id="dkListInfo">-</span><button type="button" class="btn" id="dkListUpdate" style="margin-left:auto;padding:5px 10px">Update from HA</button></div></div>
 <div class="dk-list" id="dkEnts"></div></div></div>
@@ -141,8 +141,12 @@
     cur = 0,
     ents = null,
     entMap = {},
+    entsErr = "",
+    domBefore = null,
+    entsBusy = false,
     dirty = false,
     pickFor = -1,
+    pickAuto = false,
     dom = "",
     pcm = [],
     ori = null,
@@ -1067,15 +1071,54 @@
       "</div>"
     );
   }
+  /* Now playing source: a PC (companion), a Home Assistant media player (#6),
+     or auto: whichever of the two plays. */
+  function mediaSrcSel(t, i) {
+    const cur = pcOf(t),
+      auto = !!(t.entity && t.auto);
+    let o = pcs.length
+      ? pcs
+          .map((x) => opt("pc:" + x.id, "PC: " + x.name + (x.online ? "" : " (offline)"), !t.entity && cur === x))
+          .join("")
+      : opt("pc:", "PC (companion)", !t.entity);
+    if (!t.entity && t.pc && !cur) o += opt("pc:" + t.pc, "Unknown PC", true);
+    o += opt("ha", "Home Assistant player", !!t.entity && !auto);
+    o += pcs.length
+      ? pcs.map((x) => opt("auto:" + x.id, "Auto: PC " + x.name + " or HA player", auto && cur === x)).join("")
+      : opt("auto:", "Auto: PC or HA player", auto);
+    if (auto && t.pc && !cur) o += opt("auto:" + t.pc, "Auto: unknown PC or HA player", true);
+    return (
+      '<select data-ms="' +
+      i +
+      '">' +
+      o +
+      "</select>" +
+      (t.entity
+        ? '<button type="button" class="btn" data-e="' +
+          i +
+          '">' +
+          esc((entMap[t.entity] || {}).name || t.entity) +
+          "</button>"
+        : "")
+    );
+  }
   function mediaRow(t, i) {
     return (
       '<div class="dk-tile' +
       (i === sel ? " sel" : "") +
       '"><div class="dk-ic" style="background:' +
       (t.color || "#E6E8EC") +
-      '">PC</div><div class="dk-tmain"><b>Now playing</b><div class="dk-tsub">Cover, track and playback controls</div></div>' +
+      '">' +
+      (t.entity ? (t.auto ? "A" : "HA") : "PC") +
+      '</div><div class="dk-tmain"><b>Now playing</b><div class="dk-tsub">' +
+      (t.entity
+        ? t.auto
+          ? "The PC or " + esc(t.entity) + ", whichever plays (the PC when both do)"
+          : "Track and playback controls from " + esc(t.entity)
+        : "Cover, track and playback controls") +
+      "</div></div>" +
       '<div class="dk-tact">' +
-      pcSel(t, i) +
+      mediaSrcSel(t, i) +
       sizeSel(t, i) +
       '<button type="button" class="btn' +
       (i === more ? " on" : "") +
@@ -2026,6 +2069,7 @@
             i +
             '">' +
             (stackedAt(ps, i) ? "&#8595; " : "") +
+            (p.home ? "&#8962; " : "") +
             esc(p.name || p.id) +
             "</button>",
         )
@@ -2163,7 +2207,10 @@
       '<label class="check-row standalone"><input type="checkbox" id="dkPStack"' +
       (stackedAt(ps, cur) ? " checked" : "") +
       (cur === 0 ? " disabled" : "") +
-      '><span class="check-box"></span><span class="check-text"><strong>Below the previous page</strong><span class="ct-hint">Stacked pages form one column: swipe up and down between them, left and right to the next column. Move left/right moves a column head with its column, or swaps a stacked page within its column.</span></span></label>';
+      '><span class="check-box"></span><span class="check-text"><strong>Below the previous page</strong><span class="ct-hint">Stacked pages form one column: swipe up and down between them, left and right to the next column. Move left/right moves a column head with its column, or swaps a stacked page within its column.</span></span></label>' +
+      '<label class="check-row standalone"><input type="checkbox" id="dkPHome"' +
+      (p.home ? " checked" : "") +
+      '><span class="check-box"></span><span class="check-text"><strong>Home page</strong><span class="ct-hint">The deck starts on this page after power-on or a restart, and falls back to it when a shown page goes away. Only one page is home; while it is hidden (a condition or a printer that is off) the first page takes its place.</span></span></label>';
     let g = "";
     for (let y = 0; y < r; y++)
       for (let x = 0; x < c; x++)
@@ -2253,7 +2300,9 @@
                 i +
                 '"><option value="toggle"' +
                 (t.type === "toggle" ? " selected" : "") +
-                '>Switch</option><option value="action"' +
+                ">" +
+                (d === "climate" ? "Thermostat" : "Switch") +
+                '</option><option value="action"' +
                 (t.type === "action" ? " selected" : "") +
                 '>Button</option><option value="sensor"' +
                 (t.type === "sensor" ? " selected" : "") +
@@ -2416,6 +2465,12 @@
       renderTabs();
       renderPage();
     };
+    $("dkPHome").onchange = (e) => {
+      deck.pages.forEach((x) => delete x.home);
+      if (e.target.checked) p.home = true;
+      setDirty(true);
+      renderTabs();
+    };
     $("dkPLeft").disabled = !canMovePage(ps, cur, -1);
     $("dkPRight").disabled = !canMovePage(ps, cur, 1);
     $("dkPLeft").onclick = () => movePage(-1);
@@ -2426,7 +2481,7 @@
     $("dkPDup").title = $("dkPDup").disabled ? "The deck holds at most " + MAX_PAGES + " pages" : "";
     $("dkPDup").onclick = () => {
       const copy = JSON.parse(JSON.stringify(p));
-      ["group", "when", "auto", "printer"].forEach((k) => delete copy[k]);
+      ["group", "when", "auto", "printer", "home"].forEach((k) => delete copy[k]);
       copy.id = "p" + Date.now().toString(36);
       copy.name = (p.name || p.id) + " copy";
       let end = cur + 1;
@@ -2711,6 +2766,41 @@
     );
     el.querySelectorAll("[data-hst]").forEach(
       (x) => (x.onclick = () => testHttpSensor(p.tiles[+x.dataset.hst], +x.dataset.hst)),
+    );
+    el.querySelectorAll("[data-ms]").forEach(
+      (x) =>
+        (x.onchange = () => {
+          const i = +x.dataset.ms,
+            t = p.tiles[i];
+          if (x.value === "ha" && t.entity) {
+            delete t.auto;
+            delete t.pc;
+            setDirty(true);
+            renderPage();
+            return;
+          }
+          if (x.value.startsWith("auto:")) {
+            if (t.entity) t.auto = true; // else the picker sets it with the player
+            if (x.value.length > 5) t.pc = x.value.slice(5);
+            else delete t.pc;
+            setDirty(true);
+            renderPage();
+            if (!t.entity) openPicker(i, true);
+            return;
+          }
+          if (x.value === "ha") {
+            delete t.auto;
+            renderPage(); // the select shows the old source until a player is picked
+            openPicker(i);
+            return;
+          }
+          delete t.entity;
+          delete t.auto;
+          if (x.value.length > 3) t.pc = x.value.slice(3);
+          else delete t.pc;
+          setDirty(true);
+          renderPage();
+        }),
     );
     $("dkAddMedia").onclick = () => {
       const t = { id: "np" + Date.now().toString(36), type: "media" };
@@ -2998,18 +3088,41 @@
       (refresh ? "Fetching the entity list from Home Assistant..." : "Loading...") +
       "</p>";
     $("dkListUpdate").disabled = true;
+    entsBusy = true;
     try {
       setList(await api("/api/ha/entities" + (refresh ? "?refresh=1" : "")));
+      entsErr = "";
       if (deck) {
         renderPage();
       }
     } catch (e) {
+      entsErr = e.message;
       $("dkEnts").innerHTML =
+        typedRow() +
         '<p class="dk-empty">' + esc(e.message) + "<br>Check the Home Assistant settings above.</p>";
+      bindEnts();
       throw e;
     } finally {
+      entsBusy = false;
       $("dkListUpdate").disabled = false;
     }
+  }
+  /* A full entity id typed in the search can be used without the list (#5). */
+  function typedRow() {
+    const q = $("dkQ").value.trim().toLowerCase();
+    if (!/^[a-z0-9_]+\.[a-z0-9_]+$/.test(q) || entMap[q]) return "";
+    return (
+      '<div class="dk-ent" data-id="' +
+      esc(q) +
+      '"><div><b>Use ' +
+      esc(q) +
+      "</b><small>not on the list from Home Assistant</small></div></div>"
+    );
+  }
+  function bindEnts() {
+    $("dkEnts")
+      .querySelectorAll("[data-id]")
+      .forEach((r) => (r.onclick = () => pick(r.dataset.id)));
   }
   $("dkListUpdate").onclick = async () => {
     try {
@@ -3034,10 +3147,16 @@
       );
   }
   function renderEnts() {
-    if (!ents) return;
-    if (!ents.length) {
+    if (entsBusy) return;
+    if (!ents || !ents.length) {
       $("dkEnts").innerHTML =
-        '<p class="dk-empty">No entity list on the device yet. Press "Update from HA".</p>';
+        typedRow() +
+        '<p class="dk-empty">' +
+        (entsErr
+          ? esc(entsErr) + "<br>Check the Home Assistant settings above."
+          : 'No entity list on the device yet. Press "Update from HA".') +
+        "<br>Or type a full entity id, for example light.kitchen.</p>";
+      bindEnts();
       return;
     }
     const q = $("dkQ").value.trim().toLowerCase();
@@ -3058,7 +3177,8 @@
       list = list.slice().sort((a, b) => pri(a) - pri(b));
     }
     const shown = list.slice(0, 250);
-    $("dkEnts").innerHTML = shown.length
+    const typed = typedRow();
+    const rows = shown.length
       ? shown
           .map(
             (e) =>
@@ -3077,13 +3197,20 @@
         (list.length > shown.length
           ? '<p class="dk-empty">' + (list.length - shown.length) + " more - refine the search</p>"
           : "")
-      : '<p class="dk-empty">Nothing matches.</p>';
-    $("dkEnts")
-      .querySelectorAll("[data-id]")
-      .forEach((r) => (r.onclick = () => pick(r.dataset.id)));
+      : typed
+        ? ""
+        : '<p class="dk-empty">Nothing matches.</p>';
+    $("dkEnts").innerHTML = typed + rows;
+    bindEnts();
   }
-  async function openPicker(i) {
+  async function openPicker(i, auto) {
     pickFor = i;
+    pickAuto = !!auto;
+    const pt = i >= 0 ? pages()[cur].tiles[i] : null;
+    if (pt && pt.type === "media") {
+      domBefore = dom; // only this picker is limited to players
+      dom = "media_player";
+    }
     $("dkQ").value = "";
     $("dkPicker").classList.add("show");
     renderDomains();
@@ -3095,6 +3222,10 @@
   }
   function closePicker() {
     $("dkPicker").classList.remove("show");
+    if (domBefore !== null) {
+      dom = domBefore;
+      domBefore = null;
+    }
   }
   /* deck.json "led" is set on the Hardware page (portal.js sets window.snLedEntity); keep this copy in step
    so a save from here does not bring back the old entity. */
@@ -3108,7 +3239,15 @@
     const p = pages()[cur];
     const type = autoType(domainOf(id));
     if (pickFor < 0) p.tiles.push({ id: "t" + Date.now().toString(36), type: type, entity: id });
-    else {
+    else if (p.tiles[pickFor].type === "media") {
+      if (domainOf(id) !== "media_player") {
+        alert("Now playing needs a media player (media_player.*).");
+        return;
+      }
+      p.tiles[pickFor].entity = id;
+      if (pickAuto) p.tiles[pickFor].auto = true;
+      if (!p.tiles[pickFor].auto) delete p.tiles[pickFor].pc;
+    } else {
       const t = p.tiles[pickFor];
       t.entity = id;
       t.type = type;

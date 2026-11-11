@@ -18,13 +18,18 @@ namespace deck {
 // RAM but every transaction adds overhead, and with 20 chunks a frame grew
 // to ~16 ms, too close to the 16.39 ms TE period.
 constexpr int PANEL_ROWS = 48;
-// Animation frames are sampled this far ahead of the build so the offset
-// matches the moment the frame is actually on the glass.
+// Animations are sampled this far past the next TE edge; without recent TE,
+// this far ahead of the build.
+constexpr int64_t PANEL_SYNC_PERIOD_US = 16390;
+constexpr int64_t PANEL_SYNC_LEAD_US = 6000;
 constexpr int64_t PANEL_ANIM_LEAD_US = 8000;
 constexpr bool PANEL_BIG_ENDIAN = true;
 #elif defined(BOARD_DISPLAY_MIPI_DSI)
 // One chunk = the whole frame, built straight into the back framebuffer.
 constexpr int PANEL_ROWS = NATIVE_H;
+// No sync clock yet (transportLastSyncUs() is 0); period is nominal 60 Hz, unmeasured.
+constexpr int64_t PANEL_SYNC_PERIOD_US = 16667;
+constexpr int64_t PANEL_SYNC_LEAD_US = 0;
 // A frame shows at the refresh after it is built: about one period ahead.
 constexpr int64_t PANEL_ANIM_LEAD_US = 12000;
 constexpr bool PANEL_BIG_ENDIAN = false;
@@ -86,6 +91,8 @@ void quiesceAck();
 bool transportBegin();
 // The flush loop (core 1, high priority).
 void transportTask(void*);
+// esp_timer time of the last panel sync edge (TE), 0 when the bus has none.
+int64_t transportLastSyncUs();
 
 }  // namespace deck
 

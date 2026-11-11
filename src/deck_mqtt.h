@@ -14,6 +14,8 @@ struct MqttSettings {
 // NVS and these entry points belong to the loop task.
 void mqttBegin();
 void mqttTick();
+// Drop the broker connection until resumed (the daily download needs its RAM).
+void mqttPause(bool pause);
 const MqttSettings& mqttSettings();
 bool mqttNormalize(MqttSettings& settings, String& error);
 bool mqttSaveSettings(const MqttSettings& settings);

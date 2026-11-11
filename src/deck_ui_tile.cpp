@@ -207,6 +207,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   const bool glass = s_theme == THEME_GLASS && wallBlur();
 
   lv_obj_t* t = lv_obj_create(grid);
+  lv_obj_set_size(t, 0, 0);  // the grid stretches it; LVGL's default 130 px would be fitted first
   lv_obj_set_grid_cell(t, LV_GRID_ALIGN_STRETCH, col, w, LV_GRID_ALIGN_STRETCH, row, h);
   lv_obj_remove_flag(t, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_radius(t, 16, 0);
@@ -317,14 +318,44 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
       lv_obj_set_style_radius(button, 8, 0);
       lv_obj_set_style_bg_color(button, lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
       lv_obj_set_style_bg_opa(button, LV_OPA_50, LV_STATE_PRESSED);
+      if (i == 1) {
+        r.mediaDisc = lv_obj_create(button);
+        lv_obj_remove_style_all(r.mediaDisc);
+        lv_obj_remove_flag(r.mediaDisc, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+        lv_obj_set_style_radius(r.mediaDisc, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(r.mediaDisc, lv_color_hex(accent), 0);
+        lv_obj_set_style_bg_opa(r.mediaDisc, LV_OPA_COVER, 0);
+        showObj(r.mediaDisc, false);
+      }
       r.mediaIcons[i] = lv_label_create(button);
       mediaGlyph(r.mediaIcons[i], icons[i], fallback[i], 24);
       lv_obj_center(r.mediaIcons[i]);
-      lv_obj_add_event_cb(button, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 4 + i));
+      lv_obj_add_event_cb(button, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 8 + i));
     }
+    r.volBar = lv_bar_create(t);
+    lv_obj_remove_style_all(r.volBar);
+    lv_obj_add_flag(r.volBar, LV_OBJ_FLAG_CLICKABLE);
+    for (lv_event_code_t c : {LV_EVENT_PRESSED, LV_EVENT_PRESSING, LV_EVENT_SHORT_CLICKED, LV_EVENT_LONG_PRESSED,
+                              LV_EVENT_LONG_PRESSED_REPEAT, LV_EVENT_RELEASED, LV_EVENT_PRESS_LOST})
+      lv_obj_add_event_cb(r.volBar, mediaVolEvent, c, (void*)(uintptr_t)idx);
+    lv_bar_set_range(r.volBar, 0, 100);
+    lv_obj_set_style_bg_color(r.volBar, lv_color_hex(C_TRACK), 0);
+    lv_obj_set_style_bg_opa(r.volBar, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(r.volBar, lv_color_hex(accent), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(r.volBar, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(r.volBar, 14, 0);
+    lv_obj_set_style_clip_corner(r.volBar, true, 0);
+    showObj(r.volBar, false);
+    static const char* const volIcons[] = {"volume-minus", "volume-plus"};
+    static const char* const volFallback[] = {"-", "+"};
+    for (int i = 0; i < 2; i++) {
+      r.volIcons[i] = lv_label_create(r.volBar);
+      mediaGlyph(r.volIcons[i], volIcons[i], volFallback[i], 24);
+    }
+    r.iconCp = 2;  // force the first play glyph
     s_tiles.push_back(r);
     applyMedia(s_tiles.back());
-    lv_obj_add_event_cb(t, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 4 + 3));
+    lv_obj_add_event_cb(t, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 8 + 3));
     lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
     return;
   }

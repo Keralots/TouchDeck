@@ -15,15 +15,18 @@ enum JpegResult : uint8_t { JPEG_OK, JPEG_PROGRESSIVE, JPEG_TOO_SMALL, JPEG_NO_M
 using JpegReadFn = size_t (*)(void* ctx, uint8_t* buf, size_t n);
 using JpegWriteFn = size_t (*)(void* ctx, const uint8_t* data, size_t n);
 
-// A decoded picture: RGB888 in R, G, B order, PSRAM, release with free().
-struct JpegImage {
-  uint8_t* px = nullptr;
-  int w = 0, h = 0;
+// Takes the picture as it is decoded. begin: decoded size and the tallest
+// block, false = no memory. block: pixels x0..x1, y0..y1 (inclusive) as packed
+// RGB888 rows in R, G, B order; a block reaching x = w - 1 ends a band.
+struct JpegSink {
+  bool (*begin)(void* ctx, int w, int h, int bandH);
+  void (*block)(void* ctx, int x0, int y0, int x1, int y1, const uint8_t* rgb);
+  void* ctx;
 };
 
 // Decode the stream to at least minW x minH pixels (scaled down by a power of
-// two where the decoder can). `tick` runs now and then during long decodes.
-JpegResult jpegDecode(JpegReadFn read, void* ctx, int minW, int minH, JpegImage& out, void (*tick)());
+// two where the decoder can).
+JpegResult jpegDecode(JpegReadFn read, void* readCtx, int minW, int minH, const JpegSink& sink);
 
 // The encoder takes RGB888 in B, G, R order when this is true.
 #if SOC_JPEG_CODEC_SUPPORTED

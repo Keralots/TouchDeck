@@ -66,6 +66,8 @@ bool fail(const char* step, esp_err_t e) {
 
 }  // namespace
 
+int64_t transportLastSyncUs() { return 0; }
+
 bool transportBegin() {
   esp_ldo_channel_handle_t ldo = nullptr;
   esp_ldo_channel_config_t lc = {};

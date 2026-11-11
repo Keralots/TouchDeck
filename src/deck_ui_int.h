@@ -127,8 +127,16 @@ struct TileRt {
   std::shared_ptr<MediaArt> art;
   String artWanted;
   uint32_t artAttempt;
+  String artFailed;       // HA cover that failed (PNG, network): retried after 2 min
   int16_t coverPx;
   bool mediaFull;
+  bool mediaVol;          // the volume row is shown
+  bool mediaHa;           // the HA player is the source (auto tiles switch it)
+  uint8_t mediaPx;        // transport icon size
+  lv_obj_t* mediaDisc;    // accent disc behind play on bigger tiles
+  lv_obj_t* volBar;       // volume pill: bar, drag and tap target in one
+  lv_obj_t* volIcons[2];  // minus and plus on it
+  bool volHeld;           // a drag or a held half is moving the level
   // Glass auto text: the colour picked from the picture under the tile.
   uint32_t autoText;
   bool hasAuto;
@@ -204,6 +212,7 @@ struct QuickPanel {
   bool open;
   bool stale;
   uint32_t lastStatus;
+  int rssi;  // shown on the WiFi chip, 0 = none yet
 };
 
 constexpr int NAME_LINE_SP = -2;  // Montserrat's line height has room for accents
@@ -235,6 +244,8 @@ struct Spark {
   lv_draw_buf_t* buf;       // A8 coverage, the chart object's size; drawn in color
   int32_t key;              // glide step last painted, -1 = repaint
   bool painted;             // buf holds a chart (a repaint keeps the old one until then)
+  bool dirty;               // new data since the last paint
+  bool drawPaint;           // paint on the next draw: not gliding (another page, panel open)
   float paintLo, paintHi;
 };
 
@@ -336,6 +347,9 @@ const char* actionVerb(const TileRt& r, const TileAction& a);
 void requestAction(TileRt& r, bool hold);
 void tileEvent(lv_event_t* e);
 bool pcVolHeld();
+void pcVolumeAsk(const String& pc, int pct);
+int pcVolWanted(const String& pc);
+bool pcIsOnline(const String& id);
 void pcVolumeTick();
 void sliderEvent(lv_event_t* e);
 
@@ -362,6 +376,8 @@ extern lv_obj_t* s_modalCard;
 extern int s_modalTile;
 extern int8_t s_confirmHold;
 bool modalShown();
+void cardUnderFree();
+void fxCardPicFree();
 void setModalOpen(bool open);
 void deckToastShow(const char* text, uint32_t holdMs);
 void dailyBarSync();
@@ -378,7 +394,7 @@ lv_obj_t* makeRoot(int w, int h);
 uint32_t metricAccent(const TileDef& d);
 uint32_t metricChart(const TileDef& d);
 uint32_t tileText(const TileDef& d);
-void setText(lv_obj_t* l, const char* text);
+bool setText(lv_obj_t* l, const char* text);  // true when the text changed
 int lineH(const lv_font_t* f);
 int textH(const lv_font_t* f, int lines);
 void showObj(lv_obj_t* o, bool on);
@@ -391,11 +407,12 @@ void fitEvent(lv_event_t* e);
 
 // deck_ui_media.cpp
 void mediaGlyph(lv_obj_t* label, const char* name, const char* fallback, int px);
-void mediaProgress(TileRt& r);
-void mediaCover(TileRt& r);
+void mediaTick(TileRt& r);
 void applyMedia(TileRt& r);
 void mediaArtTick();
 void mediaEvent(lv_event_t* e);
+void mediaVolEvent(lv_event_t* e);
+extern bool s_zonesDirty;
 void fitMedia(TileRt& r, int cw, int ch);
 void fitClock(TileRt& r, int cw, int ch);
 
@@ -427,7 +444,7 @@ void sparkFree(Spark* s);
 bool sparkRender(TileRt& r, uint32_t now, bool ease, uint32_t dtMs);
 void sparkDrawEvent(lv_event_t* e);
 void sparkSizeEvent(lv_event_t* e);
-void applyPcToTile(TileRt& r);
+bool applyPcToTile(TileRt& r);  // true when the tile changed
 lv_obj_t* makeRows(lv_obj_t* t, const TileDef& d);
 lv_obj_t* makeDetail(lv_obj_t* t, const TileDef& d);
 void makeMetricContent(TileRt& r, lv_obj_t* t);
@@ -461,6 +478,7 @@ void fxRipple(TileRt& r, lv_point_t p);  // the touch effect, p in screen coords
 bool fxCancelRipples();  // true when one was running
 void fxBeforeTileOn(TileRt& r, bool on);  // before the CHECKED state changes
 void fxTileOn(TileRt& r, bool wasOn);
+void fxCardOpenBegin(int tileIdx, deck::FrameRect to, int r1);
 void fxCardOpen(lv_obj_t* card, int tileIdx);
 void fxCardClose(lv_obj_t* card, int tileIdx);
 

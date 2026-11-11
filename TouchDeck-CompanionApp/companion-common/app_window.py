@@ -14,7 +14,7 @@ import time
 import webbrowser
 
 from app_state import AppState
-from config_model import normalize_config
+from config_model import device_host, normalize_config
 import pc_control
 import pc_state
 from art_server import ART
@@ -154,9 +154,34 @@ def _packet_identity(cfg):
     return udp_stream.packet_identity(cfg)
 
 
+_lan = {"ip": "", "until": 0.0}
+
+
+def _lan_ip(cfg):
+    """This PC's LAN address, so a deck fed over USB can still fetch covers over WiFi."""
+    now = time.monotonic()
+    if now >= _lan["until"]:
+        ip = ""
+        # Connecting a UDP socket sends nothing; it only picks the outgoing interface.
+        for target in (cfg.get("esp32_ip"), "192.0.2.1"):
+            if not target:
+                continue
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                    probe.connect((device_host(target), 9))
+                    ip = probe.getsockname()[0]
+                break
+            except (OSError, ValueError):
+                pass
+        _lan.update(ip=ip, until=now + 30)
+    return _lan["ip"]
+
+
 def _send_packet(sock, cfg, payload):
-    payload, data = pc_state.encode_packet(payload)
     usb_connected = _serial_link is not None and _serial_link.is_connected()
+    if usb_connected and "art_port" in payload and _lan_ip(cfg):
+        payload["ip"] = _lan_ip(cfg)
+    payload, data = pc_state.encode_packet(payload)
     try:
         if usb_connected:
             _serial_link.send(payload)
