@@ -1,12 +1,14 @@
 // JPEG through the chip's hardware codec (ESP32-P4). The decoder needs the
 // whole file in memory and always decodes at full size; resampling is left to
-// the caller. Untested on hardware: colour order and odd sizes (600 is not a
-// multiple of 16) still need a check.
+// the caller. A picture whose full-size output does not fit in PSRAM (4K
+// Spotlight: 24.9 MB RGB888) goes through JPEGDEC at a reduced scale instead.
 #include "deck_jpeg.h"
 #if SOC_JPEG_CODEC_SUPPORTED
+#include <new>
 #include <esp_heap_caps.h>
 #include <driver/jpeg_decode.h>
 #include <driver/jpeg_encode.h>
+#include <JPEGDEC.h>
 
 namespace deck {
 namespace {
@@ -50,6 +52,54 @@ uint8_t* readAll(JpegReadFn read, void* ctx, size_t& len) {
   return nullptr;
 }
 
+struct SwDecode {
+  JPEGDEC dec;
+  const JpegSink* sink;
+  int w, h;
+  uint8_t rgb[MAX_BUFFERED_PIXELS * 3];
+};
+
+int swDraw(JPEGDRAW* d) {
+  SwDecode& s = *(SwDecode*)d->pUser;
+  if (d->x >= s.w || d->y >= s.h) return 1;
+  const int bw = std::min(d->iWidthUsed, s.w - d->x), bh = std::min(d->iHeight, s.h - d->y);
+  uint8_t* o = s.rgb;
+  for (int y = 0; y < bh; y++)
+    for (int x = 0; x < bw; x++) {
+      const uint16_t c = d->pPixels[y * d->iWidth + x];
+      *o++ = (c >> 8 & 0xF8) | c >> 13;
+      *o++ = (c >> 3 & 0xFC) | (c >> 9 & 3);
+      *o++ = (c << 3 & 0xF8) | (c >> 2 & 7);
+    }
+  s.sink->block(s.sink->ctx, d->x, d->y, d->x + bw - 1, d->y + bh - 1, s.rgb);
+  return 1;
+}
+
+// Software decode at the smallest power-of-two scale that still covers
+// minW x minH; JPEG_NO_MEMORY when even that is not smaller than full size.
+JpegResult swDecode(uint8_t* file, size_t len, int fullW, int fullH, int minW, int minH, const JpegSink& sink) {
+  int div = 1;
+  while (div < 8 && fullW / (div * 2) >= minW && fullH / (div * 2) >= minH) div *= 2;
+  if (div == 1) return JPEG_NO_MEMORY;
+  void* mem = heap_caps_malloc(sizeof(SwDecode), MALLOC_CAP_SPIRAM);
+  if (!mem) return JPEG_NO_MEMORY;
+  SwDecode* s = new (mem) SwDecode();
+  s->sink = &sink;
+  s->w = fullW / div;
+  s->h = fullH / div;
+  JpegResult r = JPEG_BAD;
+  if (s->dec.openRAM(file, (int)len, swDraw)) {
+    s->dec.setPixelType(RGB565_LITTLE_ENDIAN);
+    s->dec.setUserPointer(s);
+    if (!sink.begin(sink.ctx, s->w, s->h, 16)) r = JPEG_NO_MEMORY;
+    else if (s->dec.decode(0, 0, div)) r = JPEG_OK;
+    s->dec.close();
+  }
+  s->~SwDecode();
+  heap_caps_free(mem);
+  return r;
+}
+
 }  // namespace
 
 JpegResult jpegDecode(JpegReadFn read, void* readCtx, int minW, int minH, const JpegSink& sink) {
@@ -80,12 +130,14 @@ JpegResult jpegDecode(JpegReadFn read, void* readCtx, int minW, int minH, const 
   size_t inSize = 0, outSize = 0;
   uint8_t* in = (uint8_t*)jpeg_alloc_decoder_mem(len, &inCfg, &inSize);
   uint8_t* px = in ? (uint8_t*)jpeg_alloc_decoder_mem((size_t)aw * ah * 3, &outCfg, &outSize) : nullptr;
-  if (in) memcpy(in, file, len);
-  free(file);
   if (!px) {
     free(in);
-    return JPEG_NO_MEMORY;
+    const JpegResult r = swDecode(file, len, info.width, info.height, minW, minH, sink);
+    free(file);
+    return r;
   }
+  memcpy(in, file, len);
+  free(file);
   jpeg_decoder_handle_t dec = nullptr;
   jpeg_decode_engine_cfg_t eng = {};
   eng.timeout_ms = TIMEOUT_MS;
