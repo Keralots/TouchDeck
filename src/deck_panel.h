@@ -69,6 +69,8 @@ const uint16_t* panelLatestLvFrame();
 // every pixel out of a posted framebuffer (or dropped the frame): one token
 // per posted frame, up to two frames in flight.
 void panelPostLv(int idx, uint32_t gen);
+// An area (inclusive, logical pixels) LVGL redrew in the frame it posts next.
+void panelLvDirty(int x0, int y0, int x1, int y1);
 bool panelWaitLvReady(uint32_t timeoutMs);
 
 // --- Page-slide compositor ---------------------------------------------------

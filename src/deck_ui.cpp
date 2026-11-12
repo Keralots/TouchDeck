@@ -98,7 +98,8 @@ uint32_t tickCb() { return panelFrameClockMs(); }
 // Posted LVGL frames whose framebuffer the flush task has not released yet.
 int s_lvOut = 0;
 
-void flushCb(lv_display_t* d, const lv_area_t*, uint8_t* px) {
+void flushCb(lv_display_t* d, const lv_area_t* a, uint8_t* px) {
+  panelLvDirty(a->x1, a->y1, a->x2, a->y2);
   if (!lv_display_flush_is_last(d)) {
     lv_display_flush_ready(d);
     return;

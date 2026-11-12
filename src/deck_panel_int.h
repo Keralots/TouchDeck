@@ -27,10 +27,10 @@ constexpr bool PANEL_BIG_ENDIAN = true;
 #elif defined(BOARD_DISPLAY_MIPI_DSI)
 // One chunk = the whole frame, built straight into the back framebuffer.
 constexpr int PANEL_ROWS = NATIVE_H;
-// No sync clock yet (transportLastSyncUs() is 0); period is nominal 60 Hz, unmeasured.
+// Frame times come from transportPresentUs(); these are the nominal 60 Hz
+// period and the fallback lead before the first refresh was seen.
 constexpr int64_t PANEL_SYNC_PERIOD_US = 16667;
 constexpr int64_t PANEL_SYNC_LEAD_US = 0;
-// A frame shows at the refresh after it is built: about one period ahead.
 constexpr int64_t PANEL_ANIM_LEAD_US = 12000;
 constexpr bool PANEL_BIG_ENDIAN = false;
 #else
@@ -38,6 +38,31 @@ constexpr bool PANEL_BIG_ENDIAN = false;
 #endif
 
 enum Kind : uint8_t { KIND_HSTRIP = 0, KIND_VSTRIP, KIND_PANEL, KIND_FRAME, KIND_MORPH };
+
+// What changed between LVGL frames, as a grid of cells (32 columns, native
+// orientation): a transport that keeps old frames copies only these.
+constexpr int DIRTY_CW = (NATIVE_W + 31) / 32;
+constexpr int DIRTY_CH = 24;
+constexpr int DIRTY_ROWS = (NATIVE_H + DIRTY_CH - 1) / DIRTY_CH;
+struct DirtyMask {
+  uint32_t rows[DIRTY_ROWS];
+  bool full;  // everything, the cells are not looked at
+  void clear() { memset(rows, 0, sizeof(rows)); full = false; }
+  void add(const DirtyMask& o) {
+    full = full || o.full;
+    for (int r = 0; r < DIRTY_ROWS; r++) rows[r] |= o.rows[r];
+  }
+  void addRect(int x0, int y0, int x1, int y1) {  // inclusive, clipped here
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 >= NATIVE_W) x1 = NATIVE_W - 1;
+    if (y1 >= NATIVE_H) y1 = NATIVE_H - 1;
+    if (x0 > x1 || y0 > y1) return;
+    const int c0 = x0 / DIRTY_CW, c1 = x1 / DIRTY_CW;
+    const uint32_t bits = (c1 >= 31 ? 0xFFFFFFFFu : (1u << (c1 + 1)) - 1) & ~((1u << c0) - 1);
+    for (int r = y0 / DIRTY_CH; r <= y1 / DIRTY_CH; r++) rows[r] |= bits;
+  }
+};
 
 // A frame to send, resolved under the lock so the build never reads shared
 // state: one LVGL framebuffer, a horizontal or vertical A|B strip, or a panel
@@ -65,6 +90,8 @@ struct Frame {
   uint32_t base8;  // the base's brightness this frame in eighths, 4 (the scrim) .. 8
   uint8_t dotCount, dotActive, dotAlpha;
   bool dotsV;
+  // Plain LVGL frame: what differs from the plain frame decided before it.
+  DirtyMask dirty;
 };
 
 // --- Compositor side, called from the transport's flush task ---
@@ -72,6 +99,9 @@ struct Frame {
 bool frameDecide(Frame& f);
 // Native rows ny0 .. ny0 + PANEL_ROWS - 1 of f into dst (row stride NATIVE_W).
 void frameBuild(const Frame& f, uint16_t* dst, int ny0);
+// Plain LVGL frame over an older one in dst (a whole frame): only the cells of m.
+// False when f cannot be built that way; nothing was written then.
+bool frameBuildDirty(const Frame& f, uint16_t* dst, const DirtyMask& m);
 // Nothing to show: sleep until LVGL posts a frame or an animation needs one.
 void frameIdleWait();
 // f no longer reads its LVGL framebuffer: LVGL may render into it again.
@@ -93,6 +123,9 @@ bool transportBegin();
 void transportTask(void*);
 // esp_timer time of the last panel sync edge (TE), 0 when the bus has none.
 int64_t transportLastSyncUs();
+// When a frame decided now will be on the glass; 0 = no prediction, the
+// compositor uses the sync edge and the constants above.
+int64_t transportPresentUs(int64_t nowUs);
 
 }  // namespace deck
 

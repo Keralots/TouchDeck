@@ -41,6 +41,7 @@ struct State {
   bool frameResult = false;
   PanelStats frameStats = {};
   bool lvPending = false;
+  DirtyMask lvDirty = {{}, true};  // LVGL areas since the last plain frame went out
   int lvIdx = 0;
   uint32_t lvGen = 0;
   int lvLatest = -1;
@@ -121,6 +122,10 @@ inline void copyRun(uint16_t* d, int dstep, const uint16_t* s, int n) {
 }
 
 inline void copyAny(uint16_t* d, int dstep, const uint16_t* s, int n, bool swap, uint8_t dim) {
+  if (!PANEL_BIG_ENDIAN && dstep == 1 && dim == 0) {
+    memcpy(d, s, (size_t)n * 2);
+    return;
+  }
   if (swap) {
     if (dim == 0) copyRun<true, 0>(d, dstep, s, n);
     else if (dim == 1) copyRun<true, 1>(d, dstep, s, n);
@@ -826,19 +831,38 @@ inline float clamp01(float v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
 // Page dots on a translucent pill, bottom centre (columns) or right edge
 // (pages of a column), drawn into the native chunk (panel byte order) after
 // it was built.
+constexpr int DOTS_SPACING = 14;
+constexpr float DOTS_PILL_R = 8.0f;
+
+// The pill's centre, half length and bounding box in logical pixels.
+struct DotsBox {
+  float cx, cy, half;
+  int x0, y0, x1, y1;
+};
+DotsBox dotsBox(const Frame& f) {
+  DotsBox b;
+  const bool v = f.dotsV;
+  b.cy = v ? (float)f.h * 0.5f : (float)f.h - 14.0f;
+  b.cx = v ? (float)f.w - 14.0f : (float)f.w * 0.5f;
+  b.half = (float)(f.dotCount - 1) * DOTS_SPACING * 0.5f;
+  const float hx = v ? 0.0f : b.half, hy = v ? b.half : 0.0f;
+  b.x0 = (int)(b.cx - hx - DOTS_PILL_R) - 1;
+  b.x1 = (int)(b.cx + hx + DOTS_PILL_R) + 1;
+  b.y0 = (int)(b.cy - hy - DOTS_PILL_R) - 1;
+  b.y1 = (int)(b.cy + hy + DOTS_PILL_R) + 1;
+  return b;
+}
+
 void overlayDots(const Frame& f, uint16_t* dst, int ny0) {
   const int n = f.dotCount;
   if (n < 2 || !f.dotAlpha) return;
-  constexpr int SPACING = 14;
+  constexpr int SPACING = DOTS_SPACING;
   constexpr float DOT_R = 3.5f;
-  constexpr float PILL_R = 8.0f;
+  constexpr float PILL_R = DOTS_PILL_R;
   const bool v = f.dotsV;
-  const float cy = v ? (float)f.h * 0.5f : (float)f.h - 14.0f;
-  const float cx = v ? (float)f.w - 14.0f : (float)f.w * 0.5f;
-  const float half = (float)(n - 1) * SPACING * 0.5f;  // pill segment half length
-  const float hx = v ? 0.0f : half, hy = v ? half : 0.0f;
-  const int bx0 = (int)(cx - hx - PILL_R) - 1, bx1 = (int)(cx + hx + PILL_R) + 1;
-  const int by0 = (int)(cy - hy - PILL_R) - 1, by1 = (int)(cy + hy + PILL_R) + 1;
+  const DotsBox box = dotsBox(f);
+  const float cx = box.cx, cy = box.cy, half = box.half;
+  const int bx0 = box.x0, bx1 = box.x1, by0 = box.y0, by1 = box.y1;
   // Quick reject: does the box touch the native rows of this chunk?
   int nxa, nya, nxb, nyb;
   toNative(f.rot, bx0, by0, nxa, nya);
@@ -1001,7 +1025,9 @@ bool decide(Frame& f) {
   bool give = false;
   const int64_t te = transportLastSyncUs();
   const int64_t now = esp_timer_get_time();
-  const int64_t frameTime = te && now - te <= 2 * PANEL_SYNC_PERIOD_US ? te + PANEL_SYNC_PERIOD_US + PANEL_SYNC_LEAD_US
+  const int64_t shown = transportPresentUs(now);
+  const int64_t frameTime = shown ? shown
+                          : te && now - te <= 2 * PANEL_SYNC_PERIOD_US ? te + PANEL_SYNC_PERIOD_US + PANEL_SYNC_LEAD_US
                                                                       : now + PANEL_ANIM_LEAD_US;
   portENTER_CRITICAL(&s_mux);
   const uint8_t rot = s_rot;
@@ -1170,6 +1196,16 @@ bool decide(Frame& f) {
   }
   if (have) {
     f.dotAlpha = dots;
+    if (!f.comp) {
+      f.dirty = s.lvDirty;
+      s.lvDirty.clear();
+      if (rot != 0) f.dirty.full = true;
+      // The dots are drawn over the copy, and must go from it afterwards.
+      if (f.dotCount >= 2 && (dots || s.lastSentDots)) {
+        const DotsBox b = dotsBox(f);
+        f.dirty.addRect(b.x0, b.y0, b.x1, b.y1);
+      }
+    }
     s.lastSentDots = dots;
   }
   portEXIT_CRITICAL(&s_mux);
@@ -1251,6 +1287,9 @@ bool panelBegin(uint8_t rotation) {
 void panelSetRotation(uint8_t rotation) {
   compCancel();
   s_rot = (rotation + BOARD_ROT_BASE) & 3;
+  portENTER_CRITICAL(&s_mux);
+  s.lvDirty.full = true;
+  portEXIT_CRITICAL(&s_mux);
 }
 
 uint8_t panelRotation() { return (s_rot + 4 - BOARD_ROT_BASE) & 3; }
@@ -1267,6 +1306,12 @@ const uint16_t* panelLatestLvFrame() {
   const int idx = s.lvLatest;
   portEXIT_CRITICAL(&s_mux);
   return idx >= 0 ? s_fb[idx] : nullptr;
+}
+
+void panelLvDirty(int x0, int y0, int x1, int y1) {
+  portENTER_CRITICAL(&s_mux);
+  s.lvDirty.addRect(x0, y0, x1, y1);
+  portEXIT_CRITICAL(&s_mux);
 }
 
 void panelPostLv(int idx, uint32_t gen) {
@@ -1510,6 +1555,26 @@ PanelStats panelTakeStats() {
 // --- Transport contract (deck_panel_int.h) ------------------------------------------
 bool frameDecide(Frame& f) { return decide(f); }
 void frameBuild(const Frame& f, uint16_t* dst, int ny0) { buildChunk(f, dst, ny0); }
+
+bool frameBuildDirty(const Frame& f, uint16_t* dst, const DirtyMask& m) {
+  if (PANEL_BIG_ENDIAN || f.comp || f.rot != 0 || m.full || PANEL_ROWS != NATIVE_H) return false;
+  for (int r = 0; r < DIRTY_ROWS; r++) {
+    uint32_t bits = m.rows[r];
+    const int y0 = r * DIRTY_CH, y1 = std::min(y0 + DIRTY_CH, NATIVE_H);
+    while (bits) {
+      const int c0 = __builtin_ctz(bits);
+      int c1 = c0;  // end of this run of cells
+      while (c1 < 32 && (bits >> c1 & 1)) c1++;
+      bits &= c1 >= 32 ? 0 : ~0u << c1;
+      const int x0 = c0 * DIRTY_CW, x1 = std::min(c1 * DIRTY_CW, NATIVE_W);
+      if (x0 >= x1) continue;
+      for (int y = y0; y < y1; y++)
+        memcpy(dst + y * NATIVE_W + x0, f.lv + y * NATIVE_W + x0, (size_t)(x1 - x0) * 2);
+    }
+  }
+  overlayDots(f, dst, 0);
+  return true;
+}
 
 void frameIdleWait() {
   const CompMode mode = compMode();
