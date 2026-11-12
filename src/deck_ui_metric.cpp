@@ -530,15 +530,31 @@ void applyClock(TileRt& r) {
 
 uint32_t s_pcSeen = 0;
 
-// A companion packet or an online change of any PC: refresh metric tiles.
+static void pcApplyTile(TileRt& r) {
+  if (r.def->type == TILE_MEDIA && (!r.def->entity.length() || r.def->mediaAuto)) applyMedia(r);
+  if (r.def->tap.kind == ACT_PC) applyPcStateToTile(r);
+  if (r.def->type == TILE_METRIC && applyPcToTile(r)) markPageStale(r.page);
+}
+
+// A companion packet or an online change of any PC: refresh its tiles. The
+// shown page at once, the other pages a few tiles per pass (all in one pass
+// cost a frame every second).
 void pcSync(bool force) {
-  if (!force && pcVersion() == s_pcSeen) return;
-  s_pcSeen = pcVersion();
-  for (TileRt& r : s_tiles) {
-    if (r.def->type == TILE_MEDIA && (!r.def->entity.length() || r.def->mediaAuto)) applyMedia(r);
-    if (r.def->tap.kind == ACT_PC) applyPcStateToTile(r);
-    if (r.def->type == TILE_METRIC && applyPcToTile(r)) markPageStale(r.page);
+  static size_t rest = SIZE_MAX;  // next tile of the walk over the other pages
+  static int shown = -1;          // the page done when the packet came
+  const bool fresh = force || pcVersion() != s_pcSeen;
+  const uint32_t t0 = micros();
+  // A new packet finishes the walk of the one before.
+  while (rest < s_tiles.size() && (fresh || micros() - t0 < 300)) {
+    TileRt& r = s_tiles[rest++];
+    if (r.page != shown) pcApplyTile(r);
   }
+  if (!fresh) return;
+  s_pcSeen = pcVersion();
+  shown = force ? -1 : sh.active;
+  rest = force ? SIZE_MAX : 0;
+  for (TileRt& r : s_tiles)
+    if (force || r.page == shown) pcApplyTile(r);
 }
 
 }  // namespace deckui

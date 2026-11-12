@@ -354,6 +354,8 @@
         ["", "Always"],
         ["pc-on", "Only while the PC is on"],
         ["pc-off", "Only while the PC is off"],
+        ["sound-on", "Only while the PC plays sound"],
+        ["sound-off", "Only while the PC is silent"],
         ["entity", "Only while an entity is in a state"],
       ]
         .map((o) => opt(o[0], o[1], k === o[0]))
@@ -478,7 +480,7 @@
     if (wide) return '<div class="dk-grp wide">' + secH(title) + inner + "</div>";
     return '<div class="dk-grp flat" style="--t:&quot;' + title + '&quot;">' + inner + "</div>";
   }
-  const canOn = (t) => !["metric", "sensor", "clock", "media"].includes(t.type);
+  const canOn = (t) => !["metric", "sensor", "clock", "media", "viz"].includes(t.type);
   /* Colours, then the on state; icon colours sit with them, the icon's style in iconFields. */
   function colorField(t, i) {
     const tx = TXT.concat(SW),
@@ -488,6 +490,13 @@
         "Colours",
         colRow(t, i, "color", "Time colour", "#E6E8EC", theme, { sw: tx, warn: readHint(t.color) }) +
           colRow(t, i, "textColor", "Date colour", "#E6E8EC", theme, { sw: tx, warn: readHint(t.textColor) }) +
+          lookOff(t, i),
+        true,
+      );
+    if (t.type === "viz")
+      return grp(
+        "Colours",
+        colRow(t, i, "color", "Colour", "#7DB5FF", "Bars or trace colour.", { sw: tx, warn: readHint(t.color) }) +
           lookOff(t, i),
         true,
       );
@@ -1071,6 +1080,39 @@
       "</div>"
     );
   }
+  /* Audio visualizer: spectrum bars or a scope, fed by the companion's audio stream. */
+  function vizRow(t, i) {
+    const scope = t.style === "scope";
+    return (
+      '<div class="dk-tile' +
+      (i === sel ? " sel" : "") +
+      '"><div class="dk-ic" style="background:' +
+      (t.color || "#7DB5FF") +
+      '">' +
+      (scope ? "~" : "EQ") +
+      '</div><div class="dk-tmain"><b>' +
+      (scope ? "Oscilloscope" : "Visualizer") +
+      '</b><div class="dk-tsub">What the PC plays (needs audio streaming in the companion)</div></div>' +
+      '<div class="dk-tact"><select data-vs="' +
+      i +
+      '" style="width:auto">' +
+      opt("bars", "Bars", !scope) +
+      opt("scope", "Scope", scope) +
+      "</select>" +
+      sizeSel(t, i) +
+      '<button type="button" class="btn' +
+      (i === more ? " on" : "") +
+      '" data-mo="' +
+      i +
+      '" title="More options">&#8943;</button><button type="button" class="btn" data-u="' +
+      i +
+      '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
+      i +
+      '" title="Remove">&#215;</button></div>' +
+      (i === more ? '<div class="dk-more">' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
+      "</div>"
+    );
+  }
   /* Now playing source: a PC (companion), a Home Assistant media player (#6),
      or auto: whichever of the two plays. */
   function mediaSrcSel(t, i) {
@@ -1576,6 +1618,7 @@
     const w = t.when;
     if (w === "pc-on" || w === "pc-off")
       return { k: "pc:" + ((isPcCmd(t) ? t.tap.pc : t.pc) || ""), neg: w === "pc-off" };
+    if (w === "sound-on" || w === "sound-off") return { k: "sound", neg: w === "sound-off" };
     if (w && typeof w === "object") {
       const s = String(w.state || ""),
         n = s[0] === "!";
@@ -1603,7 +1646,8 @@
           if (k.startsWith("pc:")) {
             const pc = pcs.find((x) => x.id === k.slice(3)) || (k === "pc:" && pcs[0]);
             nm = pc ? pc.name : "PC";
-          } else nm = k.slice(2).replace("=", " is ");
+          } else if (k === "sound") nm = "PC sound";
+          else nm = k.slice(2).replace("=", " is ");
           const on = pv[k] !== false,
             yes = k.startsWith("pc:") ? ["On", "Off"] : ["Yes", "No"];
           return (
@@ -1640,7 +1684,9 @@
       ? ""
       : (k === "entity"
           ? "The state as Home Assistant reports it (on, off, home, playing...). Hidden until it is known."
-          : "The PC counts as off about a minute after its companion goes quiet.") +
+          : k.startsWith("sound")
+            ? "Needs the companion's Audio visualizer switch. Sound counts after 2 s, silence after 30 s."
+            : "The PC counts as off about a minute after its companion goes quiet.") +
         " Its cell is free otherwise: another tile with the opposite condition can take it. Switch the Preview above the grid to place it.";
     let h =
       '<div class="field">' +
@@ -1652,6 +1698,8 @@
         ["", "Always"],
         ["pc-on", "Only while the PC is on"],
         ["pc-off", "Only while the PC is off"],
+        ["sound-on", "Only while the PC plays sound"],
+        ["sound-off", "Only while the PC is silent"],
         ["entity", "Only while an entity is in a state"],
       ]
         .map((o) => opt(o[0], o[1], k === o[0]))
@@ -1913,13 +1961,18 @@
     const np = t.type === "media",
       ck = t.type === "clock",
       pr = t.type === "printer",
+      vz = t.type === "viz",
       col =
         t.color ||
         (m ? PAL[((t.metric || 1) - 1) % 8] : ck ? "#E6E8EC" : pr ? "#F5B83D" : COL[d] || "#7DB5FF"),
-      cp = m || ck || pr || np ? 0 : tileCp(t);
+      cp = m || ck || pr || np || vz ? 0 : tileCp(t);
     const nm = np
       ? "Now playing"
-      : ck
+      : vz
+        ? t.style === "scope"
+          ? "Oscilloscope"
+          : "Visualizer"
+        : ck
         ? "Clock"
         : pr
           ? prnTileName(t)
@@ -2255,6 +2308,7 @@
           if (t.type === "metric") return metricRow(t, i);
           if (t.type === "clock") return clockRow(t, i);
           if (t.type === "media") return mediaRow(t, i);
+          if (t.type === "viz") return vizRow(t, i);
           if (isPcVol(t)) return pcVolRow(t, i);
           if (t.type === "printer") return offT(t) ? "" : printerRow(t, i);
           const d = domainOf(t.entity);
@@ -2334,7 +2388,7 @@
       +cells.toFixed(2) +
       " of " +
       c * r +
-      ' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddPcCmd">+ Add PC control</button><button type="button" class="btn" id="dkAddPcVol">+ Add PC volume</button><button type="button" class="btn" id="dkAddMedia">+ Add now playing</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button>' +
+      ' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddPcCmd">+ Add PC control</button><button type="button" class="btn" id="dkAddPcVol">+ Add PC volume</button><button type="button" class="btn" id="dkAddMedia">+ Add now playing</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddViz">+ Add visualizer</button><button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button>' +
       (prnOn() && (deck.printers || []).length
         ? '<button type="button" class="btn" id="dkAddPrinter">+ Add printer tile</button>'
         : "") +
@@ -2809,6 +2863,23 @@
       setDirty(true);
       renderPage();
     };
+    $("dkAddViz").onclick = () => {
+      const t = { id: "z" + Date.now().toString(36), type: "viz" };
+      setSize(t, "2x1");
+      p.tiles.push(t);
+      setDirty(true);
+      renderPage();
+    };
+    el.querySelectorAll("[data-vs]").forEach(
+      (x) =>
+        (x.onchange = () => {
+          const t = p.tiles[+x.dataset.vs];
+          if (x.value === "scope") t.style = "scope";
+          else delete t.style;
+          setDirty(true);
+          renderPage();
+        }),
+    );
     $("dkAddClock").onclick = () => {
       const t = { id: "k" + Date.now().toString(36), type: "clock" };
       setSize(t, "2x1");

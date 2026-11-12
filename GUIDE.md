@@ -47,7 +47,7 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 - **Printers:** Bambu Lab printers, their errors and alerts, the energy of a print. Shown once printers are turned on under Advanced. See [Bambu Lab printers](#bambu-lab-printers).
 - **Screen:** day brightness and the night schedule, screen sleep and presence.
 - **Hardware:** the speaker, the status LED and its Home Assistant entity, the vibration motor.
-- **Time:** 12/24 h clock and timezone.
+- **Time:** 12/24 h clock, timezone, and where the time comes from: network time (pool.ntp.org, the default) or Home Assistant, for a deck on a network that reaches only Home Assistant. With Home Assistant the deck reads its clock over the WebSocket on every connection and then hourly; the timezone is still the deck's own.
 - **Network:** WiFi, hostname / mDNS, static IP.
 - **Advanced:** optional features, off by default: Bambu Lab printers and MQTT.
 - **Maintenance:** microSD card, configuration backup (pages and settings; WiFi and the Home Assistant token are never included), firmware update, factory reset.
@@ -74,6 +74,7 @@ In **Pages & tiles**, a tile's "more options" has "Show": Always, Only while the
 ```
 
 - `"pc-on"` / `"pc-off"` follow the tile's own PC (the PC of its command or metric, otherwise the first known PC). The PC counts as off about a minute after its companion stops sending, so a companion restart does not rearrange the page; it counts as on again with the first packet.
+- `"sound-on"` / `"sound-off"` follow the audio a companion streams for the visualizer (its Audio visualizer switch must be on). Sound counts after 2 s without a break, so a notification sound does not count; silence counts after 30 s, so a pause between tracks does not rearrange the page.
 - `{ "entity": ..., "state": ... }` compares the state Home Assistant reports (`on`, `off`, `home`, `playing`...); a leading `!` means "is not". The tile stays hidden until Home Assistant has reported the entity; while Home Assistant is unreachable the last known state stands.
 
 A whole page can follow a condition the same way ("Page shown" in the page settings; its PC is the first known one). With "Switch to it when it appears" (`"auto": true`) the deck slides to the page when the condition starts to hold, for example a PC stats page when the PC comes on, and back to the page shown before when it stops:

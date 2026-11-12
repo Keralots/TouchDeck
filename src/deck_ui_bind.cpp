@@ -1,5 +1,6 @@
 // Deck UI: tiles bound to Home Assistant, HTTP sensors and the PC; tile actions.
 #include "deck_ui_int.h"
+#include "deck_viz.h"
 
 namespace deckui {
 
@@ -702,6 +703,7 @@ bool whenWanted(const WhenDef& w, const String& pcId) {
       if (p.id == pcId) on = p.on;
     return on == (w.kind == WHEN_PC_ON);
   }
+  if (w.kind == WHEN_SOUND_ON || w.kind == WHEN_SOUND_OFF) return vizSoundOn() == (w.kind == WHEN_SOUND_ON);
   if (w.kind == WHEN_ENTITY) {
     for (const auto& s : s_whenStates)
       if (s.first == w.entity) return s.second.length() && (s.second == w.state) != w.negate;
@@ -724,7 +726,7 @@ void whenWatch(const WhenDef& w, const String& pcId, std::vector<WhenPc>& pcs,
     HaEntity e;
     if (!last.length() && haGetEntity(w.entity, e) && e.known) last = e.state;
     states.push_back({w.entity, last});
-  } else if (w.kind != WHEN_ALWAYS) {
+  } else if (w.kind == WHEN_PC_ON || w.kind == WHEN_PC_OFF) {
     for (const WhenPc& p : pcs)
       if (p.id == pcId) return;
     WhenPc n;

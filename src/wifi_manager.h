@@ -7,6 +7,8 @@ void startWiFiDuringSplash();
 void initWiFi();
 void handleWiFi();
 bool isWiFiConnected();
+// Applies the timezone and the time source (NTP or Home Assistant).
+void configureClock();
 bool isAPMode();
 String getAPSSID();
 uint32_t wifiDisconnectCount();

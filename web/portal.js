@@ -563,6 +563,7 @@
     }
     if (window.dkPrnSync) window.dkPrnSync();
     setVal("timeFormat", c.clock.use24h ? "24" : "12");
+    setVal("timeSource", c.clock.source === "ha" ? "ha" : "ntp");
     setVal("timezone", c.clock.timezone || "");
     const tz = qa("#timezonePreset option").find((o) => o.value === (c.clock.timezone || ""));
     setVal("timezonePreset", tz ? tz.value : "");
@@ -671,6 +672,17 @@
             : !s.time_valid && $("nightEnabled").checked
               ? "day / time pending"
               : "day " + pct + "%";
+      if ($("timeSourceState")) {
+        const age = Number(s.time_ha_age);
+        $("timeSourceState").textContent =
+          s.time_source !== "ha"
+            ? ""
+            : s.time_ha_error
+              ? "Home Assistant time: " + s.time_ha_error
+              : age >= 0
+                ? "Last set from Home Assistant " + (age < 90 ? "just now" : Math.round(age / 60) + " min ago")
+                : "Waiting for Home Assistant";
+      }
       const pr = s.presence || {};
       $("sleepState").textContent = !pr.sleep_min
         ? "off"

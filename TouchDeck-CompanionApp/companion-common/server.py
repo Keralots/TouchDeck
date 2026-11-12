@@ -26,6 +26,7 @@ from config_model import (
 )
 from constants import MAX_METRICS
 import serial_link
+import audio_spectrum
 import walls
 
 
@@ -259,6 +260,7 @@ def apply_connection(core, state, form):
         if not core.save_config(config):
             return {"success": False, "message": "Could not write the configuration file."}
         state.set_config(config)
+        audio_spectrum.ensure(config)  # follow a new device address
 
         resolved = None
         if supports_source:
@@ -272,6 +274,24 @@ def apply_connection(core, state, form):
         if resolved:
             result.update({"sensor_source": source, "resolved_source": resolved})
         return result
+
+
+def apply_audio(core, state, form):
+    """Audio streaming switch for the deck's visualizer tiles."""
+    with _CONFIG_LOCK:
+        config = normalize_config(state.get_config())
+        config["audio_viz"] = form.get("enable", ["0"])[0] == "1"
+        if not core.save_config(config):
+            return {"success": False, "message": "Could not write the configuration file."}
+        state.set_config(config)
+    audio_spectrum.ensure(config)
+    return audio_status(state)
+
+
+def audio_status(state):
+    result = audio_spectrum.status()
+    result["audioEnabled"] = bool(state.get_config().get("audio_viz"))
+    return result
 
 
 def do_test(state, form):
@@ -510,6 +530,7 @@ def apply_import(core, state, config):
         if not core.save_config(migrated):
             return {"success": False, "message": "Could not write the imported configuration."}
         state.set_config(migrated)
+        audio_spectrum.ensure(migrated)
         return {"success": True, "message": "Configuration imported and migrated to version %s." % CONFIG_VERSION}
 
 
@@ -631,6 +652,7 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/api/status":
                 result = state.status()
                 result["version"] = CONFIG_VERSION
+                result.update(audio_status(state))
                 return self._json(result)
             if path == "/api/device/status":
                 return self._json(device_status(state))
@@ -701,6 +723,8 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json(apply_connection(core, state, self._form()))
             if path == "/api/test":
                 return self._json(do_test(state, self._form()))
+            if path == "/api/audio":
+                return self._json(apply_audio(core, state, self._form()))
             if path == "/api/import":
                 return self._json(apply_import(core, state, self._json_body()))
             if path == "/api/pair/start":

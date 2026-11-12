@@ -1326,7 +1326,8 @@
               <div class="page-header">
                 <h1 class="page-h1">Time</h1>
                 <p class="page-lede">
-                  Clock format and the timezone for the top bar clock and the night schedule.
+                  Clock format, where the time comes from, and the timezone for the top bar clock and the
+                  night schedule.
                 </p>
               </div>
               <form
@@ -1347,6 +1348,21 @@
                         </select>
                       </div>
                     </div>
+                  </div>
+                  <div class="field">
+                    <label class="field-label" for="timeSource">Time source</label>
+                    <div class="select-wrap">
+                      <select id="timeSource" name="timeSource">
+                        <option value="ntp">Network time (pool.ntp.org)</option>
+                        <option value="ha">Home Assistant</option>
+                      </select>
+                    </div>
+                    <p class="field-hint">
+                      Home Assistant: for a deck on a network that reaches only Home Assistant. The deck takes
+                      the time from it on every connection and then every hour. The timezone below still
+                      applies.
+                    </p>
+                    <p class="field-hint" id="timeSourceState"></p>
                   </div>
                 </div>
                 <div class="card">

@@ -187,6 +187,8 @@ bool parseWhen(JsonVariantConst v, WhenDef& w, String* err, const String& where)
     const char* s = v.as<const char*>();
     if (!strcmp(s, "pc-on")) w.kind = WHEN_PC_ON;
     else if (!strcmp(s, "pc-off")) w.kind = WHEN_PC_OFF;
+    else if (!strcmp(s, "sound-on")) w.kind = WHEN_SOUND_ON;
+    else if (!strcmp(s, "sound-off")) w.kind = WHEN_SOUND_OFF;
     else {
       if (err) *err = where + ": unknown when '" + s + "'";
       return false;
@@ -333,6 +335,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       else if (!strcmp(tt, "metric")) t.type = TILE_METRIC;
       else if (!strcmp(tt, "clock")) t.type = TILE_CLOCK;
       else if (!strcmp(tt, "media")) t.type = TILE_MEDIA;
+      else if (!strcmp(tt, "viz")) t.type = TILE_VIZ;
       else if (!strcmp(tt, "printer")) t.type = TILE_PRINTER;
       else {
         if (err) *err = where + ": unknown type '" + tt + "'";
@@ -419,7 +422,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         t.hasWarn = tv["warn"].is<float>() && isfinite(t.warn);
         t.hasCrit = tv["crit"].is<float>() && isfinite(t.crit);
       }
-      if (t.type == TILE_CLOCK || t.type == TILE_MEDIA) {
+      if (t.type == TILE_CLOCK || t.type == TILE_MEDIA || t.type == TILE_VIZ) {
         if (t.type == TILE_MEDIA) {
           t.pc = (const char*)(tv["pc"] | "");
           // entity = a Home Assistant player instead of a PC (#6).
@@ -429,6 +432,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
             return false;
           }
         }
+        if (t.type == TILE_VIZ) t.vizScope = !strcmp(tv["style"] | "bars", "scope");
         p.tiles.push_back(t);
         continue;
       }

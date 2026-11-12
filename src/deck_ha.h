@@ -145,6 +145,15 @@ bool haTakeCallResult(uint32_t id, HaCallResult& result);
 // show. False when none is pending.
 bool haTakeFailure(String& entity, String& message);
 
+// Clock from Home Assistant (for decks without network time): while on, the
+// deck asks Home Assistant for the time on every connection and then hourly,
+// and sets the system clock from it. The timezone stays the deck's own.
+void haSetTimeSync(bool on);
+// Epoch of the last time taken from Home Assistant, 0 = none yet; the last
+// error, "" when the last request worked.
+time_t haTimeSyncedAt();
+String haTimeError();
+
 // Portal entity picker: {"updated": epoch, "entities":
 // [{"id","name","state","icon","unit"}], "count": n}, kept on flash
 // (/ha_entities.json). Refresh fetches it from Home Assistant in pages

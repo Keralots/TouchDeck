@@ -284,6 +284,7 @@ static void handleApiConfig() {
   JsonObject clock = doc["clock"].to<JsonObject>();
   clock["use24h"] = netSettings.use24h;
   clock["timezone"] = netSettings.timezoneStr;
+  clock["source"] = timeSource == TIME_SRC_HA ? "ha" : "ntp";
 
   JsonObject network = doc["network"].to<JsonObject>();
   network["ssid"] = wifiSSID;
@@ -407,6 +408,7 @@ static void handleConfigExport() {
   JsonObject clock = doc["clock"].to<JsonObject>();
   clock["use24h"] = netSettings.use24h;
   clock["timezone"] = netSettings.timezoneStr;
+  clock["source"] = timeSource == TIME_SRC_HA ? "ha" : "ntp";
 
   JsonObject network = doc["network"].to<JsonObject>();
   network["hostname"] = netSettings.hostname;
@@ -701,6 +703,16 @@ static void handleConfigImport() {
     return;
   }
   strlcpy(nextNetwork.timezoneStr, textValue, sizeof(nextNetwork.timezoneStr));
+  // Backups from before the time source: NTP.
+  uint8_t nextTimeSource = TIME_SRC_NTP;
+  if (!clock["source"].isNull()) {
+    const char* src = clock["source"] | "";
+    if (strcmp(src, "ntp") && strcmp(src, "ha")) {
+      sendJsonMessage(400, false, "clock.source: expected \"ntp\" or \"ha\"");
+      return;
+    }
+    nextTimeSource = !strcmp(src, "ha") ? TIME_SRC_HA : TIME_SRC_NTP;
+  }
 
   READ_BOOL(network, "mdns", nextNetwork.mdnsEnabled);
   READ_BOOL(network, "showIp", nextNetwork.showIPAtStartup);
@@ -860,6 +872,7 @@ static void handleConfigImport() {
   deck::wallInvalidateJobs();
   dispSettings = nextDisplay;
   netSettings = nextNetwork;
+  timeSource = nextTimeSource;
   backlightSettings = nextBacklight;
   ledSettings = nextLed;
   hapticSettings = nextHaptic;
@@ -1347,8 +1360,10 @@ static void handleSaveClock() {
   if (server.hasArg("timezone"))
     strlcpy(netSettings.timezoneStr, server.arg("timezone").c_str(),
             sizeof(netSettings.timezoneStr));
+  if (server.hasArg("timeSource"))
+    timeSource = server.arg("timeSource") == "ha" ? TIME_SRC_HA : TIME_SRC_NTP;
   saveSettings();
-  configTzTime(netSettings.timezoneStr, "pool.ntp.org", "time.nist.gov");
+  configureClock();
   refreshBacklightControl();
   sendJsonMessage(200, true, "Time settings applied.");
 }
@@ -1493,6 +1508,13 @@ static void handleApiStatus() {
   doc["night_active"] = nightBrightnessActive();
   doc["night_wake"] = nightWakeActive();
   doc["time_valid"] = backlightTimeValid();
+  doc["time_source"] = timeSource == TIME_SRC_HA ? "ha" : "ntp";
+  if (timeSource == TIME_SRC_HA) {
+    const time_t synced = deck::haTimeSyncedAt();
+    doc["time_ha_age"] = synced ? (long)(time(nullptr) - synced) : -1;  // s, -1 = not yet
+    const String err = deck::haTimeError();
+    if (err.length()) doc["time_ha_error"] = err;
+  }
   doc["manual_display_off"] = manualDisplayOff();
   deckPresenceJson(doc["presence"].to<JsonObject>());
   mqttStatusJson(doc["mqtt"].to<JsonObject>());
@@ -2197,6 +2219,14 @@ static void handleWallsNext() {
   sendJsonMessage(200, true, "Wallpaper queued.");
 }
 
+// GET /api/deck/perf[?min=ms] - bench hook: counters since the last read, then
+// a new window that keeps the loop passes slower than min (default 25 ms).
+static void handlePerf() {
+  String out;
+  deckPerfJson(out, (uint32_t)constrain(server.hasArg("min") ? server.arg("min").toInt() : 25, 1, 1000) * 1000);
+  server.send(200, "application/json", out);
+}
+
 static void handleFrameGet() {
   JsonDocument doc;
   deckFrameJson(doc.to<JsonObject>());
@@ -2620,6 +2650,7 @@ void initWebServer() {
   server.on("/api/deck/daily/run", HTTP_POST, handleDailyRun);
   server.on("/api/deck/wallpaper/remove", HTTP_POST, handleWallRemove);
   server.on("/api/deck/bench", HTTP_POST, handleDeckBench);
+  server.on("/api/deck/perf", HTTP_GET, handlePerf);
   server.on("/api/deck/frame", HTTP_GET, handleFrameGet);
   server.on("/api/deck/frame", HTTP_POST, handleFramePost);
   server.on("/api/deck/prefs", HTTP_POST, handleDeckPrefs);

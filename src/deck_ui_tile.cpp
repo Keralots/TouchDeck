@@ -117,6 +117,7 @@ String tileLabel(const TileDef& t) {
   if (t.label.length()) return t.label;
   if (t.type == TILE_CLOCK) return "Clock";
   if (t.type == TILE_MEDIA) return "Now playing";
+  if (t.type == TILE_VIZ) return "Audio";
   const int dot = t.entity.indexOf('.');
   if (dot > 0) return t.entity.substring(dot + 1);
   return t.id.length() ? t.id : String("Tile");
@@ -356,6 +357,20 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     s_tiles.push_back(r);
     applyMedia(s_tiles.back());
     lv_obj_add_event_cb(t, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 8 + 3));
+    lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
+    return;
+  }
+
+  if (def.type == TILE_VIZ) {
+    lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);  // read-only
+    TileRt r = {};
+    r.def = &def;
+    r.page = page;
+    r.obj = t;
+    makeVizContent(r, t);
+    const size_t idx = s_tiles.size();
+    s_tiles.push_back(r);
+    lv_obj_add_event_cb(r.viz, vizDrawEvent, LV_EVENT_DRAW_MAIN, r.vz);
     lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
     return;
   }
