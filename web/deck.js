@@ -1047,7 +1047,14 @@
     for (let i = 0; i < count; i++) ams.push(t("ams", (i % 2) * 2, Math.floor(i / 2), 2, { unit: i + 1 }));
     const amsRows = Math.ceil(count / 2);
     return [
-      { id: pid, name: d.name || id, group: pid, printer: id, tiles: tiles },
+      {
+        id: pid,
+        name: d.name || id,
+        group: pid,
+        printer: id,
+        layouts: { landscape: { cols: 4, rows: 3 } },
+        tiles: tiles,
+      },
       {
         id: pid + "_ams",
         name: (d.name || id) + " AMS",
