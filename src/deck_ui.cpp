@@ -1385,6 +1385,7 @@ bool deckTestCard(const String& tileId) {
   if (s_ed.root) return false;  // the editor blocks gestures until it closes
   for (size_t i = 0; i < s_tiles.size(); i++) {
     if (s_tiles[i].def->id != tileId) continue;
+    if (s_tiles[i].def->type == TILE_PRINTER) return false;  // touch never opens a card there
     openModal((int)i);
     return true;
   }

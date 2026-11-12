@@ -84,7 +84,9 @@ Clip* newClip(uint32_t frames, uint32_t rate) {
   return new Clip{pcm, frames, rate};
 }
 
-uint16_t gainFor(uint8_t vol) { return (uint16_t)((uint32_t)min<uint8_t>(vol, 100) * 4096 / 100); }
+uint16_t gainFor(uint8_t vol) {
+  return (uint16_t)((uint32_t)min<uint8_t>(vol, 100) * 4096 * BOARD_AUDIO_MAX_GAIN_PCT / 10000);
+}
 
 bool IRAM_ATTR onSendOvf(i2s_chan_handle_t, i2s_event_data_t*, void*) {
   if (s_playing) s_underruns = s_underruns + 1;

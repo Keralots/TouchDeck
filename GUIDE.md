@@ -62,7 +62,7 @@ Optional [Custom Brand Icons by elax46](https://github.com/elax46/custom-brand-i
 
 ## Conditional tiles
 
-In **Pages & tiles**, a tile's "more options" has "Show": Always, Only while the PC is on, Only while the PC is off, or Only while an entity is (or is not) in a state. A tile whose condition does not hold takes no cell, so a tile with the opposite condition can share it: volume buttons while the PC runs, a "PC power" switch in the same place while it is off. The page is laid out again when a condition changes (once nothing is being touched). When a page has conditional tiles, "Preview" above the grid switches each condition so you can place the tiles for both cases.
+In **Pages & tiles**, a tile's "more options" has "Show": Always, Only while the PC is on, Only while the PC is off, Only while an entity is (or is not) in a state, or Only while a printer is on or printing. A tile whose condition does not hold takes no cell, so a tile with the opposite condition can share it: volume buttons while the PC runs, a "PC power" switch in the same place while it is off. The page is laid out again when a condition changes (once nothing is being touched). When a page has conditional tiles, "Preview" above the grid switches each condition so you can place the tiles for both cases.
 
 ```json
 { "id": "vol", "type": "action", "when": "pc-on",
@@ -76,6 +76,7 @@ In **Pages & tiles**, a tile's "more options" has "Show": Always, Only while the
 - `"pc-on"` / `"pc-off"` follow the tile's own PC (the PC of its command or metric, otherwise the first known PC). The PC counts as off about a minute after its companion stops sending, so a companion restart does not rearrange the page; it counts as on again with the first packet.
 - `"sound-on"` / `"sound-off"` follow the audio a companion streams for the visualizer (its Audio visualizer switch must be on). Sound counts after 2 s without a break, so a notification sound does not count; silence counts after 30 s, so a pause between tracks does not rearrange the page.
 - `{ "entity": ..., "state": ... }` compares the state Home Assistant reports (`on`, `off`, `home`, `playing`...); a leading `!` means "is not". The tile stays hidden until Home Assistant has reported the entity; while Home Assistant is unreachable the last known state stands.
+- `{ "printer": "h2c", "state": "on" }` shows the tile while the printer is powered and reports. `{ "printer": "h2c", "state": "printing", "idle": 30 }` shows it while a job runs (preparing, printing or paused) and for `idle` minutes after it ends (0 = only during the job). After a restart a printer counts as idle until its next job.
 
 A whole page can follow a condition the same way ("Page shown" in the page settings; its PC is the first known one). With "Switch to it when it appears" (`"auto": true`) the deck slides to the page when the condition starts to hold, for example a PC stats page when the PC comes on, and back to the page shown before when it stops:
 

@@ -704,6 +704,7 @@ bool whenWanted(const WhenDef& w, const String& pcId) {
     return on == (w.kind == WHEN_PC_ON);
   }
   if (w.kind == WHEN_SOUND_ON || w.kind == WHEN_SOUND_OFF) return vizSoundOn() == (w.kind == WHEN_SOUND_ON);
+  if (w.kind == WHEN_PRINTER) return printerWhenWanted(w);
   if (w.kind == WHEN_ENTITY) {
     for (const auto& s : s_whenStates)
       if (s.first == w.entity) return s.second.length() && (s.second == w.state) != w.negate;
