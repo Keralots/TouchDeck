@@ -48,6 +48,11 @@
 .dk-ibtn{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 4px;border:1px solid transparent;border-radius:var(--r-md);background:none;color:var(--ink);cursor:pointer;min-width:0}
 .dk-ibtn:hover{background:var(--card-2)}.dk-ibtn.on{border-color:var(--accent);background:var(--accent-soft)}
 .dk-ibtn i{font:28px dkmdi, dkcbi;font-style:normal;line-height:1}.dk-ibtn small{font:10px var(--mono);color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dk-tile.sel{cursor:default}.dk-tiles>.dk-tile:not(.sel){cursor:pointer}
+@media(min-width:1600px){.content-inner:has(>#deckSection.active){max-width:1560px}
+#deckSection.page.active{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px}#deckSection>.page-header,#deckSection>#dkPagesCard{grid-column:1/-1}#dkPage>:not(.dk-split){max-width:872px}
+.dk-split{display:grid;grid-template-columns:minmax(0,760px) minmax(0,1fr);gap:24px;align-items:start;margin-top:12px}
+.dk-left{position:sticky;top:calc(var(--topbar-h) + 12px)}.dk-left .dk-grid{margin-top:0;max-width:760px}}
 @media(max-width:560px){.dk-tile{grid-template-columns:36px minmax(0,1fr)}.dk-tact{grid-column:1/-1}.dk-save{margin:18px -16px -18px;padding:12px 16px}}
 `;
   const st = document.createElement("style");
@@ -74,7 +79,7 @@
 <div id="dkPrnBody">
 <div id="dkPrn"></div><div class="dk-row"><button type="button" class="btn" id="dkPrnAdd">+ Add printer</button></div></div>
 <div class="dk-save"><span class="dk-msg" id="dkPrnMsg">No changes</span><button type="button" class="btn btn-accent" id="dkPrnSave">Save to device</button></div></div>
-<div class="card"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
+<div class="card" id="dkPagesCard"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
 <label class="check-row standalone" style="margin-bottom:14px"><input type="checkbox" id="dkHeader"><span class="check-box"></span><span class="check-text"><strong>Show the top bar</strong><span class="ct-hint">Page name, WiFi and clock above the tiles. Also switchable in the quick panel on the device.</span></span></label>
 <div class="dk-tabs" id="dkTabs"></div><div id="dkPage"></div>
 <div class="dk-save"><span class="dk-msg" id="dkMsg">No changes</span><button type="button" class="btn btn-accent" id="dkSave">Save to device</button></div></div>`;
@@ -2246,6 +2251,12 @@
     renderTabs();
     renderPage();
   }
+  /* 2..max, plus the current value when a hand-edited deck went past max. */
+  function gridOpts(max, v) {
+    const ns = [];
+    for (let n = Math.min(2, v); n <= Math.max(max, v); n++) if ((n >= 2 && n <= max) || n === v) ns.push(n);
+    return ns.map((n) => "<option" + (n === v ? " selected" : "") + ">" + n + "</option>").join("");
+  }
   function renderPage() {
     const ps = pages();
     const el = $("dkPage");
@@ -2256,6 +2267,7 @@
     const p = ps[cur];
     const [c, r] = grid(p),
       land = ori === "landscape",
+      pick = (scr.pick || { landscape: [6, 4], portrait: [4, 6] })[ori],
       at = layout(p),
       lost = p.tiles.map((t, k) => k).filter((k) => !at[k] && !hidT(p.tiles[k]));
     let cells = 0;
@@ -2285,13 +2297,9 @@
       '<div class="grid-2 dk-phead"><div class="field"><label class="field-label">Page name</label><input type="text" id="dkPName" value="' +
       esc(p.name || "") +
       '"></div><div class="field"><label class="field-label">Grid (columns x rows)</label><div class="dk-row"><select id="dkPCols" style="width:auto">' +
-      (land ? [2, 3, 4, 5, 6] : [2, 3, 4])
-        .map((n) => "<option" + (n === c ? " selected" : "") + ">" + n + "</option>")
-        .join("") +
+      gridOpts(pick[0], c) +
       '</select><span>x</span><select id="dkPRows" style="width:auto">' +
-      (land ? [2, 3, 4] : [2, 3, 4, 5, 6])
-        .map((n) => "<option" + (n === r ? " selected" : "") + ">" + n + "</option>")
-        .join("") +
+      gridOpts(pick[1], r) +
       '</select><button type="button" class="btn" id="dkPLeft" style="margin-left:auto">Move left</button><button type="button" class="btn" id="dkPRight">Move right</button><button type="button" class="btn" id="dkPDup">Duplicate</button><button type="button" class="btn btn-danger" id="dkPDel">Delete page</button></div></div></div>';
     if (prnOn() && (deck.printers || []).length && (p.printer || p.tiles.some((t) => t.type === "printer")))
       h +=
@@ -2320,8 +2328,9 @@
           (2 * x + 1) +
           '/span 2/span 2"></div>';
     const hd = $("dkHeader").checked ? 30 : 0;
+    /* Wide windows: grid preview (sticky) left, tile list right; narrow: stacked. */
     h +=
-      '<div class="dk-grid' +
+      '<div class="dk-split"><div class="dk-left"><div class="dk-grid' +
       (land ? "" : " pt") +
       '" id="dkGrid" style="grid-template-columns:repeat(' +
       2 * c +
@@ -2348,7 +2357,7 @@
         ps.map((q, i) => (i === cur ? "" : opt(String(i), q.name || q.id, false))).join("") +
         '</select><button type="button" class="btn" id="dkMv">Move</button></div>';
     h +=
-      '<div class="dk-tiles">' +
+      '</div><div class="dk-right"><div class="dk-tiles" id="dkTiles">' +
       p.tiles
         .map((t, i) => {
           if (t.type === "metric") return metricRow(t, i);
@@ -2440,8 +2449,19 @@
         : "") +
       "</div>" +
       pcList() +
-      '<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a 2x0.5 one fits them in a row between the name and the number, a narrower one shows the number), so picking one makes a 1x1 tile 2x1.</p>';
+      '<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a 2x0.5 one fits them in a row between the name and the number, a narrower one shows the number), so picking one makes a 1x1 tile 2x1.</p></div></div>';
     el.innerHTML = h;
+    /* A click on a row's free area selects its tile in the preview. */
+    el.querySelectorAll("#dkTiles > .dk-tile").forEach((row) => {
+      const x = row.querySelector("[data-x]");
+      if (x)
+        row.onclick = (e) => {
+          const k = +x.dataset.x;
+          if (k === sel || e.target.closest("input,select,button,textarea,a,label,.dk-more")) return;
+          sel = k;
+          renderPage();
+        };
+    });
     $("dkPName").oninput = (e) => {
       p.name = e.target.value;
       setDirty(true);
