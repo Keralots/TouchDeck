@@ -44,6 +44,7 @@
 #define BOARD_BACKLIGHT_PIN 32
 #define BOARD_BACKLIGHT_ACTIVE_LOW 1
 #define BOARD_BACKLIGHT_FREQ 5000  // vendor BSP
+#define BOARD_BACKLIGHT_HOLD_ON_RESTART 1  // pin floats on during reset: white flash
 
 // --- Deck grid: about the JC3248W535's cell size (same pixel density) ---
 #define BOARD_GRID_MAX 10
