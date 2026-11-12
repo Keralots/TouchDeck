@@ -44,6 +44,8 @@
 #define BOARD_I2S_BCLK 42
 #define BOARD_I2S_WS 2
 #define BOARD_I2S_DOUT 41
+#define BOARD_AUDIO_WAKE_MS 30      // speaker defaults (portal adjustable)
+#define BOARD_AUDIO_KEEP_ON_MS 1500
 
 // --- microSD: 1-bit SD mode or SPI, same pins ---
 #define BOARD_SD_SLOT 1

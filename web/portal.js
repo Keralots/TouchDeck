@@ -510,6 +510,8 @@
     const au = c.audio || {};
     setCheck("audioEnabled", au.enabled);
     setVal("audioVolume", au.volume == null ? 70 : au.volume);
+    setVal("audioWakeMs", au.wakeMs == null ? "" : au.wakeMs);
+    setVal("audioKeepOnMs", au.keepOnMs == null ? "" : au.keepOnMs);
     setCheck("audioNight", au.nightMute !== false);
     setCheck("audioClick", au.click);
     setCheck("audioFinished", au.finished !== false);

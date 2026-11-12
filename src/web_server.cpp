@@ -178,6 +178,8 @@ static void audioSettingsJson(JsonObject o) {
   o["finished"] = audioSettings.finished;
   o["error"] = audioSettings.error;
   o["cooled"] = audioSettings.cooled;
+  o["wakeMs"] = audioSettings.wakeMs;
+  o["keepOnMs"] = audioSettings.keepOnMs;
   o["fileFinished"] = audioSettings.fileFinished;
   o["fileError"] = audioSettings.fileError;
   o["fileCooled"] = audioSettings.fileCooled;
@@ -782,6 +784,9 @@ static void handleConfigImport() {
     READ_BOOL(audio, "finished", nextAudio.finished);
     READ_BOOL(audio, "error", nextAudio.error);
     READ_BOOL(audio, "cooled", nextAudio.cooled);
+    if (!audio["wakeMs"].isNull()) READ_INT(audio, "wakeMs", 0, AUDIO_WAKE_MAX_MS, nextAudio.wakeMs, uint16_t);
+    if (!audio["keepOnMs"].isNull())
+      READ_INT(audio, "keepOnMs", AUDIO_KEEP_ON_MIN_MS, AUDIO_KEEP_ON_MAX_MS, nextAudio.keepOnMs, uint32_t);
     const char* const keys[] = {"fileFinished", "fileError", "fileCooled"};
     char* const targets[] = {nextAudio.fileFinished, nextAudio.fileError, nextAudio.fileCooled};
     for (int i = 0; i < 3; i++) {
@@ -986,6 +991,9 @@ static void handleSaveHardware() {
   nextAudio.finished = server.hasArg("audioFinished");
   nextAudio.error = server.hasArg("audioError");
   nextAudio.cooled = server.hasArg("audioCooled");
+  nextAudio.wakeMs = (uint16_t)clampedArg("audioWakeMs", nextAudio.wakeMs, 0, AUDIO_WAKE_MAX_MS);
+  nextAudio.keepOnMs = (uint32_t)clampedArg("audioKeepOnMs", nextAudio.keepOnMs, AUDIO_KEEP_ON_MIN_MS,
+                                            AUDIO_KEEP_ON_MAX_MS);
   const char* const fields[] = {"audioFileFinished", "audioFileError", "audioFileCooled"};
   char* const targets[] = {nextAudio.fileFinished, nextAudio.fileError, nextAudio.fileCooled};
   for (int i = 0; i < 3; i++) {

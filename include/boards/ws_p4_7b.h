@@ -72,6 +72,10 @@
 #define BOARD_I2S_DOUT 9
 #define BOARD_I2S_DIN 11        // ES7210 mics, unused
 #define BOARD_AMP_EN 53         // speaker amplifier, high = on
+// Speaker defaults (portal adjustable). By ear: 120 ms of wake-up drops the
+// first click, 200 ms does not; kept on 30 s with no audible hiss.
+#define BOARD_AUDIO_WAKE_MS 200
+#define BOARD_AUDIO_KEEP_ON_MS 30000
 
 // --- microSD: 4-bit SD on slot 0 (IO MUX pins), card powered from LDO_VO4 ---
 // Power handling as Arduino's SD_MMC does for the P4 variant.

@@ -20,8 +20,6 @@ constexpr gpio_num_t PIN_DOUT = (gpio_num_t)BOARD_I2S_DOUT;
 constexpr uint32_t SYNTH_RATE = 22050;
 constexpr size_t CHUNK = 256;  // frames per i2s_channel_write
 constexpr uint32_t FADE_FRAMES = 128;  // ramp when a sound is cut short
-constexpr uint32_t IDLE_OFF_MS = 1500;
-constexpr uint32_t AMP_SETTLE_MS = 30;
 constexpr uint32_t MAX_CLIP_FRAMES = 1024 * 1024;  // 2 MB of mono PCM
 constexpr uint32_t CACHE_MAX_BYTES = 256 * 1024;   // larger file clips load per play
 constexpr int FILE_CACHE = 3;
@@ -164,7 +162,7 @@ bool openChannel(uint32_t rate) {
   s_opens = s_opens + 1;
   s_channelCost = before - heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
   // The amp wakes when BCLK returns; let it settle on silence.
-  vTaskDelay(pdMS_TO_TICKS(AMP_SETTLE_MS));
+  vTaskDelay(pdMS_TO_TICKS(audioSettings.wakeMs));
   return true;
 }
 
@@ -457,7 +455,7 @@ bool takeReq(Req& r) {
 void audioTask(void*) {
   static int16_t buf[CHUNK];
   for (;;) {
-    const uint32_t woke = ulTaskNotifyTake(pdTRUE, s_tx ? pdMS_TO_TICKS(IDLE_OFF_MS) : portMAX_DELAY);
+    const uint32_t woke = ulTaskNotifyTake(pdTRUE, s_tx ? pdMS_TO_TICKS(audioSettings.keepOnMs) : portMAX_DELAY);
     Req r;
     if (!takeReq(r)) {
       // Without BCLK the NS4168 powers down.
