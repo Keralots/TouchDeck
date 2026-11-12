@@ -47,6 +47,7 @@
 #define BOARD_I2S_DOUT 41
 #define BOARD_AUDIO_WAKE_MS 30      // speaker defaults (portal adjustable)
 #define BOARD_AUDIO_KEEP_ON_MS 1500
+#define BOARD_AUDIO_MAX_GAIN_PCT 100  // sample gain at 100 % volume
 
 // --- microSD: 1-bit SD mode or SPI, same pins ---
 #define BOARD_SD_SLOT 1

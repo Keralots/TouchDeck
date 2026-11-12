@@ -77,6 +77,7 @@
 // first click, 200 ms does not; kept on 30 s with no audible hiss.
 #define BOARD_AUDIO_WAKE_MS 200
 #define BOARD_AUDIO_KEEP_ON_MS 30000
+#define BOARD_AUDIO_MAX_GAIN_PCT 70  // 100 % in settings; full scale crackles on the kit speaker
 
 // --- microSD: 4-bit SD on slot 0 (IO MUX pins), card powered from LDO_VO4 ---
 // Power handling as Arduino's SD_MMC does for the P4 variant.
