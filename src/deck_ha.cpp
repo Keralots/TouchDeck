@@ -4,6 +4,7 @@
 #include "deck_panel.h"
 #include <LittleFS.h>
 #include <time.h>
+#include <sys/time.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
@@ -488,6 +489,84 @@ void failPending(const String& message) {
   s_calls.clear();
 }
 
+// --- Clock from Home Assistant ----------------------------------------------------------
+// A render_template subscription of utcnow(): its first event carries the
+// time, then it is unsubscribed. Half the round trip is added, as SNTP does.
+volatile bool s_timeSync = false;
+volatile time_t s_timeSyncedAt = 0;  // guarded loosely: a status read
+String s_timeError;                  // under s_lock
+constexpr uint32_t TIME_RESYNC_MS = 60UL * 60 * 1000;
+constexpr uint32_t TIME_RETRY_MS = 60UL * 1000;
+constexpr uint32_t TIME_ANSWER_MS = 10000;
+// HA task only:
+uint32_t s_timeId = 0, s_timeSentMs = 0, s_timeNextMs = 0;
+bool s_timeDue = true;
+
+void timeError(const String& e) {
+  Lock g;
+  s_timeError = e;
+}
+
+void timeStop(bool retry) {
+  if (s_timeId) {
+    JsonDocument u(psram());
+    u["id"] = s_nextId++;
+    u["type"] = "unsubscribe_events";
+    u["subscription"] = s_timeId;
+    sendJson(u);
+  }
+  s_timeId = 0;
+  s_timeDue = false;
+  s_timeNextMs = millis() + (retry ? TIME_RETRY_MS : TIME_RESYNC_MS);
+}
+
+void timeTick() {
+  if (!s_timeSync) {
+    if (s_timeId) timeStop(false);
+    s_timeDue = true;  // first thing once it is turned on
+    return;
+  }
+  const uint32_t now = millis();
+  if (s_timeId) {
+    if (now - s_timeSentMs >= TIME_ANSWER_MS) {
+      timeError("no answer from Home Assistant");
+      Serial.println("HA: no answer to the time request");
+      timeStop(true);
+    }
+    return;
+  }
+  if (!s_timeDue && (int32_t)(now - s_timeNextMs) < 0) return;
+  JsonDocument d(psram());
+  s_timeId = s_nextId++;
+  d["id"] = s_timeId;
+  d["type"] = "render_template";
+  d["template"] = "{{ utcnow().timestamp() }}";
+  s_timeSentMs = now;
+  s_timeDue = false;
+  sendJson(d);
+}
+
+void timeReply(JsonVariantConst result) {
+  double ts = NAN;
+  if (result.is<double>()) ts = result.as<double>();
+  else if (result.is<const char*>()) ts = strtod(result.as<const char*>(), nullptr);
+  if (!(ts > 1609459200.0)) {  // 2021-01-01: anything older is not a clock
+    timeError("Home Assistant sent no usable time");
+    timeStop(true);
+    return;
+  }
+  ts += (millis() - s_timeSentMs) / 2000.0;
+  timeval tv;
+  tv.tv_sec = (time_t)ts;
+  tv.tv_usec = (suseconds_t)((ts - (double)tv.tv_sec) * 1e6);
+  const time_t before = time(nullptr);
+  settimeofday(&tv, nullptr);
+  s_timeSyncedAt = tv.tv_sec;
+  timeError("");
+  Serial.printf("HA: clock set from Home Assistant (%+ld s)\n", (long)(tv.tv_sec - before));
+  timeStop(false);
+}
+
 void regFinish(bool ok, const char* err);
 void regReply(bool ok, JsonDocument& doc);
 void regStep();
@@ -515,6 +594,8 @@ void handleText(const uint8_t* payload, size_t len) {
     s_everConnected = true;
     s_subscribedGen = 0;  // subscribe from scratch on every connection
     s_subIds.clear();
+    s_timeId = 0;
+    s_timeDue = true;  // the clock again on every connection
     setLink(HA_CONNECTED);
     Serial.printf("HA: connected, Home Assistant %s\n", (const char*)(doc["ha_version"] | "?"));
   } else if (!strcmp(type, "auth_invalid")) {
@@ -522,12 +603,26 @@ void handleText(const uint8_t* payload, size_t len) {
     Serial.println("HA: authentication failed, waiting for new settings");
     s_ws.disconnect();
   } else if (!strcmp(type, "event")) {
+    if (s_timeId && (doc["id"] | 0u) == s_timeId) {
+      timeReply(doc["event"]["result"]);
+      return;
+    }
     applyEvent(doc["event"].as<JsonObjectConst>());
   } else if (!strcmp(type, "result")) {
     const uint32_t id = doc["id"] | 0;
     const bool ok = doc["success"] | false;
     if (s_reg && s_reg->waitId == id) {
       regReply(ok, doc);
+      return;
+    }
+    if (s_timeId && id == s_timeId) {
+      if (!ok) {  // a template error, or a server that refuses render_template
+        const char* msg = doc["error"]["message"] | "request refused";
+        timeError(String("time request refused: ") + msg);
+        Serial.printf("HA: time request refused: %s\n", msg);
+        s_timeId = 0;  // nothing to unsubscribe
+        timeStop(false);
+      }
       return;
     }
     for (size_t i = 0; i < s_pending.size(); i++) {
@@ -561,6 +656,7 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
                                        s_everConnected ? String() : String("no answer from Home Assistant"));
       s_subscribedGen = 0;
       s_subIds.clear();
+      s_timeId = 0;
       if (s_reg) regFinish(false, "connection to Home Assistant lost");
       // Never replay an uncertain call after a reconnect: report it instead.
       failPending("connection to Home Assistant lost");
@@ -726,6 +822,7 @@ void haTask(void*) {
       if (s_subscribedGen != wantedGen) resubscribe();
       sendQueuedCalls();
       regStep();
+      timeTick();
     }
     vTaskDelay(pdMS_TO_TICKS(5));
   }
@@ -747,6 +844,14 @@ const char* haLinkName(HaLink s) {
 }
 
 void haPause(bool pause) { s_paused = pause; }
+
+void haSetTimeSync(bool on) { s_timeSync = on; }
+time_t haTimeSyncedAt() { return s_timeSyncedAt; }
+String haTimeError() {
+  if (!s_lock) return "";
+  Lock g;
+  return s_timeError;
+}
 
 void haBegin() {
   if (s_lock) return;

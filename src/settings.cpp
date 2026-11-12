@@ -9,6 +9,7 @@ char wifiPass[65] = "";
 uint8_t brightness = 200;
 DisplaySettings dispSettings;
 NetworkSettings netSettings;
+uint8_t timeSource = TIME_SRC_NTP;
 BacklightSettings backlightSettings;
 LedSettings ledSettings;
 AdvancedSettings advSettings = {};
@@ -166,6 +167,7 @@ void loadSettings() {
   }
   dispSettings.theme = prefs.getUChar("theme", THEME_MIDNIGHT);
   if (dispSettings.theme > THEME_GLASS) dispSettings.theme = THEME_MIDNIGHT;
+  timeSource = prefs.getUChar("tsrc", TIME_SRC_NTP) == TIME_SRC_HA ? TIME_SRC_HA : TIME_SRC_NTP;
   dispSettings.glassTint = min<uint8_t>(prefs.getUChar("gtint", dispSettings.glassTint), 90);
   dispSettings.glassBlur = min<uint8_t>(prefs.getUChar("gblur", dispSettings.glassBlur), 24);
   dispSettings.glassDim = min<uint8_t>(prefs.getUChar("gdim", dispSettings.glassDim), 60);
@@ -284,6 +286,7 @@ void saveSettings() {
   prefs.putUShort("pscale", dispSettings.powerScaleW);
   prefs.putUChar("warnpct", dispSettings.warnThresholdPct);
   prefs.putUChar("theme", dispSettings.theme);
+  prefs.putUChar("tsrc", timeSource);
   prefs.putUChar("gtint", dispSettings.glassTint);
   prefs.putUChar("gblur", dispSettings.glassBlur);
   prefs.putUChar("gdim", dispSettings.glassDim);

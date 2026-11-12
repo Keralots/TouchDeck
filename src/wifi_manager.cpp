@@ -6,6 +6,8 @@
 #include <WiFi.h>
 #include <DNSServer.h>
 #include <ESPmDNS.h>
+#include <esp_sntp.h>
+#include "deck_ha.h"
 
 static bool apMode = false;
 static DNSServer* dnsServer = nullptr;
@@ -147,6 +149,20 @@ static void startMDNS() {
   }
 }
 
+// The timezone, and the clock's source: NTP, or Home Assistant (no NTP then,
+// so the two never take turns setting the clock).
+void configureClock() {
+  const bool ha = timeSource == TIME_SRC_HA;
+  deck::haSetTimeSync(ha);
+  if (!ha) {
+    configTzTime(netSettings.timezoneStr, "pool.ntp.org", "time.nist.gov");
+    return;
+  }
+  if (esp_sntp_enabled()) esp_sntp_stop();
+  setenv("TZ", netSettings.timezoneStr, 1);
+  tzset();
+}
+
 static void completeWiFiStartup() {
   Serial.printf("WiFi connected! IP: %s\n",
                 WiFi.localIP().toString().c_str());
@@ -156,9 +172,10 @@ static void completeWiFiStartup() {
   reconnectAttempts = 0;
   splashStaStarted = false;
 
-  // Sync time via NTP with automatic DST
-  configTzTime(netSettings.timezoneStr, "pool.ntp.org", "time.nist.gov");
-  Serial.printf("NTP configured: %s\n", netSettings.timezoneStr);
+  // Time from NTP or Home Assistant, with automatic DST
+  configureClock();
+  Serial.printf("Clock: %s, %s\n", timeSource == TIME_SRC_HA ? "Home Assistant" : "NTP",
+                netSettings.timezoneStr);
 
   startMDNS();
 
@@ -310,7 +327,7 @@ void handleWiFi() {
         lastReconnectAttempt = 0;
         phase3StartTime = 0;
 
-        configTzTime(netSettings.timezoneStr, "pool.ntp.org", "time.nist.gov");
+        configureClock();
         startMDNS();
         setScreenState(SCREEN_WIFI_CONNECTED);
       } else {

@@ -147,6 +147,12 @@ extern char wifiPass[65];
 extern uint8_t brightness;
 extern DisplaySettings dispSettings;
 extern NetworkSettings netSettings;
+// Where the clock comes from: network time (NTP) or Home Assistant, for decks
+// on a network that reaches only Home Assistant. NVS key "tsrc", outside the
+// "net" blob, whose layout is shared with StatNode.
+constexpr uint8_t TIME_SRC_NTP = 0;
+constexpr uint8_t TIME_SRC_HA = 1;
+extern uint8_t timeSource;
 extern BacklightSettings backlightSettings;
 extern LedSettings ledSettings;
 extern AdvancedSettings advSettings;
