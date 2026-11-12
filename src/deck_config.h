@@ -89,6 +89,9 @@
 //     (on after 2 s of sound, off after 30 s of silence).
 //   { "entity": "switch.pc", "state": "on" }: the HA state equals "state";
 //     "!on" = differs. Hidden until Home Assistant reports the entity.
+//   { "printer": "h2c", "state": "on" | "printing", "idle": 30 }: the printer
+//     reports (powered and reachable) / has a job or had one in the last
+//     "idle" minutes (0 = only during the job).
 // A page takes "when" too (its PC is the first known one) and "auto": true:
 // the deck slides to the page when it appears and back to the page shown
 // before when it goes.
@@ -141,12 +144,17 @@ enum ActionKind : uint8_t {
   ACT_PC,            // {pc, cmd}: a command to a paired PC's companion
 };
 enum ConfirmMode : uint8_t { CONFIRM_NONE = 0, CONFIRM_OFF, CONFIRM_ALWAYS };
-enum WhenKind : uint8_t { WHEN_ALWAYS = 0, WHEN_PC_ON, WHEN_PC_OFF, WHEN_ENTITY, WHEN_SOUND_ON, WHEN_SOUND_OFF };
+enum WhenKind : uint8_t {
+  WHEN_ALWAYS = 0, WHEN_PC_ON, WHEN_PC_OFF, WHEN_ENTITY, WHEN_SOUND_ON, WHEN_SOUND_OFF, WHEN_PRINTER
+};
 
 struct WhenDef {
   WhenKind kind = WHEN_ALWAYS;
   String entity, state;  // WHEN_ENTITY
   bool negate = false;   // "state": "!on"
+  String printer;        // WHEN_PRINTER
+  bool printing = false;  // WHEN_PRINTER: a job, not just reachable
+  uint16_t idleMin = 0;   // WHEN_PRINTER printing: kept this long after the job
 };
 
 struct TileAction {

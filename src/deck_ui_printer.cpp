@@ -37,6 +37,7 @@ struct PrnTrack {
   bool follow = false;     // its print start showed the printer page (printerSettings.follow)
   uint32_t endMs = 0;      // follow: when the job ended, 0 = still running
   uint32_t cooledMs = 0;   // follow: when the bed was cool after the job, 0 = not yet
+  uint32_t jobMs = 0;      // last time a job was seen, 0 = none since boot
   PrnEnergy energy;
   uint64_t announced[PRN_ANNOUNCED];  // PrinterAlert::key(), oldest first
   uint8_t nAnnounced = 0;
@@ -516,6 +517,18 @@ bool printersJobActive() {
       return true;
   }
   return false;
+}
+
+// "when": {"printer"}: the printer reports; printing: a job now or within idleMin of the last one.
+bool printerWhenWanted(const WhenDef& w) {
+  const PrinterState* s = nullptr;
+  for (size_t i = 0; i < s_cfg.printers.size() && i < MAX_PRINTERS; i++)
+    if (s_cfg.printers[i].id == w.printer) s = s_prnHave[i] ? s_prn[i] : nullptr;
+  if (!prnShown(s)) return false;
+  if (!w.printing) return true;
+  const PrnTrack* t = prnTrack(w.printer);
+  if (!t || !t->jobMs) return false;
+  return t->job || millis() - t->jobMs < (uint32_t)w.idleMin * 60000u;
 }
 
 // Printing for real: not paused, preparing or changing filament.
@@ -1423,6 +1436,7 @@ void printerEvents() {
     }
     t.seen = true;
     t.job = job;
+    if (job) t.jobMs = millis() | 1;
     if (t.follow && !job && !t.endMs) t.endMs = millis() | 1;
     if (t.follow && !job && !t.cooledMs && !(isfinite(s->bed) && s->bed > printerSettings.coolTemp))
       t.cooledMs = millis() | 1;

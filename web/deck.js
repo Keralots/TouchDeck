@@ -344,10 +344,37 @@
       "</div>"
     );
   }
+  /* "when" on a printer: key = tile index or "p" for the page. */
+  const whenKind = (w) => (!w ? "" : typeof w === "string" ? w : w.printer !== undefined ? "printer" : "entity");
+  const prnWhenHtml = (w, key) =>
+    '<div class="field">' +
+    lbl("Printer") +
+    '<select data-wpr="' +
+    key +
+    '">' +
+    (deck.printers || []).map((x) => opt(x.id, x.name || x.id, x.id === w.printer)).join("") +
+    "</select></div>" +
+    '<div class="field">' +
+    lbl("While it") +
+    '<div class="dk-row"><select data-wpst="' +
+    key +
+    '" style="width:auto">' +
+    opt("on", "is on", w.state !== "printing") +
+    opt("printing", "prints", w.state === "printing") +
+    "</select>" +
+    (w.state === "printing"
+      ? '<span class="dk-tsub" style="margin:0 6px">+</span><input type="number" min="0" max="1440" data-wpi="' +
+        key +
+        '" value="' +
+        (w.idle | 0) +
+        '" style="width:80px"><span class="dk-tsub" style="margin:0 0 0 6px">min after</span>'
+      : "") +
+    "</div></div>";
+  const prnWhenNew = (id) => ({ printer: id || ((deck.printers || [])[0] || {}).id || "", state: "printing", idle: 30 });
   /* A page can follow a condition too; "auto" slides to it when it appears. */
   function pageWhenField(p) {
     const w = p.when,
-      k = !w ? "" : typeof w === "string" ? w : "entity";
+      k = whenKind(w);
     let h =
       '<div class="grid-2"><div class="field"><label class="field-label">Page shown</label><select id="dkPWh">' +
       [
@@ -357,10 +384,12 @@
         ["sound-on", "Only while the PC plays sound"],
         ["sound-off", "Only while the PC is silent"],
         ["entity", "Only while an entity is in a state"],
+        ["printer", "Only while a printer is on or printing"],
       ]
         .map((o) => opt(o[0], o[1], k === o[0]))
         .join("") +
       "</select></div>";
+    if (k === "printer") h += prnWhenHtml(w, "p");
     if (k === "entity") {
       const st = String(w.state || ""),
         n = st[0] === "!";
@@ -1626,6 +1655,8 @@
     if (w === "pc-on" || w === "pc-off")
       return { k: "pc:" + ((isPcCmd(t) ? t.tap.pc : t.pc) || ""), neg: w === "pc-off" };
     if (w === "sound-on" || w === "sound-off") return { k: "sound", neg: w === "sound-off" };
+    if (w && typeof w === "object" && w.printer !== undefined)
+      return { k: "p:" + w.printer + (w.state === "printing" ? ":printing" : ""), neg: false };
     if (w && typeof w === "object") {
       const s = String(w.state || ""),
         n = s[0] === "!";
@@ -1654,7 +1685,11 @@
             const pc = pcs.find((x) => x.id === k.slice(3)) || (k === "pc:" && pcs[0]);
             nm = pc ? pc.name : "PC";
           } else if (k === "sound") nm = "PC sound";
-          else nm = k.slice(2).replace("=", " is ");
+          else if (k.startsWith("p:")) {
+            const [id, st] = k.slice(2).split(":"),
+              pr = (deck.printers || []).find((x) => x.id === id);
+            nm = (pr ? pr.name || pr.id : id) + (st ? " printing" : " on");
+          } else nm = k.slice(2).replace("=", " is ");
           const on = pv[k] !== false,
             yes = k.startsWith("pc:") ? ["On", "Off"] : ["Yes", "No"];
           return (
@@ -1686,12 +1721,14 @@
   }
   function whenField(t, i) {
     const w = t.when,
-      k = !w ? "" : typeof w === "string" ? w : "entity";
+      k = whenKind(w);
     const hint = !k
       ? ""
       : (k === "entity"
           ? "The state as Home Assistant reports it (on, off, home, playing...). Hidden until it is known."
-          : k.startsWith("sound")
+          : k === "printer"
+            ? "On = the printer is powered and reports. Prints = a job runs, and for the minutes after it ends (0 = only during the job)."
+            : k.startsWith("sound")
             ? "Needs the companion's Audio visualizer switch. Sound counts after 2 s, silence after 30 s."
             : "The PC counts as off about a minute after its companion goes quiet.") +
         " Its cell is free otherwise: another tile with the opposite condition can take it. Switch the Preview above the grid to place it.";
@@ -1708,10 +1745,12 @@
         ["sound-on", "Only while the PC plays sound"],
         ["sound-off", "Only while the PC is silent"],
         ["entity", "Only while an entity is in a state"],
+        ["printer", "Only while a printer is on or printing"],
       ]
         .map((o) => opt(o[0], o[1], k === o[0]))
         .join("") +
       "</select></div>";
+    if (k === "printer") h += prnWhenHtml(w, i);
     if (k === "entity") {
       const s = String(w.state || ""),
         n = s[0] === "!";
@@ -2638,11 +2677,38 @@
             v = e.target.value;
           if (!v) delete t.when;
           else if (v === "entity") t.when = { entity: domainOf(t.entity) ? t.entity : "", state: "on" };
+          else if (v === "printer") t.when = prnWhenNew(t.printer);
           else t.when = v;
           setDirty(true);
           renderPage();
         }),
     );
+    const whenObj = (key) => (key === "p" ? p : p.tiles[+key]).when;
+    el.querySelectorAll("[data-wpr]").forEach(
+      (x) =>
+        (x.onchange = (e) => {
+          whenObj(x.dataset.wpr).printer = e.target.value;
+          setDirty(true);
+          renderPage();
+        }),
+    );
+    el.querySelectorAll("[data-wpst]").forEach(
+      (x) =>
+        (x.onchange = (e) => {
+          const w = whenObj(x.dataset.wpst);
+          w.state = e.target.value;
+          if (w.state === "printing") w.idle = w.idle === undefined ? 30 : w.idle;
+          else delete w.idle;
+          setDirty(true);
+          renderPage();
+        }),
+    );
+    el.querySelectorAll("[data-wpi]").forEach((x) => {
+      x.oninput = (e) => {
+        whenObj(x.dataset.wpi).idle = Math.max(0, Math.min(1440, parseInt(e.target.value, 10) || 0));
+        setDirty(true);
+      };
+    });
     el.querySelectorAll("[data-we]").forEach((x) => {
       x.oninput = (e) => {
         p.tiles[+x.dataset.we].when.entity = e.target.value.trim();
@@ -2931,6 +2997,7 @@
         delete p.when;
         delete p.auto;
       } else if (v === "entity") p.when = { entity: "", state: "on" };
+      else if (v === "printer") p.when = prnWhenNew(p.printer);
       else p.when = v;
       setDirty(true);
       renderPage();

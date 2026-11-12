@@ -427,6 +427,7 @@ void vizTick();
 // deck_ui_printer.cpp
 void readPrinters();
 bool printersJobActive();
+bool printerWhenWanted(const WhenDef& w);
 void makePrinterContent(TileRt& r, lv_obj_t* t);
 void fitPrinter(TileRt& r, int cw, int ch);
 void applyPrinterToTile(TileRt& r);

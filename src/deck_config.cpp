@@ -195,6 +195,19 @@ bool parseWhen(JsonVariantConst v, WhenDef& w, String* err, const String& where)
     }
     return true;
   }
+  if (!v["printer"].isNull()) {
+    const char* prn = v["printer"] | "";
+    const char* st = v["state"] | "on";
+    if (!prn[0] || (strcmp(st, "on") && strcmp(st, "printing"))) {
+      if (err) *err = where + ": when needs a printer and state on or printing";
+      return false;
+    }
+    w.kind = WHEN_PRINTER;
+    w.printer = prn;
+    w.printing = !strcmp(st, "printing");
+    w.idleMin = (uint16_t)constrain((int)(v["idle"] | 0), 0, 1440);
+    return true;
+  }
   const char* entity = v["entity"] | "";
   const char* state = v["state"] | "";
   if (!strchr(entity, '.') || state[0] == '\0' || !strcmp(state, "!")) {
