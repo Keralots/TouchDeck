@@ -281,6 +281,8 @@ void sparkAt(int i, int w, int h, float& sx, float& sy) {
 
 // Paints the rect x0..x1, y0..y1 (exclusive ends) of the overlay.
 void tempPaint(TileRt& r, PrnFx& f, uint32_t now, int x0, int y0, int x1, int y1) {
+  // Ordered dither on the alpha: a slow gradient over RGB565 bands otherwise.
+  static const int8_t kDither[4][4] = {{-6, 0, -5, 2}, {3, -3, 5, -2}, {-4, 2, -6, 1}, {6, -1, 4, -2}};
   lv_draw_buf_t* b = f.buf;
   const int w = b->header.w, h = b->header.h;
   const float rad = (float)lv_obj_get_style_radius(r.obj, LV_PART_MAIN);
@@ -319,6 +321,7 @@ void tempPaint(TileRt& r, PrnFx& f, uint32_t now, int x0, int y0, int x1, int y1
       const int wa = ga + ha - ((ga * ha) >> 8);
       const int fa = frost ? (F[i0 + x] * fk) >> 8 : 0;
       int a = wa > fa ? wa : fa;
+      if (a) a = LV_CLAMP(0, a + kDither[y & 3][x & 3], 255);
       uint32_t c = wa > fa ? 0xFF9440 : 0x8CC8FF;
       if (a && edgeRow && (x < irad || x >= w - irad)) a = (a * cov255(cornerCover(x, y, w, h, rad))) >> 8;
       p[0] = c & 0xFF;
