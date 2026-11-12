@@ -31,6 +31,7 @@
 #define BOARD_GRID_PORTRAIT_COLS 3
 #define BOARD_GRID_PORTRAIT_ROWS 4
 #define BOARD_MAX_PAGE_TILES 24
+#define BOARD_MEDIA_ART_MAX 200  // Now playing cover side, px
 
 // --- Touch: AXS15231B controller (deck_touch_axs15231b.cpp) ---
 #define BOARD_TOUCH_AXS15231B 1

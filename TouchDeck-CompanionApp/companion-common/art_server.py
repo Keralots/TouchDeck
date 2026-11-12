@@ -11,6 +11,10 @@ import zlib
 DEFAULT_ART_PORT = 8751
 
 
+# Largest cover side a deck may ask for (the 7" board shows 400 px).
+MAX_SIZE = 400
+
+
 class _ArtServer(ThreadingHTTPServer):
     # Windows SO_REUSEADDR can steal another process's connections instead
     # of failing bind, which would prevent the ephemeral-port fallback.
@@ -24,7 +28,7 @@ class _Handler(BaseHTTPRequestHandler):
         query = parse_qs(url.query)
         art_id = query.get("id", [""])[0]
         try:
-            size = max(32, min(200, int(query.get("s", ["80"])[0])))
+            size = max(32, min(MAX_SIZE, int(query.get("s", ["80"])[0])))
         except ValueError:
             self.send_error(400)
             return
@@ -66,7 +70,7 @@ class ArtServer:
         return art_id
 
     def pixels(self, art_id, size):
-        size = max(32, min(200, size))
+        size = max(32, min(MAX_SIZE, size))
         key = (art_id, size)
         with self._lock:
             if art_id != self._id or not self._source:

@@ -351,9 +351,9 @@ void fitMedia(TileRt& r, int cw, int ch) {
   // Tall room: a big cover with the volume beside it, over a one-line title
   // and artist. Else the cover beside the text.
   constexpr int PILL = 52, GAP = 10;
-  const int side = cw >= 150 && topH >= 40 ? min(200, min(topH, cw * 3 / 8)) : 0;
+  const int side = cw >= 150 && topH >= 40 ? min(BOARD_MEDIA_ART_MAX, min(topH, cw * 3 / 8)) : 0;
   const int stackText = lineH(&deck_font_20) + 4 + lineH(&deck_font_12);
-  const int stacked = r.mediaFull && !wide ? min(200, min(cw - PILL - GAP, topH - stackText - 8)) : 0;
+  const int stacked = r.mediaFull && !wide ? min(BOARD_MEDIA_ART_MAX, min(cw - PILL - GAP, topH - stackText - 8)) : 0;
   const bool stack = stacked >= 90;
   r.mediaVol = wide || stack;
   const int cover = stack ? stacked : side;

@@ -32,7 +32,7 @@ class ArtServerTest(unittest.TestCase):
 
     def test_crc_crop_rgb565_and_size_clamps(self):
         self.assertEqual(self.id, "%08x" % zlib.crc32(self.source))
-        for requested, size in ((1, 32), (80, 80), (999, 200)):
+        for requested, size in ((1, 32), (80, 80), (999, 400)):
             status, headers, body = self.get("/art?id=%s&s=%d" % (self.id, requested))
             self.assertEqual(status, 200)
             self.assertEqual(headers["Content-Type"], "application/octet-stream")

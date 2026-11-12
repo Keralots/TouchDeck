@@ -53,6 +53,7 @@
 #define BOARD_GRID_PORTRAIT_COLS 5
 #define BOARD_GRID_PORTRAIT_ROWS 9
 #define BOARD_MAX_PAGE_TILES 48
+#define BOARD_MEDIA_ART_MAX 400  // Now playing cover side, px
 
 // --- Touch: GT911 on the shared I2C bus, polled (deck_touch_gt911.cpp) ---
 // The vendor Arduino code uses neither INT nor RST.
