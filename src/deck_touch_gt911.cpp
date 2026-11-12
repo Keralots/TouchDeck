@@ -81,8 +81,13 @@ bool touchHwRead(int& nx, int& ny) {
     writeReg(REG_STATUS, 0);  // hand the buffer back to the controller
   }
   if (!s_down || s_x >= NATIVE_W || s_y >= NATIVE_H) return false;
+#if BOARD_PANEL_FLIP
+  nx = NATIVE_W - 1 - s_x;
+  ny = NATIVE_H - 1 - s_y;
+#else
   nx = s_x;
   ny = s_y;
+#endif
   return true;
 }
 

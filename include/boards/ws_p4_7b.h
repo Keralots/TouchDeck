@@ -33,10 +33,14 @@
 #define BOARD_DPI_VFP 12
 // EK79007 init from the vendor BSP: 2-lane pad control, vendor registers,
 // sleep out. {cmd, data, data length, delay ms after}.
+// MADCTL 0x36 = 0x02 (default 0x01): scan turned by 180 in the panel itself,
+// so landscape stays on the row-copy path; touch follows via BOARD_PANEL_FLIP.
+#define BOARD_PANEL_FLIP 1
 #define BOARD_DSI_INIT_CMDS                                                    \
   {0xB2, 0x10, 1, 0}, {0x80, 0x8B, 1, 0}, {0x81, 0x78, 1, 0},                 \
   {0x82, 0x84, 1, 0}, {0x83, 0x88, 1, 0}, {0x84, 0xA8, 1, 0},                 \
-  {0x85, 0xE3, 1, 0}, {0x86, 0x88, 1, 0}, {0x11, 0x00, 0, 120}
+  {0x85, 0xE3, 1, 0}, {0x86, 0x88, 1, 0}, {0x36, 0x02, 1, 0},                 \
+  {0x11, 0x00, 0, 120}
 #define BOARD_BACKLIGHT_PIN 32
 #define BOARD_BACKLIGHT_ACTIVE_LOW 1
 #define BOARD_BACKLIGHT_FREQ 5000  // vendor BSP
