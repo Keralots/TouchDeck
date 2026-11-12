@@ -187,6 +187,7 @@ struct Decode {
 
 size_t readInput(void* ctx, uint8_t* buf, size_t n) {
   Decode& d = *(Decode*)ctx;
+  if (!d.stream) return 0;  // getStreamPtr() after the server closed
   uint8_t skip[64];
   size_t got = 0;
   uint32_t last = millis();

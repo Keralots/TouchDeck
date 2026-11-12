@@ -74,6 +74,8 @@ void updateTask(void*) {
     NetworkClient* stream = http.getStreamPtr();
     if (total <= 0) {
       fail("size unknown");
+    } else if (!stream) {
+      fail("download cut");
     } else if (!hostedBeginUpdate()) {
       fail("co-processor refused the update");
     } else {

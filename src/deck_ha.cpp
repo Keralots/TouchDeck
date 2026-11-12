@@ -1125,9 +1125,9 @@ bool readBody(HTTPClient& http, char*& body, size_t& len, String& err) {
     return false;
   }
   len = 0;
-  WiFiClient* in = http.getStreamPtr();
+  WiFiClient* in = http.getStreamPtr();  // nullptr once the server has closed
   uint32_t lastData = millis();
-  while (true) {
+  while (in) {
     if (declared > 0 && len >= (size_t)declared) break;
     const int avail = in->available();
     if (avail > 0) {
@@ -1425,6 +1425,7 @@ struct HistoryStream {
       return c;
     }
     while (pos >= len) {
+      if (!in) return -1;  // getStreamPtr() after the server closed
       if (feedWdt) esp_task_wdt_reset();
       if ((int32_t)(millis() - deadline) >= 0) {
         timedOut = true;
