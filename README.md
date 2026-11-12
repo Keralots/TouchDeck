@@ -18,6 +18,8 @@ A touch control deck for the Guition JC3248W535 (3.5" 320x480 IPS, capacitive to
 
 Optional: a single-colour status LED on a free GPIO ([wiring](GUIDE.md#wiring-the-led)), a [vibration motor](GUIDE.md#vibration-motor) for tile taps and a microSD card for wallpapers and brand icons.
 
+**Beta:** Waveshare ESP32-P4-WIFI6-Touch-LCD-7B (7" 1024x600 MIPI-DSI, GT911 touch, ES8311 speaker, WiFi through the on-board ESP32-C6). Builds for P4 chip revision v3.x only, tested on v3.2. Known issues and open checks are listed in the release notes.
+
 ## Screenshots
 
 Short video of the deck in use: [YouTube](https://youtube.com/shorts/eh1_8pJR3-M).
