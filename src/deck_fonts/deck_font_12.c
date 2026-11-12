@@ -1,9 +1,8 @@
-/* Guition deck UI font: Montserrat Medium 12 px (SIL OFL 1.1) with Latin-1
+/* Deck UI font: Montserrat Medium 12 px (SIL OFL 1.1) with Latin-1
  * and Latin Extended-A (Polish and most European names from Home Assistant),
  * the euro sign,
  * plus the LVGL symbol set from Font Awesome 5 Free (Font Awesome Free
  * License). Generated with lv_font_conv 1.5.3; options below. */
-#if defined(BOARD_IS_JC3248W535)
 
 /*******************************************************************************
  * Size: 12 px
@@ -4115,4 +4114,3 @@ lv_font_t deck_font_12 = {
 #endif /*#if DECK_FONT_12*/
 
 
-#endif  /* BOARD_IS_JC3248W535 */

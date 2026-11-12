@@ -22,18 +22,11 @@
 #include <time.h>
 #include <algorithm>
 #include <vector>
-#include "img_converters.h"
-#include "esp32s3/rom/tjpgd.h"
+#include "deck_jpeg.h"
+#include "deck_panel.h"
 
 namespace deck {
 namespace {
-
-// ROM TJpgDec can scale while it decodes (LVGL's copy is built without that).
-// Called by address (esp32s3.rom.ld) because LVGL defines the same names.
-using PrepareFn = JRESULT (*)(JDEC*, UINT (*)(JDEC*, BYTE*, UINT), void*, UINT, void*);
-using DecompFn = JRESULT (*)(JDEC*, UINT (*)(JDEC*, void*, JRECT*), BYTE);
-const PrepareFn romPrepare = (PrepareFn)0x40000858;
-const DecompFn romDecomp = (DecompFn)0x40000864;
 
 constexpr const char* API_URL =
     "https://fd.api.iris.microsoft.com/v4/api/selection?placement=88000820&bcnt=4&country=US&locale=en-US&fmt=json";
@@ -192,10 +185,11 @@ struct Decode {
   uint32_t bytes, blocks;
 };
 
-UINT readInput(JDEC* jd, BYTE* buf, UINT n) {
-  Decode& d = *(Decode*)jd->device;
+size_t readInput(void* ctx, uint8_t* buf, size_t n) {
+  Decode& d = *(Decode*)ctx;
+  if (!d.stream) return 0;  // getStreamPtr() after the server closed
   uint8_t skip[64];
-  UINT got = 0;
+  size_t got = 0;
   uint32_t last = millis();
   while (got < n) {
     const size_t want = buf ? n - got : std::min<size_t>(n - got, sizeof(skip));
@@ -245,10 +239,10 @@ void foldBand(Decode& d, int top, int bottom) {
       for (int i = 0; i < d.tw * 3; i++) d.acc[i] += w * row[i];
     }
     if (d.sy < end) break;
-    // ROM TJpgDec emits R, G, B; the esp32-camera encoder reads B, G, R.
+    // Decoded as R, G, B; out in the encoder's order.
     uint8_t* out = d.out + (size_t)d.y * d.tw * 3;
     for (int i = 0; i < d.tw * 3; i++) {
-      const float v = d.acc[i - i % 3 + 2 - i % 3] / d.fy;
+      const float v = d.acc[JPEG_ENCODE_BGR ? i - i % 3 + 2 - i % 3 : i] / d.fy;
       out[i] = v <= 0 ? 0 : v >= 255 ? 255 : (uint8_t)(v + 0.5f);
     }
     if ((d.y & 15) == 15) vTaskDelay(1);
@@ -258,25 +252,46 @@ void foldBand(Decode& d, int top, int bottom) {
   }
 }
 
-UINT writeOutput(JDEC* jd, void* bitmap, JRECT* rect) {
-  Decode& d = *(Decode*)jd->device;
-  const uint8_t* src = (const uint8_t*)bitmap;
-  const int rw = rect->right - rect->left + 1;
-  const int left = std::max((int)rect->left, d.left);
-  const int right = std::min((int)rect->right + 1, d.left + d.bandW);
+// Decoded size known: centre crop to the target aspect and the buffers.
+bool beginDecode(void* ctx, int w, int h, int bandH) {
+  Decode& d = *(Decode*)ctx;
+  const int tw = d.tw, th = d.th;
+  d.w = w;
+  d.h = h;
+  float cw = w, ch = h;
+  if ((float)w / h > (float)tw / th) cw = h * (float)tw / th;
+  else ch = w * (float)th / tw;
+  d.cx = (w - cw) / 2;
+  d.cy = (h - ch) / 2;
+  d.fx = cw / tw;
+  d.fy = ch / th;
+  d.left = (int)d.cx;
+  d.sy = (int)d.cy;
+  d.bandW = std::min((int)ceilf(d.cx + (tw - 1) * d.fx + d.fx), w) - d.left;
+  d.bottom = std::min((int)ceilf(d.cy + (th - 1) * d.fy + d.fy), h);
+  d.out = (uint8_t*)heap_caps_malloc(tw * th * 3, MALLOC_CAP_SPIRAM);
+  d.band = (uint8_t*)heap_caps_malloc((size_t)d.bandW * bandH * 3, MALLOC_CAP_SPIRAM);
+  d.acc = (float*)heap_caps_calloc(tw * 3 * 2, sizeof(float), MALLOC_CAP_SPIRAM);
+  return d.out && d.band && d.acc;
+}
+
+void writeOutput(void* ctx, int x0, int y0, int x1, int y1, const uint8_t* src) {
+  Decode& d = *(Decode*)ctx;
+  const int rw = x1 - x0 + 1;
+  const int left = std::max(x0, d.left);
+  const int right = std::min(x1 + 1, d.left + d.bandW);
   if (left < right && d.y < d.th) {
-    for (int y = std::max((int)rect->top, d.sy); y <= rect->bottom && y < d.bottom; y++) {
-      memcpy(d.band + ((size_t)(y - rect->top) * d.bandW + left - d.left) * 3,
-             src + ((size_t)(y - rect->top) * rw + left - rect->left) * 3, (right - left) * 3);
+    for (int y = std::max(y0, d.sy); y <= y1 && y < d.bottom; y++) {
+      memcpy(d.band + ((size_t)(y - y0) * d.bandW + left - d.left) * 3,
+             src + ((size_t)(y - y0) * rw + left - x0) * 3, (right - left) * 3);
     }
   }
-  if (rect->right + 1 >= d.w) foldBand(d, rect->top, rect->bottom);
+  if (x1 + 1 >= d.w) foldBand(d, y0, y1);
   // Let the core 0 idle task feed its watchdog during long decodes.
   if ((++d.blocks & 255) == 0) {
     sampleRam();
     vTaskDelay(1);
   }
-  return 1;
 }
 
 struct JpegBuf {
@@ -285,7 +300,7 @@ struct JpegBuf {
   bool over;
 };
 
-size_t appendJpeg(void* arg, size_t, const void* data, size_t len) {
+size_t appendJpeg(void* arg, const uint8_t* data, size_t len) {
   JpegBuf& b = *(JpegBuf*)arg;
   if (b.len + len > b.cap) {
     b.over = true;
@@ -381,11 +396,12 @@ void clearDaily(bool portrait) {
   }
 }
 
-// Download, decode at 1/2^n scale, crop, resample, encode and store one picture.
+// Download, decode (at 1/2^n scale where the decoder can), crop, resample,
+// encode and store one picture.
 // False with log.error set; a network failure also sets *offline.
 bool fetchImage(const Pick& pick, const String& name, LogEntry& log, bool* offline) {
   const bool p = pick.portrait;
-  const int tw = p ? 320 : 480, th = p ? 480 : 320;
+  const int tw = screenW(p), th = screenH(p);
   WiFiClientSecure tls;
   tls.setCACert(ROOT_CA);
   HTTPClient http;
@@ -407,46 +423,18 @@ bool fetchImage(const Pick& pick, const String& name, LogEntry& log, bool* offli
   d.stream = http.getStreamPtr();
   d.tw = tw;
   d.th = th;
-  void* pool = heap_caps_malloc(4096, MALLOC_CAP_SPIRAM);
-  JDEC jd;
-  JRESULT r = pool ? romPrepare(&jd, readInput, pool, 4096, &d) : JDR_MEM1;
-  uint8_t scale = 0;
-  if (r == JDR_OK) {
-    while (scale < 3 && (int)(jd.width >> (scale + 1)) >= tw && (int)(jd.height >> (scale + 1)) >= th) scale++;
-    // TJpgDec drops incomplete scaled pixels at the right and bottom edges.
-    d.w = jd.width >> scale;
-    d.h = jd.height >> scale;
-    if (d.w < tw || d.h < th) r = JDR_FMT2;
-    else {
-      float cw = d.w, ch = d.h;
-      if ((float)d.w / d.h > (float)tw / th) cw = d.h * (float)tw / th;
-      else ch = d.w * (float)th / tw;
-      d.cx = (d.w - cw) / 2;
-      d.cy = (d.h - ch) / 2;
-      d.fx = cw / tw;
-      d.fy = ch / th;
-      d.left = (int)d.cx;
-      d.sy = (int)d.cy;
-      d.bandW = std::min((int)ceilf(d.cx + (tw - 1) * d.fx + d.fx), d.w) - d.left;
-      d.bottom = std::min((int)ceilf(d.cy + (th - 1) * d.fy + d.fy), d.h);
-      const int bandH = (jd.msy * 8) >> scale;
-      d.out = (uint8_t*)heap_caps_malloc(tw * th * 3, MALLOC_CAP_SPIRAM);
-      d.band = (uint8_t*)heap_caps_malloc((size_t)d.bandW * bandH * 3, MALLOC_CAP_SPIRAM);
-      d.acc = (float*)heap_caps_calloc(tw * 3 * 2, sizeof(float), MALLOC_CAP_SPIRAM);
-      r = d.out && d.band && d.acc ? romDecomp(&jd, writeOutput, scale) : JDR_MEM1;
-      if (r == JDR_OK && d.y != th) r = JDR_FMT1;
-    }
-  }
+  const JpegSink sink = {beginDecode, writeOutput, &d};
+  JpegResult r = jpegDecode(readInput, &d, tw, th, sink);
+  if (r == JPEG_OK && d.y != th) r = JPEG_BAD;
   http.end();
-  free(pool);
   free(d.band);
   free(d.acc);
   log.bytesIn = d.bytes;
-  if (r != JDR_OK) {
+  if (r != JPEG_OK) {
     free(d.out);
     strlcpy(log.error,
-            r == JDR_FMT3 ? "progressive JPEG" : r == JDR_FMT2 ? "picture too small"
-            : r == JDR_MEM1 ? "no PSRAM" : r == JDR_INP ? "download cut" : "bad JPEG",
+            r == JPEG_PROGRESSIVE ? "progressive JPEG" : r == JPEG_TOO_SMALL ? "picture too small"
+            : r == JPEG_NO_MEMORY ? "no PSRAM" : r == JPEG_CUT ? "download cut" : "bad JPEG",
             sizeof(log.error));
     return false;
   }
@@ -456,7 +444,7 @@ bool fetchImage(const Pick& pick, const String& name, LogEntry& log, bool* offli
   for (int quality = 85; quality >= 60 && !ok && jpg.data; quality -= 10) {
     jpg.len = 0;
     jpg.over = false;
-    ok = fmt2jpg_cb(out, tw * th * 3, tw, th, PIXFORMAT_RGB888, quality, appendJpeg, &jpg) && !jpg.over;
+    ok = jpegEncode(out, tw, th, quality, appendJpeg, &jpg) && !jpg.over;
   }
   free(out);
   log.bytesOut = jpg.len;

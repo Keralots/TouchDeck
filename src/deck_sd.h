@@ -27,7 +27,7 @@ void wallStorageBegin();
 bool wallOnSd();
 // Why an enabled card did not mount; "" when mounted or disabled.
 const char* wallSdError();
-// "SD 1-bit" or "SPI" while mounted.
+// "SD 1-bit", "SD 4-bit" or "SPI" while mounted.
 const char* wallSdMode();
 // SD mode error when the card fell back to SPI.
 const char* wallSdmmcError();

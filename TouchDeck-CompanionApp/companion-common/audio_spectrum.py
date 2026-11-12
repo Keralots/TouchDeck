@@ -137,11 +137,11 @@ def audio_thread_com():
 
 
 class SpectrumStreamer(threading.Thread):
-    def __init__(self, host, port):
+    def __init__(self, hosts, port):
         super().__init__(daemon=True, name="audio-spectrum")
         self._lock = threading.Lock()
-        self._requested = (host, int(port))
-        self._target = None  # resolved off the capture thread
+        self._requested = (tuple(hosts), int(port))
+        self._targets = {}  # host -> address, resolved off the capture thread
         self._default_device_id = None
         self._stop_event = threading.Event()
         self._wake = threading.Event()
@@ -166,12 +166,12 @@ class SpectrumStreamer(threading.Thread):
         self._wave_ref = WAVE_AGC_FLOOR
         self._analysis = np.zeros(FRAMES, dtype=np.float32)
 
-    def set_target(self, host, port):
+    def set_targets(self, hosts, port):
         with self._lock:
-            if (host, int(port)) == self._requested:
+            if (tuple(hosts), int(port)) == self._requested:
                 return
-            self._requested = (host, int(port))
-            self._target = None
+            self._requested = (tuple(hosts), int(port))
+            self._targets = {}
         self._wake.set()
 
     def stop(self):
@@ -206,14 +206,16 @@ class SpectrumStreamer(threading.Thread):
 
     def _send(self, bands, wave):
         with self._lock:
-            target = self._target
-        if target is None or self._stop_event.is_set():
+            targets = list(self._targets.values())
+        if not targets or self._stop_event.is_set():
             return
-        try:
-            self._sock.sendto(b"FFT1" + bands.astype(np.uint8).tobytes() + wave.astype(np.uint8).tobytes(), target)
-            self.last_sent = time.monotonic()
-        except OSError:
-            pass
+        packet = b"FFT1" + bands.astype(np.uint8).tobytes() + wave.astype(np.uint8).tobytes()
+        for target in targets:
+            try:
+                self._sock.sendto(packet, target)
+                self.last_sent = time.monotonic()
+            except OSError:
+                pass
 
     def _watchdog(self):
         mmcss = boost_thread_priority()
@@ -252,14 +254,16 @@ class SpectrumStreamer(threading.Thread):
                 with self._lock:
                     requested = self._requested
                 if requested != resolved_for or now >= resolve_at:
-                    try:
-                        address = socket.getaddrinfo(*requested, socket.AF_INET, socket.SOCK_DGRAM)[0][4]
-                        with self._lock:
-                            if requested == self._requested:
-                                self._target = address
-                        resolve_at = now + 30.0
-                    except OSError:
-                        resolve_at = now + 2.0  # keep the last good address meanwhile
+                    hosts, port = requested
+                    resolve_at = now + 30.0
+                    for host in hosts:
+                        try:
+                            address = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_DGRAM)[0][4]
+                            with self._lock:
+                                if requested == self._requested:
+                                    self._targets[host] = address
+                        except OSError:
+                            resolve_at = now + 2.0  # keep the last good address meanwhile
                     resolved_for = requested
                 if now >= check_at:
                     try:
@@ -355,16 +359,22 @@ def ensure(config):
     if not AVAILABLE:
         return
     config = config or {}
-    host, port = udp_target(config.get("esp32_ip"), config.get("udp_port"))
-    want = bool(config.get("audio_viz")) and bool(host)
+    # The deck plus the extra panels, as for the metrics packets.
+    addresses = [config.get("esp32_ip")] + [p.get("address") for p in config.get("panels", [])]
+    hosts, port = [], 4210
+    for address in addresses:
+        host, port = udp_target(address, config.get("udp_port"))
+        if host and host not in hosts:
+            hosts.append(host)
+    want = bool(config.get("audio_viz")) and bool(hosts)
     with _lock:
         if _streamer is not None and not _streamer.is_alive():
             _streamer = None
         if want and _streamer is None:
-            _streamer = SpectrumStreamer(host, port)
+            _streamer = SpectrumStreamer(hosts, port)
             _streamer.start()
         elif want:
-            _streamer.set_target(host, port)
+            _streamer.set_targets(hosts, port)
         elif _streamer is not None:
             _streamer.stop()
             _streamer.join(timeout=2.0)

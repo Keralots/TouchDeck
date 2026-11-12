@@ -6,7 +6,7 @@ namespace deckui {
 // --- PC metric charts -----------------------------------------------------------------
 constexpr float SPARK_LINE = 2.0f;  // line thickness, px
 constexpr float SPARK_EASE_MS = 250.0f;
-constexpr int SPARK_MAX_W = 480;
+constexpr int SPARK_MAX_W = MAX_DIM;  // a full-width chart
 
 constexpr float SPARK_SYNC_MS = 400.0f;
 constexpr int SPARK_SPAN = PC_HISTORY_LEN - 2;  // sample intervals across the chart

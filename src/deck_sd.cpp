@@ -3,12 +3,16 @@
 #include "deck_config.h"
 #include "settings.h"
 #include "config.h"
+#include "board.h"
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <vfs_api.h>
 #include <esp_vfs_fat.h>
 #include <sdmmc_cmd.h>
 #include <driver/sdmmc_host.h>
+#if defined(BOARD_SD_LDO_CHAN)
+#include <sd_pwr_ctrl_by_on_chip_ldo.h>
+#endif
 #include <driver/sdspi_host.h>
 #include <driver/gpio.h>
 #include <driver/spi_master.h>
@@ -72,7 +76,7 @@ void indexChanged(bool p, bool d, const String& name) {
 // A card left mid-transfer by a warm reset can miss the first init.
 constexpr int SD_MOUNT_TRIES = 3;
 
-// Slot wiring: CLK 12, CMD/MOSI 11, DAT0/MISO 13, DAT3/CS 10.
+// Slot wiring from the board header; in SPI mode CMD = MOSI, D0 = MISO, D3 = CS.
 esp_vfs_fat_mount_config_t mountConfig() {
   esp_vfs_fat_mount_config_t mc = {};
   mc.format_if_mount_failed = false;
@@ -81,19 +85,49 @@ esp_vfs_fat_mount_config_t mountConfig() {
   return mc;
 }
 
-// 1-bit SD mode, set up as the vendor's SD_MMC.setPins(12, 11, 13) demo:
-// DAT3 and the pull-ups are left to the board.
+#if defined(BOARD_SD_LDO_CHAN)
+// Card IO power from an on-chip LDO, created once and kept across mounts.
+// The power pin is toggled as Arduino's SD_MMC does for the P4 variant.
+sd_pwr_ctrl_handle_t sdPower() {
+  static sd_pwr_ctrl_handle_t s_pwr = nullptr;
+  if (s_pwr) return s_pwr;
+#if defined(BOARD_SD_POWER_PIN)
+  pinMode(BOARD_SD_POWER_PIN, OUTPUT);
+  digitalWrite(BOARD_SD_POWER_PIN, !BOARD_SD_POWER_ON_LEVEL);
+  delay(200);
+  digitalWrite(BOARD_SD_POWER_PIN, BOARD_SD_POWER_ON_LEVEL);
+#endif
+  sd_pwr_ctrl_ldo_config_t ldo = {};
+  ldo.ldo_chan_id = BOARD_SD_LDO_CHAN;
+  if (sd_pwr_ctrl_new_on_chip_ldo(&ldo, &s_pwr) != ESP_OK) s_pwr = nullptr;
+  return s_pwr;
+}
+#endif
+
+// SD mode at the board's bus width. On the JC3248W535 this is 1-bit, set up as
+// the vendor's SD_MMC.setPins(12, 11, 13) demo: DAT3 and the pull-ups are left
+// to the board.
 void sdmmcConfig(sdmmc_host_t& host, sdmmc_slot_config_t& slot) {
   host = SDMMC_HOST_DEFAULT();
-  host.flags = SDMMC_HOST_FLAG_1BIT;
+  host.slot = BOARD_SD_SLOT;
+  if (BOARD_SD_WIDTH == 1) host.flags = SDMMC_HOST_FLAG_1BIT;
   host.max_freq_khz = SDMMC_FREQ_DEFAULT;
+#if defined(BOARD_SD_LDO_CHAN)
+  host.pwr_ctrl_handle = sdPower();
+#endif
   slot = SDMMC_SLOT_CONFIG_DEFAULT();
-  slot.width = 1;
-  slot.clk = GPIO_NUM_12;
-  slot.cmd = GPIO_NUM_11;
-  slot.d0 = GPIO_NUM_13;
+  slot.width = BOARD_SD_WIDTH;
+  slot.clk = (gpio_num_t)BOARD_SD_CLK;
+  slot.cmd = (gpio_num_t)BOARD_SD_CMD;
+  slot.d0 = (gpio_num_t)BOARD_SD_D0;
+#if BOARD_SD_WIDTH == 4
+  slot.d1 = (gpio_num_t)BOARD_SD_D1;
+  slot.d2 = (gpio_num_t)BOARD_SD_D2;
+  slot.d3 = (gpio_num_t)BOARD_SD_D3;
+#else
   // S3 defaults put D2/D3 on GPIO 12/13, this slot's CLK and D0.
   slot.d1 = slot.d2 = slot.d3 = GPIO_NUM_NC;
+#endif
   slot.d4 = slot.d5 = slot.d6 = slot.d7 = GPIO_NUM_NC;
 }
 
@@ -106,10 +140,11 @@ esp_err_t mountSdmmc(sdmmc_card_t** card) {
 }
 
 esp_err_t mountSpi(sdmmc_card_t** card) {
+  if (!BOARD_SD_HAS_SPI) return ESP_ERR_NOT_SUPPORTED;
   spi_bus_config_t bus = {};
-  bus.mosi_io_num = 11;
-  bus.miso_io_num = 13;
-  bus.sclk_io_num = 12;
+  bus.mosi_io_num = BOARD_SD_CMD;
+  bus.miso_io_num = BOARD_SD_D0;
+  bus.sclk_io_num = BOARD_SD_CLK;
   bus.quadwp_io_num = bus.quadhd_io_num = -1;
   bus.max_transfer_sz = 4096;
   esp_err_t err = spi_bus_initialize(SPI3_HOST, &bus, SPI_DMA_CH_AUTO);
@@ -118,7 +153,7 @@ esp_err_t mountSpi(sdmmc_card_t** card) {
   host.slot = SPI3_HOST;
   host.max_freq_khz = 20000;
   sdspi_device_config_t dev = SDSPI_DEVICE_CONFIG_DEFAULT();
-  dev.gpio_cs = GPIO_NUM_10;
+  dev.gpio_cs = (gpio_num_t)BOARD_SD_D3;
   dev.host_id = SPI3_HOST;
   const esp_vfs_fat_mount_config_t mc = mountConfig();
   err = esp_vfs_fat_sdspi_mount("/sd", &host, &dev, &mc, card);
@@ -307,7 +342,7 @@ sdmmc_card_t* mountCard() {
   }
   const bool sdMode = card;
   if (sdMode) {
-    s_mode = "SD 1-bit";
+    s_mode = BOARD_SD_WIDTH == 4 ? "SD 4-bit" : "SD 1-bit";
   } else if (mmcErr == ESP_FAIL) {
     // The card answered but FatFs refused it; SPI cannot help a card
     // already in SD mode.

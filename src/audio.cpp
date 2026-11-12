@@ -1,4 +1,6 @@
 #include "audio.h"
+#include "audio_hw.h"
+#include "board.h"
 #include "deck_sd.h"
 #include "display_ui.h"
 #include "settings.h"
@@ -10,16 +12,14 @@
 
 namespace {
 
-// Vendor pincfg.h (DEMO_MP3): NS4168 has no MCLK.
-constexpr gpio_num_t PIN_BCLK = GPIO_NUM_42;
-constexpr gpio_num_t PIN_WS = GPIO_NUM_2;
-constexpr gpio_num_t PIN_DOUT = GPIO_NUM_41;
+constexpr gpio_num_t PIN_MCLK = (gpio_num_t)BOARD_I2S_MCLK;  // -1 = unused
+constexpr gpio_num_t PIN_BCLK = (gpio_num_t)BOARD_I2S_BCLK;
+constexpr gpio_num_t PIN_WS = (gpio_num_t)BOARD_I2S_WS;
+constexpr gpio_num_t PIN_DOUT = (gpio_num_t)BOARD_I2S_DOUT;
 
 constexpr uint32_t SYNTH_RATE = 22050;
 constexpr size_t CHUNK = 256;  // frames per i2s_channel_write
 constexpr uint32_t FADE_FRAMES = 128;  // ramp when a sound is cut short
-constexpr uint32_t IDLE_OFF_MS = 1500;
-constexpr uint32_t AMP_SETTLE_MS = 30;
 constexpr uint32_t MAX_CLIP_FRAMES = 1024 * 1024;  // 2 MB of mono PCM
 constexpr uint32_t CACHE_MAX_BYTES = 256 * 1024;   // larger file clips load per play
 constexpr int FILE_CACHE = 3;
@@ -95,6 +95,7 @@ bool IRAM_ATTR onSendOvf(i2s_chan_handle_t, i2s_event_data_t*, void*) {
 
 void closeChannel() {
   if (!s_tx) return;
+  audioHwStop();
   i2s_channel_disable(s_tx);
   i2s_del_channel(s_tx);
   s_tx = nullptr;
@@ -109,6 +110,7 @@ bool openChannel(uint32_t rate) {
     i2s_channel_disable(s_tx);
     err = i2s_channel_reconfig_std_clock(s_tx, &clk);
     if (err == ESP_OK) err = i2s_channel_enable(s_tx);
+    if (err == ESP_OK && !audioHwStart(rate)) err = ESP_ERR_NOT_SUPPORTED;
     if (err != ESP_OK) {
       s_lastErr = err;
       closeChannel();
@@ -133,7 +135,7 @@ bool openChannel(uint32_t rate) {
     .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(rate),
     .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
     .gpio_cfg = {
-      .mclk = I2S_GPIO_UNUSED,
+      .mclk = PIN_MCLK,
       .bclk = PIN_BCLK,
       .ws = PIN_WS,
       .dout = PIN_DOUT,
@@ -146,6 +148,10 @@ bool openChannel(uint32_t rate) {
   err = i2s_channel_init_std_mode(s_tx, &sc);
   if (err == ESP_OK) err = i2s_channel_register_event_callback(s_tx, &cbs, nullptr);
   if (err == ESP_OK) err = i2s_channel_enable(s_tx);
+  if (err == ESP_OK && !audioHwStart(rate)) {
+    err = ESP_ERR_NOT_SUPPORTED;
+    i2s_channel_disable(s_tx);
+  }
   if (err != ESP_OK) {
     s_lastErr = err;
     i2s_del_channel(s_tx);
@@ -156,7 +162,7 @@ bool openChannel(uint32_t rate) {
   s_opens = s_opens + 1;
   s_channelCost = before - heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
   // The amp wakes when BCLK returns; let it settle on silence.
-  vTaskDelay(pdMS_TO_TICKS(AMP_SETTLE_MS));
+  vTaskDelay(pdMS_TO_TICKS(audioSettings.wakeMs));
   return true;
 }
 
@@ -449,7 +455,7 @@ bool takeReq(Req& r) {
 void audioTask(void*) {
   static int16_t buf[CHUNK];
   for (;;) {
-    const uint32_t woke = ulTaskNotifyTake(pdTRUE, s_tx ? pdMS_TO_TICKS(IDLE_OFF_MS) : portMAX_DELAY);
+    const uint32_t woke = ulTaskNotifyTake(pdTRUE, s_tx ? pdMS_TO_TICKS(audioSettings.keepOnMs) : portMAX_DELAY);
     Req r;
     if (!takeReq(r)) {
       // Without BCLK the NS4168 powers down.

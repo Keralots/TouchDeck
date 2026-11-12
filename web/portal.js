@@ -510,6 +510,8 @@
     const au = c.audio || {};
     setCheck("audioEnabled", au.enabled);
     setVal("audioVolume", au.volume == null ? 70 : au.volume);
+    setVal("audioWakeMs", au.wakeMs == null ? "" : au.wakeMs);
+    setVal("audioKeepOnMs", au.keepOnMs == null ? "" : au.keepOnMs);
     setCheck("audioNight", au.nightMute !== false);
     setCheck("audioClick", au.click);
     setCheck("audioFinished", au.finished !== false);
@@ -661,6 +663,7 @@
       $("diagRssi").textContent = s.rssi + " dBm";
       $("diagUptime").textContent = fmtUptime(s.uptime_seconds);
       $("maintIp").textContent = s.ip || "--";
+      showCoproc(s.coprocessor);
       const pct = Math.round((Number(s.backlight || 0) * 100) / 255);
       $("backlightState").textContent = s.manual_display_off
         ? "screen off"
@@ -867,6 +870,36 @@
     } catch (e) {
       showToast(e.message, true);
       $("sdFormat").disabled = false;
+    }
+  });
+  /* WiFi co-processor (boards with ESP-Hosted only). */
+  function showCoproc(c) {
+    $("coprocBox").classList.toggle("hidden", !c);
+    if (!c) return;
+    $("coprocFw").textContent = c.firmware;
+    $("coprocWant").textContent = c.expected;
+    const running = c.update === "running";
+    $("coprocState").textContent = running
+      ? "Updating... " + c.progress + " %"
+      : c.update === "error"
+        ? "Update failed: " + c.error
+        : c.update === "done"
+          ? "Updated, restarting..."
+          : c.firmware === c.expected
+            ? "Up to date."
+            : "Does not match this build: update it.";
+    $("coprocUpdate").classList.toggle("hidden", running || c.firmware === c.expected);
+  }
+  $("coprocUpdate").addEventListener("click", async () => {
+    if (!confirm("Update the WiFi co-processor firmware? Keep the deck powered until it restarts.")) return;
+    try {
+      $("coprocUpdate").disabled = true;
+      const data = await getJson("/api/coprocessor/update", { method: "POST" });
+      showToast(data.message || "Update started", false);
+    } catch (e) {
+      showToast(e.message, true);
+    } finally {
+      $("coprocUpdate").disabled = false;
     }
   });
   $("factoryReset").addEventListener("click", async () => {
@@ -1157,8 +1190,10 @@
     const img = await createImageBitmap(file);
     try {
       const c = document.createElement("canvas");
-      c.width = o === "l" ? 480 : 320;
-      c.height = o === "l" ? 320 : 480;
+      /* The device's screen (older firmware: the 3.5" deck). */
+      const s = (config && config.screen) || { w: 480, h: 320 };
+      c.width = o === "l" ? s.w : s.h;
+      c.height = o === "l" ? s.h : s.w;
       const scale = Math.max(c.width / img.width, c.height / img.height),
         w = img.width * scale,
         h = img.height * scale;

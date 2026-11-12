@@ -116,13 +116,16 @@
 
 #include <Arduino.h>
 #include <vector>
+#include "board.h"
 
 namespace deck {
 
 constexpr int ORIENT_LANDSCAPE = 0;
 constexpr int ORIENT_PORTRAIT = 1;
 constexpr int MAX_DECK_PAGES = 8;
-constexpr int MAX_PAGE_TILES = 24;
+constexpr int MAX_PAGE_TILES = BOARD_MAX_PAGE_TILES;
+// Cells per grid side; tiles sit and span in half cells.
+constexpr int GRID_MAX = BOARD_GRID_MAX;
 
 enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER, TILE_CLOCK, TILE_PRINTER, TILE_MEDIA, TILE_VIZ };
 enum PrinterShow : uint8_t { PS_HERO = 0, PS_NOZZLE, PS_BED, PS_CHAMBER, PS_FILAMENT, PS_LAYER, PS_LIGHT, PS_AMS, PS_SLOTS, PS_SUMMARY };
@@ -234,8 +237,8 @@ struct PageDef {
   bool autoShow = false;  // "auto": slide here when it appears, back when it goes
   bool home = false;      // "home": the page the deck starts on
   bool shown = true;      // runtime, as for tiles
-  uint8_t cols[2] = {4, 3};
-  uint8_t rows[2] = {3, 4};
+  uint8_t cols[2] = {BOARD_GRID_LANDSCAPE_COLS, BOARD_GRID_PORTRAIT_COLS};
+  uint8_t rows[2] = {BOARD_GRID_LANDSCAPE_ROWS, BOARD_GRID_PORTRAIT_ROWS};
   std::vector<TileDef> tiles;
 };
 

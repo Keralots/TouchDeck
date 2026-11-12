@@ -77,16 +77,16 @@ lv_obj_t* tileBox(const TileRt& r) {
   return box;
 }
 
-// Centre (in the parent's content coords) and size packed into a user pointer.
-void* pack(int cx, int cy, int size) {
-  return (void*)(uintptr_t)(((uint32_t)(cx + 1024) & 0x7FF) | ((uint32_t)(cy + 1024) & 0x7FF) << 11 |
-                            (uint32_t)LV_MIN(size, 1023) << 22);
-}
+// A circle's centre (in the parent's content coords) and target size, owned
+// by the object (packing them into the pointer ran out of bits on 1024 px).
+struct CircleGeo {
+  int16_t cx, cy, size;
+};
 void unpack(const void* k, int& cx, int& cy, int& size) {
-  const uint32_t v = (uint32_t)(uintptr_t)k;
-  cx = (int)(v & 0x7FF) - 1024;
-  cy = (int)(v >> 11 & 0x7FF) - 1024;
-  size = (int)(v >> 22);
+  const CircleGeo& g = *(const CircleGeo*)k;
+  cx = g.cx;
+  cy = g.cy;
+  size = g.size;
 }
 
 void placeCircle(lv_obj_t* o, int cx, int cy, int d) {
@@ -96,7 +96,10 @@ void placeCircle(lv_obj_t* o, int cx, int cy, int d) {
 
 lv_obj_t* circle(lv_obj_t* parent, int cx, int cy, int size) {
   lv_obj_t* o = overlay(parent);
-  lv_obj_set_user_data(o, pack(cx, cy, size));
+  CircleGeo* g = (CircleGeo*)lv_malloc(sizeof(CircleGeo));
+  *g = {(int16_t)cx, (int16_t)cy, (int16_t)size};
+  lv_obj_set_user_data(o, g);
+  lv_obj_add_event_cb(o, [](lv_event_t* e) { lv_free(lv_event_get_user_data(e)); }, LV_EVENT_DELETE, g);
   lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
   placeCircle(o, cx, cy, 2);
   return o;

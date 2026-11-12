@@ -18,7 +18,6 @@ const char kDefaultDeck[] PROGMEM = R"JSON({
   "theme": "midnight",
   "pages": [
     { "id": "desk", "name": "Desk",
-      "layouts": { "landscape": { "cols": 4, "rows": 3 } },
       "tiles": [
         { "id": "lamp", "type": "toggle", "entity": "light.desk_lamp", "label": "Desk lamp", "icon": "mdi:lightbulb",
           "pos": { "landscape": { "x": 0, "y": 0, "w": 2, "h": 1 } } },
@@ -36,7 +35,6 @@ const char kDefaultDeck[] PROGMEM = R"JSON({
           "tap": { "action": "page", "page": "pc" } }
       ] },
     { "id": "pc", "name": "PC",
-      "layouts": { "landscape": { "cols": 4, "rows": 3 } },
       "tiles": [
         { "id": "m1", "type": "metric", "metric": 1, "style": "chart",
           "pos": { "landscape": { "x": 0, "y": 0, "w": 2, "h": 1 } } },
@@ -179,8 +177,8 @@ void parsePos(JsonVariantConst v, TilePos& p) {
   p.set = v["x"].is<float>() && v["y"].is<float>();
   p.x = halves(v["x"], 0, 0, 30);
   p.y = halves(v["y"], 0, 0, 30);
-  p.w = halves(v["w"], 2, 1, 12);
-  p.h = halves(v["h"], 2, 1, 12);
+  p.w = halves(v["w"], 2, 1, 2 * GRID_MAX);
+  p.h = halves(v["h"], 2, 1, 2 * GRID_MAX);
 }
 
 bool parseWhen(JsonVariantConst v, WhenDef& w, String* err, const String& where) {
@@ -212,8 +210,8 @@ bool parseWhen(JsonVariantConst v, WhenDef& w, String* err, const String& where)
 
 void parseGrid(JsonVariantConst v, uint8_t& cols, uint8_t& rows) {
   if (v.isNull()) return;
-  cols = (uint8_t)constrain((int)(v["cols"] | cols), 1, 6);
-  rows = (uint8_t)constrain((int)(v["rows"] | rows), 1, 6);
+  cols = (uint8_t)constrain((int)(v["cols"] | cols), 1, GRID_MAX);
+  rows = (uint8_t)constrain((int)(v["rows"] | rows), 1, GRID_MAX);
 }
 
 bool s_fsTried = false;

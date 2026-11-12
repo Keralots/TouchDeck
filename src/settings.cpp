@@ -251,6 +251,9 @@ void loadSettings() {
   audioSettings.finished = prefs.getBool("audfin", true);
   audioSettings.error = prefs.getBool("auderr", true);
   audioSettings.cooled = prefs.getBool("audcool", true);
+  audioSettings.wakeMs = min<uint16_t>(prefs.getUShort("audwake", BOARD_AUDIO_WAKE_MS), AUDIO_WAKE_MAX_MS);
+  audioSettings.keepOnMs = constrain(prefs.getUInt("audkeep", BOARD_AUDIO_KEEP_ON_MS), AUDIO_KEEP_ON_MIN_MS,
+                                     AUDIO_KEEP_ON_MAX_MS);
   // isKey first: getString logs a missing key.
   if (prefs.isKey("audffin")) prefs.getString("audffin", audioSettings.fileFinished, AUDIO_FILE_LEN);
   if (prefs.isKey("audferr")) prefs.getString("audferr", audioSettings.fileError, AUDIO_FILE_LEN);
@@ -344,6 +347,8 @@ void saveSettings() {
   prefs.putBool("audfin", audioSettings.finished);
   prefs.putBool("auderr", audioSettings.error);
   prefs.putBool("audcool", audioSettings.cooled);
+  prefs.putUShort("audwake", audioSettings.wakeMs);
+  prefs.putUInt("audkeep", audioSettings.keepOnMs);
   prefs.putString("audffin", audioSettings.fileFinished);
   prefs.putString("audferr", audioSettings.fileError);
   prefs.putString("audfcool", audioSettings.fileCooled);

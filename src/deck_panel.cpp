@@ -1,78 +1,31 @@
-// Guition JC3248W535 display pipeline. See deck_panel.h for the contract and
-// the measured panel facts behind it.
-#include "deck_panel.h"
-#include <driver/spi_master.h>
-#include <driver/gpio.h>
+// Frame compositor shared by every display: LVGL frames, page slides and
+// card/frame animations built in native orientation and panel byte order for
+// the board's transport (deck_panel_<bus>.cpp, contract in deck_panel_int.h).
+#include "deck_panel_int.h"
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <atomic>
-// Only for axs15231b_180640_init_operations and its op-code enum; the
-// library's databus and panel classes are not used.
-#include <Arduino_GFX_Library.h>
 
 namespace deck {
 namespace {
 
-constexpr int PIN_CS = 45;
-constexpr int PIN_SCK = 47;
-constexpr int PIN_D0 = 21;
-constexpr int PIN_D1 = 48;
-constexpr int PIN_D2 = 40;
-constexpr int PIN_D3 = 39;
-constexpr int PIN_TE = 38;
+// Pixels in panel byte order (PANEL_BIG_ENDIAN) from little-endian RGB565
+// (LVGL), and back: its own inverse.
+inline uint16_t pnl(uint16_t c) { return PANEL_BIG_ENDIAN ? __builtin_bswap16(c) : c; }
 
-// 48 native rows per chunk: 30,720 bytes (the S3 limit for one SPI
-// transaction is 32 KB), 10 chunks per frame. Smaller chunks save internal
-// RAM but every transaction adds overhead, and with 20 chunks a frame grew
-// to ~16 ms, too close to the 16.39 ms TE period. Two staging buffers only:
-// the next frame's first chunk is pre-built into whichever one frees first.
-constexpr int ROWS = 48;
-constexpr size_t CHUNK_BYTES = (size_t)NATIVE_W * ROWS * 2;
-constexpr int NCHUNK = NATIVE_H / ROWS;
-constexpr uint32_t SPI_HZ = 40000000;  // 80 MHz corrupts the image on this panel
-// The write (15.4 ms) is slower than the scan, so a frame that starts later
-// than this after the TE rising edge is overtaken near the bottom.
-constexpr int64_t TE_LATE_US = 900;
-constexpr int64_t TE_PERIOD_US = 16390;
-constexpr int64_t TE_STALE_US = 50000;
-// Sample composed animations a fixed distance past the next TE edge.
-constexpr int64_t TE_ANIM_LEAD_US = 6000;
-// Use a build-relative lead when recent TE timing is unavailable.
-constexpr int64_t ANIM_LEAD_US = 8000;
+constexpr int64_t SYNC_STALE_US = 50000;
 constexpr int64_t SCRIM_IN_US = 50000;  // the scrim's fade for a card begun before its picture
 
-spi_device_handle_t s_dev = nullptr;
 uint16_t* s_fb[2] = {nullptr, nullptr};
-uint16_t* s_bounce[2] = {nullptr, nullptr};
-DMA_ATTR uint8_t s_cmdbuf[64];
-spi_transaction_ext_t s_tr[NCHUNK];
 TaskHandle_t s_task = nullptr;
+// Native rotation: the user rotation + BOARD_ROT_BASE.
 volatile uint8_t s_rot = 1;
-
-// --- TE ----------------------------------------------------------------------
-portMUX_TYPE s_teMux = portMUX_INITIALIZER_UNLOCKED;
-volatile uint32_t s_teSeq = 0;
-volatile int64_t s_teUs = 0;
-SemaphoreHandle_t s_teSem = nullptr;
-uint32_t s_teUsed = 0;
-
-void IRAM_ATTR teIsr(void*) {
-  portENTER_CRITICAL_ISR(&s_teMux);
-  s_teUs = esp_timer_get_time();
-  s_teSeq = s_teSeq + 1;
-  portEXIT_CRITICAL_ISR(&s_teMux);
-  BaseType_t woken = pdFALSE;
-  xSemaphoreGiveFromISR(s_teSem, &woken);
-  if (woken) portYIELD_FROM_ISR();
-}
 
 // --- Shared frame / compositor state (s_mux) ----------------------------------
 SemaphoreHandle_t s_lvReady = nullptr;
 SemaphoreHandle_t s_quiet = nullptr;
 bool s_quiescing = false;
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
-
-enum Kind : uint8_t { KIND_HSTRIP = 0, KIND_VSTRIP, KIND_PANEL, KIND_FRAME, KIND_MORPH };
 
 // Page dots: shown while a page slide owns the screen, then held and faded
 // out over LVGL frames by this task (LVGL never draws them). Horizontal dots
@@ -88,6 +41,7 @@ struct State {
   bool frameResult = false;
   PanelStats frameStats = {};
   bool lvPending = false;
+  DirtyMask lvDirty = {{}, true};  // LVGL areas since the last plain frame went out
   int lvIdx = 0;
   uint32_t lvGen = 0;
   int lvLatest = -1;
@@ -126,33 +80,6 @@ struct State {
 State s;
 volatile PageFx s_pageFx = PAGE_SLIDE;
 
-// A frame to send, resolved under the lock so the build never reads shared
-// state: one LVGL framebuffer, a horizontal or vertical A|B strip, or a panel
-// pulled down over a (dimmed) page. Plus the page-dot overlay.
-struct Frame {
-  FrameScene scene;
-  uint32_t elapsedMs, durationMs, build0Us;
-  bool frameLast;
-  bool comp;
-  bool releaseLv;
-  uint8_t rot;
-  int w, h;
-  const uint16_t* lv;
-  Kind kind;
-  Src a, b;
-  int off;
-  uint8_t dim;
-  PageFx pageFx;
-  // Morph window this frame, the card picture's step per window pixel (16.16),
-  // picture share over the ghost and window share over the base (both 0..32).
-  // Reveal: the circle's radius in wr.
-  MorphScene morph;
-  int16_t wx, wy, ww, wh, wr;
-  uint32_t wdx, wdy, wa5, wo5;
-  uint32_t base8;  // the base's brightness this frame in eighths, 4 (the scrim) .. 8
-  uint8_t dotCount, dotActive, dotAlpha;
-  bool dotsV;
-};
 
 // --- Stats (approximate, single writer) ----------------------------------------
 volatile uint32_t st_frames = 0, st_comp = 0, st_flushSum = 0, st_flushMax = 0;
@@ -164,99 +91,6 @@ int64_t s_frameStart = 0;
 int64_t s_lastStartUs = 0;
 bool s_lastWasComp = false;
 
-inline void csLow() { gpio_set_level((gpio_num_t)PIN_CS, 0); }
-inline void csHigh() { gpio_set_level((gpio_num_t)PIN_CS, 1); }
-
-// Command with optional parameters on one data line, polling. Only the flush
-// task (or panelBegin before it exists) may call this: polling transfers are
-// not allowed while queued transactions are pending.
-void txCmd(uint8_t c, const uint8_t* d, size_t n) {
-  spi_transaction_t t = {};
-  t.flags = SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
-  t.cmd = 0x02;
-  t.addr = ((uint32_t)c) << 8;
-  if (n > 0 && n <= 4) {
-    t.flags |= SPI_TRANS_USE_TXDATA;
-    memcpy(t.tx_data, d, n);
-  } else if (n > 0) {
-    memcpy(s_cmdbuf, d, n);
-    t.tx_buffer = s_cmdbuf;
-  }
-  t.length = n * 8;
-  csLow();
-  spi_device_polling_transmit(s_dev, &t);
-  csHigh();
-}
-
-void panelInitSequence() {
-  txCmd(0x01, nullptr, 0);  // SWRESET
-  delay(200);
-  const uint8_t* op = axs15231b_180640_init_operations;
-  const size_t len = sizeof(axs15231b_180640_init_operations);
-  for (size_t i = 0; i < len; ++i) {
-    switch (op[i]) {
-      case BEGIN_WRITE:
-      case END_WRITE:
-        break;
-      case WRITE_COMMAND_8:
-        txCmd(op[++i], nullptr, 0);
-        break;
-      case WRITE_C8_D8: {
-        uint8_t c = op[++i];
-        txCmd(c, &op[i + 1], 1);
-        i += 1;
-        break;
-      }
-      case WRITE_C8_D16: {
-        uint8_t c = op[++i];
-        txCmd(c, &op[i + 1], 2);
-        i += 2;
-        break;
-      }
-      case WRITE_C8_BYTES: {
-        uint8_t c = op[++i];
-        uint8_t l = op[++i];
-        txCmd(c, &op[i + 1], l);
-        i += l;
-        break;
-      }
-      case DELAY:
-        delay(op[++i]);
-        break;
-      default:
-        Serial.printf("Deck panel: unknown init op %u at %u\n", op[i], (unsigned)i);
-        break;
-    }
-  }
-  uint8_t v;
-  txCmd(0x20, nullptr, 0);         // INVOFF
-  v = 0x00; txCmd(0x36, &v, 1);    // MADCTL: rotation is done in software
-  v = 0x05; txCmd(0x3A, &v, 1);    // COLMOD RGB565
-  v = 0x00; txCmd(0x35, &v, 1);    // TEON, V-blank only
-}
-
-// Full-width window. RASET is deliberately not sent (QSPI quirk); RAMWR
-// restarts the frame at the top-left native pixel.
-void setWindow() {
-  const uint8_t ca[4] = {0, 0, (uint8_t)((NATIVE_W - 1) >> 8),
-                         (uint8_t)((NATIVE_W - 1) & 0xFF)};
-  txCmd(0x2A, ca, 4);
-  txCmd(0x2C, nullptr, 0);
-}
-
-void fillTr(spi_transaction_ext_t& t, bool first, const void* buf, size_t len) {
-  memset(&t, 0, sizeof(t));
-  t.base.flags = SPI_TRANS_MODE_QIO;
-  if (first) {
-    t.base.cmd = 0x32;
-    t.base.addr = 0x003C00;  // RAMWRC pixel stream, as Arduino_GFX does
-  } else {
-    t.base.flags |= SPI_TRANS_VARIABLE_CMD | SPI_TRANS_VARIABLE_ADDR |
-                    SPI_TRANS_VARIABLE_DUMMY;
-  }
-  t.base.tx_buffer = buf;
-  t.base.length = len * 8;
-}
 
 inline void logicalSize(uint8_t rot, int& w, int& h) {
   if (rot & 1) { w = NATIVE_H; h = NATIVE_W; }
@@ -279,15 +113,19 @@ inline void copyRun(uint16_t* d, int dstep, const uint16_t* s, int n) {
   for (int k = 0; k < n; k++) {
     uint16_t c = s[k];
     if (DIM) {
-      if (!SWAP) c = __builtin_bswap16(c);
+      if (!SWAP) c = pnl(c);
       c = dimLE<DIM>(c);
-      if (!SWAP) c = __builtin_bswap16(c);
+      if (!SWAP) c = pnl(c);
     }
-    d[k * dstep] = SWAP ? __builtin_bswap16(c) : c;
+    d[k * dstep] = SWAP ? pnl(c) : c;
   }
 }
 
 inline void copyAny(uint16_t* d, int dstep, const uint16_t* s, int n, bool swap, uint8_t dim) {
+  if (!PANEL_BIG_ENDIAN && dstep == 1 && dim == 0) {
+    memcpy(d, s, (size_t)n * 2);
+    return;
+  }
   if (swap) {
     if (dim == 0) copyRun<true, 0>(d, dstep, s, n);
     else if (dim == 1) copyRun<true, 1>(d, dstep, s, n);
@@ -317,18 +155,18 @@ void blendRun(uint16_t* d, int step, const uint16_t* a, const uint16_t* b, int n
     const uint32_t* b2 = (const uint32_t*)b;
     for (; k + 1 < n; k += 2, d += 2 * step) {
       const uint32_t wa = *a2++, wb = *b2++;
-      const uint16_t a0 = SA ? (uint16_t)wa : __builtin_bswap16((uint16_t)wa);
-      const uint16_t a1 = SA ? (uint16_t)(wa >> 16) : __builtin_bswap16((uint16_t)(wa >> 16));
-      const uint16_t b0 = SB ? (uint16_t)wb : __builtin_bswap16((uint16_t)wb);
-      const uint16_t b1 = SB ? (uint16_t)(wb >> 16) : __builtin_bswap16((uint16_t)(wb >> 16));
-      d[0] = __builtin_bswap16(mix565(a0, b0, a5));
-      d[step] = __builtin_bswap16(mix565(a1, b1, a5));
+      const uint16_t a0 = SA ? (uint16_t)wa : pnl((uint16_t)wa);
+      const uint16_t a1 = SA ? (uint16_t)(wa >> 16) : pnl((uint16_t)(wa >> 16));
+      const uint16_t b0 = SB ? (uint16_t)wb : pnl((uint16_t)wb);
+      const uint16_t b1 = SB ? (uint16_t)(wb >> 16) : pnl((uint16_t)(wb >> 16));
+      d[0] = pnl(mix565(a0, b0, a5));
+      d[step] = pnl(mix565(a1, b1, a5));
     }
   }
   for (; k < n; k++, d += step) {
-    const uint16_t ca = SA ? a[k] : __builtin_bswap16(a[k]);
-    const uint16_t cb = SB ? b[k] : __builtin_bswap16(b[k]);
-    *d = __builtin_bswap16(mix565(ca, cb, a5));
+    const uint16_t ca = SA ? a[k] : pnl(a[k]);
+    const uint16_t cb = SB ? b[k] : pnl(b[k]);
+    *d = pnl(mix565(ca, cb, a5));
   }
 }
 
@@ -351,7 +189,7 @@ inline uint16_t scale565(uint16_t c, uint32_t a5) {
 // n pixels of s scaled by a5 (0..32), panel byte order out.
 template <bool SWAP>
 void scaleRun(uint16_t* d, int step, const uint16_t* s, int n, uint32_t a5) {
-  for (int k = 0; k < n; k++, d += step) *d = __builtin_bswap16(scale565(SWAP ? s[k] : __builtin_bswap16(s[k]), a5));
+  for (int k = 0; k < n; k++, d += step) *d = pnl(scale565(SWAP ? s[k] : pnl(s[k]), a5));
 }
 
 inline void scaleAny(uint16_t* d, int step, const uint16_t* s, int n, bool swap, uint32_t a5) {
@@ -374,7 +212,7 @@ inline uint16_t shade8(uint16_t c, uint32_t l) {
 
 template <bool SWAP, uint32_t L>
 void shadeRun(uint16_t* d, int step, const uint16_t* s, int n) {
-  for (int k = 0; k < n; k++, d += step) *d = __builtin_bswap16(shade8(SWAP ? s[k] : __builtin_bswap16(s[k]), L));
+  for (int k = 0; k < n; k++, d += step) *d = pnl(shade8(SWAP ? s[k] : pnl(s[k]), L));
 }
 
 inline void shadeAny(uint16_t* d, int step, const uint16_t* s, int n, bool swap, uint32_t l) {
@@ -446,7 +284,7 @@ void emitFrameRow(const Frame& f, int y, int x0, int n, uint16_t* d, int step) {
     uint16_t* out = d + (first - x0) * step;
     for (int x = first; x < end; x++, sx += r.dx, out += step) {
       const uint16_t c = row[sx >> 16];
-      *out = __builtin_bswap16(mix565(__builtin_bswap16(*out), page.swap ? c : __builtin_bswap16(c), r.a5));
+      *out = pnl(mix565(pnl(*out), page.swap ? c : pnl(c), r.a5));
     }
   }
   const FrameRect& c = sc.clockRect;
@@ -460,7 +298,7 @@ void emitFrameRow(const Frame& f, int y, int x0, int n, uint16_t* d, int step) {
       if (!ca5) continue;
       const uint16_t fg = ((px >> 8) & 0xF800) | ((px >> 5) & 0x07E0) | ((px >> 3) & 0x001F);
       uint16_t& out = d[(x - x0) * step];
-      out = __builtin_bswap16(mix565(__builtin_bswap16(out), fg, ca5));
+      out = pnl(mix565(pnl(out), fg, ca5));
     }
   }
 }
@@ -480,7 +318,7 @@ void morphRun(uint16_t* out, int step, const uint16_t* row, uint32_t sx, uint32_
     if (OVER) {
       px = mix565(shade8(base[k], base8), px, wo5);
     }
-    *out = __builtin_bswap16(px);
+    *out = pnl(px);
   }
 }
 
@@ -489,9 +327,9 @@ void morphRun(uint16_t* out, int step, const uint16_t* row, uint32_t sx, uint32_
 template <uint32_t L>
 void ghostFadeRun(uint16_t* out, int step, const uint16_t* base, bool swap, int n, uint32_t gw, uint32_t wo5) {
   for (int k = 0; k < n; k++, out += step) {
-    const uint16_t b = shade8(swap ? base[k] : __builtin_bswap16(base[k]), L);
+    const uint16_t b = shade8(swap ? base[k] : pnl(base[k]), L);
     const uint32_t x = ((spread565(b) * (32 - wo5) + gw) >> 5) & 0x07E0F81F;
-    *out = __builtin_bswap16((uint16_t)(x | x >> 16));
+    *out = pnl((uint16_t)(x | x >> 16));
   }
 }
 
@@ -589,7 +427,7 @@ void emitMorphRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) 
     uint16_t* out = d + (l - x0) * step;
     const bool ghost = f.wa5 < 32, over = f.wo5 < 32;
     if (ghost && !over && f.wa5 == 0) {  // still all ghost
-      const uint16_t g = __builtin_bswap16(m.ghost);
+      const uint16_t g = pnl(m.ghost);
       for (int k = l; k < r; k++, out += step) *out = g;
     } else if (ghost && over) morphRun<true, true>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, b8);
     else if (ghost) morphRun<true, false>(out, step, row, sx, f.wdx, r - l, base + l, m.ghost, f.wa5, f.wo5, b8);
@@ -601,13 +439,13 @@ void emitMorphRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) 
     uint16_t* out = d + (l - x0) * step;
     for (int x = l; x < r; x++, sx += f.wdx, out += step) {
       const uint16_t c = row[sx >> 16];
-      uint16_t px = m.card.swap ? c : __builtin_bswap16(c);
+      uint16_t px = m.card.swap ? c : pnl(c);
       if (f.wa5 < 32) px = mix565(m.ghost, px, f.wa5);
       if (f.wo5 < 32) {
-        uint16_t b = m.base.swap ? base[x] : __builtin_bswap16(base[x]);
+        uint16_t b = m.base.swap ? base[x] : pnl(base[x]);
         px = mix565(shade8(b, b8), px, f.wo5);
       }
-      *out = __builtin_bswap16(px);
+      *out = pnl(px);
     }
   }
   if (end > r) shadeAny(d + (r - x0) * step, step, base + r, end - r, m.base.swap, b8);
@@ -618,7 +456,7 @@ void emitMorphRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) 
 // the edge per row (horizontal strip) or per column (vertical strip) are set
 // before chunk 0 (flush task only).
 struct WaterPrep {
-  int16_t edge[NATIVE_H];
+  int16_t edge[MAX_DIM];
   int16_t lo, hi;  // vertical strip: the edge's range over all columns
   int sa, sb;      // A's and B's drift in px
   uint32_t a5;     // A's brightness, 0..32
@@ -663,11 +501,11 @@ void prepWater(const Frame& f) {
 // read), B after it, the light line across it.
 inline uint16_t waterPx(const Src& A, const uint16_t* pa, const Src& B, const uint16_t* pb, int dist) {
   uint16_t c;
-  if (dist < 0) c = scale565(A.swap ? *pa : __builtin_bswap16(*pa), s_wp.a5);
-  else c = B.swap ? *pb : __builtin_bswap16(*pb);
+  if (dist < 0) c = scale565(A.swap ? *pa : pnl(*pa), s_wp.a5);
+  else c = B.swap ? *pb : pnl(*pb);
   if (s_wp.line5 && dist >= -2 && dist <= 1)
     c = mix565(c, 0xFFFF, dist == -1 || dist == 0 ? s_wp.line5 : s_wp.line5 / 2);
-  return __builtin_bswap16(c);
+  return pnl(c);
 }
 
 // Runs of A (dimmed, drifted by sa) for logical x in [x0, x1) of row ra; the
@@ -746,7 +584,7 @@ template <bool SWAP, uint32_t L>
 void depthRun(uint16_t* d, int step, const uint16_t* row, int32_t sx, int32_t inv, int n) {
   for (int k = 0; k < n; k++, sx += inv, d += step) {
     const uint16_t c = row[sx >> 16];
-    *d = __builtin_bswap16(shade8(SWAP ? c : __builtin_bswap16(c), L));
+    *d = pnl(shade8(SWAP ? c : pnl(c), L));
   }
 }
 
@@ -802,7 +640,7 @@ void emitDepthRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int step) 
 // Cascade: the strip in bands, one per grid column (edges in the middle of
 // the gaps), each with its own progress: column k starts 9 % later than
 // k - 1. Per-frame values, set before chunk 0 (flush task only).
-constexpr int MAX_BANDS = 8;
+constexpr int MAX_BANDS = BOARD_GRID_MAX > 8 ? BOARD_GRID_MAX : 8;
 struct CascadeRun {
   int16_t x, end;  // screen columns
   int16_t shift;   // source column = x + shift
@@ -833,9 +671,11 @@ void cascadeSide(CascadeSide& c, int cols, uint16_t cuts, int w, int full, float
     if (!cuts || (cuts >> k & 1)) c.edge[n++] = 8 + (int)lroundf(k * (cw + 7)) - 4;
   c.edge[n] = w;
   c.n = n;
-  const float spread = .09f * (n - 1);
+  // The whole stagger stays within 63 % of the slide on wide grids.
+  const float step = n > 1 ? std::min(.09f, .63f / (n - 1)) : 0;
+  const float spread = step * (n - 1);
   for (int k = 0; k < n; k++) {
-    const float q = std::min(1.0f, std::max(0.0f, (e - .09f * k) / (1 - spread)));
+    const float q = std::min(1.0f, std::max(0.0f, (e - step * k) / (1 - spread)));
     c.off[k] = (int)lroundf(q * full);
   }
 }
@@ -849,7 +689,7 @@ void prepCascade(const Frame& f) {
   s_cp.top = f.a.top ? f.a.top : f.b.top;
   if (v) return;
   // Owner of each column: black, A's bands moved left, B's bands over them.
-  static int16_t own[NATIVE_H], shift[NATIVE_H];
+  static int16_t own[MAX_DIM], shift[MAX_DIM];
   for (int x = 0; x < f.w; x++) own[x] = 0;
   for (int pass = 1; pass <= 2; pass++)
     for (int k = 0; k < (pass == 1 ? s_cp.a.n : s_cp.b.n); k++) {
@@ -967,7 +807,7 @@ inline void emitRow(const Frame& f, int ly, int x0, int n, uint16_t* d, int dste
   }
 }
 
-// Logical (lx, ly) to native (nx, ny) for the user rotation.
+// Logical (lx, ly) to native (nx, ny) for the native rotation.
 inline void toNative(uint8_t rot, int lx, int ly, int& nx, int& ny) {
   switch (rot) {
     case 1:  nx = NATIVE_W - 1 - ly; ny = lx;                 break;
@@ -991,31 +831,50 @@ inline float clamp01(float v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
 // Page dots on a translucent pill, bottom centre (columns) or right edge
 // (pages of a column), drawn into the native chunk (panel byte order) after
 // it was built.
+constexpr int DOTS_SPACING = 14;
+constexpr float DOTS_PILL_R = 8.0f;
+
+// The pill's centre, half length and bounding box in logical pixels.
+struct DotsBox {
+  float cx, cy, half;
+  int x0, y0, x1, y1;
+};
+DotsBox dotsBox(const Frame& f) {
+  DotsBox b;
+  const bool v = f.dotsV;
+  b.cy = v ? (float)f.h * 0.5f : (float)f.h - 14.0f;
+  b.cx = v ? (float)f.w - 14.0f : (float)f.w * 0.5f;
+  b.half = (float)(f.dotCount - 1) * DOTS_SPACING * 0.5f;
+  const float hx = v ? 0.0f : b.half, hy = v ? b.half : 0.0f;
+  b.x0 = (int)(b.cx - hx - DOTS_PILL_R) - 1;
+  b.x1 = (int)(b.cx + hx + DOTS_PILL_R) + 1;
+  b.y0 = (int)(b.cy - hy - DOTS_PILL_R) - 1;
+  b.y1 = (int)(b.cy + hy + DOTS_PILL_R) + 1;
+  return b;
+}
+
 void overlayDots(const Frame& f, uint16_t* dst, int ny0) {
   const int n = f.dotCount;
   if (n < 2 || !f.dotAlpha) return;
-  constexpr int SPACING = 14;
+  constexpr int SPACING = DOTS_SPACING;
   constexpr float DOT_R = 3.5f;
-  constexpr float PILL_R = 8.0f;
+  constexpr float PILL_R = DOTS_PILL_R;
   const bool v = f.dotsV;
-  const float cy = v ? (float)f.h * 0.5f : (float)f.h - 14.0f;
-  const float cx = v ? (float)f.w - 14.0f : (float)f.w * 0.5f;
-  const float half = (float)(n - 1) * SPACING * 0.5f;  // pill segment half length
-  const float hx = v ? 0.0f : half, hy = v ? half : 0.0f;
-  const int bx0 = (int)(cx - hx - PILL_R) - 1, bx1 = (int)(cx + hx + PILL_R) + 1;
-  const int by0 = (int)(cy - hy - PILL_R) - 1, by1 = (int)(cy + hy + PILL_R) + 1;
+  const DotsBox box = dotsBox(f);
+  const float cx = box.cx, cy = box.cy, half = box.half;
+  const int bx0 = box.x0, bx1 = box.x1, by0 = box.y0, by1 = box.y1;
   // Quick reject: does the box touch the native rows of this chunk?
   int nxa, nya, nxb, nyb;
   toNative(f.rot, bx0, by0, nxa, nya);
   toNative(f.rot, bx1, by1, nxb, nyb);
   const int lo = nya < nyb ? nya : nyb, hi = nya < nyb ? nyb : nya;
-  if (hi < ny0 || lo >= ny0 + ROWS) return;
+  if (hi < ny0 || lo >= ny0 + PANEL_ROWS) return;
   const float fade = f.dotAlpha / 255.0f;
   for (int ly = by0; ly <= by1; ly++) {
     for (int lx = bx0; lx <= bx1; lx++) {
       int nx, ny;
       toNative(f.rot, lx, ly, nx, ny);
-      if (ny < ny0 || ny >= ny0 + ROWS || nx < 0 || nx >= NATIVE_W) continue;
+      if (ny < ny0 || ny >= ny0 + PANEL_ROWS || nx < 0 || nx >= NATIVE_W) continue;
       const float px = lx + 0.5f, py = ly + 0.5f;
       // Along and across the pill's axis.
       const float along = v ? py : px, mid = v ? cy : cx;
@@ -1025,7 +884,7 @@ void overlayDots(const Frame& f, uint16_t* dst, int ny0) {
       const float pill = clamp01(PILL_R + 0.5f - sqrtf(sa * sa + across * across));
       if (pill <= 0) continue;
       uint16_t& out = dst[(ny - ny0) * NATIVE_W + nx];
-      uint16_t c = __builtin_bswap16(out);
+      uint16_t c = pnl(out);
       c = blendLE(c, 0x0000, (uint32_t)(150 * pill * fade));
       const int i = (int)lroundf((along - (mid - half)) / SPACING);
       if (i >= 0 && i < n) {
@@ -1036,45 +895,52 @@ void overlayDots(const Frame& f, uint16_t* dst, int ny0) {
           c = blendLE(c, col, (uint32_t)(255 * dot * fade));
         }
       }
-      out = __builtin_bswap16(c);
+      out = pnl(c);
     }
   }
 }
 
-// Fill one native chunk (rows ny0 .. ny0+ROWS-1). Mapping per user rotation:
-//   0: lx = nx,        ly = ny
-//   1: lx = ny,        ly = 319 - nx
-//   2: lx = 319 - nx,  ly = 479 - ny
-//   3: lx = 479 - ny,  ly = nx
-// Part [lo, hi) of a chunk: logical rows in landscape, chunk rows in portrait.
+// Fill one native chunk (rows ny0 .. ny0+PANEL_ROWS-1). Mapping per native
+// rotation (W, H = NATIVE_W, NATIVE_H):
+//   0: lx = nx,          ly = ny
+//   1: lx = ny,          ly = W - 1 - nx
+//   2: lx = W - 1 - nx,  ly = H - 1 - ny
+//   3: lx = H - 1 - ny,  ly = nx
+// Part [lo, hi) of a chunk: logical rows when rotated by 90, chunk rows otherwise.
 void buildPart(const Frame& f, uint16_t* dst, int ny0, int lo, int hi) {
+  if (!PANEL_BIG_ENDIAN && !f.comp && f.rot == 0) {
+    // Plain LVGL frame already in panel order and orientation: row copies.
+    for (int k = lo; k < hi; k++)
+      memcpy(dst + k * NATIVE_W, f.lv + (ny0 + k) * NATIVE_W, NATIVE_W * 2);
+    return;
+  }
   if (!f.comp && (f.rot & 1)) {
-    // Plain landscape LVGL frame: the hot path, free of the per-run
-    // bookkeeping emitRow() needs for composed frames.
+    // Plain LVGL frame turned by 90 (landscape on the S3): the hot path, free
+    // of the per-run bookkeeping emitRow() needs for composed frames.
     const uint16_t* lv = f.lv;
     if (f.rot == 1) {
       for (int ly = lo; ly < hi; ly++) {
         const uint16_t* s = lv + ly * NATIVE_H + ny0;
         uint16_t* d = dst + (NATIVE_W - 1 - ly);
-        for (int k = 0; k < ROWS; k++) d[k * NATIVE_W] = __builtin_bswap16(s[k]);
+        for (int k = 0; k < PANEL_ROWS; k++) d[k * NATIVE_W] = pnl(s[k]);
       }
     } else {
       for (int ly = lo; ly < hi; ly++) {
-        const uint16_t* s = lv + ly * NATIVE_H + (NATIVE_H - ROWS - ny0);
-        uint16_t* d = dst + (ROWS - 1) * NATIVE_W + ly;
-        for (int k = 0; k < ROWS; k++) d[-k * NATIVE_W] = __builtin_bswap16(s[k]);
+        const uint16_t* s = lv + ly * NATIVE_H + (NATIVE_H - PANEL_ROWS - ny0);
+        uint16_t* d = dst + (PANEL_ROWS - 1) * NATIVE_W + ly;
+        for (int k = 0; k < PANEL_ROWS; k++) d[-k * NATIVE_W] = pnl(s[k]);
       }
     }
   } else {
     switch (f.rot) {
       case 1:
         for (int ly = lo; ly < hi; ly++)
-          emitRow(f, ly, ny0, ROWS, dst + (NATIVE_W - 1 - ly), NATIVE_W);
+          emitRow(f, ly, ny0, PANEL_ROWS, dst + (NATIVE_W - 1 - ly), NATIVE_W);
         break;
       case 3:
         for (int ly = lo; ly < hi; ly++)
-          emitRow(f, ly, NATIVE_H - ROWS - ny0, ROWS,
-                  dst + (ROWS - 1) * NATIVE_W + ly, -NATIVE_W);
+          emitRow(f, ly, NATIVE_H - PANEL_ROWS - ny0, PANEL_ROWS,
+                  dst + (PANEL_ROWS - 1) * NATIVE_W + ly, -NATIVE_W);
         break;
       case 2:
         for (int k = lo; k < hi; k++)
@@ -1133,7 +999,7 @@ void buildChunk(const Frame& f, uint16_t* dst, int ny0) {
     if (f.pageFx == PAGE_DEPTH) prepDepth(f);
     if (f.pageFx == PAGE_CASCADE) prepCascade(f);
   }
-  const int n = (f.rot & 1) ? NATIVE_W : ROWS;
+  const int n = (f.rot & 1) ? NATIVE_W : PANEL_ROWS;
   ChunkJob c = {&f, dst, ny0};
   if (f.comp) panelShare(buildBatch, &c, n, 16);
   else buildPart(f, dst, ny0, 0, n);
@@ -1157,11 +1023,12 @@ inline uint8_t dotsAlphaAt(int64_t now) {
 bool decide(Frame& f) {
   bool have = false;
   bool give = false;
-  portENTER_CRITICAL(&s_teMux);
-  const int64_t te = s_teUs;
-  portEXIT_CRITICAL(&s_teMux);
+  const int64_t te = transportLastSyncUs();
   const int64_t now = esp_timer_get_time();
-  const int64_t frameTime = te && now - te <= 2 * TE_PERIOD_US ? te + TE_PERIOD_US + TE_ANIM_LEAD_US : now + ANIM_LEAD_US;
+  const int64_t shown = transportPresentUs(now);
+  const int64_t frameTime = shown ? shown
+                          : te && now - te <= 2 * PANEL_SYNC_PERIOD_US ? te + PANEL_SYNC_PERIOD_US + PANEL_SYNC_LEAD_US
+                                                                      : now + PANEL_ANIM_LEAD_US;
   portENTER_CRITICAL(&s_mux);
   const uint8_t rot = s_rot;
   int w, h;
@@ -1219,7 +1086,7 @@ bool decide(Frame& f) {
     const float u = last ? 1.0f : tc <= 0 ? 0.0f : (float)tc / (float)s.durUs;
     const float p = last ? 1.0f : easeOutCubic(u);
     // Waiting with the scrim done: no frames, the loop needs both cores.
-    const bool still = waiting && t >= SCRIM_IN_US + TE_PERIOD_US;
+    const bool still = waiting && t >= SCRIM_IN_US + PANEL_SYNC_PERIOD_US;
     const bool skip = still && s.morphStill;
     s.morphStill = still;
     if (last) {
@@ -1329,34 +1196,21 @@ bool decide(Frame& f) {
   }
   if (have) {
     f.dotAlpha = dots;
+    if (!f.comp) {
+      f.dirty = s.lvDirty;
+      s.lvDirty.clear();
+      if (rot != 0) f.dirty.full = true;
+      // The dots are drawn over the copy, and must go from it afterwards.
+      if (f.dotCount >= 2 && (dots || s.lastSentDots)) {
+        const DotsBox b = dotsBox(f);
+        f.dirty.addRect(b.x0, b.y0, b.x1, b.y1);
+      }
+    }
     s.lastSentDots = dots;
   }
   portEXIT_CRITICAL(&s_mux);
   if (give) xSemaphoreGive(s_lvReady);
   return have;
-}
-
-// Wait for a TE rising edge that is fresh enough to start a frame on.
-// `backToBack` = this frame follows the previous one without a pause, so a
-// missed edge is a real dropped frame rather than an idle panel.
-void waitTe(bool backToBack) {
-  for (int tries = 0; tries < 4; tries++) {
-    portENTER_CRITICAL(&s_teMux);
-    const uint32_t seq = s_teSeq;
-    const int64_t at = s_teUs;
-    portEXIT_CRITICAL(&s_teMux);
-    if (seq != s_teUsed) {
-      const int64_t age = esp_timer_get_time() - at;
-      if (age < TE_LATE_US) {
-        s_teUsed = seq;
-        return;
-      }
-      if (tries == 0 && backToBack) st_teLate = st_teLate + 1;
-      s_teUsed = seq;  // too late for this one; wait for the next
-    }
-    xSemaphoreTake(s_teSem, pdMS_TO_TICKS(25));
-  }
-  st_teTimeout = st_teTimeout + 1;
 }
 
 void publishFrameStats() {
@@ -1369,114 +1223,6 @@ void publishFrameStats() {
   s.frameDone = true;
   s.frameResult = true;
   portEXIT_CRITICAL(&s_mux);
-}
-
-// Send f (chunk 0 already built into s_bounce[0]). While the tail of f is on
-// the wire, decide the following frame and pre-build its chunk 0; returns
-// true when `next` is ready that way.
-bool sendFrame(const Frame& f, Frame& next, bool backToBack) {
-  setWindow();  // before the TE wait: the pixel stream must start at once
-  waitTe(backToBack);
-  const int64_t f0 = esp_timer_get_time();
-  if (backToBack && f.comp && s_lastWasComp) {
-    const uint32_t gap = (uint32_t)(f0 - s_lastStartUs);
-    if (gap > st_gapMax) st_gapMax = gap;
-  }
-  s_lastStartUs = f0;
-  s_lastWasComp = f.comp;
-
-  csLow();
-  fillTr(s_tr[0], true, s_bounce[0], CHUNK_BYTES);
-  spi_device_queue_trans(s_dev, (spi_transaction_t*)&s_tr[0], portMAX_DELAY);
-  int inflight = 1;
-  uint32_t build = f.build0Us;
-  spi_transaction_t* r;
-  for (int i = 1; i < NCHUNK; i++) {
-    if (inflight == 2) {
-      spi_device_get_trans_result(s_dev, &r, portMAX_DELAY);
-      inflight--;
-    }
-    const int64_t b0 = esp_timer_get_time();
-    buildChunk(f, s_bounce[i & 1], i * ROWS);
-    build += (uint32_t)(esp_timer_get_time() - b0);
-    fillTr(s_tr[i], false, s_bounce[i & 1], CHUNK_BYTES);
-    spi_device_queue_trans(s_dev, (spi_transaction_t*)&s_tr[i], portMAX_DELAY);
-    inflight++;
-  }
-  // Every pixel of an LVGL frame is now in staging buffers: LVGL may reuse
-  // its framebuffer while the DMA tail runs. (Valid only because DMA never
-  // reads the framebuffer itself.)
-  if (f.releaseLv) xSemaphoreGive(s_lvReady);
-  // The second-to-last chunk (even index, s_bounce[0]) finishes first; build
-  // the next frame's chunk 0 there while the last chunk is still on the wire.
-  spi_device_get_trans_result(s_dev, &r, portMAX_DELAY);
-  inflight--;
-  bool have = decide(next);
-  if (have) {
-    const int64_t b0 = esp_timer_get_time();
-    buildChunk(next, s_bounce[0], 0);
-    next.build0Us = (uint32_t)(esp_timer_get_time() - b0);
-  }
-  while (inflight--) spi_device_get_trans_result(s_dev, &r, portMAX_DELAY);
-  csHigh();
-
-  const int64_t end = esp_timer_get_time();
-  const uint32_t fl = (uint32_t)(end - f0);
-  st_frames = st_frames + 1;
-  if (f.comp) st_comp = st_comp + 1;
-  st_flushSum = st_flushSum + fl;
-  if (fl > st_flushMax) st_flushMax = fl;
-  st_buildSum = st_buildSum + build;
-  const uint32_t cost = fl + f.build0Us;
-  st_frameSum = st_frameSum + cost;
-  if (cost > st_frameMax) st_frameMax = cost;
-  if (f.comp && f.kind == KIND_FRAME) {
-    s_frameStats.frames++;
-    s_frameStats.compFrames++;
-    s_frameSum += cost;
-    s_frameBuildSum += build;
-    s_frameFlushSum += fl;
-    if (cost > s_frameStats.frameUsMax) s_frameStats.frameUsMax = cost;
-    if (fl > s_frameStats.flushUsMax) s_frameStats.flushUsMax = fl;
-    if (s_frameStart && f0 - s_frameStart > s_frameStats.gapMaxUs)
-      s_frameStats.gapMaxUs = f0 - s_frameStart;
-    s_frameStart = f0;
-    if (f.frameLast) publishFrameStats();
-  }
-  return have;
-}
-
-static_assert(NCHUNK % 2 == 0, "the last chunk must use s_bounce[1]");
-
-void flushTask(void*) {
-  Frame cur = {}, next = {};
-  bool ready = false;
-  for (;;) {
-    portENTER_CRITICAL(&s_mux);
-    const bool quiet = s_quiescing;
-    const bool partial = quiet && s.kind == KIND_FRAME && !s.frameDone;
-    s_quiescing = false;
-    portEXIT_CRITICAL(&s_mux);
-    if (quiet) {
-      if (partial) publishFrameStats();
-      if (ready && cur.releaseLv) xSemaphoreGive(s_lvReady);
-      ready = false;
-      xSemaphoreGive(s_quiet);
-    }
-    if (!ready) {
-      if (!decide(cur)) {
-        const CompMode mode = compMode();
-        const bool animating = mode == COMP_ANIM || mode == COMP_FRAME;
-        ulTaskNotifyTake(pdTRUE, animating ? 1 : pdMS_TO_TICKS(50));
-        continue;
-      }
-      const int64_t b0 = esp_timer_get_time();
-      buildChunk(cur, s_bounce[0], 0);
-      cur.build0Us = esp_timer_get_time() - b0;
-    }
-    ready = sendFrame(cur, next, ready);
-    if (ready) cur = next;
-  }
 }
 
 }  // namespace
@@ -1503,11 +1249,9 @@ void panelShare(void (*fn)(void* ctx, int lo, int hi), void* ctx, int n, int bat
 }
 
 uint32_t panelFrameClockMs() {
-  portENTER_CRITICAL(&s_teMux);
-  const int64_t te = s_teUs;
-  portEXIT_CRITICAL(&s_teMux);
+  const int64_t te = transportLastSyncUs();
   const int64_t now = esp_timer_get_time();
-  const uint32_t ms = (uint32_t)((te && now - te <= TE_STALE_US ? te + TE_PERIOD_US : now) / 1000);
+  const uint32_t ms = (uint32_t)((te && now - te <= SYNC_STALE_US ? te + PANEL_SYNC_PERIOD_US : now) / 1000);
   // Clamp a backward prediction when TE resumes, including across millis wrap.
   static uint32_t lastMs = ms;
   if ((int32_t)(ms - lastMs) > 0) lastMs = ms;
@@ -1515,91 +1259,45 @@ uint32_t panelFrameClockMs() {
 }
 
 bool panelBegin(uint8_t rotation) {
-  s_rot = rotation & 3;
-  gpio_reset_pin((gpio_num_t)PIN_CS);
-  gpio_set_direction((gpio_num_t)PIN_CS, GPIO_MODE_OUTPUT);
-  csHigh();
-
-  spi_bus_config_t b = {};
-  b.data0_io_num = PIN_D0;
-  b.data1_io_num = PIN_D1;
-  b.sclk_io_num = PIN_SCK;
-  b.data2_io_num = PIN_D2;
-  b.data3_io_num = PIN_D3;
-  b.data4_io_num = b.data5_io_num = b.data6_io_num = b.data7_io_num = -1;
-  b.max_transfer_sz = CHUNK_BYTES;
-  b.flags = SPICOMMON_BUSFLAG_MASTER;
-  if (spi_bus_initialize(SPI2_HOST, &b, SPI_DMA_CH_AUTO) != ESP_OK) return false;
-
-  spi_device_interface_config_t d = {};
-  d.command_bits = 8;
-  d.address_bits = 24;
-  d.mode = 0;
-  d.clock_source = SPI_CLK_SRC_DEFAULT;
-  d.clock_speed_hz = SPI_HZ;
-  d.spics_io_num = -1;  // CS is held low by hand across a whole frame
-  d.flags = SPI_DEVICE_HALFDUPLEX;
-  d.queue_size = NCHUNK + 2;
-  if (spi_bus_add_device(SPI2_HOST, &d, &s_dev) != ESP_OK) return false;
-
+  s_rot = (rotation + BOARD_ROT_BASE) & 3;
   for (int i = 0; i < 2; i++) {
     s_fb[i] = (uint16_t*)heap_caps_aligned_alloc(64, FRAME_BYTES, MALLOC_CAP_SPIRAM);
-    s_bounce[i] = (uint16_t*)heap_caps_aligned_alloc(64, CHUNK_BYTES,
-                                                     MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    if (!s_fb[i]) {
+      Serial.println("Deck panel: framebuffer allocation FAILED");
+      return false;
+    }
+    memset(s_fb[i], 0, FRAME_BYTES);
   }
-  if (!s_fb[0] || !s_fb[1] || !s_bounce[0] || !s_bounce[1]) {
-    Serial.println("Deck panel: buffer allocation FAILED");
-    return false;
-  }
-  memset(s_fb[0], 0, FRAME_BYTES);
-  memset(s_fb[1], 0, FRAME_BYTES);
+  if (!transportBegin()) return false;
 
-  panelInitSequence();
-
-  // Black first frame, before the backlight comes on.
-  memset(s_bounce[0], 0, CHUNK_BYTES);
-  setWindow();
-  csLow();
-  for (int i = 0; i < NCHUNK; i++) {
-    fillTr(s_tr[i], i == 0, s_bounce[0], CHUNK_BYTES);
-    spi_device_queue_trans(s_dev, (spi_transaction_t*)&s_tr[i], portMAX_DELAY);
-  }
-  spi_transaction_t* r;
-  for (int i = 0; i < NCHUNK; i++) spi_device_get_trans_result(s_dev, &r, portMAX_DELAY);
-  csHigh();
-
-  s_teSem = xSemaphoreCreateBinary();
   s_lvReady = xSemaphoreCreateCounting(2, 0);  // up to two LVGL frames in flight
   s_quiet = xSemaphoreCreateBinary();
-  gpio_config_t g = {};
-  g.pin_bit_mask = 1ULL << PIN_TE;
-  g.mode = GPIO_MODE_INPUT;
-  g.intr_type = GPIO_INTR_POSEDGE;
-  gpio_config(&g);
-  esp_err_t e = gpio_install_isr_service(0);
-  if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) return false;
-  gpio_isr_handler_add((gpio_num_t)PIN_TE, teIsr, nullptr);
-
   // Core 1 at high priority: on core 0 the flush loses to WiFi/lwIP under
-  // network load (measured: ~30 fps slides instead of 60).
+  // network load (measured on the S3: ~30 fps slides instead of 60).
   xTaskCreatePinnedToCore(helperTask, "deck_build", 3072, nullptr, 15, &s_helper, 0);
-  xTaskCreatePinnedToCore(flushTask, "deck_flush", 4096, nullptr, 20, &s_task, 1);
-  Serial.printf("Deck panel: up, rotation %u, internal free %u, largest %u\n",
-                (unsigned)s_rot,
+  xTaskCreatePinnedToCore(transportTask, "deck_flush", 4096, nullptr, 20, &s_task, 1);
+  Serial.printf("Deck panel: up, rotation %u, internal free %u, largest %u, PSRAM free %u\n",
+                (unsigned)rotation,
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
   return true;
 }
 
 void panelSetRotation(uint8_t rotation) {
   compCancel();
-  s_rot = rotation & 3;
+  s_rot = (rotation + BOARD_ROT_BASE) & 3;
+  portENTER_CRITICAL(&s_mux);
+  s.lvDirty.full = true;
+  portEXIT_CRITICAL(&s_mux);
 }
 
-uint8_t panelRotation() { return s_rot; }
+uint8_t panelRotation() { return (s_rot + 4 - BOARD_ROT_BASE) & 3; }
+uint8_t panelNativeRotation() { return s_rot; }
 
 int logicalW() { return (s_rot & 1) ? NATIVE_H : NATIVE_W; }
 int logicalH() { return (s_rot & 1) ? NATIVE_W : NATIVE_H; }
+
 
 uint16_t* panelLvBuffer(int i) { return s_fb[i & 1]; }
 
@@ -1608,6 +1306,12 @@ const uint16_t* panelLatestLvFrame() {
   const int idx = s.lvLatest;
   portEXIT_CRITICAL(&s_mux);
   return idx >= 0 ? s_fb[idx] : nullptr;
+}
+
+void panelLvDirty(int x0, int y0, int x1, int y1) {
+  portENTER_CRITICAL(&s_mux);
+  s.lvDirty.addRect(x0, y0, x1, y1);
+  portEXIT_CRITICAL(&s_mux);
 }
 
 void panelPostLv(int idx, uint32_t gen) {
@@ -1847,5 +1551,84 @@ PanelStats panelTakeStats() {
   st_gapMax = 0;
   return p;
 }
+
+// --- Transport contract (deck_panel_int.h) ------------------------------------------
+bool frameDecide(Frame& f) { return decide(f); }
+void frameBuild(const Frame& f, uint16_t* dst, int ny0) { buildChunk(f, dst, ny0); }
+
+bool frameBuildDirty(const Frame& f, uint16_t* dst, const DirtyMask& m) {
+  if (PANEL_BIG_ENDIAN || f.comp || f.rot != 0 || m.full || PANEL_ROWS != NATIVE_H) return false;
+  for (int r = 0; r < DIRTY_ROWS; r++) {
+    uint32_t bits = m.rows[r];
+    const int y0 = r * DIRTY_CH, y1 = std::min(y0 + DIRTY_CH, NATIVE_H);
+    while (bits) {
+      const int c0 = __builtin_ctz(bits);
+      int c1 = c0;  // end of this run of cells
+      while (c1 < 32 && (bits >> c1 & 1)) c1++;
+      bits &= c1 >= 32 ? 0 : ~0u << c1;
+      const int x0 = c0 * DIRTY_CW, x1 = std::min(c1 * DIRTY_CW, NATIVE_W);
+      if (x0 >= x1) continue;
+      for (int y = y0; y < y1; y++)
+        memcpy(dst + y * NATIVE_W + x0, f.lv + y * NATIVE_W + x0, (size_t)(x1 - x0) * 2);
+    }
+  }
+  overlayDots(f, dst, 0);
+  return true;
+}
+
+void frameIdleWait() {
+  const CompMode mode = compMode();
+  const bool animating = mode == COMP_ANIM || mode == COMP_FRAME;
+  ulTaskNotifyTake(pdTRUE, animating ? 1 : pdMS_TO_TICKS(50));
+}
+
+void frameReleaseLv() { xSemaphoreGive(s_lvReady); }
+
+void frameStarted(const Frame& f, int64_t startUs, bool backToBack) {
+  if (backToBack && f.comp && s_lastWasComp) {
+    const uint32_t gap = (uint32_t)(startUs - s_lastStartUs);
+    if (gap > st_gapMax) st_gapMax = gap;
+  }
+  s_lastStartUs = startUs;
+  s_lastWasComp = f.comp;
+}
+
+void frameFinished(const Frame& f, int64_t startUs, uint32_t buildUs, uint32_t flushUs, uint32_t costUs) {
+  st_frames = st_frames + 1;
+  if (f.comp) st_comp = st_comp + 1;
+  st_flushSum = st_flushSum + flushUs;
+  if (flushUs > st_flushMax) st_flushMax = flushUs;
+  st_buildSum = st_buildSum + buildUs;
+  st_frameSum = st_frameSum + costUs;
+  if (costUs > st_frameMax) st_frameMax = costUs;
+  if (f.comp && f.kind == KIND_FRAME) {
+    s_frameStats.frames++;
+    s_frameStats.compFrames++;
+    s_frameSum += costUs;
+    s_frameBuildSum += buildUs;
+    s_frameFlushSum += flushUs;
+    if (costUs > s_frameStats.frameUsMax) s_frameStats.frameUsMax = costUs;
+    if (flushUs > s_frameStats.flushUsMax) s_frameStats.flushUsMax = flushUs;
+    if (s_frameStart && startUs - s_frameStart > s_frameStats.gapMaxUs)
+      s_frameStats.gapMaxUs = startUs - s_frameStart;
+    s_frameStart = startUs;
+    if (f.frameLast) publishFrameStats();
+  }
+}
+
+void countLateSync() { st_teLate = st_teLate + 1; }
+void countMissedSync() { st_teTimeout = st_teTimeout + 1; }
+
+bool quiesceRequested() {
+  portENTER_CRITICAL(&s_mux);
+  const bool quiet = s_quiescing;
+  const bool partial = quiet && s.kind == KIND_FRAME && !s.frameDone;
+  s_quiescing = false;
+  portEXIT_CRITICAL(&s_mux);
+  if (partial) publishFrameStats();
+  return quiet;
+}
+
+void quiesceAck() { xSemaphoreGive(s_quiet); }
 
 }  // namespace deck

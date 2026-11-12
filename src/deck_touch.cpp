@@ -1,21 +1,18 @@
-// Guition JC3248W535 touch reader and swipe arbiter. See deck_touch.h.
+// Touch task and swipe arbiter, shared by every board; the controller
+// driver is deck_touch_<chip>.cpp (contract in deck_touch_int.h).
 #include "deck_touch.h"
+#include "deck_touch_int.h"
 #include "deck_panel.h"
 #include "deck_ui.h"
-#include <Wire.h>
-#include <driver/gpio.h>
 
 namespace deck {
 namespace {
 
-constexpr int PIN_SDA = 4;
-constexpr int PIN_SCL = 8;
-constexpr int PIN_INT = 3;   // wired on this board (Phase 0), despite older docs
-constexpr uint8_t ADDR = 0x3B;
-
 // No valid frame for this long = finger lifted (the controller reports no
 // explicit release event that we have seen).
 constexpr uint32_t RELEASE_MS = 60;
+// Read interval for controllers without an interrupt line.
+constexpr uint32_t POLL_MS = 10;
 // Movement before a touch is classified as a swipe or a vertical gesture.
 constexpr int SLOP_PX = 12;
 // A released swipe changes page when it travelled this share of the width,
@@ -59,35 +56,11 @@ struct Drag {
 };
 constexpr int NSAMPLES = 8;
 
-void IRAM_ATTR intIsr(void*) {
-  if (!s_task) return;
-  BaseType_t woken = pdFALSE;
-  vTaskNotifyGiveFromISR(s_task, &woken);
-  if (woken) portYIELD_FROM_ISR();
-}
 
-// One 8-byte read. Returns true with native coordinates for a valid contact.
-bool readPoint(int& nx, int& ny) {
-  static const uint8_t cmd[8] = {0xB5, 0xAB, 0xA5, 0x5A, 0x00, 0x00, 0x00, 0x08};
-  Wire.beginTransmission(ADDR);
-  Wire.write(cmd, sizeof(cmd));
-  if (Wire.endTransmission() != 0) return false;
-  uint8_t d[8] = {0};
-  const uint8_t got = Wire.requestFrom((int)ADDR, 8);
-  for (int i = 0; i < 8 && Wire.available(); i++) d[i] = Wire.read();
-  if (got < 8) return false;
-  // Valid frame: 00 <points 1..2> E?xH xL 0?yH yL ... Idle/filler reads come
-  // back as B0.. or FF.. and are ignored.
-  if (d[0] != 0 || d[1] == 0 || d[1] > 2) return false;
-  nx = ((d[2] & 0x0F) << 8) | d[3];
-  ny = ((d[4] & 0x0F) << 8) | d[5];
-  return nx < NATIVE_W && ny < NATIVE_H;
-}
-
-// Native portrait coordinates to the logical (rotated) space; same mapping
-// as the pixels in deck_panel.cpp.
+// Native coordinates to the logical (rotated) space; same mapping as the
+// pixels in deck_panel.cpp.
 void toLogical(int nx, int ny, int16_t& x, int16_t& y) {
-  switch (panelRotation()) {
+  switch (panelNativeRotation()) {
     case 1:  x = ny;                 y = NATIVE_W - 1 - nx; break;
     case 2:  x = NATIVE_W - 1 - nx;  y = NATIVE_H - 1 - ny; break;
     case 3:  x = NATIVE_H - 1 - ny;  y = nx;                break;
@@ -104,17 +77,7 @@ void publish(int16_t x, int16_t y, bool pressed) {
 }
 
 void touchTask(void*) {
-  Wire.begin(PIN_SDA, PIN_SCL, 400000);
-  Wire.setTimeOut(5);  // bounded; Wire's default is 50 ms
-  // Raw IDF handler: the GPIO ISR service is already installed by
-  // deck_panel (TE), and attachInterrupt() would log an error re-installing it.
-  gpio_config_t g = {};
-  g.pin_bit_mask = 1ULL << PIN_INT;
-  g.mode = GPIO_MODE_INPUT;
-  g.pull_up_en = GPIO_PULLUP_ENABLE;
-  g.intr_type = GPIO_INTR_NEGEDGE;
-  gpio_config(&g);
-  gpio_isr_handler_add((gpio_num_t)PIN_INT, intIsr, nullptr);
+  const bool irq = touchHwBegin(xTaskGetCurrentTaskHandle());
 
   GestureState state = G_IDLE;
   int16_t x0 = 0, y0 = 0, lastX = 0, lastY = 0;
@@ -125,10 +88,12 @@ void touchTask(void*) {
   int nsamples = 0;
 
   for (;;) {
-    const bool woke = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(s_down ? RELEASE_MS : 1000)) != 0;
+    bool woke = true;
+    if (irq) woke = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(s_down ? RELEASE_MS : 1000)) != 0;
+    else vTaskDelay(pdMS_TO_TICKS(POLL_MS));
     const uint32_t now = millis();
     int nx, ny;
-    if (woke && readPoint(nx, ny)) {
+    if (woke && touchHwRead(nx, ny)) {
       portENTER_CRITICAL(&s_mux);
       s_lastTouch = now;
       portEXIT_CRITICAL(&s_mux);

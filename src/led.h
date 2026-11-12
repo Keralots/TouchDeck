@@ -2,6 +2,8 @@
 #define LED_H
 
 #include <Arduino.h>
+#include "soc/soc_caps.h"
+#include "board.h"
 
 // Status LED: one plain single-color LED on a GPIO, dimmed with PWM through a
 // transistor driver. NOT addressable - there is no color to set, only
@@ -27,6 +29,10 @@ void clearLedPreview();
 
 // Pin validation. sanitizeLedPin() runs on load and before every NVS write.
 bool ledPinAllowed(uint8_t pin);
+// The same check against a card setting that is not applied yet.
+bool ledPinAllowed(uint8_t pin, bool sdCard);
+// Highest GPIO number of the chip.
+constexpr uint8_t GPIO_PIN_MAX = SOC_GPIO_PIN_COUNT - 1;
 bool ledPinValid();
 void sanitizeLedPin();
 

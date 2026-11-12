@@ -109,6 +109,10 @@ constexpr uint8_t HAPTIC_MAX_MS = 200;
 // NS4168 speaker (portal Hardware page); NVS scalars. A file name is a WAV in
 // audioDir(), "" = the built-in sound.
 constexpr size_t AUDIO_FILE_LEN = 40;
+constexpr uint16_t AUDIO_WAKE_MAX_MS = 1000;
+constexpr uint32_t AUDIO_KEEP_ON_MIN_MS = 500;
+constexpr uint32_t AUDIO_KEEP_ON_MAX_MS = 600000;
+
 struct AudioSettings {
   bool enabled = false;
   uint8_t volume = 70;     // 0..100
@@ -117,6 +121,8 @@ struct AudioSettings {
   bool finished = true;    // print finished
   bool error = true;       // new printer error
   bool cooled = true;      // bed cooled after a print
+  uint16_t wakeMs = BOARD_AUDIO_WAKE_MS;       // amp + codec settle after power-up
+  uint32_t keepOnMs = BOARD_AUDIO_KEEP_ON_MS;  // idle time before the amp is cut
   char fileFinished[AUDIO_FILE_LEN] = "";
   char fileError[AUDIO_FILE_LEN] = "";
   char fileCooled[AUDIO_FILE_LEN] = "";

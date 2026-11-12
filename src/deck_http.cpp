@@ -1,5 +1,6 @@
 // Guition deck: HTTP tile actions. See deck_http.h.
 #include "deck_http.h"
+#include "board.h"
 #include <HTTPClient.h>
 #include <JPEGDEC.h>
 #include <WiFi.h>
@@ -498,7 +499,7 @@ bool enqueue(const TileAction& a, const String& label, uint32_t ticket, bool sen
 }  // namespace
 
 bool httpArtFetch(IPAddress ip, uint16_t port, const char* id, int px) {
-  if (!port || !id || strlen(id) != 8 || px < 32 || px > 200 || !ensureTask()) return false;
+  if (!port || !id || strlen(id) != 8 || px < 32 || px > BOARD_MEDIA_ART_MAX || !ensureTask()) return false;
   for (int i = 0; i < 8; i++) if (!isxdigit((unsigned char)id[i])) return false;
   xSemaphoreTake(s_lock, portMAX_DELAY);
   if (s_artBusy) { xSemaphoreGive(s_lock); return false; }
@@ -514,7 +515,7 @@ bool httpArtFetch(IPAddress ip, uint16_t port, const char* id, int px) {
 }
 
 bool httpArtFetchJpeg(const String& url, const char* id, int px) {
-  if (!url.startsWith("http://") || !id || !*id || px < 32 || px > 200 || !ensureTask()) return false;
+  if (!url.startsWith("http://") || !id || !*id || px < 32 || px > BOARD_MEDIA_ART_MAX || !ensureTask()) return false;
   xSemaphoreTake(s_lock, portMAX_DELAY);
   if (s_artBusy) { xSemaphoreGive(s_lock); return false; }
   Job* j = new Job{};

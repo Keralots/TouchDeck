@@ -5,12 +5,14 @@
 #include <Arduino.h>
 #include <lvgl.h>
 #include "deck_sd.h"
+#include "board.h"
 
 namespace deck {
 
 constexpr uint32_t WALL_IDLE_MS = 30000;
 constexpr size_t WALL_RESERVE = 256 * 1024;
-constexpr size_t WALL_MAX_JPEG = 200 * 1024;
+// 200 KB for a 320x480 screen, scaled with the screen area.
+constexpr size_t WALL_MAX_JPEG = (size_t)(200ull * 1024 * BOARD_PANEL_W * BOARD_PANEL_H / (320 * 480));
 struct WallFile {
   uint64_t id;
   size_t size;

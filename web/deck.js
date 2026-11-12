@@ -153,9 +153,12 @@
     sel = -1,
     more = -1;
   const PAL = ["#3987E5", "#00A35C", "#D55181", "#C98500", "#199E70", "#D95926", "#9085E9", "#E66767"];
+  /* The device's landscape screen and grid limits (older firmware: the 3.5" deck). */
+  let scr = { w: 480, h: 320, gridMax: 6, grid: { landscape: [4, 3], portrait: [3, 4] } };
   async function loadPc() {
     try {
       const c = await api("/api/config");
+      if (c.screen) scr = c.screen;
       pcm = (c.metrics || []).slice().sort((a, b) => a.id - b.id);
       pcs = c.pcs || [];
       if (!ori && c.display) ori = c.display.rotation % 2 ? "landscape" : "portrait";
@@ -1044,7 +1047,14 @@
     for (let i = 0; i < count; i++) ams.push(t("ams", (i % 2) * 2, Math.floor(i / 2), 2, { unit: i + 1 }));
     const amsRows = Math.ceil(count / 2);
     return [
-      { id: pid, name: d.name || id, group: pid, printer: id, tiles: tiles },
+      {
+        id: pid,
+        name: d.name || id,
+        group: pid,
+        printer: id,
+        layouts: { landscape: { cols: 4, rows: 3 } },
+        tiles: tiles,
+      },
       {
         id: pid + "_ams",
         name: (d.name || id) + " AMS",
@@ -1782,21 +1792,20 @@
   /* pages and tiles */
   /* Grid and positions are per orientation (ori is the one being edited).
    The editor counts positions and spans in half cells (deck.json: 1.5). */
-  const DEF = { landscape: [4, 3], portrait: [3, 4] };
   const grid = (p) => {
     const l = (p.layouts && p.layouts[ori]) || {};
-    return [gi(l.cols, DEF[ori][0]), gi(l.rows, DEF[ori][1])];
+    return [gi(l.cols, scr.grid[ori][0]), gi(l.rows, scr.grid[ori][1])];
   };
   const tpos = (t) => (t.pos && t.pos[ori]) || {};
   const cl = (v, a, b) => Math.min(b, Math.max(a, v == null ? a : Math.round(v)));
-  /* Like the firmware's parser: a non-integer takes the default, an integer is clamped to 1..6. */
-  const gi = (v, d) => (Number.isInteger(v) ? Math.min(6, Math.max(1, v)) : d);
+  /* Like the firmware's parser: a non-integer takes the default, an integer is clamped to 1..gridMax. */
+  const gi = (v, d) => (Number.isInteger(v) ? Math.min(scr.gridMax, Math.max(1, v)) : d);
   /* Like the firmware: a number rounds to the nearest half cell and is clamped, anything else takes the default. */
   const hv = (v, d, a, b) =>
     typeof v === "number" && isFinite(v) ? Math.min(b, Math.max(a, Math.round(v * 2))) : d;
   const tdim = (t) => {
     const q = tpos(t);
-    return [hv(q.w, 2, 1, 12), hv(q.h, 2, 1, 12)];
+    return [hv(q.w, 2, 1, 2 * scr.gridMax), hv(q.h, 2, 1, 2 * scr.gridMax)];
   };
   const tileSize = (t) =>
     tdim(t)
@@ -2140,7 +2149,6 @@
       deck.pages.push({
         id: "p" + Date.now().toString(36),
         name: "New page",
-        layouts: { landscape: { cols: 4, rows: 3 } },
         tiles: [],
       });
       cur = pages().length - 1;
@@ -2281,9 +2289,9 @@
       ",minmax(0,1fr));grid-template-rows:repeat(" +
       2 * r +
       ",minmax(0,1fr));aspect-ratio:" +
-      (land ? 480 : 320) +
+      (land ? scr.w : scr.h) +
       "/" +
-      ((land ? 320 : 480) - hd) +
+      ((land ? scr.h : scr.w) - hd) +
       '">' +
       g +
       p.tiles.map((t, k) => (at[k] ? gtile(t, k, at[k]) : "")).join("") +

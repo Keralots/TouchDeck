@@ -20,10 +20,12 @@
 #include "deck_mqtt.h"
 #include "deck_icons.h"
 #include "deck_wall.h"
+#include "deck_panel.h"
 #include "deck_daily.h"
 #include "deck_sys.h"
 #include "psram_json.h"
 #include "crash_log.h"
+#include "coproc_update.h"
 #include <LittleFS.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
@@ -176,6 +178,8 @@ static void audioSettingsJson(JsonObject o) {
   o["finished"] = audioSettings.finished;
   o["error"] = audioSettings.error;
   o["cooled"] = audioSettings.cooled;
+  o["wakeMs"] = audioSettings.wakeMs;
+  o["keepOnMs"] = audioSettings.keepOnMs;
   o["fileFinished"] = audioSettings.fileFinished;
   o["fileError"] = audioSettings.fileError;
   o["fileCooled"] = audioSettings.fileCooled;
@@ -199,6 +203,18 @@ static void handleApiConfig() {
   doc["board"] = BOARD_VARIANT;
   doc["ip"] = WiFi.localIP().toString();
   doc["deck"] = true;
+  // Screen and grid facts for the portal's page editor and picture uploads.
+  JsonObject screen = doc["screen"].to<JsonObject>();
+  screen["w"] = deck::screenW(false);
+  screen["h"] = deck::screenH(false);
+  screen["gridMax"] = deck::GRID_MAX;
+  screen["maxTiles"] = deck::MAX_PAGE_TILES;
+  screen["maxJpeg"] = (uint32_t)deck::WALL_MAX_JPEG;
+  JsonObject grid = screen["grid"].to<JsonObject>();
+  grid["landscape"][0] = BOARD_GRID_LANDSCAPE_COLS;
+  grid["landscape"][1] = BOARD_GRID_LANDSCAPE_ROWS;
+  grid["portrait"][0] = BOARD_GRID_PORTRAIT_COLS;
+  grid["portrait"][1] = BOARD_GRID_PORTRAIT_ROWS;
 
   JsonObject display = doc["display"].to<JsonObject>();
   display["rotation"] = dispSettings.rotation;
@@ -257,7 +273,7 @@ static void handleApiConfig() {
   mqttConfigJson(doc["mqtt"].to<JsonObject>(), true);
   presenceJson(doc["presence"].to<JsonObject>());
   JsonArray ledPins = led["allowedPins"].to<JsonArray>();
-  for (uint8_t pin = 0; pin <= 48; pin++) {
+  for (uint8_t pin = 0; pin <= GPIO_PIN_MAX; pin++) {
     if (ledPinAllowed(pin)) ledPins.add(pin);
   }
   JsonObject haptic = doc["haptic"].to<JsonObject>();
@@ -646,7 +662,7 @@ static void handleConfigImport() {
   READ_INT(backlight, "nightEndMinute", 0, 1439, nextBacklight.nightEndMinute, uint16_t);
 
   READ_BOOL(led, "enabled", nextLed.enabled);
-  READ_INT(led, "pin", 0, 48, nextLed.pin, uint8_t);
+  READ_INT(led, "pin", 0, GPIO_PIN_MAX, nextLed.pin, uint8_t);
   READ_INT(led, "brightness", 0, 255, nextLed.brightness, uint8_t);
   READ_BOOL(led, "nightEnabled", nextLed.nightEnabled);
   READ_INT(led, "nightBrightness", 0, 255, nextLed.nightBrightness, uint8_t);
@@ -661,8 +677,7 @@ static void handleConfigImport() {
   }
   READ_BOOL(led, "followDisplay", nextLed.followDisplay);
   READ_BOOL(led, "offlineOff", nextLed.offlineOff);
-  const bool sdPin = nextLed.pin >= 10 && nextLed.pin <= 13;
-  if (nextLed.enabled && (sdPin ? nextDisplay.sdCard : !ledPinAllowed(nextLed.pin))) {
+  if (nextLed.enabled && !ledPinAllowed(nextLed.pin, nextDisplay.sdCard)) {
     sendJsonMessage(400, false, "The backup uses an LED GPIO this board does not allow.");
     return;
   }
@@ -671,12 +686,11 @@ static void handleConfigImport() {
   JsonObjectConst haptic = root["haptic"].as<JsonObjectConst>();
   if (!haptic.isNull()) {
     READ_BOOL(haptic, "enabled", nextHaptic.enabled);
-    READ_INT(haptic, "pin", 0, 48, nextHaptic.pin, uint8_t);
+    READ_INT(haptic, "pin", 0, GPIO_PIN_MAX, nextHaptic.pin, uint8_t);
     READ_INT(haptic, "strength", HAPTIC_MIN_STRENGTH, 100, nextHaptic.strength, uint8_t);
     READ_INT(haptic, "pulseMs", HAPTIC_MIN_MS, HAPTIC_MAX_MS, nextHaptic.pulseMs, uint8_t);
-    const bool sdPin = nextHaptic.pin >= 10 && nextHaptic.pin <= 13;
     if (nextHaptic.enabled &&
-        ((sdPin ? nextDisplay.sdCard : !ledPinAllowed(nextHaptic.pin)) ||
+        (!ledPinAllowed(nextHaptic.pin, nextDisplay.sdCard) ||
          (nextLed.enabled && nextLed.pin == nextHaptic.pin))) {
       sendJsonMessage(400, false, "The backup uses a vibration motor GPIO this board does not allow.");
       return;
@@ -770,6 +784,9 @@ static void handleConfigImport() {
     READ_BOOL(audio, "finished", nextAudio.finished);
     READ_BOOL(audio, "error", nextAudio.error);
     READ_BOOL(audio, "cooled", nextAudio.cooled);
+    if (!audio["wakeMs"].isNull()) READ_INT(audio, "wakeMs", 0, AUDIO_WAKE_MAX_MS, nextAudio.wakeMs, uint16_t);
+    if (!audio["keepOnMs"].isNull())
+      READ_INT(audio, "keepOnMs", AUDIO_KEEP_ON_MIN_MS, AUDIO_KEEP_ON_MAX_MS, nextAudio.keepOnMs, uint32_t);
     const char* const keys[] = {"fileFinished", "fileError", "fileCooled"};
     char* const targets[] = {nextAudio.fileFinished, nextAudio.fileError, nextAudio.fileCooled};
     for (int i = 0; i < 3; i++) {
@@ -931,7 +948,7 @@ static void handleSaveLight() {
 static void handleSaveHardware() {
   LedSettings nextLed = ledSettings;
   nextLed.enabled = server.hasArg("ledEnabled") ? 1 : 0;
-  nextLed.pin = (uint8_t)clampedArg("ledPin", nextLed.pin, 0, 48);
+  nextLed.pin = (uint8_t)clampedArg("ledPin", nextLed.pin, 0, GPIO_PIN_MAX);
   nextLed.brightness = (uint8_t)clampedArg("ledBrightness", nextLed.brightness, 0, 255);
   nextLed.nightEnabled = server.hasArg("ledNightEnabled") ? 1 : 0;
   nextLed.nightBrightness =
@@ -947,7 +964,7 @@ static void handleSaveHardware() {
   }
   HapticSettings nextHaptic = hapticSettings;
   nextHaptic.enabled = server.hasArg("hapticEnabled");
-  nextHaptic.pin = (uint8_t)clampedArg("hapticPin", nextHaptic.pin, 0, 48);
+  nextHaptic.pin = (uint8_t)clampedArg("hapticPin", nextHaptic.pin, 0, GPIO_PIN_MAX);
   nextHaptic.strength = (uint8_t)clampedArg("hapticStrength", nextHaptic.strength, HAPTIC_MIN_STRENGTH, 100);
   nextHaptic.pulseMs = (uint8_t)clampedArg("hapticMs", nextHaptic.pulseMs, HAPTIC_MIN_MS, HAPTIC_MAX_MS);
   if (nextHaptic.enabled && !ledPinAllowed(nextHaptic.pin)) {
@@ -974,6 +991,9 @@ static void handleSaveHardware() {
   nextAudio.finished = server.hasArg("audioFinished");
   nextAudio.error = server.hasArg("audioError");
   nextAudio.cooled = server.hasArg("audioCooled");
+  nextAudio.wakeMs = (uint16_t)clampedArg("audioWakeMs", nextAudio.wakeMs, 0, AUDIO_WAKE_MAX_MS);
+  nextAudio.keepOnMs = (uint32_t)clampedArg("audioKeepOnMs", nextAudio.keepOnMs, AUDIO_KEEP_ON_MIN_MS,
+                                            AUDIO_KEEP_ON_MAX_MS);
   const char* const fields[] = {"audioFileFinished", "audioFileError", "audioFileCooled"};
   char* const targets[] = {nextAudio.fileFinished, nextAudio.fileError, nextAudio.fileCooled};
   for (int i = 0; i < 3; i++) {
@@ -1033,7 +1053,7 @@ static void handleSaveAdvanced() {
 
 static void handleLedPreview() {
   const bool enabled = server.hasArg("ledEnabled");
-  const uint8_t pin = (uint8_t)clampedArg("ledPin", ledSettings.pin, 0, 48);
+  const uint8_t pin = (uint8_t)clampedArg("ledPin", ledSettings.pin, 0, GPIO_PIN_MAX);
   const uint8_t level =
     (uint8_t)clampedArg("ledBrightness", ledSettings.brightness, 0, 255);
   if (server.hasArg("stop")) {
@@ -1051,7 +1071,7 @@ static void handleLedPreview() {
 }
 
 static void handleHapticTest() {
-  const uint8_t pin = (uint8_t)clampedArg("hapticPin", hapticSettings.pin, 0, 48);
+  const uint8_t pin = (uint8_t)clampedArg("hapticPin", hapticSettings.pin, 0, GPIO_PIN_MAX);
   const uint8_t strength =
     (uint8_t)clampedArg("hapticStrength", hapticSettings.strength, HAPTIC_MIN_STRENGTH, 100);
   const uint8_t ms = (uint8_t)clampedArg("hapticMs", hapticSettings.pulseMs, HAPTIC_MIN_MS, HAPTIC_MAX_MS);
@@ -1223,11 +1243,10 @@ static void handleSaveSd() {
     sendJsonMessage(200, true, "No change.");
     return;
   }
-  const auto sdPin = [](uint8_t pin) { return pin >= 10 && pin <= 13; };
   const char* user = nullptr;
   uint8_t pin = 0;
-  if (on && ledSettings.enabled && sdPin(ledSettings.pin)) user = "status LED", pin = ledSettings.pin;
-  else if (on && hapticSettings.enabled && sdPin(hapticSettings.pin))
+  if (on && ledSettings.enabled && boardSdPin(ledSettings.pin)) user = "status LED", pin = ledSettings.pin;
+  else if (on && hapticSettings.enabled && boardSdPin(hapticSettings.pin))
     user = "vibration motor", pin = hapticSettings.pin;
   if (user) {
     const String msg = String("The ") + user + " uses GPIO " + pin +
@@ -1456,6 +1475,17 @@ static const char* screenName(ScreenState s) {
   }
 }
 
+// POST /api/coprocessor/update - flash the WiFi co-processor with the
+// firmware this build expects; progress in /api/status, restarts when done.
+static void handleCoprocUpdate() {
+  const char* why = nullptr;
+  if (!coprocUpdateStart(&why)) {
+    sendJsonMessage(409, false, why);
+    return;
+  }
+  sendJsonMessage(200, true, "Co-processor update started. The deck restarts when it is done.");
+}
+
 static void handleApiStatus() {
   JsonDocument doc;
   doc["product"] = PRODUCT_NAME;
@@ -1463,6 +1493,20 @@ static void handleApiStatus() {
   doc["board"]   = BOARD_VARIANT;
   doc["ip"]      = WiFi.localIP().toString();
   doc["screen"]  = screenName(getScreenState());
+#if defined(BOARD_WIFI_ESP_HOSTED)
+  // The WiFi co-processor's firmware against the one this build expects.
+  if (hostedIsInitialized()) {
+    uint32_t a, b, c, x, y, z;
+    hostedGetSlaveVersion(&a, &b, &c);
+    hostedGetHostVersion(&x, &y, &z);
+    JsonObject co = doc["coprocessor"].to<JsonObject>();
+    co["firmware"] = String(a) + "." + b + "." + c;
+    co["expected"] = String(x) + "." + y + "." + z;
+    co["update"] = coprocUpdateState();
+    co["progress"] = coprocUpdateProgress();
+    co["error"] = coprocUpdateError();
+  }
+#endif
   const PcSource* pc0 = pcSource("");
   doc["pc_online"] = pcAnyOnline();
   doc["pc_status"] = pc0 ? pc0->data.status : PC_STATUS_OK;
@@ -1870,7 +1914,7 @@ static size_t wallBytes;
 static unsigned wallParts;
 static bool wallComplete;
 
-static const char* wallFile(bool portrait) { return deck::wallPath(portrait ? 320 : 480, portrait ? 480 : 320); }
+static const char* wallFile(bool portrait) { return deck::wallPath(deck::screenW(portrait), deck::screenH(portrait)); }
 
 static bool wallOrientation(bool& portrait) {
   const String o = server.arg("o");
@@ -2033,7 +2077,7 @@ static void handleWallFinish() {
   if (!wallOrientation(p)) { wallUploadCleanup(); return; }
   if (!complete && !err.length()) err = "expected one JPEG file";
   if (!err.length() && !deck::wallValidateJpeg(wallUploadPath(), p))
-    err = p ? "expected a baseline 320x480 JPEG" : "expected a baseline 480x320 JPEG";
+    err = String("expected a baseline ") + deck::screenW(p) + "x" + deck::screenH(p) + " JPEG";
   if (!err.length() && wallRoom(p) < deck::WALL_RESERVE) err = "flash full";
   // Daily archive upload (PC download): keeps the URL-based name so the deck dedupes it.
   if (server.arg("gallery") == "d") {
@@ -2576,6 +2620,7 @@ void initWebServer() {
   server.on("/api/config/export", HTTP_GET, handleConfigExport);
   server.on("/api/config/import", HTTP_POST, handleConfigImport);
   server.on("/api/factory-reset", HTTP_POST, handleFactoryReset);  server.on("/api/status", HTTP_GET, handleApiStatus);
+  server.on("/api/coprocessor/update", HTTP_POST, handleCoprocUpdate);
   // /screen.bmp is what the StatNode Companion's preview fetches.
   server.on("/screen.bmp", HTTP_GET, handleLiveScreenshot);
   server.on("/screen_live.bmp", HTTP_GET, handleLiveScreenshot);
