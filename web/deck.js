@@ -2392,7 +2392,7 @@
           const d = domainOf(t.entity);
           const en = entMap[t.entity];
           const nm = en && en.name ? en.name : t.entity || (isHttpSensor(t) ? "HTTP sensor" : "No entity");
-          const cp = tileCp(t);
+          const cp = iconOptional(t) ? iconCp(t.icon) : tileCp(t);
           return (
             '<div class="dk-tile' +
             (i === sel ? " sel" : "") +
@@ -3523,6 +3523,8 @@
     return mdi ? mdi.get(n) || 0 : 0;
   };
   const tileCp = (t) => iconCp(t.icon) || iconCp((entMap[t.entity] || {}).icon);
+  // PC metrics and chart sensors show an icon only when one is picked, never the entity's.
+  const iconOptional = (t) => t.type === "metric" || (t.type === "sensor" && t.style === "chart" && !(t.rows || []).length);
   async function loadMdi(size) {
     try {
       const r = await fetch("/mdi.ttf?v=" + size);
@@ -3859,9 +3861,12 @@
           if (f.size > 12 * 1024 * 1024) throw new Error("The .js file is too big: " + f.name);
           srcs.push(await f.text());
         }
-        // A loader picked along with its chunks adds nothing.
-        const parts = srcs.length > 1 ? srcs.filter((t) => !brandLoader(t)) : srcs;
-        parts.forEach((t) => parseBrandSource(t, icons));
+        // A loader picked along with its chunks adds nothing but the icon count.
+        const lds = srcs.map(brandLoader),
+          ld = srcs.length > 1 ? lds.find(Boolean) : null;
+        (ld ? srcs.filter((t, k) => !lds[k]) : srcs).forEach((t) => parseBrandSource(t, icons));
+        if (ld && icons.size !== ld.count)
+          throw new Error("Got " + icons.size + " icons, the loader lists " + ld.count + ": pick all " + ld.chunks.length + " cbi-*.js files");
       } else {
         brProgress("Finding the latest GitHub release...");
         const release = await fetch("https://api.github.com/repos/elax46/custom-brand-icons/releases/latest");
@@ -3974,9 +3979,7 @@
     }
     icFor = i;
     icKey = key || "icon";
-    // PC metrics and chart sensors show an icon only when one is picked.
-    const t = pages()[cur].tiles[i],
-      opt = t.type === "metric" || (t.type === "sensor" && t.style === "chart" && !(t.rows || []).length);
+    const opt = iconOptional(pages()[cur].tiles[i]);
     $("dkIcAuto").textContent = icKey === "onIcon" ? "Same" : opt ? "No icon" : "Automatic";
     $("dkIcNone").hidden = icKey === "onIcon" || opt;
     $("dkIcQ").value = "";
