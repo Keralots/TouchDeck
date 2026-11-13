@@ -50,7 +50,8 @@
 .dk-ibtn i{font:28px dkmdi, dkcbi;font-style:normal;line-height:1}.dk-ibtn small{font:10px var(--mono);color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dk-tile.sel{cursor:default}.dk-tiles>.dk-tile:not(.sel){cursor:pointer}
 @media(min-width:1600px){.content-inner:has(>#deckSection.active){max-width:1560px}
-#deckSection.page.active{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px}#deckSection>.page-header,#deckSection>#dkPagesCard{grid-column:1/-1}#dkPage>:not(.dk-split){max-width:872px}
+#deckSection.page.active{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px}#deckSection>.page-header,#deckSection>#dkPagesCard{grid-column:1/-1}#dkPage>:not(.dk-split):not(.dk-pset){max-width:872px}
+.dk-pset{display:grid;grid-template-columns:minmax(0,760px) minmax(0,1fr);gap:0 24px;align-items:start}
 .dk-split{display:grid;grid-template-columns:minmax(0,760px) minmax(0,1fr);gap:24px;align-items:start;margin-top:12px}
 .dk-left{position:sticky;top:calc(var(--topbar-h) + 12px)}.dk-left .dk-grid{margin-top:0;max-width:760px}}
 @media(max-width:560px){.dk-tile{grid-template-columns:36px minmax(0,1fr)}.dk-tact{grid-column:1/-1}.dk-save{margin:18px -16px -18px;padding:12px 16px}}
@@ -795,11 +796,17 @@
       "</div></div>" +
       '<div class="dk-tact">' +
       sizeSel(t, i) +
-      '<button type="button" class="btn" data-u="' +
+      '<button type="button" class="btn' +
+      (i === more ? " on" : "") +
+      '" data-mo="' +
+      i +
+      '" title="More options">&#8943;</button><button type="button" class="btn" data-u="' +
       i +
       '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
       i +
-      '" title="Remove">&#215;</button></div></div>'
+      '" title="Remove">&#215;</button></div>' +
+      (i === more ? '<div class="dk-more">' + whenField(t, i) + "</div>" : "") +
+      "</div>"
     );
   }
   function prnLine(d, s) {
@@ -1658,7 +1665,7 @@
   const whenOf = (t) => {
     const w = t.when;
     if (w === "pc-on" || w === "pc-off")
-      return { k: "pc:" + ((isPcCmd(t) ? t.tap.pc : t.pc) || ""), neg: w === "pc-off" };
+      return { k: "pc:" + ((isPcCmd(t) ? t.tap.pc : t.pc) || (pcs[0] || {}).id || ""), neg: w === "pc-off" };
     if (w === "sound-on" || w === "sound-off") return { k: "sound", neg: w === "sound-off" };
     if (w && typeof w === "object" && w.printer !== undefined)
       return { k: "p:" + w.printer + (w.state === "printing" ? ":printing" : ""), neg: false };
@@ -1752,6 +1759,7 @@
         ["entity", "Only while an entity is in a state"],
         ["printer", "Only while a printer is on or printing"],
       ]
+        .filter((o) => t.type !== "printer" || !/^(pc|sound)-/.test(o[0]) || o[0] === k)
         .map((o) => opt(o[0], o[1], k === o[0]))
         .join("") +
       "</select></div>";
@@ -2274,8 +2282,9 @@
     at.forEach((a) => {
       if (a) cells += (a.w * a.h) / 4;
     });
+    /* Wide windows: page settings in two columns, the right one lined up with the tile list. */
     let h =
-      '<div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Layout</span>' +
+      '<div class="dk-pset"><div class="dk-pcol"><div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Layout</span>' +
       [
         ["landscape", "Landscape"],
         ["portrait", "Portrait"],
@@ -2300,7 +2309,7 @@
       gridOpts(pick[0], c) +
       '</select><span>x</span><select id="dkPRows" style="width:auto">' +
       gridOpts(pick[1], r) +
-      '</select><button type="button" class="btn" id="dkPLeft" style="margin-left:auto">Move left</button><button type="button" class="btn" id="dkPRight">Move right</button><button type="button" class="btn" id="dkPDup">Duplicate</button><button type="button" class="btn btn-danger" id="dkPDel">Delete page</button></div></div></div>';
+      '</select><button type="button" class="btn" id="dkPLeft" style="margin-left:auto">Move left</button><button type="button" class="btn" id="dkPRight">Move right</button><button type="button" class="btn" id="dkPDup">Duplicate</button><button type="button" class="btn btn-danger" id="dkPDel">Delete page</button></div></div></div></div><div class="dk-pcol">';
     if (prnOn() && (deck.printers || []).length && (p.printer || p.tiles.some((t) => t.type === "printer")))
       h +=
         '<div class="field"><label class="field-label">Printer page</label><select id="dkPPrn" style="width:auto">' +
@@ -2317,7 +2326,7 @@
       '><span class="check-box"></span><span class="check-text"><strong>Below the previous page</strong><span class="ct-hint">Stacked pages form one column: swipe up and down between them, left and right to the next column. Move left/right moves a column head with its column, or swaps a stacked page within its column.</span></span></label>' +
       '<label class="check-row standalone"><input type="checkbox" id="dkPHome"' +
       (p.home ? " checked" : "") +
-      '><span class="check-box"></span><span class="check-text"><strong>Home page</strong><span class="ct-hint">The deck starts on this page after power-on or a restart, and falls back to it when a shown page goes away. Only one page is home; while it is hidden (a condition or a printer that is off) the first page takes its place.</span></span></label>';
+      '><span class="check-box"></span><span class="check-text"><strong>Home page</strong><span class="ct-hint">The deck starts on this page after power-on or a restart, and falls back to it when a shown page goes away. Only one page is home; while it is hidden (a condition or a printer that is off) the first page takes its place.</span></span></label></div></div>';
     let g = "";
     for (let y = 0; y < r; y++)
       for (let x = 0; x < c; x++)
@@ -2511,7 +2520,10 @@
     el.querySelectorAll("[data-pt]").forEach(
       (x) =>
         (x.onchange = () => {
-          p.tiles[+x.dataset.pt].printer = x.value;
+          const t = p.tiles[+x.dataset.pt],
+            w = t.when;
+          if (w && typeof w === "object" && w.printer === t.printer) w.printer = x.value;
+          t.printer = x.value;
           setDirty(true);
           renderPage();
         }),
