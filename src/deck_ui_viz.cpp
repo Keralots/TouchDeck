@@ -314,7 +314,7 @@ void vizTick() {
   if (scopeDue) s_scopeMs = now;
   bool painted = false;
   for (TileRt& r : s_tiles) {
-    if (!r.vz || r.page != sh.active) continue;
+    if (!r.vz || r.page != sh.active || r.off) continue;
     if (r.vz->scope ? scopeStep(r, now) : barsDue && vizStep(r, now, dt)) painted = true;
   }
   if (painted) s_sparkPaintMs = now;  // like a gliding chart: other pages snapshot rarely meanwhile

@@ -787,7 +787,7 @@ bool prnFxTick(uint32_t now, bool lit) {
     TileRt& r = s_tiles[i];
     if (r.def->type != TILE_PRINTER || !r.pfx) continue;
     PrnFx& f = *r.pfx;
-    const bool shown = lit && r.page == sh.active;
+    const bool shown = lit && r.page == sh.active && !r.off;
     if (isTempTile(*r.def)) {
       if (on != s_on) tempShow(r, f);  // cooling colours follow the switch
       const bool had = token;

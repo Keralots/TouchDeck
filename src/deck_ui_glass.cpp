@@ -22,6 +22,7 @@ std::vector<uint32_t> glassKey(Page& p) {
   lv_obj_get_coords(p.root, &rc);
   for (uint32_t i = 0; i < count; i++) {
     lv_obj_t* t = lv_obj_get_child(p.grid, i);
+    if (lv_obj_has_flag(t, LV_OBJ_FLAG_HIDDEN)) continue;
     lv_area_t tc;
     lv_obj_get_coords(t, &tc);
     lv_area_move(&tc, -rc.x1, -rc.y1);
@@ -151,7 +152,7 @@ void autoTextPage(Page& p) {
   for (uint32_t i = 0; i < lv_obj_get_child_count(p.grid); i++) {
     lv_obj_t* t = lv_obj_get_child(p.grid, i);
     TileRt* r = tileOf(t);
-    if (!r) continue;
+    if (!r || r->off) continue;
     lv_area_t tc;
     lv_obj_get_coords(t, &tc);
     lv_area_move(&tc, -rc.x1, -rc.y1);
@@ -163,8 +164,10 @@ void autoTextPage(Page& p) {
 // Glass: the page background is baked once the tiles are laid out: the
 // wallpaper, and under each tile the blurred wallpaper cut to its rounded
 // rect with the tint and a hairline. A page render is then one image copy
-// instead of per-tile blending.
-bool bakeGlass(Page& p) {
+// instead of per-tile blending. only: just this part of the page (tiles came
+// or went there), the rest of a finished bake stays.
+bool bakeGlass(Page& p, const lv_area_t* only) {
+  const bool part = only && p.glass && !p.glassKey.empty();
   p.glassKey.clear();  // a partial bake must never be reused
   const lv_image_dsc_t* sharp = wallSharp();
   const lv_image_dsc_t* blur = wallBlur();
@@ -172,9 +175,12 @@ bool bakeGlass(Page& p) {
   const int w = sharp->header.w, h = sharp->header.h;
   if (!p.glass) p.glass = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
   if (!p.glass) return false;
+  const int xa = part ? LV_MAX(only->x1, 0) : 0, xb = part ? LV_MIN(only->x2, w - 1) : w - 1;
+  const int ya = part ? LV_MAX(only->y1, 0) : 0, yb = part ? LV_MIN(only->y2, h - 1) : h - 1;
   lv_image_cache_drop(p.glass);
-  for (int y = 0; y < h; y++)
-    memcpy(p.glass->data + y * p.glass->header.stride, sharp->data + y * sharp->header.stride, w * 2);
+  for (int y = ya; y <= yb && xa <= xb; y++)
+    memcpy(p.glass->data + y * p.glass->header.stride + xa * 2, sharp->data + y * sharp->header.stride + xa * 2,
+           (xb - xa + 1) * 2);
   // The glass is drawn in ARGB8888 over nothing, then laid over the picture
   // and dithered to RGB565 once: blending in RGB565 left coloured bands.
   // In bands: a screen sized ARGB8888 buffer needs 614 KB in one piece.
@@ -191,20 +197,22 @@ bool bakeGlass(Page& p) {
   std::vector<lv_opa_t> opa(count);
   for (uint32_t i = 0; i < count; i++) {
     lv_obj_t* t = lv_obj_get_child(p.grid, i);
+    if (lv_obj_has_flag(t, LV_OBJ_FLAG_HIDDEN)) continue;
     lv_area_t tc;
     lv_obj_get_coords(t, &tc);
     lv_area_move(&tc, -rc.x1, -rc.y1);
+    if (tc.x2 < xa || tc.x1 > xb || tc.y2 < ya || tc.y1 > yb) continue;
     TileRt* tr = tileOf(t);
     const AutoPick pk = autoPick(tr, tc);
     if (tr) applyAutoPick(*tr, pk);
     opa[i] = pk.opa;
   }
-  for (int y0 = 0; y0 < h; y0 += BAND) {
-    const int rows = LV_MIN(BAND, h - y0);
-    lv_draw_buf_clear(top, nullptr);
+  for (int y0 = ya; y0 <= yb && xa <= xb; y0 += BAND) {
+    const int rows = LV_MIN(BAND, yb + 1 - y0);
+    const lv_area_t band = {xa, 0, xb, rows - 1};
+    lv_draw_buf_clear(top, &band);
     lv_layer_t layer;
     lv_canvas_init_layer(cv, &layer);
-    const lv_area_t band = {0, 0, w - 1, rows - 1};
     const lv_area_t all = {0, -y0, w - 1, h - 1 - y0};  // the whole picture, seen from the band
     for (uint32_t i = 0; i < count; i++) {
       lv_obj_t* t = lv_obj_get_child(p.grid, i);
@@ -212,8 +220,8 @@ bool bakeGlass(Page& p) {
       lv_obj_get_coords(t, &tc);
       lv_area_move(&tc, -rc.x1, -rc.y1 - y0);
       TileRt* tr = tileOf(t);
-      if (tc.y2 < 0 || tc.y1 >= rows) continue;
-      const lv_area_t clip = {LV_MAX(tc.x1, 0), LV_MAX(tc.y1, 0), LV_MIN(tc.x2, w - 1), LV_MIN(tc.y2, rows - 1)};
+      if (tc.y2 < 0 || tc.y1 >= rows || tc.x2 < xa || tc.x1 > xb || lv_obj_has_flag(t, LV_OBJ_FLAG_HIDDEN)) continue;
+      const lv_area_t clip = {LV_MAX(tc.x1, xa), LV_MAX(tc.y1, 0), LV_MIN(tc.x2, xb), LV_MIN(tc.y2, rows - 1)};
       const int r = lv_obj_get_style_radius(t, LV_PART_MAIN);
       lv_draw_image_dsc_t id;
       lv_draw_image_dsc_init(&id);
@@ -235,9 +243,9 @@ bool bakeGlass(Page& p) {
     }
     lv_canvas_finish_layer(cv, &layer);
     for (int y = 0; y < rows; y++) {
-      const uint8_t* s = top->data + y * top->header.stride;  // B, G, R, A
+      const uint8_t* s = top->data + y * top->header.stride + xa * 4;  // B, G, R, A
       uint16_t* d = (uint16_t*)(p.glass->data + (y0 + y) * p.glass->header.stride);
-      for (int x = 0; x < w; x++, s += 4) {
+      for (int x = xa; x <= xb; x++, s += 4) {
         const int a = s[3];
         if (!a) continue;
         int r = s[2], g = s[1], b = s[0];
@@ -253,9 +261,14 @@ bool bakeGlass(Page& p) {
   }
   lv_obj_delete(cv);
   lv_draw_buf_destroy(top);
-  autoHeader(p);
-  lv_obj_set_style_bg_image_src(p.root, p.glass, 0);
-  lv_obj_invalidate(p.root);
+  if (part) {
+    const lv_area_t a = {rc.x1 + xa, rc.y1 + ya, rc.x1 + xb, rc.y1 + yb};
+    lv_obj_invalidate_area(p.root, &a);
+  } else {
+    autoHeader(p);
+    lv_obj_set_style_bg_image_src(p.root, p.glass, 0);
+    lv_obj_invalidate(p.root);
+  }
   p.stale = true;
   p.glassKey.swap(key);
   return true;

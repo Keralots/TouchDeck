@@ -73,6 +73,7 @@ struct MediaArt {
 struct TileRt {
   const TileDef* def;
   int page;
+  bool off;               // built but hidden: "when" not met or no room, takes no cell
   lv_obj_t* obj;
   lv_obj_t* name;
   lv_obj_t* sub;
@@ -495,7 +496,7 @@ void fxCardClose(lv_obj_t* card, int tileIdx);
 // deck_ui_glass.cpp
 std::vector<uint32_t> glassKey(Page& p);
 void autoTextPage(Page& p);
-bool bakeGlass(Page& p);
+bool bakeGlass(Page& p, const lv_area_t* only = nullptr);
 
 // deck_ui_edit.cpp
 extern EditState s_ed;
