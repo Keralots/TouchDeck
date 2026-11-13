@@ -41,7 +41,7 @@ struct State {
   bool frameResult = false;
   PanelStats frameStats = {};
   bool lvPending = false;
-  DirtyMask lvDirty = {{}, true};  // LVGL areas since the last plain frame went out
+  DirtyMask lvDirty = {{}, true};  // areas of posted LVGL frames since the last plain frame went out
   int lvIdx = 0;
   uint32_t lvGen = 0;
   int lvLatest = -1;
@@ -78,6 +78,10 @@ struct State {
   uint8_t lastSentDots = 0;
 };
 State s;
+// Areas of the LVGL frame being flushed (LVGL task only). They join lvDirty
+// when the frame is posted: added earlier, the frame still pending would take
+// them, and the framebuffer built from it would keep their old pixels.
+DirtyMask s_lvNext = {{}, false};
 volatile PageFx s_pageFx = PAGE_SLIDE;
 
 
@@ -1308,14 +1312,12 @@ const uint16_t* panelLatestLvFrame() {
   return idx >= 0 ? s_fb[idx] : nullptr;
 }
 
-void panelLvDirty(int x0, int y0, int x1, int y1) {
-  portENTER_CRITICAL(&s_mux);
-  s.lvDirty.addRect(x0, y0, x1, y1);
-  portEXIT_CRITICAL(&s_mux);
-}
+void panelLvDirty(int x0, int y0, int x1, int y1) { s_lvNext.addRect(x0, y0, x1, y1); }
 
 void panelPostLv(int idx, uint32_t gen) {
   portENTER_CRITICAL(&s_mux);
+  s.lvDirty.add(s_lvNext);
+  s_lvNext.clear();
   const bool superseded = s.lvPending;  // never read: its buffer is free again
   s.lvPending = true;
   s.lvIdx = idx & 1;
