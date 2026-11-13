@@ -373,6 +373,15 @@ void makeMetricContent(TileRt& r, lv_obj_t* t) {
   const lv_color_t nameCol = lv_color_hex(accent);
   lv_obj_set_style_text_color(r.name, s_theme == THEME_GLASS ? lv_color_mix(lv_color_white(), nameCol, 110) : nameCol, 0);
   lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
+  // A chosen icon sits before the name, as a child of its label (fitMetricIcon pads the name).
+  if (d.icon.length() && d.icon != "none") {
+    r.icon = lv_label_create(r.name);
+    lv_obj_remove_flag(r.icon, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_add_flag(r.name, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    if (d.hasIconColor) lv_obj_set_style_text_color(r.icon, lv_color_hex(d.iconColor), 0);
+    r.iconPx = 16;
+    r.iconCp = showIcon(r.icon, d, nullptr, false, r.iconPx, 0);
+  }
 
   // Value and unit side by side, bottoms aligned.
   lv_obj_t* row = lv_obj_create(t);

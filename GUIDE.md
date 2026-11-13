@@ -58,7 +58,7 @@ In **Pages & tiles**, enter the Home Assistant address (for example `http://192.
 
 ## Brand icons
 
-Optional [Custom Brand Icons by elax46](https://github.com/elax46/custom-brand-icons), available under the [MIT license](https://github.com/elax46/custom-brand-icons/blob/main/LICENSE), complement the MDI icon font. They require a mounted microSD card: enable **Maintenance > microSD card > Use the microSD card** first (the deck restarts). In **Pages & tiles > Icons > Brand icons**, install the latest GitHub release or upload `custom-brand-icons.js`, including a subset from the upstream Icon Finder. The browser converts and installs the set on the card under `/touchdeck/icons/`; no brand icons are bundled with the firmware. Use `phu:<name>` in tiles or Home Assistant entity icons, or select one in the portal's icon picker.
+Optional [Custom Brand Icons by elax46](https://github.com/elax46/custom-brand-icons), available under the [MIT license](https://github.com/elax46/custom-brand-icons/blob/main/LICENSE), complement the MDI icon font. They require a mounted microSD card: enable **Maintenance > microSD card > Use the microSD card** first (the deck restarts). In **Pages & tiles > Icons > Brand icons**, install the latest GitHub release or upload the `.js` files: a single `custom-brand-icons.js` (also a subset from the upstream Icon Finder), or the release's `dist` loader together with its `cbi-*.js` chunks. The browser converts and installs the set on the card under `/touchdeck/icons/`; no brand icons are bundled with the firmware. Use `phu:<name>` in tiles or Home Assistant entity icons, or select one in the portal's icon picker.
 
 ## Conditional tiles
 

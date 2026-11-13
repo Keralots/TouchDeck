@@ -453,6 +453,8 @@
     setVal("powerScale", c.display.powerScale);
     setVal("warnThreshold", c.display.warnThreshold);
     setVal("wallEvery", c.display.wallEvery ?? 5);
+    const prnPause = !c.screen || c.screen.wallPrnPause !== false;
+    document.querySelectorAll(".wall-prn-pause").forEach((el) => (el.hidden = !prnPause));
     setVal("wallOrder", c.display.wallOrder ?? 0);
     setVal("wallSource", c.display.wallSource ?? (c.display.wallDaily ? 1 : 0));
     setCheck("sdCard", c.display.sdCard ?? false);

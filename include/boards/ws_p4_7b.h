@@ -52,8 +52,13 @@
 #define BOARD_GRID_LANDSCAPE_ROWS 6
 #define BOARD_GRID_PORTRAIT_COLS 5
 #define BOARD_GRID_PORTRAIT_ROWS 9
+#define BOARD_GRID_PICK_LANDSCAPE_COLS 8  // portal grid picker limits (cell >= ~100 px)
+#define BOARD_GRID_PICK_LANDSCAPE_ROWS 6
+#define BOARD_GRID_PICK_PORTRAIT_COLS 6
+#define BOARD_GRID_PICK_PORTRAIT_ROWS 9
 #define BOARD_MAX_PAGE_TILES 48
 #define BOARD_MEDIA_ART_MAX 400  // Now playing cover side, px
+#define BOARD_WALL_PRINTER_PAUSE 0  // ~12 MB PSRAM free with printer pages up: rotation keeps going
 
 // --- Touch: GT911 on the shared I2C bus, polled (deck_touch_gt911.cpp) ---
 // The vendor Arduino code uses neither INT nor RST.

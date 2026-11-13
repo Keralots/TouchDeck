@@ -225,6 +225,7 @@ struct TileDef {
   bool pcVolume = false;  // TILE_SLIDER: "control": "pc-volume"
   bool mediaAuto = false;  // TILE_MEDIA: "auto": the PC or the HA player, whichever plays
   bool vizScope = false;   // TILE_VIZ: "style": "scope" (waveform) instead of bars
+  bool clockDate = false;  // TILE_CLOCK: "date": "always" (default: only when it fits)
   WhenDef when;
   bool shown = true;  // runtime: "when" as the pages were last built
 };

@@ -130,6 +130,13 @@ class CompanionServerModel(unittest.TestCase):
         second = {m["wmi_identifier"]: m["id"] for m in self.state.get_config()["metrics"]}
         self.assertEqual(first, second)
 
+    def test_panel_changes_retarget_the_audio_stream(self):
+        with mock.patch.object(server.audio_spectrum, "ensure") as ensure:
+            server.apply_panel(self.core, self.state, "add", "panel.local")
+            self.assertEqual(["panel.local"], [p["address"] for p in ensure.call_args[0][0]["panels"]])
+            server.apply_panel(self.core, self.state, "remove", "panel.local")
+            self.assertEqual([], ensure.call_args[0][0]["panels"])
+
     def test_labels_are_stream_only_and_sized(self):
         server.apply_select(self.core, self.state, ["cpu"])
         server.apply_labels(self.state, {"cpu": "CPU package sensor"})

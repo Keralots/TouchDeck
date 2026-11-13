@@ -48,6 +48,12 @@
 .dk-ibtn{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 4px;border:1px solid transparent;border-radius:var(--r-md);background:none;color:var(--ink);cursor:pointer;min-width:0}
 .dk-ibtn:hover{background:var(--card-2)}.dk-ibtn.on{border-color:var(--accent);background:var(--accent-soft)}
 .dk-ibtn i{font:28px dkmdi, dkcbi;font-style:normal;line-height:1}.dk-ibtn small{font:10px var(--mono);color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dk-tile.sel{cursor:default}.dk-tiles>.dk-tile:not(.sel){cursor:pointer}
+@media(min-width:1600px){.content-inner:has(>#deckSection.active){max-width:1560px}
+#deckSection.page.active{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px}#deckSection>.page-header,#deckSection>#dkPagesCard{grid-column:1/-1}#dkPage>:not(.dk-split):not(.dk-pset){max-width:872px}
+.dk-pset{display:grid;grid-template-columns:minmax(0,760px) minmax(0,1fr);gap:0 24px;align-items:start}
+.dk-split{display:grid;grid-template-columns:minmax(0,760px) minmax(0,1fr);gap:24px;align-items:start;margin-top:12px}
+.dk-left{position:sticky;top:calc(var(--topbar-h) + 12px)}.dk-left .dk-grid{margin-top:0;max-width:760px}}
 @media(max-width:560px){.dk-tile{grid-template-columns:36px minmax(0,1fr)}.dk-tact{grid-column:1/-1}.dk-save{margin:18px -16px -18px;padding:12px 16px}}
 `;
   const st = document.createElement("style");
@@ -67,14 +73,14 @@
 <div class="dk-status"><span class="dk-dot" id="dkIcDot"></span><span id="dkIcState">checking...</span></div>
 <h3 class="card-title" style="margin-top:18px">Brand icons</h3>
 <p class="field-hint">Custom Brand Icons (phu:) by elax46, installed from <a href="https://github.com/elax46/custom-brand-icons" target="_blank" rel="noopener">their GitHub</a>, not bundled. Needs a mounted microSD card. Enable it in <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>. You can also upload a .js subset from the upstream Icon Finder.</p>
-<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkBrNet" disabled>Install latest from GitHub</button><button type="button" class="btn" id="dkBrFile" disabled>Upload .js file</button><button type="button" class="btn" id="dkBrRemove" disabled>Remove</button><input type="file" id="dkBrInput" accept=".js" hidden></div>
+<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkBrNet" disabled>Install latest from GitHub</button><button type="button" class="btn" id="dkBrFile" disabled>Upload .js files</button><button type="button" class="btn" id="dkBrRemove" disabled>Remove</button><input type="file" id="dkBrInput" accept=".js" multiple hidden></div>
 <div class="dk-status"><span class="dk-dot" id="dkBrDot"></span><span id="dkBrState">checking...</span></div></div>
 <div class="card" id="dkPrnCard"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag" id="dkPrnTag">Bambu Lab</span></div>
 <p class="field-hint">Source Printer LAN talks to the printer directly: it must be in LAN mode or have LAN access on, and its serial and access code are stored only on the device. Source Home Assistant reads a printer already added to the Bambu Lab integration (ha-bambulab) - nothing else to enter. With a plug (an HA switch), the printer's pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
 <div id="dkPrnBody">
 <div id="dkPrn"></div><div class="dk-row"><button type="button" class="btn" id="dkPrnAdd">+ Add printer</button></div></div>
 <div class="dk-save"><span class="dk-msg" id="dkPrnMsg">No changes</span><button type="button" class="btn btn-accent" id="dkPrnSave">Save to device</button></div></div>
-<div class="card"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
+<div class="card" id="dkPagesCard"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
 <label class="check-row standalone" style="margin-bottom:14px"><input type="checkbox" id="dkHeader"><span class="check-box"></span><span class="check-text"><strong>Show the top bar</strong><span class="ct-hint">Page name, WiFi and clock above the tiles. Also switchable in the quick panel on the device.</span></span></label>
 <div class="dk-tabs" id="dkTabs"></div><div id="dkPage"></div>
 <div class="dk-save"><span class="dk-msg" id="dkMsg">No changes</span><button type="button" class="btn btn-accent" id="dkSave">Save to device</button></div></div>`;
@@ -220,7 +226,8 @@
   function metricRow(t, i) {
     const ml = mlist(t),
       m = ml.find((x) => x.id === t.metric);
-    const col = t.color || PAL[((t.metric || 1) - 1) % 8];
+    const col = t.color || PAL[((t.metric || 1) - 1) % 8],
+      cp = iconCp(t.icon);
     const opts =
       ml
         .map(
@@ -244,9 +251,17 @@
     return (
       '<div class="dk-tile' +
       (i === sel ? " sel" : "") +
-      '"><div class="dk-ic" style="background:' +
+      '"><button type="button" class="dk-ic' +
+      (cp ? " mdi" : "") +
+      '" data-ic="' +
+      i +
+      '" title="' +
+      esc(cp ? t.icon : "Choose an icon") +
+      '" style="background:' +
       col +
-      '">PC</div><div class="dk-tmain"><input type="text" data-l="' +
+      '">' +
+      (cp ? String.fromCodePoint(cp) : "PC") +
+      '</button><div class="dk-tmain"><input type="text" data-l="' +
       i +
       '" value="' +
       esc(t.label || "") +
@@ -790,11 +805,17 @@
       "</div></div>" +
       '<div class="dk-tact">' +
       sizeSel(t, i) +
-      '<button type="button" class="btn" data-u="' +
+      '<button type="button" class="btn' +
+      (i === more ? " on" : "") +
+      '" data-mo="' +
+      i +
+      '" title="More options">&#8943;</button><button type="button" class="btn" data-u="' +
       i +
       '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
       i +
-      '" title="Remove">&#215;</button></div></div>'
+      '" title="Remove">&#215;</button></div>' +
+      (i === more ? '<div class="dk-more">' + whenField(t, i) + "</div>" : "") +
+      "</div>"
     );
   }
   function prnLine(d, s) {
@@ -1101,7 +1122,12 @@
       '"><div class="dk-ic" style="background:' +
       (t.color || "#E6E8EC") +
       '">12</div><div class="dk-tmain"><b>Clock</b><div class="dk-tsub">Time and date (24h and time zone from Time settings)</div></div>' +
-      '<div class="dk-tact">' +
+      '<div class="dk-tact"><select data-cd="' +
+      i +
+      '" style="width:auto" title="Small tiles leave the date out unless Always">' +
+      opt("", "Date if it fits", t.date !== "always") +
+      opt("always", "Date always", t.date === "always") +
+      "</select>" +
       sizeSel(t, i) +
       '<button type="button" class="btn' +
       (i === more ? " on" : "") +
@@ -1653,7 +1679,7 @@
   const whenOf = (t) => {
     const w = t.when;
     if (w === "pc-on" || w === "pc-off")
-      return { k: "pc:" + ((isPcCmd(t) ? t.tap.pc : t.pc) || ""), neg: w === "pc-off" };
+      return { k: "pc:" + ((isPcCmd(t) ? t.tap.pc : t.pc) || (pcs[0] || {}).id || ""), neg: w === "pc-off" };
     if (w === "sound-on" || w === "sound-off") return { k: "sound", neg: w === "sound-off" };
     if (w && typeof w === "object" && w.printer !== undefined)
       return { k: "p:" + w.printer + (w.state === "printing" ? ":printing" : ""), neg: false };
@@ -1747,6 +1773,7 @@
         ["entity", "Only while an entity is in a state"],
         ["printer", "Only while a printer is on or printing"],
       ]
+        .filter((o) => t.type !== "printer" || !/^(pc|sound)-/.test(o[0]) || o[0] === k)
         .map((o) => opt(o[0], o[1], k === o[0]))
         .join("") +
       "</select></div>";
@@ -2246,6 +2273,12 @@
     renderTabs();
     renderPage();
   }
+  /* 2..max, plus the current value when a hand-edited deck went past max. */
+  function gridOpts(max, v) {
+    const ns = [];
+    for (let n = Math.min(2, v); n <= Math.max(max, v); n++) if ((n >= 2 && n <= max) || n === v) ns.push(n);
+    return ns.map((n) => "<option" + (n === v ? " selected" : "") + ">" + n + "</option>").join("");
+  }
   function renderPage() {
     const ps = pages();
     const el = $("dkPage");
@@ -2256,14 +2289,16 @@
     const p = ps[cur];
     const [c, r] = grid(p),
       land = ori === "landscape",
+      pick = (scr.pick || { landscape: [6, 4], portrait: [4, 6] })[ori],
       at = layout(p),
       lost = p.tiles.map((t, k) => k).filter((k) => !at[k] && !hidT(p.tiles[k]));
     let cells = 0;
     at.forEach((a) => {
       if (a) cells += (a.w * a.h) / 4;
     });
+    /* Wide windows: page settings in two columns, the right one lined up with the tile list. */
     let h =
-      '<div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Layout</span>' +
+      '<div class="dk-pset"><div class="dk-pcol"><div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Layout</span>' +
       [
         ["landscape", "Landscape"],
         ["portrait", "Portrait"],
@@ -2285,14 +2320,10 @@
       '<div class="grid-2 dk-phead"><div class="field"><label class="field-label">Page name</label><input type="text" id="dkPName" value="' +
       esc(p.name || "") +
       '"></div><div class="field"><label class="field-label">Grid (columns x rows)</label><div class="dk-row"><select id="dkPCols" style="width:auto">' +
-      (land ? [2, 3, 4, 5, 6] : [2, 3, 4])
-        .map((n) => "<option" + (n === c ? " selected" : "") + ">" + n + "</option>")
-        .join("") +
+      gridOpts(pick[0], c) +
       '</select><span>x</span><select id="dkPRows" style="width:auto">' +
-      (land ? [2, 3, 4] : [2, 3, 4, 5, 6])
-        .map((n) => "<option" + (n === r ? " selected" : "") + ">" + n + "</option>")
-        .join("") +
-      '</select><button type="button" class="btn" id="dkPLeft" style="margin-left:auto">Move left</button><button type="button" class="btn" id="dkPRight">Move right</button><button type="button" class="btn" id="dkPDup">Duplicate</button><button type="button" class="btn btn-danger" id="dkPDel">Delete page</button></div></div></div>';
+      gridOpts(pick[1], r) +
+      '</select><button type="button" class="btn" id="dkPLeft" style="margin-left:auto">Move left</button><button type="button" class="btn" id="dkPRight">Move right</button><button type="button" class="btn" id="dkPDup">Duplicate</button><button type="button" class="btn btn-danger" id="dkPDel">Delete page</button></div></div></div></div><div class="dk-pcol">';
     if (prnOn() && (deck.printers || []).length && (p.printer || p.tiles.some((t) => t.type === "printer")))
       h +=
         '<div class="field"><label class="field-label">Printer page</label><select id="dkPPrn" style="width:auto">' +
@@ -2309,7 +2340,7 @@
       '><span class="check-box"></span><span class="check-text"><strong>Below the previous page</strong><span class="ct-hint">Stacked pages form one column: swipe up and down between them, left and right to the next column. Move left/right moves a column head with its column, or swaps a stacked page within its column.</span></span></label>' +
       '<label class="check-row standalone"><input type="checkbox" id="dkPHome"' +
       (p.home ? " checked" : "") +
-      '><span class="check-box"></span><span class="check-text"><strong>Home page</strong><span class="ct-hint">The deck starts on this page after power-on or a restart, and falls back to it when a shown page goes away. Only one page is home; while it is hidden (a condition or a printer that is off) the first page takes its place.</span></span></label>';
+      '><span class="check-box"></span><span class="check-text"><strong>Home page</strong><span class="ct-hint">The deck starts on this page after power-on or a restart, and falls back to it when a shown page goes away. Only one page is home; while it is hidden (a condition or a printer that is off) the first page takes its place.</span></span></label></div></div>';
     let g = "";
     for (let y = 0; y < r; y++)
       for (let x = 0; x < c; x++)
@@ -2320,8 +2351,9 @@
           (2 * x + 1) +
           '/span 2/span 2"></div>';
     const hd = $("dkHeader").checked ? 30 : 0;
+    /* Wide windows: grid preview (sticky) left, tile list right; narrow: stacked. */
     h +=
-      '<div class="dk-grid' +
+      '<div class="dk-split"><div class="dk-left"><div class="dk-grid' +
       (land ? "" : " pt") +
       '" id="dkGrid" style="grid-template-columns:repeat(' +
       2 * c +
@@ -2348,7 +2380,7 @@
         ps.map((q, i) => (i === cur ? "" : opt(String(i), q.name || q.id, false))).join("") +
         '</select><button type="button" class="btn" id="dkMv">Move</button></div>';
     h +=
-      '<div class="dk-tiles">' +
+      '</div><div class="dk-right"><div class="dk-tiles" id="dkTiles">' +
       p.tiles
         .map((t, i) => {
           if (t.type === "metric") return metricRow(t, i);
@@ -2360,7 +2392,7 @@
           const d = domainOf(t.entity);
           const en = entMap[t.entity];
           const nm = en && en.name ? en.name : t.entity || (isHttpSensor(t) ? "HTTP sensor" : "No entity");
-          const cp = tileCp(t);
+          const cp = iconOptional(t) ? iconCp(t.icon) : tileCp(t);
           return (
             '<div class="dk-tile' +
             (i === sel ? " sel" : "") +
@@ -2440,8 +2472,19 @@
         : "") +
       "</div>" +
       pcList() +
-      '<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a 2x0.5 one fits them in a row between the name and the number, a narrower one shows the number), so picking one makes a 1x1 tile 2x1.</p>';
+      '<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a 2x0.5 one fits them in a row between the name and the number, a narrower one shows the number), so picking one makes a 1x1 tile 2x1.</p></div></div>';
     el.innerHTML = h;
+    /* A click on a row's free area selects its tile in the preview. */
+    el.querySelectorAll("#dkTiles > .dk-tile").forEach((row) => {
+      const x = row.querySelector("[data-x]");
+      if (x)
+        row.onclick = (e) => {
+          const k = +x.dataset.x;
+          if (k === sel || e.target.closest("input,select,button,textarea,a,label,.dk-more")) return;
+          sel = k;
+          renderPage();
+        };
+    });
     $("dkPName").oninput = (e) => {
       p.name = e.target.value;
       setDirty(true);
@@ -2491,7 +2534,10 @@
     el.querySelectorAll("[data-pt]").forEach(
       (x) =>
         (x.onchange = () => {
-          p.tiles[+x.dataset.pt].printer = x.value;
+          const t = p.tiles[+x.dataset.pt],
+            w = t.when;
+          if (w && typeof w === "object" && w.printer === t.printer) w.printer = x.value;
+          t.printer = x.value;
           setDirty(true);
           renderPage();
         }),
@@ -2943,6 +2989,16 @@
       setDirty(true);
       renderPage();
     };
+    el.querySelectorAll("[data-cd]").forEach(
+      (x) =>
+        (x.onchange = () => {
+          const t = p.tiles[+x.dataset.cd];
+          if (x.value === "always") t.date = "always";
+          else delete t.date;
+          setDirty(true);
+          renderPage();
+        }),
+    );
     el.querySelectorAll("[data-vs]").forEach(
       (x) =>
         (x.onchange = () => {
@@ -3467,6 +3523,8 @@
     return mdi ? mdi.get(n) || 0 : 0;
   };
   const tileCp = (t) => iconCp(t.icon) || iconCp((entMap[t.entity] || {}).icon);
+  // PC metrics and chart sensors show an icon only when one is picked, never the entity's.
+  const iconOptional = (t) => t.type === "metric" || (t.type === "sensor" && t.style === "chart" && !(t.rows || []).length);
   async function loadMdi(size) {
     try {
       const r = await fetch("/mdi.ttf?v=" + size);
@@ -3547,15 +3605,25 @@
   const brProgress = (text) => { $("dkBrState").textContent = text; };
   const brYield = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-  function parseBrandSource(src) {
+  /* One file (var icons = {...}) or, since release 2026.11.2, a loader listing
+     chunk files (export default {...}); icons collects across chunks. */
+  function brandLoader(src) {
+    const c = /\bvar\s+CHUNKS\s*=\s*(\[[^\]]*\])/.exec(src), m = /\bvar\s+MANIFEST\s*=\s*(\{[^}]*\})/.exec(src);
+    if (!c || !m) return null;
+    const chunks = JSON.parse(c[1]).map((n) => String(n).split("?")[0]);
+    if (!chunks.length || chunks.length > 500 || chunks.some((n) => !/^cbi-\d+\.js$/.test(n)))
+      throw new Error("Invalid chunk list");
+    return { chunks, count: Object.keys(JSON.parse(m[1])).length };
+  }
+  function parseBrandSource(src, icons = new Map()) {
     if (src.length > 12 * 1024 * 1024) throw new Error("The .js file is too big");
-    const start = /\b(?:var|let|const)\s+icons\s*=\s*\{/.exec(src);
-    if (!start) throw new Error("No icons object in this file");
+    const start = /\b(?:(?:var|let|const)\s+icons\s*=|export\s+default)\s*\{/.exec(src);
+    if (!start)
+      throw new Error(brandLoader(src) ? "This is the loader only: pick its cbi-*.js chunk files too" : "No icons object in this file");
     const quoted = '"(?:[^"\\\\\\r\\n]|\\\\.)*"';
     const number = '-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?';
     const entry = new RegExp('(' + quoted + ')\\s*:\\s*(\\[\\s*' +
       (number + '\\s*,\\s*').repeat(4) + quoted + '\\s*\\])', 'y');
-    const icons = new Map();
     let at = start.index + start[0].length;
     const space = () => { while (/\s/.test(src[at] || "") && at < src.length) at++; };
     while (true) {
@@ -3577,6 +3645,11 @@
     }
     if (!icons.size) throw new Error("No icons in this file");
     return icons;
+  }
+  async function fetchBrandText(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error("Download HTTP " + r.status);
+    return r.text();
   }
 
   function parseBrandPath(d) {
@@ -3675,8 +3748,8 @@
     return opentypeLoad;
   }
 
-  async function convertBrand(src, version) {
-    const icons = parseBrandSource(src), names = [...icons.keys()].sort(brandOrder);
+  async function convertBrand(icons, version) {
+    const names = [...icons.keys()].sort(brandOrder);
     if (!brandVersion.test(version)) throw new Error("Invalid release version");
     brProgress("Loading the font converter...");
     const ot = await loadOpentype();
@@ -3774,17 +3847,26 @@
       brProgress("Brand icons unavailable: " + e.message);
     } finally { brBusy = false; brButtons(); }
   }
-  async function brInstall(file) {
+  async function brInstall(files) {
     if (brBusy || !brState || !brState.sd) return;
     brBusy = true;
     brButtons();
     $("dkBrDot").className = "dk-dot busy";
     try {
-      let src, version = "file";
-      if (file) {
-        if (file.size > 12 * 1024 * 1024) throw new Error("The .js file is too big");
-        brProgress("Reading the .js file...");
-        src = await file.text();
+      let icons = new Map(), version = "file";
+      if (files) {
+        brProgress("Reading the .js files...");
+        const srcs = [];
+        for (const f of files) {
+          if (f.size > 12 * 1024 * 1024) throw new Error("The .js file is too big: " + f.name);
+          srcs.push(await f.text());
+        }
+        // A loader picked along with its chunks adds nothing but the icon count.
+        const lds = srcs.map(brandLoader),
+          ld = srcs.length > 1 ? lds.find(Boolean) : null;
+        (ld ? srcs.filter((t, k) => !lds[k]) : srcs).forEach((t) => parseBrandSource(t, icons));
+        if (ld && icons.size !== ld.count)
+          throw new Error("Got " + icons.size + " icons, the loader lists " + ld.count + ": pick all " + ld.chunks.length + " cbi-*.js files");
       } else {
         brProgress("Finding the latest GitHub release...");
         const release = await fetch("https://api.github.com/repos/elax46/custom-brand-icons/releases/latest");
@@ -3793,11 +3875,19 @@
         if (typeof tag !== "string" || !brandVersion.test(tag)) throw new Error("Invalid GitHub release tag");
         version = tag.replace(/^v(?=\d)/, "");
         brProgress("Downloading Custom Brand Icons " + version + "...");
-        const r = await fetch("https://cdn.jsdelivr.net/gh/elax46/custom-brand-icons@" + encodeURIComponent(tag) + "/dist/custom-brand-icons.js");
-        if (!r.ok) throw new Error("Download HTTP " + r.status);
-        src = await r.text();
+        const base = "https://cdn.jsdelivr.net/gh/elax46/custom-brand-icons@" + encodeURIComponent(tag) + "/dist/",
+          src = await fetchBrandText(base + "custom-brand-icons.js"),
+          ld = brandLoader(src);
+        if (!ld) parseBrandSource(src, icons);
+        else {
+          for (let i = 0; i < ld.chunks.length; i++) {
+            brProgress("Downloading Custom Brand Icons " + version + " (" + (i + 1) + "/" + ld.chunks.length + ")...");
+            parseBrandSource(await fetchBrandText(base + ld.chunks[i]), icons);
+          }
+          if (icons.size !== ld.count) throw new Error("Got " + icons.size + " icons, the release lists " + ld.count);
+        }
       }
-      const { data, index, skipped } = await convertBrand(src, version);
+      const { data, index, skipped } = await convertBrand(icons, version);
       brProgress("Sending to the device and installing...");
       const fd = new FormData();
       fd.append("font", new Blob([data], { type: "font/otf" }), "cbi.otf");
@@ -3811,15 +3901,15 @@
       } catch (e) { brProgress("Installed, but the portal could not read the font: " + e.message); }
     } catch (e) {
       $("dkBrDot").className = "dk-dot err";
-      brProgress("Not installed: " + e.message + (file ? "" : '. Download custom-brand-icons.js and use "Upload .js file".'));
+      brProgress("Not installed: " + e.message + (files ? "" : '. Download the .js files from the release\'s dist folder and use "Upload .js files".'));
     } finally { brBusy = false; brButtons(); }
   }
   $("dkBrNet").onclick = () => brInstall(null);
   $("dkBrFile").onclick = () => $("dkBrInput").click();
   $("dkBrInput").onchange = (e) => {
-    const file = e.target.files[0];
+    const files = [...e.target.files];
     e.target.value = "";
-    if (file) brInstall(file);
+    if (files.length) brInstall(files);
   };
   $("dkBrRemove").onclick = async () => {
     if (brBusy || !brState || !brState.sd) return;
@@ -3889,8 +3979,9 @@
     }
     icFor = i;
     icKey = key || "icon";
-    $("dkIcAuto").textContent = icKey === "onIcon" ? "Same" : "Automatic";
-    $("dkIcNone").hidden = icKey === "onIcon";
+    const opt = iconOptional(pages()[cur].tiles[i]);
+    $("dkIcAuto").textContent = icKey === "onIcon" ? "Same" : opt ? "No icon" : "Automatic";
+    $("dkIcNone").hidden = icKey === "onIcon" || opt;
     $("dkIcQ").value = "";
     $("dkIcPick").classList.add("show");
     renderIcons();

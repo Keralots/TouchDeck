@@ -435,8 +435,31 @@ void fitMedia(TileRt& r, int cw, int ch) {
   applyMedia(r);
 }
 
+// Digit ink in a line box: rows of air above it and its height. The clock
+// fonts are digits only and have no air; text fonts do.
+static void digitInk(const lv_font_t* f, int& top, int& h) {
+  lv_font_glyph_dsc_t g = {};
+  if (!lv_font_get_glyph_dsc(f, &g, '0', 0)) {
+    top = lineH(f) / 8;
+    h = lineH(f) * 3 / 4;
+    return;
+  }
+  top = lineH(f) - f->base_line - (g.ofs_y + g.box_h);
+  h = g.box_h;
+}
+
+// Date ink: from the digit tops down to the descenders (Sep, Aug, May).
+static void dateInk(const lv_font_t* f, int& top, int& h) {
+  digitInk(f, top, h);
+  lv_font_glyph_dsc_t g = {};
+  const int bot = lv_font_get_glyph_dsc(f, &g, 'p', 0) ? lineH(f) - f->base_line - g.ofs_y : lineH(f);
+  h = LV_MAX(h, bot - top);
+}
+
 // Clock: the largest time that fits, the date under it when there is room
-// (a one step smaller time is worth it for the date).
+// (a one step smaller time is worth it for the date). "date": "always" takes
+// a tighter gap first, then any smaller time. Fit and centring go by the ink,
+// not by the line boxes.
 void fitClock(TileRt& r, int cw, int ch) {
   static const lv_font_t* const kTime[] = {&deck_font_clock_72, &deck_font_clock_56, &lv_font_montserrat_40,
                                            &deck_font_28, &deck_font_20, &deck_font_14};
@@ -444,17 +467,54 @@ void fitClock(TileRt& r, int cw, int ch) {
   const lv_font_t* df = ch >= 120 ? &deck_font_20 : &deck_font_14;
   const bool ampm = !netSettings.use24h;
   auto unitFont = [](const lv_font_t* f) { return lineH(f) >= 48 ? &deck_font_20 : &deck_font_14; };
+  int dTop, dH;
+  dateInk(df, dTop, dH);
+  const int gap = lv_obj_get_style_pad_row(r.obj, LV_PART_MAIN);  // theme gap between time and date
+  constexpr int MIN_GAP = 5;  // ink rows between digits and date when "always" tightens it
+  int cut = 0;                // rows taken off the gap
+  // Ink rows from the top of the column; the date line sits L/8 up into the time's.
+  auto dateY = [&](const lv_font_t* f) { return lineH(f) - lineH(f) / 8 + gap - cut; };
+  auto inkSpan = [&](const lv_font_t* f, bool withDate, int& top, int& bot) {
+    int h;
+    digitInk(f, top, h);
+    bot = withDate ? dateY(f) + dTop + dH : top + h;
+  };
   int best = N - 1, dated = -1;
   for (int i = N - 1; i >= 0; i--) {
     const lv_font_t* f = kTime[i];
-    // Digits have no accents or descenders: a quarter of the line box is air.
-    const int w = textW("00:00", f) + (ampm ? 4 + textW("PM", unitFont(f)) : 0), h = lineH(f) * 3 / 4;
-    if (w > cw || h > ch) continue;
+    const int w = textW("00:00", f) + (ampm ? 4 + textW("PM", unitFont(f)) : 0);
+    int top, bot;
+    inkSpan(f, false, top, bot);
+    if (w > cw || bot - top > ch) continue;
     best = i;
-    if (h + lineH(df) <= ch) dated = i;
+    inkSpan(f, true, top, bot);
+    if (bot - top <= ch) dated = i;
   }
-  const bool date = dated >= 0 && dated <= best + 1;
+  // Fonts from best down already fit the width and, without the date, the height.
+  if (r.def->clockDate) {
+    const int last = dated < 0 ? N : dated;
+    for (int i = best; i < last; i++) {
+      const lv_font_t* f = kTime[i];
+      int top, bot, h;
+      inkSpan(f, true, top, bot);
+      digitInk(f, top, h);
+      const int over = bot - top - ch, room = dateY(f) + dTop - (top + h) - MIN_GAP;
+      if (over <= room) {
+        cut = LV_MAX(0, over);
+        dated = i;
+        break;
+      }
+    }
+  }
+  const bool date = dated >= 0 && (dated <= best + 1 || r.def->clockDate);
   const lv_font_t* f = kTime[date ? dated : best];
+  // Flex centres the boxes; move them so the ink is centred instead.
+  int top, bot;
+  inkSpan(f, date, top, bot);
+  const int boxH = date ? dateY(f) + lineH(df) : lineH(f);
+  const int shift = boxH / 2 - (top + bot) / 2;
+  lv_obj_set_style_translate_y(lv_obj_get_parent(r.unit), shift, 0);
+  lv_obj_set_style_translate_y(r.name, shift, 0);
   setFont(r.sub, f);
   setFont(r.colon, f);
   setFont(r.mins, f);
@@ -465,7 +525,7 @@ void fitClock(TileRt& r, int cw, int ch) {
   setFont(r.unit, unitFont(f));
   lv_obj_set_style_pad_bottom(r.unit, (lineH(f) - lineH(unitFont(f))) / 5, 0);  // share the baseline
   setFont(r.name, df);
-  lv_obj_set_style_margin_top(r.name, -lineH(f) / 8, 0);
+  lv_obj_set_style_margin_top(r.name, -lineH(f) / 8 - cut, 0);
   showObj(r.name, date);
 }
 

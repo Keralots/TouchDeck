@@ -602,8 +602,8 @@ void tickWallpaper() {
                     !touchIsDown() && !s_qp.open && !s_modalCard && !s_ed.root &&
                     s_ed.pending == EditState::P_NONE && compMode() == COMP_NONE && !sh.owned;
   const bool idle = millis() - touchLastActivity() >= WALL_IDLE_MS;
-  // Printer pages leave too little PSRAM for a reliable change, so no rotation.
-  const bool rotate = !s_prnPagesUp;
+  // On small PSRAM boards printer pages leave too little for a reliable change.
+  const bool rotate = !(BOARD_WALL_PRINTER_PAUSE && s_prnPagesUp);
   bool baking = false;
   for (int i = 0; i < s_count; i++) baking |= s_pages[i].wallBake;
   // A job starts only when safe: no card is open, so its two screen sized

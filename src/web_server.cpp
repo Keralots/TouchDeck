@@ -215,6 +215,12 @@ static void handleApiConfig() {
   grid["landscape"][1] = BOARD_GRID_LANDSCAPE_ROWS;
   grid["portrait"][0] = BOARD_GRID_PORTRAIT_COLS;
   grid["portrait"][1] = BOARD_GRID_PORTRAIT_ROWS;
+  JsonObject pick = screen["pick"].to<JsonObject>();
+  pick["landscape"][0] = BOARD_GRID_PICK_LANDSCAPE_COLS;
+  pick["landscape"][1] = BOARD_GRID_PICK_LANDSCAPE_ROWS;
+  pick["portrait"][0] = BOARD_GRID_PICK_PORTRAIT_COLS;
+  pick["portrait"][1] = BOARD_GRID_PICK_PORTRAIT_ROWS;
+  screen["wallPrnPause"] = (bool)BOARD_WALL_PRINTER_PAUSE;
 
   JsonObject display = doc["display"].to<JsonObject>();
   display["rotation"] = dispSettings.rotation;
