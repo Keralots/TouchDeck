@@ -512,7 +512,8 @@ def apply_panel(core, state, action, address, code_text=""):
         if not core.save_config(config):
             return {"success": False, "message": "Could not write the configuration file."}
         state.set_config(config)
-        return {"success": True, "message": "Panel settings saved."}
+    audio_spectrum.ensure(config)  # the visualizer stream follows added and removed panels
+    return {"success": True, "message": "Panel settings saved."}
 
 
 def apply_revert(core, state):
