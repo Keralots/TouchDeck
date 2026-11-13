@@ -446,6 +446,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
           }
         }
         if (t.type == TILE_VIZ) t.vizScope = !strcmp(tv["style"] | "bars", "scope");
+        if (t.type == TILE_CLOCK) t.clockDate = !strcmp(tv["date"] | "", "always");
         p.tiles.push_back(t);
         continue;
       }

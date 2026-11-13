@@ -1113,7 +1113,12 @@
       '"><div class="dk-ic" style="background:' +
       (t.color || "#E6E8EC") +
       '">12</div><div class="dk-tmain"><b>Clock</b><div class="dk-tsub">Time and date (24h and time zone from Time settings)</div></div>' +
-      '<div class="dk-tact">' +
+      '<div class="dk-tact"><select data-cd="' +
+      i +
+      '" style="width:auto" title="Small tiles leave the date out unless Always">' +
+      opt("", "Date if it fits", t.date !== "always") +
+      opt("always", "Date always", t.date === "always") +
+      "</select>" +
       sizeSel(t, i) +
       '<button type="button" class="btn' +
       (i === more ? " on" : "") +
@@ -2975,6 +2980,16 @@
       setDirty(true);
       renderPage();
     };
+    el.querySelectorAll("[data-cd]").forEach(
+      (x) =>
+        (x.onchange = () => {
+          const t = p.tiles[+x.dataset.cd];
+          if (x.value === "always") t.date = "always";
+          else delete t.date;
+          setDirty(true);
+          renderPage();
+        }),
+    );
     el.querySelectorAll("[data-vs]").forEach(
       (x) =>
         (x.onchange = () => {
