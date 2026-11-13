@@ -372,7 +372,8 @@ void setWidth(lv_obj_t* o, int w) {
 constexpr int ROW_VIZ_MIN = 40;
 
 int rowNameW(const TileRt& r) {
-  const int t = textW(lv_label_get_text(r.name), lv_obj_get_style_text_font(r.name, LV_PART_MAIN));
+  const int t = textW(lv_label_get_text(r.name), lv_obj_get_style_text_font(r.name, LV_PART_MAIN)) +
+                lv_obj_get_style_pad_left(r.name, LV_PART_MAIN);
   return LV_MIN(t, r.valW * 2 / 5);
 }
 
@@ -420,7 +421,8 @@ void fitValue(TileRt& r) {
   const char* text = lv_label_get_text(r.sub);
   int room = r.valW;
   if (r.besideName)
-    room -= LV_MIN(textW(lv_label_get_text(r.name), lv_obj_get_style_text_font(r.name, LV_PART_MAIN)),
+    room -= LV_MIN(textW(lv_label_get_text(r.name), lv_obj_get_style_text_font(r.name, LV_PART_MAIN)) +
+                       lv_obj_get_style_pad_left(r.name, LV_PART_MAIN),
                    r.valW * (r.row ? 35 : 55) / 100) + 8;
   // A sensor's icon gives way when the reading does not fit beside it.
   if (r.chipRoom) {
@@ -452,6 +454,20 @@ void fitValue(TileRt& r) {
   if (r.row) layoutRow(r, f, unit ? unitW : 0);
 }
 
+// Metric or chart sensor icon before the name, sized to the name's line.
+static void fitMetricIcon(TileRt& r, const lv_font_t* nf) {
+  if (!r.icon) return;
+  const int px = lineH(nf) >= 24 ? 20 : 16;
+  if (px != r.iconPx) {
+    r.iconPx = px;
+    r.iconCp = showIcon(r.icon, *r.def, nullptr, false, px, 0);
+  }
+  showObj(r.icon, r.iconCp != 0);
+  const int pad = r.iconCp ? px + 4 : 0;
+  if (lv_obj_get_style_pad_left(r.name, LV_PART_MAIN) != pad) lv_obj_set_style_pad_left(r.name, pad, 0);
+  lv_obj_align(r.icon, LV_ALIGN_LEFT_MID, -pad, 0);  // children sit in the padded area
+}
+
 // PC metric: a chart or bar under a smaller number on wide tiles with the
 // room, else the name on top and the number big at the bottom, else a row
 // (a wide one keeps the chart or bar, between the name and the number).
@@ -468,6 +484,7 @@ void fitMetric(TileRt& r, int cw, int ch) {
   r.row = 0;
   if (viz) {
     setFont(r.name, nf);
+    fitMetricIcon(r, nf);
     lv_obj_set_size(r.name, d.style == METRIC_BAR ? lv_pct(100) : lv_pct(55), lineH(nf));
     lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, 0, -2);
     r.unitFont = &deck_font_14;
@@ -507,6 +524,7 @@ void fitMetric(TileRt& r, int cw, int ch) {
     const int dh = pass ? 0 : lineH(&deck_font_12);
     if ((o.wideOnly && cw < WIDE_W) || lineH(o.name) + dh + lineH(o.val) * 3 / 4 > ch) continue;
     setFont(r.name, o.name);
+    fitMetricIcon(r, o.name);
     lv_obj_set_size(r.name, lv_pct(100), lineH(o.name));
     lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, 0, -2);
     r.unitFont = o.unit;
@@ -522,6 +540,7 @@ void fitMetric(TileRt& r, int cw, int ch) {
   const bool name = cw >= 80;
   const lv_font_t* rf = cw >= WIDE_W && ch >= lineH(&deck_font_14) ? &deck_font_14 : &deck_font_12;
   setFont(r.name, rf);
+  fitMetricIcon(r, rf);
   lv_obj_set_height(r.name, lineH(rf));
   lv_obj_align(r.name, LV_ALIGN_LEFT_MID, 0, 0);
   showObj(r.name, name);

@@ -226,7 +226,8 @@
   function metricRow(t, i) {
     const ml = mlist(t),
       m = ml.find((x) => x.id === t.metric);
-    const col = t.color || PAL[((t.metric || 1) - 1) % 8];
+    const col = t.color || PAL[((t.metric || 1) - 1) % 8],
+      cp = iconCp(t.icon);
     const opts =
       ml
         .map(
@@ -250,9 +251,17 @@
     return (
       '<div class="dk-tile' +
       (i === sel ? " sel" : "") +
-      '"><div class="dk-ic" style="background:' +
+      '"><button type="button" class="dk-ic' +
+      (cp ? " mdi" : "") +
+      '" data-ic="' +
+      i +
+      '" title="' +
+      esc(cp ? t.icon : "Choose an icon") +
+      '" style="background:' +
       col +
-      '">PC</div><div class="dk-tmain"><input type="text" data-l="' +
+      '">' +
+      (cp ? String.fromCodePoint(cp) : "PC") +
+      '</button><div class="dk-tmain"><input type="text" data-l="' +
       i +
       '" value="' +
       esc(t.label || "") +
@@ -3965,8 +3974,11 @@
     }
     icFor = i;
     icKey = key || "icon";
-    $("dkIcAuto").textContent = icKey === "onIcon" ? "Same" : "Automatic";
-    $("dkIcNone").hidden = icKey === "onIcon";
+    // PC metrics and chart sensors show an icon only when one is picked.
+    const t = pages()[cur].tiles[i],
+      opt = t.type === "metric" || (t.type === "sensor" && t.style === "chart" && !(t.rows || []).length);
+    $("dkIcAuto").textContent = icKey === "onIcon" ? "Same" : opt ? "No icon" : "Automatic";
+    $("dkIcNone").hidden = icKey === "onIcon" || opt;
     $("dkIcQ").value = "";
     $("dkIcPick").classList.add("show");
     renderIcons();
