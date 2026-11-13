@@ -73,7 +73,7 @@
 <div class="dk-status"><span class="dk-dot" id="dkIcDot"></span><span id="dkIcState">checking...</span></div>
 <h3 class="card-title" style="margin-top:18px">Brand icons</h3>
 <p class="field-hint">Custom Brand Icons (phu:) by elax46, installed from <a href="https://github.com/elax46/custom-brand-icons" target="_blank" rel="noopener">their GitHub</a>, not bundled. Needs a mounted microSD card. Enable it in <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>. You can also upload a .js subset from the upstream Icon Finder.</p>
-<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkBrNet" disabled>Install latest from GitHub</button><button type="button" class="btn" id="dkBrFile" disabled>Upload .js file</button><button type="button" class="btn" id="dkBrRemove" disabled>Remove</button><input type="file" id="dkBrInput" accept=".js" hidden></div>
+<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkBrNet" disabled>Install latest from GitHub</button><button type="button" class="btn" id="dkBrFile" disabled>Upload .js files</button><button type="button" class="btn" id="dkBrRemove" disabled>Remove</button><input type="file" id="dkBrInput" accept=".js" multiple hidden></div>
 <div class="dk-status"><span class="dk-dot" id="dkBrDot"></span><span id="dkBrState">checking...</span></div></div>
 <div class="card" id="dkPrnCard"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag" id="dkPrnTag">Bambu Lab</span></div>
 <p class="field-hint">Source Printer LAN talks to the printer directly: it must be in LAN mode or have LAN access on, and its serial and access code are stored only on the device. Source Home Assistant reads a printer already added to the Bambu Lab integration (ha-bambulab) - nothing else to enter. With a plug (an HA switch), the printer's pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
@@ -3579,15 +3579,25 @@
   const brProgress = (text) => { $("dkBrState").textContent = text; };
   const brYield = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-  function parseBrandSource(src) {
+  /* One file (var icons = {...}) or, since release 2026.11.2, a loader listing
+     chunk files (export default {...}); icons collects across chunks. */
+  function brandLoader(src) {
+    const c = /\bvar\s+CHUNKS\s*=\s*(\[[^\]]*\])/.exec(src), m = /\bvar\s+MANIFEST\s*=\s*(\{[^}]*\})/.exec(src);
+    if (!c || !m) return null;
+    const chunks = JSON.parse(c[1]).map((n) => String(n).split("?")[0]);
+    if (!chunks.length || chunks.length > 500 || chunks.some((n) => !/^cbi-\d+\.js$/.test(n)))
+      throw new Error("Invalid chunk list");
+    return { chunks, count: Object.keys(JSON.parse(m[1])).length };
+  }
+  function parseBrandSource(src, icons = new Map()) {
     if (src.length > 12 * 1024 * 1024) throw new Error("The .js file is too big");
-    const start = /\b(?:var|let|const)\s+icons\s*=\s*\{/.exec(src);
-    if (!start) throw new Error("No icons object in this file");
+    const start = /\b(?:(?:var|let|const)\s+icons\s*=|export\s+default)\s*\{/.exec(src);
+    if (!start)
+      throw new Error(brandLoader(src) ? "This is the loader only: pick its cbi-*.js chunk files too" : "No icons object in this file");
     const quoted = '"(?:[^"\\\\\\r\\n]|\\\\.)*"';
     const number = '-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?';
     const entry = new RegExp('(' + quoted + ')\\s*:\\s*(\\[\\s*' +
       (number + '\\s*,\\s*').repeat(4) + quoted + '\\s*\\])', 'y');
-    const icons = new Map();
     let at = start.index + start[0].length;
     const space = () => { while (/\s/.test(src[at] || "") && at < src.length) at++; };
     while (true) {
@@ -3609,6 +3619,11 @@
     }
     if (!icons.size) throw new Error("No icons in this file");
     return icons;
+  }
+  async function fetchBrandText(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error("Download HTTP " + r.status);
+    return r.text();
   }
 
   function parseBrandPath(d) {
@@ -3707,8 +3722,8 @@
     return opentypeLoad;
   }
 
-  async function convertBrand(src, version) {
-    const icons = parseBrandSource(src), names = [...icons.keys()].sort(brandOrder);
+  async function convertBrand(icons, version) {
+    const names = [...icons.keys()].sort(brandOrder);
     if (!brandVersion.test(version)) throw new Error("Invalid release version");
     brProgress("Loading the font converter...");
     const ot = await loadOpentype();
@@ -3806,17 +3821,23 @@
       brProgress("Brand icons unavailable: " + e.message);
     } finally { brBusy = false; brButtons(); }
   }
-  async function brInstall(file) {
+  async function brInstall(files) {
     if (brBusy || !brState || !brState.sd) return;
     brBusy = true;
     brButtons();
     $("dkBrDot").className = "dk-dot busy";
     try {
-      let src, version = "file";
-      if (file) {
-        if (file.size > 12 * 1024 * 1024) throw new Error("The .js file is too big");
-        brProgress("Reading the .js file...");
-        src = await file.text();
+      let icons = new Map(), version = "file";
+      if (files) {
+        brProgress("Reading the .js files...");
+        const srcs = [];
+        for (const f of files) {
+          if (f.size > 12 * 1024 * 1024) throw new Error("The .js file is too big: " + f.name);
+          srcs.push(await f.text());
+        }
+        // A loader picked along with its chunks adds nothing.
+        const parts = srcs.length > 1 ? srcs.filter((t) => !brandLoader(t)) : srcs;
+        parts.forEach((t) => parseBrandSource(t, icons));
       } else {
         brProgress("Finding the latest GitHub release...");
         const release = await fetch("https://api.github.com/repos/elax46/custom-brand-icons/releases/latest");
@@ -3825,11 +3846,19 @@
         if (typeof tag !== "string" || !brandVersion.test(tag)) throw new Error("Invalid GitHub release tag");
         version = tag.replace(/^v(?=\d)/, "");
         brProgress("Downloading Custom Brand Icons " + version + "...");
-        const r = await fetch("https://cdn.jsdelivr.net/gh/elax46/custom-brand-icons@" + encodeURIComponent(tag) + "/dist/custom-brand-icons.js");
-        if (!r.ok) throw new Error("Download HTTP " + r.status);
-        src = await r.text();
+        const base = "https://cdn.jsdelivr.net/gh/elax46/custom-brand-icons@" + encodeURIComponent(tag) + "/dist/",
+          src = await fetchBrandText(base + "custom-brand-icons.js"),
+          ld = brandLoader(src);
+        if (!ld) parseBrandSource(src, icons);
+        else {
+          for (let i = 0; i < ld.chunks.length; i++) {
+            brProgress("Downloading Custom Brand Icons " + version + " (" + (i + 1) + "/" + ld.chunks.length + ")...");
+            parseBrandSource(await fetchBrandText(base + ld.chunks[i]), icons);
+          }
+          if (icons.size !== ld.count) throw new Error("Got " + icons.size + " icons, the release lists " + ld.count);
+        }
       }
-      const { data, index, skipped } = await convertBrand(src, version);
+      const { data, index, skipped } = await convertBrand(icons, version);
       brProgress("Sending to the device and installing...");
       const fd = new FormData();
       fd.append("font", new Blob([data], { type: "font/otf" }), "cbi.otf");
@@ -3843,15 +3872,15 @@
       } catch (e) { brProgress("Installed, but the portal could not read the font: " + e.message); }
     } catch (e) {
       $("dkBrDot").className = "dk-dot err";
-      brProgress("Not installed: " + e.message + (file ? "" : '. Download custom-brand-icons.js and use "Upload .js file".'));
+      brProgress("Not installed: " + e.message + (files ? "" : '. Download the .js files from the release\'s dist folder and use "Upload .js files".'));
     } finally { brBusy = false; brButtons(); }
   }
   $("dkBrNet").onclick = () => brInstall(null);
   $("dkBrFile").onclick = () => $("dkBrInput").click();
   $("dkBrInput").onchange = (e) => {
-    const file = e.target.files[0];
+    const files = [...e.target.files];
     e.target.value = "";
-    if (file) brInstall(file);
+    if (files.length) brInstall(files);
   };
   $("dkBrRemove").onclick = async () => {
     if (brBusy || !brState || !brState.sd) return;
