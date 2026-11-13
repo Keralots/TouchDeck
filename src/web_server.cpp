@@ -220,6 +220,7 @@ static void handleApiConfig() {
   pick["landscape"][1] = BOARD_GRID_PICK_LANDSCAPE_ROWS;
   pick["portrait"][0] = BOARD_GRID_PICK_PORTRAIT_COLS;
   pick["portrait"][1] = BOARD_GRID_PICK_PORTRAIT_ROWS;
+  screen["wallPrnPause"] = (bool)BOARD_WALL_PRINTER_PAUSE;
 
   JsonObject display = doc["display"].to<JsonObject>();
   display["rotation"] = dispSettings.rotation;

@@ -36,6 +36,7 @@
 #define BOARD_GRID_PICK_PORTRAIT_ROWS 6
 #define BOARD_MAX_PAGE_TILES 24
 #define BOARD_MEDIA_ART_MAX 200  // Now playing cover side, px
+#define BOARD_WALL_PRINTER_PAUSE 1  // printer pages leave too little PSRAM for a wallpaper change (b59f47b)
 
 // --- Touch: AXS15231B controller (deck_touch_axs15231b.cpp) ---
 #define BOARD_TOUCH_AXS15231B 1
