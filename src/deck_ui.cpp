@@ -291,18 +291,74 @@ void addTilesPage(const PageDef& def) {
   lv_obj_add_flag(grid, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(grid, onGridHold, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)page);
 
+  // Tiles without a cell ("when" not met, no room) are built hidden, so a
+  // "when" flip only re-places the page (placePage).
   std::vector<Cell> cells;
   placeTiles(def, orient, cells);
   for (size_t i = 0; i < cells.size(); i++) {
     const Cell& c = cells[i];
-    if (c.placed) makeTile(grid, def.tiles[i], page, c.x, c.y, c.w, c.h);
-    else if (!c.off) Serial.printf("Deck: page '%s' has no room for tile '%s'\n",
-                       def.id.c_str(), def.tiles[i].id.c_str());
+    if (!c.placed && !c.off) Serial.printf("Deck: page '%s' has no room for tile '%s'\n",
+                                           def.id.c_str(), def.tiles[i].id.c_str());
+    if (def.tiles[i].type == TILE_PRINTER && !advSettings.printers) continue;
+    makeTile(grid, def.tiles[i], page, c.placed ? c.x : 0, c.placed ? c.y : 0, c.w, c.h);
+    if (c.placed) continue;
+    s_tiles.back().off = true;
+    lv_obj_add_flag(s_tiles.back().obj, LV_OBJ_FLAG_HIDDEN);
   }
 
   p.snap = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
   p.stale = true;
   s_count++;
+}
+
+// The page's built tiles take the cells its "when" conditions give them now.
+// The glass is baked again only where a tile came, went or moved.
+void placePage(int page) {
+  Page& p = s_pages[page];
+  const PageDef& def = *p.def;
+  std::vector<Cell> cells;
+  placeTiles(def, logicalW() > logicalH() ? ORIENT_LANDSCAPE : ORIENT_PORTRAIT, cells);
+  struct Was {
+    TileRt* r;
+    bool off;
+    lv_area_t a;
+  };
+  std::vector<Was> was;
+  for (TileRt& r : s_tiles) {
+    if (r.page != page) continue;
+    const Cell& c = cells[r.def - def.tiles.data()];
+    lv_obj_t* t = r.obj;
+    was.push_back({&r, r.off, {}});
+    lv_obj_get_coords(t, &was.back().a);
+    if (c.placed && (lv_obj_get_style_grid_cell_column_pos(t, LV_PART_MAIN) != c.x ||
+                     lv_obj_get_style_grid_cell_row_pos(t, LV_PART_MAIN) != c.y ||
+                     lv_obj_get_style_grid_cell_column_span(t, LV_PART_MAIN) != c.w ||
+                     lv_obj_get_style_grid_cell_row_span(t, LV_PART_MAIN) != c.h))
+      lv_obj_set_grid_cell(t, LV_GRID_ALIGN_STRETCH, c.x, c.w, LV_GRID_ALIGN_STRETCH, c.y, c.h);
+    if (c.placed != r.off) continue;
+    r.off = !c.placed;
+    showObj(t, c.placed);
+  }
+  lv_obj_update_layout(p.root);
+  lv_area_t rc, changed = {LV_COORD_MAX, LV_COORD_MAX, LV_COORD_MIN, LV_COORD_MIN};
+  lv_obj_get_coords(p.root, &rc);
+  auto add = [&](const lv_area_t& a) {
+    changed = {LV_MIN(changed.x1, a.x1 - rc.x1), LV_MIN(changed.y1, a.y1 - rc.y1),
+               LV_MAX(changed.x2, a.x2 - rc.x1), LV_MAX(changed.y2, a.y2 - rc.y1)};
+  };
+  for (const Was& k : was) {
+    lv_area_t now;
+    lv_obj_get_coords(k.r->obj, &now);
+    const bool same = now.x1 == k.a.x1 && now.y1 == k.a.y1 && now.x2 == k.a.x2 && now.y2 == k.a.y2;
+    if (k.off == k.r->off && (k.off || same)) continue;
+    if (!k.off) add(k.a);
+    if (!k.r->off) add(now);
+  }
+  if (changed.x1 > changed.x2) return;
+  // A failed bake is tried again as a wallpaper bake (tickWallpaper).
+  if (s_theme == THEME_GLASS && !p.wallBake && wallBlur() && !bakeGlass(p, &changed)) p.wallBake = true;
+  p.stale = true;
+  s_zonesDirty = true;
 }
 
 void buildPages() {
@@ -445,7 +501,7 @@ void syncSwipeZones() {
     for (const TileRt& r : s_tiles) {
       // A slider tile, or the volume row of a Now playing tile.
       const bool vol = r.def->type == TILE_MEDIA && r.volBar && !lv_obj_has_flag(r.volBar, LV_OBJ_FLAG_HIDDEN);
-      if (r.page != a || (!r.fill && !vol) || n == MAX_PAGE_TILES) continue;
+      if (r.page != a || r.off || (!r.fill && !vol) || n == MAX_PAGE_TILES) continue;
       lv_area_t t;
       lv_obj_get_coords(r.obj, &t);
       if (vol) lv_obj_get_coords(r.volBar, &t);
@@ -758,8 +814,9 @@ void autoNavTo(const String& id) {
   s_autoUntil = millis() + AUTO_WAIT_MS;
 }
 
-// A "when" tile or page whose condition flipped rebuilds the pages. A page
-// that goes while shown is left first (back where an "auto" switch came from).
+// A "when" page whose condition flipped rebuilds the pages; tiles alone are
+// re-placed on their page. A page that goes while shown is left first (back
+// where an "auto" switch came from).
 void whenSync() {
   whenTrack();
   printerFollowTick();
@@ -784,13 +841,20 @@ void whenSync() {
     Serial.printf("Deck: page '%s' %s\n", pd.id.c_str(), pd.shown ? "hides" : "shows");
     flip = true;
   }
-  for (const PageDef& pd : s_cfg.pages)
-    for (const TileDef& t : pd.tiles)
-      if (!flip && t.when.kind != WHEN_ALWAYS && whenWanted(t) != t.shown) {
+  if (!flip) {
+    for (PageDef& pd : s_cfg.pages) {
+      bool moved = false;
+      for (TileDef& t : pd.tiles) {
+        if (t.when.kind == WHEN_ALWAYS || whenWanted(t) == t.shown) continue;
         Serial.printf("Deck: tile '%s' %s\n", t.id.c_str(), t.shown ? "hides" : "shows");
-        flip = true;
+        t.shown = !t.shown;
+        moved = true;
       }
-  if (!flip) return;
+      const int page = moved ? pageIndexOf(pd.id) : -1;
+      if (page >= 0) placePage(page);
+    }
+    return;
+  }
   rebuildPages();
   if (autoTo.length()) {
     s_autoFrom = cur;
@@ -952,7 +1016,7 @@ void sparkTick() {
   s_sparkMs = now;
   if (!sparkGliding()) return;
   for (TileRt& r : s_tiles)
-    if (r.spark && r.page == sh.active && sparkRender(r, now, true, std::min<uint32_t>(dt, 200)))
+    if (r.spark && r.page == sh.active && !r.off && sparkRender(r, now, true, std::min<uint32_t>(dt, 200)))
       s_sparkPaintMs = now;
 }
 
@@ -994,7 +1058,7 @@ void deckTick() {
     }
     // Same edge formula as the compositor; a tile across one drops that cut.
     for (const TileRt& r : s_tiles) {
-      if (r.page < 0 || r.page >= MAX_PAGES || cols[r.page] < 2) continue;
+      if (r.page < 0 || r.page >= MAX_PAGES || cols[r.page] < 2 || r.off) continue;
       const int n = cols[r.page], x1 = lv_obj_get_x(r.obj), x2 = x1 + lv_obj_get_width(r.obj);
       const float cw = (float)(w - 16 - 7 * (n - 1)) / n;
       for (int k = 1; k < n; k++) {
@@ -1384,7 +1448,7 @@ bool deckTestCard(const String& tileId) {
   if (frameActive()) return false;
   if (s_ed.root) return false;  // the editor blocks gestures until it closes
   for (size_t i = 0; i < s_tiles.size(); i++) {
-    if (s_tiles[i].def->id != tileId) continue;
+    if (s_tiles[i].def->id != tileId || s_tiles[i].off) continue;
     if (s_tiles[i].def->type == TILE_PRINTER) return false;  // touch never opens a card there
     openModal((int)i);
     return true;
@@ -1396,8 +1460,8 @@ bool deckTestTap(const String& tileId, bool hold) {
   if (frameActive()) return false;
   if (s_ed.root) return false;
   for (TileRt& r : s_tiles) {
-    if (r.def->id != tileId || r.def->type == TILE_METRIC || r.def->type == TILE_CLOCK || r.def->type == TILE_MEDIA ||
-        r.def->type == TILE_VIZ) continue;
+    if (r.def->id != tileId || r.off || r.def->type == TILE_METRIC || r.def->type == TILE_CLOCK ||
+        r.def->type == TILE_MEDIA || r.def->type == TILE_VIZ) continue;
     const TileAction& a = hold ? r.def->hold : r.def->tap;
     if (a.kind == ACT_PC) return false;  // PC commands require a real touch.
     requestAction(r, hold);
@@ -1409,7 +1473,7 @@ bool deckTestTap(const String& tileId, bool hold) {
 bool deckTestSlide(const String& tileId, int pct) {
   if (frameActive()) return false;
   for (TileRt& r : s_tiles) {
-    if (r.def->id != tileId || !r.fill) continue;
+    if (r.def->id != tileId || !r.fill || r.off) continue;
     if (r.def->pcVolume) return false;  // PC commands require a real touch.
     const float f = constrain(pct, 0, 100) / 100.0f;
     return setWish(r.def->entity, true, f);

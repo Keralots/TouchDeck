@@ -1487,7 +1487,7 @@ void heroTick() {
   for (TileRt& r : s_tiles) {
     if (r.def->type != TILE_PRINTER || r.def->show != PS_HERO || !r.detail) continue;
     const int h = lv_obj_get_height(r.obj);
-    const bool run = lit && r.page == sh.active && h > 3 * HERO_HEAD &&
+    const bool run = lit && r.page == sh.active && !r.off && h > 3 * HERO_HEAD &&
                      !lv_obj_has_flag(r.icon, LV_OBJ_FLAG_HIDDEN) && prnPrinting(printerFor(*r.def));
     if (run == lv_obj_has_flag(r.detail, LV_OBJ_FLAG_HIDDEN)) showObj(r.detail, run);
     if (!run) continue;

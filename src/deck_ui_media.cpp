@@ -124,7 +124,7 @@ void mediaProgress(TileRt& r, const MediaNow& m) {
 void mediaCover(TileRt& r, const MediaNow& m) {
   const bool ha = r.mediaHa;
   const PcSource* pc = ha ? nullptr : pcSource(r.def->pc);
-  const String wanted = m.available && r.coverPx ? m.art : String();
+  const String wanted = m.available && r.coverPx && !r.off ? m.art : String();
   if (wanted != r.artWanted || (r.art && r.art->px != r.coverPx)) {
     r.artWanted = wanted;
     r.artAttempt = 0;
