@@ -11,6 +11,7 @@ namespace deckui {
 // ~40 ms of loop time at 480x320).
 constexpr uint32_t SNAP_SPACING_MS = 40;
 constexpr uint32_t NEAR_SNAP_MAX_MS = 30000;  // a neighbour image older than this is refreshed at once
+constexpr uint32_t SNAP_RETRY_MS = 1000;  // a page whose image buffer could not be allocated
 constexpr uint32_t PANEL_SNAP_MS = 5000;  // a stale panel image waits at most this long behind busy pages
 constexpr uint32_t STATS_MS = 10000;
 constexpr uint32_t SLIDE_MS = 280;
@@ -72,6 +73,7 @@ DeckConfig s_cfg;
 Page s_pages[MAX_PAGES];
 std::vector<TileRt> s_tiles;
 int s_count = 0;
+int s_built = 0;  // s_pages in use: the shown pages, then the parked "when" pages
 uint32_t s_gen = 1;
 uint32_t s_lastSnapMs = 0;
 uint32_t s_panelSnapMs = 0;
@@ -238,15 +240,15 @@ void placeTiles(const PageDef& def, int orient, std::vector<Cell>& out) {
 }
 
 void onGridHold(lv_event_t* e) {
-  const int page = (int)(uintptr_t)lv_event_get_user_data(e);
-  if (page == sh.active) edOpen(page);
+  const int a = sh.active;  // pages change index when one comes or goes
+  if (a < s_count && s_pages[a].grid == lv_event_get_current_target(e)) edOpen(a);
 }
 
-void addTilesPage(const PageDef& def) {
+// parked: a "when" page that is not shown now, built so it can show at once.
+void addTilesPage(const PageDef& def, int page, bool parked) {
   const int w = logicalW(), h = logicalH();
   const int orient = w > h ? ORIENT_LANDSCAPE : ORIENT_PORTRAIT;
-  const int page = s_count;
-  Page& p = s_pages[s_count];
+  Page& p = s_pages[page];
   p = {};
   p.def = &def;
   p.root = makeRoot(w, h);
@@ -289,7 +291,7 @@ void addTilesPage(const PageDef& def) {
 
   // Long press on an empty part of the page opens the edit mode.
   lv_obj_add_flag(grid, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(grid, onGridHold, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)page);
+  lv_obj_add_event_cb(grid, onGridHold, LV_EVENT_LONG_PRESSED, nullptr);
 
   // Tiles without a cell ("when" not met, no room) are built hidden, so a
   // "when" flip only re-places the page (placePage).
@@ -306,9 +308,8 @@ void addTilesPage(const PageDef& def) {
     lv_obj_add_flag(s_tiles.back().obj, LV_OBJ_FLAG_HIDDEN);
   }
 
-  p.snap = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
+  p.snap = parked ? nullptr : lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
   p.stale = true;
-  s_count++;
 }
 
 // The page's built tiles take the cells its "when" conditions give them now.
@@ -361,6 +362,28 @@ void placePage(int page) {
   s_zonesDirty = true;
 }
 
+// The shown pages as swipe columns (adjacent pages of one group), page `active` up.
+void setColumns(int active) {
+  portENTER_CRITICAL(&s_mux);
+  sh.count = s_count;
+  sh.active = active;
+  sh.nCols = 0;
+  for (int i = 0; i < s_count; i++) {
+    const String& g = s_pages[i].def->group;
+    const bool joins = i > 0 && g.length() && g == s_pages[i - 1].def->group;
+    if (!joins) {
+      sh.colFirst[sh.nCols] = i;
+      sh.colLen[sh.nCols] = 0;
+      sh.colCur[sh.nCols] = i;
+      sh.nCols++;
+    }
+    sh.col[i] = sh.nCols - 1;
+    sh.colLen[sh.nCols - 1]++;
+  }
+  sh.colCur[sh.col[active]] = active;
+  portEXIT_CRITICAL(&s_mux);
+}
+
 void buildPages() {
   fxQuiet();  // tiles get their first state: no animations
   const int w = logicalW();
@@ -379,7 +402,13 @@ void buildPages() {
     if (!pd.shown) continue;
     if (pd.printer.length()) s_prnPagesUp = true;
     if (s_keepPage.length() && pd.id == s_keepPage) keep = s_count;
-    addTilesPage(pd);
+    addTilesPage(pd, s_count++, false);
+  }
+  s_built = s_count;
+  for (const PageDef& pd : s_cfg.pages) {
+    if (s_built >= MAX_PAGES) break;
+    if (pd.shown || (pd.printer.length() && !printerPowered(pd.printer))) continue;
+    addTilesPage(pd, s_built++, true);
   }
   const bool byId = s_keepPage.length() > 0;
   s_keepPage = "";
@@ -389,31 +418,17 @@ void buildPages() {
   sh.owned = false;
   for (int i = 0; i < MAX_PAGES; i++) { sh.valid[i] = false; sh.busy[i] = false; }
   const int active = byId ? (keep >= 0 ? keep : 0) : sh.active < s_count ? sh.active : 0;
-  sh.active = active;
-  sh.nCols = 0;
-  for (int i = 0; i < s_count; i++) {
-    const String& g = s_pages[i].def->group;
-    const bool joins = i > 0 && g.length() && g == s_pages[i - 1].def->group;
-    if (!joins) {
-      sh.colFirst[sh.nCols] = i;
-      sh.colLen[sh.nCols] = 0;
-      sh.colCur[sh.nCols] = i;
-      sh.nCols++;
-    }
-    sh.col[i] = sh.nCols - 1;
-    sh.colLen[sh.nCols - 1]++;
-  }
-  sh.colCur[sh.col[active]] = active;
   portEXIT_CRITICAL(&s_mux);
+  setColumns(active);
 
   setPager(active);
   // Inactive pages wait just off the right edge: they keep their layout and
   // can be snapshotted, but their invalidations are clipped away.
-  for (int i = 0; i < s_count; i++) lv_obj_set_pos(s_pages[i].root, i == active ? 0 : w, 0);
+  for (int i = 0; i < s_built; i++) lv_obj_set_pos(s_pages[i].root, i == active && i < s_count ? 0 : w, 0);
   unsigned baked = 0, reused = 0;
   uint32_t bakeMs = 0;
   if (s_theme == THEME_GLASS) {
-    for (int i = 0; i < s_count; i++) {
+    for (int i = 0; i < s_built; i++) {
       Page& p = s_pages[i];
       std::vector<uint32_t> key = glassKey(p);
       if (key.empty()) continue;
@@ -434,7 +449,7 @@ void buildPages() {
   // Drop removed or changed pages before allocating any replacement bakes.
   clearGlassCache();
   if (s_theme == THEME_GLASS) {
-    for (int i = 0; i < s_count; i++) {
+    for (int i = 0; i < s_built; i++) {
       if (s_pages[i].glass) continue;
       const uint32_t start = millis();
       if (bakeGlass(s_pages[i])) baked++;
@@ -458,7 +473,7 @@ void destroyPages(bool keepGlass = false) {
   edClose();
   closeModal();
   destroyQuickPanel();
-  for (int i = 0; i < s_count; i++) {
+  for (int i = 0; i < s_built; i++) {
     Page& p = s_pages[i];
     if (keepGlass && s_theme == THEME_GLASS && p.glass && p.def && !p.glassKey.empty()) {
       GlassCacheEntry& c = s_glassCache[i];
@@ -472,7 +487,7 @@ void destroyPages(bool keepGlass = false) {
     if (s_pages[i].glass) lv_draw_buf_destroy(s_pages[i].glass);
     s_pages[i] = {};
   }
-  s_count = 0;
+  s_count = s_built = 0;
   for (TileRt& r : s_tiles) {
     r.art.reset();
     if (r.pts) lv_free(r.pts);
@@ -583,7 +598,8 @@ void refreshOneSnapshot() {
   // away jump (goToPage), so their old image stands until they are neighbours.
   auto near = [&](int p) { return p == a || p == order[0] || p == order[1] || p == order[2] || p == order[3]; };
   auto due = [&](int p) {
-    return p >= 0 && s_pages[p].stale && !s_pages[p].wallBake && (p != a || s_qp.open) && (!sh.valid[p] || near(p));
+    return p >= 0 && s_pages[p].stale && !s_pages[p].wallBake && (p != a || s_qp.open) && (!sh.valid[p] || near(p)) &&
+           (s_pages[p].snap || now - s_pages[p].snapMs >= SNAP_RETRY_MS);
   };
   if (s_qp.open && due(a)) pick = a;
   // A page without an image cannot be swiped to at all. Nor should a page
@@ -616,7 +632,12 @@ void refreshOneSnapshot() {
 
 bool snapPage(int pick) {
   Page& pg = s_pages[pick];
-  if (!pg.snap) return false;
+  // A page that just came has none yet; with PSRAM short it is tried again later.
+  if (!pg.snap) pg.snap = lv_draw_buf_create(logicalW(), logicalH(), LV_COLOR_FORMAT_RGB565, 0);
+  if (!pg.snap) {
+    pg.snapMs = millis();
+    return false;
+  }
 
   portENTER_CRITICAL(&s_mux);
   const bool owned = sh.owned;
@@ -661,7 +682,7 @@ void tickWallpaper() {
   // On small PSRAM boards printer pages leave too little for a reliable change.
   const bool rotate = !(BOARD_WALL_PRINTER_PAUSE && s_prnPagesUp);
   bool baking = false;
-  for (int i = 0; i < s_count; i++) baking |= s_pages[i].wallBake;
+  for (int i = 0; i < s_built; i++) baking |= s_pages[i].wallBake;
   // A job starts only when safe: no card is open, so its two screen sized
   // buffers can make room for the new wallpaper.
   auto makeRoom = [] {
@@ -675,14 +696,14 @@ void tickWallpaper() {
     if (!wallPoll(logicalW(), logicalH(), millis() - touchLastActivity() >= WALL_IDLE_MS, !touchIsDown(), rotate))
       return;
     wallCommit();
-    for (int i = 0; i < s_count; i++) s_pages[i].wallBake = true;
+    for (int i = 0; i < s_built; i++) s_pages[i].wallBake = true;
     bakeWallpaperPage(sh.active);
     qpMarkStale();
     ++s_gen;
     return;
   }
   if (!safe || !baking) return;
-  for (int i = 0; i < s_count; i++) {
+  for (int i = 0; i < s_built; i++) {
     if (!s_pages[i].wallBake) continue;
     bakeWallpaperPage(i);
     break;
@@ -715,7 +736,7 @@ void updateHeaders() {
   const int wifi = WiFi.status() == WL_CONNECTED ? 1 : 0;
   if (wifi != s_lastWifi) {
     s_lastWifi = wifi;
-    for (int i = 0; i < s_count; i++) {
+    for (int i = 0; i < s_built; i++) {
       if (!s_pages[i].wifi) continue;
       lv_obj_set_style_text_color(s_pages[i].wifi, lv_color_hex(wifi ? C_OK : C_DIM), 0);
       s_pages[i].stale = true;
@@ -732,7 +753,7 @@ void updateHeaders() {
   if (netSettings.use24h) snprintf(buf, sizeof(buf), "%02d:%02d", lt.tm_hour, lt.tm_min);
   else snprintf(buf, sizeof(buf), "%d:%02d %s", (lt.tm_hour + 11) % 12 + 1, lt.tm_min,
                 lt.tm_hour < 12 ? "AM" : "PM");
-  for (int i = 0; i < s_count; i++) {
+  for (int i = 0; i < s_built; i++) {
     if (!s_pages[i].clock) continue;
     lv_label_set_text(s_pages[i].clock, buf);
     s_pages[i].stale = true;
@@ -814,9 +835,124 @@ void autoNavTo(const String& id) {
   s_autoUntil = millis() + AUTO_WAIT_MS;
 }
 
-// A "when" page whose condition flipped rebuilds the pages; tiles alone are
-// re-placed on their page. A page that goes while shown is left first (back
-// where an "auto" switch came from).
+// Cascade moves each page's grid columns; the header above moves as one.
+void syncCascade() {
+  const int orient = logicalW() > logicalH() ? ORIENT_LANDSCAPE : ORIENT_PORTRAIT;
+  uint8_t cols[MAX_PAGES] = {};
+  int16_t top[MAX_PAGES] = {};
+  uint16_t cuts[MAX_PAGES] = {};
+  const int w = logicalW();
+  for (int i = 0; i < s_count && i < MAX_PAGES; i++) {
+    const Page& pg = s_pages[i];
+    cols[i] = pg.grid && pg.def ? pg.def->cols[orient] : 0;
+    top[i] = pg.grid ? (int16_t)(lv_obj_get_y(pg.grid) + 4) : 0;
+    cuts[i] = cols[i] > 1 ? (uint16_t)(((1u << cols[i]) - 1) & ~1u) : 0;  // edges 1 .. cols-1
+  }
+  // Same edge formula as the compositor; a tile across one drops that cut.
+  for (const TileRt& r : s_tiles) {
+    if (r.page < 0 || r.page >= MAX_PAGES || cols[r.page] < 2 || r.off) continue;
+    const int n = cols[r.page], x1 = lv_obj_get_x(r.obj), x2 = x1 + lv_obj_get_width(r.obj);
+    const float cw = (float)(w - 16 - 7 * (n - 1)) / n;
+    for (int k = 1; k < n; k++) {
+      const int e = 8 + (int)lroundf(k * (cw + 7)) - 4;
+      if (x1 < e && e < x2) cuts[r.page] &= (uint16_t)~(1u << k);
+    }
+  }
+  // No usable cut at all would mean "all" to the compositor: one band then.
+  for (int i = 0; i < MAX_PAGES; i++)
+    if (cols[i] > 1 && !cuts[i]) cols[i] = 1;
+  portENTER_CRITICAL(&s_mux);
+  memcpy(sh.gridCols, cols, sizeof(cols));
+  memcpy(sh.gridTop, top, sizeof(top));
+  memcpy(sh.gridCuts, cuts, sizeof(cuts));
+  portEXIT_CRITICAL(&s_mux);
+}
+
+int builtIndexOf(const PageDef& pd) {
+  for (int i = 0; i < s_built; i++)
+    if (s_pages[i].def == &pd) return i;
+  return -1;
+}
+
+// A page "when" flipped: the built pages take their places again, the shown
+// ones in config order and the parked ones behind them. A parked page keeps
+// its glass, not its swipe image. False while a gesture has the page images.
+bool arrangePages() {
+  portENTER_CRITICAL(&s_mux);
+  const bool taken = sh.owned;
+  sh.owned = true;  // no swipe starts while the pages move
+  portEXIT_CRITICAL(&s_mux);
+  if (taken) return false;
+
+  for (PageDef& pd : s_cfg.pages) {
+    if (pd.when.kind == WHEN_ALWAYS || whenWanted(pd) == pd.shown) continue;
+    Serial.printf("Deck: page '%s' %s\n", pd.id.c_str(), pd.shown ? "hides" : "shows");
+    pd.shown = !pd.shown;
+  }
+  int from[MAX_PAGES], to[MAX_PAGES], n = 0, shown = 0;
+  for (const bool want : {true, false}) {
+    for (const PageDef& pd : s_cfg.pages) {
+      const int i = builtIndexOf(pd);
+      if (i >= 0 && pd.shown == want) from[n++] = i;
+    }
+    if (want) shown = n;
+  }
+  const int oldCount = s_count, oldActive = sh.active;
+  int active = -1;
+  for (int k = 0; k < n; k++) {
+    to[from[k]] = k;
+    if (k < shown && from[k] == oldActive && oldActive < oldCount) active = k;
+  }
+  const bool left = active < 0;  // the shown page went (or there was none)
+
+  Page moved[MAX_PAGES];
+  bool valid[MAX_PAGES] = {}, was[MAX_PAGES] = {};
+  Src src[MAX_PAGES] = {};
+  for (int k = 0; k < n; k++) {
+    moved[k] = std::move(s_pages[from[k]]);
+    was[k] = from[k] < oldCount;
+    valid[k] = was[k] && k < shown && sh.valid[from[k]];
+    src[k] = sh.src[from[k]];
+  }
+  for (int k = 0; k < n; k++) s_pages[k] = std::move(moved[k]);
+  for (TileRt& r : s_tiles) r.page = to[r.page];
+  s_count = shown;
+  if (left) active = shown ? homePage() : 0;
+  portENTER_CRITICAL(&s_mux);
+  memcpy(sh.valid, valid, sizeof(valid));
+  memcpy(sh.src, src, sizeof(src));
+  portEXIT_CRITICAL(&s_mux);
+  setColumns(active);
+  setPager(active);
+
+  const int w = logicalW();
+  s_prnPagesUp = false;
+  for (int k = 0; k < n; k++) {
+    Page& p = s_pages[k];
+    const bool now = k < shown;
+    lv_obj_set_pos(p.root, now && k == active ? 0 : w, 0);
+    if (now && p.def->printer.length()) s_prnPagesUp = true;
+    if (now && !was[k]) {
+      p.stale = true;  // snapPage gives it a swipe image
+    } else if (!now && was[k]) {
+      if (p.snap) lv_draw_buf_destroy(p.snap);
+      p.snap = nullptr;
+    }
+  }
+  s_zonesDirty = true;
+  syncCascade();
+  if (left) {
+    s_gen++;
+    qpMarkStale();
+    lv_obj_invalidate(lv_screen_active());
+  }
+  releaseSwipe();
+  return true;
+}
+
+// A "when" page whose condition flipped comes or goes in place, and so do
+// tiles on their page. A page that goes while shown is left first (back where
+// an "auto" switch came from).
 void whenSync() {
   whenTrack();
   printerFollowTick();
@@ -834,28 +970,24 @@ void whenSync() {
       if (back != sh.active) {
         s_autoFrom = "";
         goToPage(s_pages[back].def->id);
-        if (!s_frameSync) return;  // rebuilt once the slide is over
+        if (!s_frameSync) return;  // moved once the slide is over
       }
     }
     if (!pd.shown && pd.autoShow && !autoTo.length()) autoTo = pd.id;
-    Serial.printf("Deck: page '%s' %s\n", pd.id.c_str(), pd.shown ? "hides" : "shows");
     flip = true;
   }
-  if (!flip) {
-    for (PageDef& pd : s_cfg.pages) {
-      bool moved = false;
-      for (TileDef& t : pd.tiles) {
-        if (t.when.kind == WHEN_ALWAYS || whenWanted(t) == t.shown) continue;
-        Serial.printf("Deck: tile '%s' %s\n", t.id.c_str(), t.shown ? "hides" : "shows");
-        t.shown = !t.shown;
-        moved = true;
-      }
-      const int page = moved ? pageIndexOf(pd.id) : -1;
-      if (page >= 0) placePage(page);
+  if (flip && !arrangePages()) return;
+  for (PageDef& pd : s_cfg.pages) {
+    bool moved = false;
+    for (TileDef& t : pd.tiles) {
+      if (t.when.kind == WHEN_ALWAYS || whenWanted(t) == t.shown) continue;
+      Serial.printf("Deck: tile '%s' %s\n", t.id.c_str(), t.shown ? "hides" : "shows");
+      t.shown = !t.shown;
+      moved = true;
     }
-    return;
+    const int page = moved ? builtIndexOf(pd) : -1;
+    if (page >= 0) placePage(page);
   }
-  rebuildPages();
   if (autoTo.length()) {
     s_autoFrom = cur;
     s_autoTo = autoTo;
@@ -1043,38 +1175,7 @@ void deckTick() {
     fxCancelRipples();
   }
   panelSetPageFx(fxPage());
-  // Cascade moves each page's grid columns; the header above moves as one.
-  {
-    const int orient = logicalW() > logicalH() ? ORIENT_LANDSCAPE : ORIENT_PORTRAIT;
-    uint8_t cols[MAX_PAGES] = {};
-    int16_t top[MAX_PAGES] = {};
-    uint16_t cuts[MAX_PAGES] = {};
-    const int w = logicalW();
-    for (int i = 0; i < s_count && i < MAX_PAGES; i++) {
-      const Page& pg = s_pages[i];
-      cols[i] = pg.grid && pg.def ? pg.def->cols[orient] : 0;
-      top[i] = pg.grid ? (int16_t)(lv_obj_get_y(pg.grid) + 4) : 0;
-      cuts[i] = cols[i] > 1 ? (uint16_t)(((1u << cols[i]) - 1) & ~1u) : 0;  // edges 1 .. cols-1
-    }
-    // Same edge formula as the compositor; a tile across one drops that cut.
-    for (const TileRt& r : s_tiles) {
-      if (r.page < 0 || r.page >= MAX_PAGES || cols[r.page] < 2 || r.off) continue;
-      const int n = cols[r.page], x1 = lv_obj_get_x(r.obj), x2 = x1 + lv_obj_get_width(r.obj);
-      const float cw = (float)(w - 16 - 7 * (n - 1)) / n;
-      for (int k = 1; k < n; k++) {
-        const int e = 8 + (int)lroundf(k * (cw + 7)) - 4;
-        if (x1 < e && e < x2) cuts[r.page] &= (uint16_t)~(1u << k);
-      }
-    }
-    // No usable cut at all would mean "all" to the compositor: one band then.
-    for (int i = 0; i < MAX_PAGES; i++)
-      if (cols[i] > 1 && !cuts[i]) cols[i] = 1;
-    portENTER_CRITICAL(&s_mux);
-    memcpy(sh.gridCols, cols, sizeof(cols));
-    memcpy(sh.gridTop, top, sizeof(top));
-    memcpy(sh.gridCuts, cuts, sizeof(cuts));
-    portEXIT_CRITICAL(&s_mux);
-  }
+  syncCascade();
 
   if (touchTakeActivity() && (displaySleepingForTouch() || frameActive())) {
     wakeDisplayFromTouch();
@@ -1331,7 +1432,7 @@ void setHeader(bool on) {
     prefs.putBool("hdr", on);
     prefs.end();
   }
-  for (int i = 0; i < s_count; i++) layoutHeader(s_pages[i]);
+  for (int i = 0; i < s_built; i++) layoutHeader(s_pages[i]);
   if (s_qp.headerBtn) {
     if (on) lv_obj_add_state(s_qp.headerBtn, LV_STATE_CHECKED);
     else lv_obj_remove_state(s_qp.headerBtn, LV_STATE_CHECKED);
