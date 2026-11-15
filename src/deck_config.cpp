@@ -87,9 +87,11 @@ bool parseHttp(JsonVariantConst v, TileAction& a, String* err, const String& whe
 bool parseAction(JsonVariantConst v, TileAction& a, String* err, const String& where) {
   a = TileAction();
   if (v.isNull()) return true;
-  const char* kind = v["action"] | "none";
-  if (!strcmp(kind, "none")) {
+  const char* kind = v["action"] | "";
+  if (!*kind) {
     a.kind = ACT_NONE;
+  } else if (!strcmp(kind, "none")) {
+    a.kind = ACT_NOTHING;
   } else if (!strcmp(kind, "toggle")) {
     a.kind = ACT_TOGGLE;
   } else if (!strcmp(kind, "more-info")) {
@@ -485,7 +487,9 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         return false;
       }
       // Defaults: a toggle toggles, anything holds to its detail card.
-      if (tv["tap"].isNull() && t.type == TILE_TOGGLE) t.tap.kind = ACT_TOGGLE;
+      // A thermostat opens its card: a stray tap would turn the heating off (#8).
+      if (tv["tap"].isNull() && t.type == TILE_TOGGLE)
+        t.tap.kind = t.entity.startsWith("climate.") ? ACT_MORE_INFO : ACT_TOGGLE;
       // A read-only sensor opens its card on a tap too.
       if (tv["tap"].isNull() && t.type == TILE_SENSOR && !t.http.enabled) t.tap.kind = ACT_MORE_INFO;
       // A slider toggles on a tap; a number has no on/off, so its card opens.

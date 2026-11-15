@@ -142,6 +142,7 @@ enum ActionKind : uint8_t {
   ACT_MORE_INFO,     // detail popup
   ACT_HTTP,          // {method, url, body, contentType, headers}
   ACT_PC,            // {pc, cmd}: a command to a paired PC's companion
+  ACT_NOTHING,       // "action": "none" set on purpose (ACT_NONE runs the entity's default)
 };
 enum ConfirmMode : uint8_t { CONFIRM_NONE = 0, CONFIRM_OFF, CONFIRM_ALWAYS };
 enum WhenKind : uint8_t {

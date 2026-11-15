@@ -965,6 +965,8 @@ void runAction(TileRt& r, const TileAction& a) {
       }
       break;
     }
+    case ACT_NOTHING:
+      break;
     case ACT_PAGE:
       goToPage(a.page);
       break;
@@ -1012,7 +1014,7 @@ const char* pcCmdLabel(const String& cmd) {
 
 // Tile setting "confirm": "off" asks before an action that turns the tile off.
 bool needsConfirm(const TileRt& r, const TileAction& a) {
-  if (a.kind == ACT_PAGE || a.kind == ACT_MORE_INFO) return false;
+  if (a.kind == ACT_PAGE || a.kind == ACT_MORE_INFO || a.kind == ACT_NOTHING) return false;
   switch (r.def->confirm) {
     case CONFIRM_ALWAYS: return true;
     case CONFIRM_OFF:
@@ -1048,7 +1050,7 @@ void requestAction(TileRt& r, bool hold) {
     return;
   }
   const TileAction& a = hold ? r.def->hold : r.def->tap;
-  if (r.def->http.enabled && a.kind == ACT_NONE) return;
+  if ((r.def->http.enabled && a.kind == ACT_NONE) || a.kind == ACT_NOTHING) return;
   if (needsConfirm(r, a)) openConfirm((int)(&r - &s_tiles[0]), hold);
   else runAction(r, a);
 }

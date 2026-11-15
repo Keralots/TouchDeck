@@ -704,12 +704,13 @@
   function iconFields(t, i) {
     let h =
       '<div class="field">' +
-      lbl("Icon style", "Without a circle the icon fills its place.") +
+      lbl("Icon style", "Without a circle the icon fills its place. No icon leaves its corner empty.") +
       '<select data-is="' +
       i +
       '">' +
-      opt("", "In a circle", t.iconStyle !== "plain") +
-      opt("plain", "No circle", t.iconStyle === "plain") +
+      opt("", "In a circle", t.icon !== "none" && t.iconStyle !== "plain") +
+      opt("plain", "No circle", t.icon !== "none" && t.iconStyle === "plain") +
+      opt("noicon", "No icon", t.icon === "none") +
       "</select></div>";
     if (t.type === "toggle") {
       const cp = iconCp(t.onIcon);
@@ -1281,6 +1282,62 @@
     Object.keys(h || {})
       .map((k) => k + ": " + h[k])
       .join("\n");
+  /* Tap and hold choices for Home Assistant tiles (#8); none set = the type's default. */
+  const HA_ACTS = [
+    ["toggle", "Toggle"],
+    ["more-info", "Open its card"],
+    ["page", "Go to page"],
+    ["none", "Nothing"],
+  ];
+  function tapDefault(t) {
+    const d = domainOf(t.entity);
+    if (t.type === "sensor" || d === "input_number" || d === "number") return "Open its card";
+    if (t.type === "toggle" && d === "climate") return "Open its card";
+    return "Toggle";
+  }
+  function setAct(t, key, v) {
+    if (!v) delete t[key];
+    else if (v === "page") {
+      const ps = pages(),
+        to = ps.find((q, j) => j !== cur) || ps[cur];
+      t[key] = { action: "page", page: to.id };
+    } else t[key] = { action: v };
+  }
+  function pageField(t, i, key) {
+    return (
+      '<div class="field">' +
+      lbl("Page") +
+      '<select data-apg="' +
+      i +
+      '" data-akey="' +
+      key +
+      '">' +
+      pages()
+        .map((q) => opt(q.id, q.name || q.id, q.id === t[key].page))
+        .join("") +
+      "</select></div>"
+    );
+  }
+  function actField(t, i, key, def) {
+    const a = t[key] || {},
+      v = t[key] ? a.action || "" : "",
+      list = HA_ACTS.filter((x) => !(x[0] === "toggle" && t.type === "sensor")),
+      known = !t[key] || list.some((x) => x[0] === v);
+    return (
+      '<div class="field">' +
+      lbl(key === "tap" ? "On tap" : "On hold") +
+      '<select data-act="' +
+      i +
+      '" data-akey="' +
+      key +
+      '">' +
+      opt("", "Default: " + def, !t[key]) +
+      list.map((x) => opt(x[0], x[1], known && v === x[0])).join("") +
+      (known ? "" : opt("keep", tapName(a), true)) +
+      "</select></div>" +
+      (v === "page" ? pageField(t, i, key) : "")
+    );
+  }
   /* A tile's "more options": sensor, action, icon, colours, on state, visibility. */
   function moreRow(t, i) {
     let h = "";
@@ -1338,7 +1395,7 @@
     h = "";
     if (t.type === "action" || isHttpSensor(t)) {
       const tp = t.tap || {},
-        k = isHttp(t) ? "http" : t.tap ? "keep" : "";
+        k = isHttp(t) ? "http" : !t.tap ? "" : HA_ACTS.some((a) => a[0] === tp.action) ? tp.action : "keep";
       const kk = isPcCmd(t) ? "pc" : k;
       h +=
         '<div class="field">' +
@@ -1347,10 +1404,12 @@
         i +
         '">' +
         opt("", isHttpSensor(t) ? "None" : "Home Assistant entity", kk === "") +
+        (isHttpSensor(t) ? "" : HA_ACTS.map((a) => opt(a[0], a[1], kk === a[0])).join("")) +
         opt("http", "HTTP request", kk === "http") +
         opt("pc", "PC command", kk === "pc") +
         (kk === "keep" ? opt("keep", tapName(tp), true) : "") +
         "</select></div>";
+      if (kk === "page") h += pageField(t, i, "tap");
       if (kk === "pc") {
         wideAct = true;
         const tg = pcs.find((x) => x.id === (tp.pc || "")) || (!tp.pc && pcs[0]);
@@ -1439,7 +1498,10 @@
           i +
           '" style="margin:0;white-space:normal;flex:1">Sends the request from the device and shows the answer.</span></div></div>';
       }
+    } else if (!isHttpSensor(t)) {
+      h += actField(t, i, "tap", tapDefault(t));
     }
+    if (t.entity && !isHttpSensor(t)) h += actField(t, i, "hold", "Open its card");
     const cf = t.confirm || "";
     h +=
       '<div class="field">' +
@@ -2791,6 +2853,22 @@
           setDirty(true);
         }),
     );
+    el.querySelectorAll("[data-act]").forEach(
+      (x) =>
+        (x.onchange = (e) => {
+          if (e.target.value === "keep") return;
+          setAct(p.tiles[+x.dataset.act], x.dataset.akey, e.target.value);
+          setDirty(true);
+          renderPage();
+        }),
+    );
+    el.querySelectorAll("[data-apg]").forEach(
+      (x) =>
+        (x.onchange = (e) => {
+          p.tiles[+x.dataset.apg][x.dataset.akey].page = e.target.value;
+          setDirty(true);
+        }),
+    );
     el.querySelectorAll("[data-tg]").forEach(
       (b) =>
         (b.onclick = (e) => {
@@ -2821,8 +2899,11 @@
     el.querySelectorAll("[data-is]").forEach(
       (x) =>
         (x.onchange = (e) => {
-          const t = p.tiles[+x.dataset.is];
-          if (e.target.value) t.iconStyle = e.target.value;
+          const t = p.tiles[+x.dataset.is],
+            v = e.target.value;
+          if (v === "noicon") t.icon = "none";
+          else if (t.icon === "none") delete t.icon;
+          if (v === "plain") t.iconStyle = v;
           else delete t.iconStyle;
           setDirty(true);
           renderPage();
@@ -3111,7 +3192,8 @@
           const t = tapOf(x),
             v = e.target.value;
           if (v === "keep") return;
-          if (v === "http") t.tap = { action: "http", method: "GET", url: "http://" };
+          if (HA_ACTS.some((a) => a[0] === v)) setAct(t, "tap", v);
+          else if (v === "http") t.tap = { action: "http", method: "GET", url: "http://" };
           else if (v === "pc") {
             delete t.tap;
             pcCmdSet(t, "media_play_pause");

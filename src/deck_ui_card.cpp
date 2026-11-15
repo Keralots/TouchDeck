@@ -488,14 +488,27 @@ void onModalScrim(lv_event_t*) {
   else closeModal();
 }
 
+// The card's button runs the tap action; a switch whose tap does not switch
+// (it opens this card, a page or nothing) gets its toggle here instead.
+const TileAction& cardAction(const TileDef& d) {
+  static TileAction toggle;
+  toggle.kind = ACT_TOGGLE;
+  const ActionKind k = d.tap.kind;
+  const String domain = entityDomain(d.entity);
+  const bool number = domain == "input_number" || domain == "number";
+  const bool switches = d.type == TILE_TOGGLE || (d.type == TILE_SLIDER && !number && !d.pcVolume);
+  return switches && (k == ACT_MORE_INFO || k == ACT_PAGE || k == ACT_NOTHING) ? toggle : d.tap;
+}
+
 void onModalPrimary(lv_event_t*) {
   if (s_modalTile < 0 || s_modalTile >= (int)s_tiles.size()) return;
   TileRt& r = s_tiles[s_modalTile];
-  if (needsConfirm(r, r.def->tap)) {
+  const TileAction& a = cardAction(*r.def);
+  if (needsConfirm(r, a)) {
     openConfirm(s_modalTile, false);  // replaces this card
     return;
   }
-  runAction(r, r.def->tap);
+  runAction(r, a);
   refreshModal();
 }
 
@@ -546,8 +559,8 @@ void refreshModal() {
   } else {
     lv_label_set_text(s_modalState, st.c_str());
   }
-  if (r.def->type == TILE_TOGGLE || (r.def->type == TILE_SLIDER && r.def->tap.kind == ACT_TOGGLE))
-    lv_label_set_text(s_modalBtnLbl, actionVerb(r, r.def->tap));
+  if (r.def->type == TILE_TOGGLE || (r.def->type == TILE_SLIDER && cardAction(*r.def).kind == ACT_TOGGLE))
+    lv_label_set_text(s_modalBtnLbl, actionVerb(r, cardAction(*r.def)));
   if (s_modalChart) {
     float value;
     const bool numeric = haKnown && e.known && haNumericState(e.state, value);
@@ -717,7 +730,8 @@ void openModal(int tileIdx) {
   lv_label_set_text(s_modalBtnLbl, "Run");
   lv_obj_add_event_cb(primary, onModalPrimary, LV_EVENT_CLICKED, nullptr);
   // Nothing to run when the tap only opens this card (sensors, numbers).
-  const bool noPrimary = d.type == TILE_SENSOR || d.tap.kind == ACT_MORE_INFO;
+  const ActionKind pk = cardAction(d).kind;
+  const bool noPrimary = d.type == TILE_SENSOR || pk == ACT_MORE_INFO || pk == ACT_NOTHING;
   if (noPrimary) lv_obj_add_flag(primary, LV_OBJ_FLAG_HIDDEN);
   lv_obj_t* close = qpButton(c, noPrimary ? 16 : 16 + bw + 10, by, noPrimary ? cw - 32 : bw, "Close", false);
   lv_obj_set_height(close, 44);
@@ -736,7 +750,7 @@ void openModal(int tileIdx) {
 void onConfirmOk(lv_event_t*) {
   if (s_modalTile < 0 || s_confirmHold < 0 || millis() - s_confirmMs < CONFIRM_ARM_MS) return;
   TileRt& r = s_tiles[s_modalTile];
-  const TileAction& a = s_confirmHold ? r.def->hold : r.def->tap;
+  const TileAction& a = s_confirmHold ? r.def->hold : cardAction(*r.def);
   closeModal();
   runAction(r, a);
 }
@@ -753,7 +767,7 @@ void openConfirm(int tileIdx, bool hold) {
   cleanPage();
   const TileRt& r = s_tiles[tileIdx];
   const TileDef& d = *r.def;
-  const TileAction& a = hold ? d.hold : d.tap;
+  const TileAction& a = hold ? d.hold : cardAction(d);
   const int w = logicalW(), h = logicalH();
   const uint32_t accent = d.hasColor ? d.color : domainColor(entityDomain(d.entity));
   constexpr uint32_t C_DANGER = 0xE5534B;
