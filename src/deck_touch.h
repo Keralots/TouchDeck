@@ -13,18 +13,21 @@ void touchBegin();
 
 // What the LVGL pointer should see. pressed is false while a swipe owns the
 // gesture and while input is suppressed (the touch that woke the display).
+// cancel: that press was taken away, LVGL must drop it instead of clicking.
 struct TouchPoint {
   int16_t x;
   int16_t y;
   bool pressed;
+  bool cancel;
 };
+// Clears cancel: call it only from the LVGL read callback.
 TouchPoint touchForLvgl();
 
 bool touchIsDown();
 uint32_t touchLastActivity();
 // True once per touch-down (wake-from-sleep detection).
 bool touchTakeActivity();
-// True once when a swipe took over a touch (the loop cancels LVGL's press).
+// True once when a swipe took over a touch (the loop cancels the tile ripple).
 bool touchTakeSwipeStarted();
 // Hide the current touch from LVGL and swipes until the finger lifts.
 void touchSuppressUntilRelease();

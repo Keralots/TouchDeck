@@ -128,8 +128,10 @@ void flushWaitCb(lv_display_t*) {
   }
 }
 
-void indevRead(lv_indev_t*, lv_indev_data_t* data) {
+void indevRead(lv_indev_t* indev, lv_indev_data_t* data) {
   const TouchPoint p = touchForLvgl();
+  // lv_indev_read handles a reset made here before the release, so no click.
+  if (p.cancel) lv_indev_reset(indev, nullptr);
   data->point.x = p.x;
   data->point.y = p.y;
   data->state = p.pressed && !frameActive() ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
@@ -1169,11 +1171,8 @@ void deckTick() {
     }
     releaseSwipe();
   }
-  // A swipe took the touch: make sure LVGL never turns it into a click.
-  if (touchTakeSwipeStarted()) {
-    lv_indev_reset(s_indev, nullptr);
-    fxCancelRipples();
-  }
+  // A swipe took the touch (indevRead drops LVGL's press).
+  if (touchTakeSwipeStarted()) fxCancelRipples();
   panelSetPageFx(fxPage());
   syncCascade();
 

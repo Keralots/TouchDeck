@@ -30,7 +30,7 @@ constexpr float PANEL_COMMIT_FRACTION = 0.3f;
 
 TaskHandle_t s_task = nullptr;
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
-TouchPoint s_lv = {0, 0, false};
+TouchPoint s_lv = {0, 0, false, false};
 volatile bool s_down = false;
 uint32_t s_lastTouch = 0;
 volatile bool s_activity = false;
@@ -38,7 +38,8 @@ volatile bool s_swipeStarted = false;
 volatile bool s_suppress = false;
 
 // G_EAT: a swipe with no page that way; LVGL must not see it as a tap.
-enum GestureState : uint8_t { G_IDLE, G_PENDING, G_PASS, G_DRAG, G_EAT };
+// G_WAIT: the compositor was busy (previous slide landing); retried each frame.
+enum GestureState : uint8_t { G_IDLE, G_PENDING, G_PASS, G_DRAG, G_EAT, G_WAIT };
 
 struct Sample {
   uint32_t ms;
@@ -68,11 +69,14 @@ void toLogical(int nx, int ny, int16_t& x, int16_t& y) {
   }
 }
 
-void publish(int16_t x, int16_t y, bool pressed) {
+// cancel goes with the release in one critical section, so LVGL cannot read
+// the release without it.
+void publish(int16_t x, int16_t y, bool pressed, bool cancel = false) {
   portENTER_CRITICAL(&s_mux);
   s_lv.x = x;
   s_lv.y = y;
   s_lv.pressed = pressed;
+  s_lv.cancel |= cancel;
   portEXIT_CRITICAL(&s_mux);
 }
 
@@ -117,7 +121,9 @@ void touchTask(void*) {
       }
       samples[nsamples++] = {now, x, y};
 
-      if (state == G_PENDING && !s_suppress) {
+      bool took = false;
+      if ((state == G_PENDING || state == G_WAIT) && !s_suppress) {
+        const GestureState was = state;
         const int dx = x - x0, dy = y - y0;
         if (noSwipe && (abs(dx) >= SLOP_PX || abs(dy) >= SLOP_PX)) {
           state = G_PASS;  // a slider tile takes the drag
@@ -131,10 +137,9 @@ void touchTask(void*) {
               state = G_DRAG;
               const int w = logicalW();
               drag = {false, false, so, d > 0 ? w : 0, w, so, (int8_t)d};
-              s_swipeStarted = true;
             } else {
               uiSwipeAborted();
-              state = G_PASS;
+              state = G_WAIT;
             }
           } else {
             state = uiSwipeOwnsTouch() ? G_EAT : G_PASS;
@@ -152,9 +157,9 @@ void touchTask(void*) {
               if (compBeginPanel(panel, page, so)) {
                 state = G_DRAG;
                 drag = {true, true, so, open ? 0 : ph, ph, so, (int8_t)(open ? -1 : 1)};
-                s_swipeStarted = true;
               } else {
                 uiSwipeAborted();
+                state = G_WAIT;
               }
             }
           } else if (!open && y0 >= EDGE_PX) {
@@ -167,16 +172,18 @@ void touchTask(void*) {
                 state = G_DRAG;
                 const int h = logicalH();
                 drag = {true, false, so, d > 0 ? h : 0, h, so, (int8_t)d};
-                s_swipeStarted = true;
               } else {
                 uiSwipeAborted();
+                state = G_WAIT;
               }
             } else if (uiSwipeOwnsTouch()) {
               state = G_EAT;
             }
           }
         }
-        if (state == G_EAT) s_swipeStarted = true;  // deckTick resets LVGL's press
+        if (was == G_WAIT && state == G_PASS) state = G_EAT;  // LVGL lost this press already
+        took = was == G_PENDING && state != G_PENDING && state != G_PASS;
+        if (took) s_swipeStarted = true;
       }
       if (state == G_DRAG) {
         int off = drag.panel      ? drag.startOff + (y - y0)
@@ -187,7 +194,7 @@ void touchTask(void*) {
         drag.off = off;
         compDrag(off);
       }
-      publish(x, y, state != G_DRAG && state != G_EAT && !s_suppress);
+      publish(x, y, (state == G_PENDING || state == G_PASS) && !s_suppress, took);
       continue;
     }
 
@@ -246,6 +253,7 @@ void touchBegin() {
 TouchPoint touchForLvgl() {
   portENTER_CRITICAL(&s_mux);
   TouchPoint p = s_lv;
+  s_lv.cancel = false;
   portEXIT_CRITICAL(&s_mux);
   return p;
 }
@@ -275,6 +283,7 @@ void touchSuppressUntilRelease() {
   s_suppress = true;
   portENTER_CRITICAL(&s_mux);
   s_lv.pressed = false;
+  s_lv.cancel = true;
   portEXIT_CRITICAL(&s_mux);
 }
 
