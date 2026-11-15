@@ -739,7 +739,8 @@
     return grp("Icon", h);
   }
   /* Tiles with an icon chip: icon style and icon colours apply. */
-  const iconTile = (t) => ["action", "toggle", "slider", "sensor", "cover"].includes(t.type) && !isPcVol(t);
+  const iconTile = (t) =>
+    ["action", "toggle", "slider", "sensor", "cover", "agent"].includes(t.type) && !isPcVol(t);
   /* The clock tile: no entity or actions, just its size and colours. */
   /* Bambu printers: deck.printers is saved with the deck; serial and code go
    straight to the device and are never read back. */
@@ -1214,6 +1215,42 @@
     );
   }
   /* Audio visualizer: spectrum bars or a scope, fed by the companion's audio stream. */
+  /* AI Agent tile: a tap starts or ends a conversation (AI Agent page). */
+  function agentRow(t, i) {
+    const cp = iconCp(t.icon) || iconCp("mdi:robot-outline");
+    return (
+      '<div class="dk-tile' +
+      (i === sel ? " sel" : "") +
+      '"><button type="button" class="dk-ic' +
+      (cp ? " mdi" : "") +
+      '" data-ic="' +
+      i +
+      '" title="' +
+      esc(t.icon || "automatic: follows the conversation") +
+      '" style="background:' +
+      (t.color || "#B388FF") +
+      '">' +
+      (cp ? String.fromCodePoint(cp) : "AI") +
+      '</button><div class="dk-tmain"><input type="text" data-l="' +
+      i +
+      '" value="' +
+      esc(t.label === "" ? " " : t.label || "") +
+      '" placeholder="AI Agent"><div class="dk-tsub">Tap to talk, tap again to end the conversation</div></div>' +
+      '<div class="dk-tact">' +
+      sizeSel(t, i) +
+      '<button type="button" class="btn' +
+      (i === more ? " on" : "") +
+      '" data-mo="' +
+      i +
+      '" title="More options">&#8943;</button><button type="button" class="btn" data-u="' +
+      i +
+      '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
+      i +
+      '" title="Remove">&#215;</button></div>' +
+      (i === more ? '<div class="dk-more">' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
+      "</div>"
+    );
+  }
   function vizRow(t, i) {
     const scope = t.style === "scope";
     return (
@@ -2269,7 +2306,9 @@
         ? "Clock"
         : pr
           ? prnTileName(t)
-          : t.label || (m ? (mm ? mm.name : "Metric #" + t.metric) : (en && en.name) || t.entity || "Tile");
+          : t.type === "agent"
+            ? t.label || "AI Agent"
+            : t.label || (m ? (mm ? mm.name : "Metric #" + t.metric) : (en && en.name) || t.entity || "Tile");
     const chip = iconTile(t) ? gchip(t, col, cp) : null;
     return (
       '<div class="dk-gt' +
@@ -2608,6 +2647,7 @@
           if (t.type === "media") return mediaRow(t, i);
           if (t.type === "viz") return vizRow(t, i);
           if (t.type === "weather") return weatherRow(t, i);
+          if (t.type === "agent") return agentRow(t, i);
           if (isPcVol(t)) return pcVolRow(t, i);
           if (t.type === "printer") return offT(t) ? "" : printerRow(t, i);
           const d = domainOf(t.entity);
@@ -2690,7 +2730,9 @@
       +cells.toFixed(2) +
       " of " +
       c * r +
-      ' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddPcCmd">+ Add PC control</button><button type="button" class="btn" id="dkAddPcVol">+ Add PC volume</button><button type="button" class="btn" id="dkAddMedia">+ Add now playing</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddViz">+ Add visualizer</button><button type="button" class="btn" id="dkAddWeather">+ Add weather</button><button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button>' +
+      ' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddPcCmd">+ Add PC control</button><button type="button" class="btn" id="dkAddPcVol">+ Add PC volume</button><button type="button" class="btn" id="dkAddMedia">+ Add now playing</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddViz">+ Add visualizer</button><button type="button" class="btn" id="dkAddWeather">+ Add weather</button>' +
+      (window.snAgent ? '<button type="button" class="btn" id="dkAddAgent">+ Add AI agent</button>' : "") +
+      '<button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button>' +
       (prnOn() && (deck.printers || []).length
         ? '<button type="button" class="btn" id="dkAddPrinter">+ Add printer tile</button>'
         : "") +
@@ -3285,6 +3327,14 @@
       setDirty(true);
       renderPage();
     };
+    if ($("dkAddAgent"))
+      $("dkAddAgent").onclick = () => {
+        const t = { id: "ai" + Date.now().toString(36), type: "agent" };
+        setSize(t, "1x1");
+        p.tiles.push(t);
+        setDirty(true);
+        renderPage();
+      };
     $("dkAddViz").onclick = () => {
       const t = { id: "z" + Date.now().toString(36), type: "viz" };
       setSize(t, "2x1");
@@ -3889,7 +3939,8 @@
     else if (n.includes(":")) return 0;
     return mdi ? mdi.get(n) || 0 : 0;
   };
-  const tileCp = (t) => iconCp(t.icon) || iconCp((entMap[t.entity] || {}).icon);
+  const tileCp = (t) =>
+    iconCp(t.icon) || iconCp((entMap[t.entity] || {}).icon) || (t.type === "agent" ? iconCp("mdi:robot-outline") : 0);
   // PC metrics and chart sensors show an icon only when one is picked, never the entity's.
   const iconOptional = (t) => t.type === "metric" || (t.type === "sensor" && t.style === "chart" && !(t.rows || []).length);
   async function loadMdi(size) {

@@ -145,7 +145,7 @@ struct AgentSettings {
   char token[AGENT_TOKEN_LEN] = "";  // sent as Authorization: Bearer
   uint8_t pga = 12;                   // 34.5 dB
   uint8_t boostDb = 6;
-  uint8_t volume = 100;               // voice, 0..100 (board cap applies)
+  uint8_t volume = 30;                // voice, 0..100 (board cap applies)
   uint16_t endPauseMs = 1100;         // quiet that ends what the user says
   uint8_t idleSec = 8;                // listening with nobody talking ends the chat
   bool chimes = true;                 // notes when listening starts and the chat ends

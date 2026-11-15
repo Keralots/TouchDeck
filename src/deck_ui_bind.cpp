@@ -1,6 +1,7 @@
 // Deck UI: tiles bound to Home Assistant, HTTP sensors and the PC; tile actions.
 #include "deck_ui_int.h"
 #include "deck_viz.h"
+#include "agent.h"
 
 namespace deckui {
 
@@ -997,6 +998,10 @@ void runAction(TileRt& r, const TileAction& a) {
       break;
     case ACT_PAGE:
       goToPage(a.page);
+      break;
+    case ACT_AGENT:
+      if (!agentAvailable()) deckToastShow("Turn the AI agent on in the portal first", 2200);
+      else agentToggle();
       break;
     case ACT_MORE_INFO:
       openModal((int)(&r - &s_tiles[0]));

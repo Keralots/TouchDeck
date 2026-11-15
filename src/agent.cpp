@@ -19,7 +19,7 @@ constexpr uint32_t MIC_TEST_MS = 20000;
 constexpr uint32_t MAX_TURN_MS = 20000;
 constexpr uint32_t CONNECT_MS = 10000;    // socket + server hello
 constexpr uint32_t STT_WAIT_MS = 4000;    // no transcript = server dropped the turn as noise
-constexpr uint32_t REPLY_WAIT_MS = 30000;
+constexpr uint32_t REPLY_WAIT_MS = 60000;  // the LLM has taken 29 s to its first token
 constexpr uint32_t DRAIN_MS = 300;        // after the last speaker sample, before the mic reopens
 constexpr int OPUS_COMPLEXITY = 2;        // 9 ms per frame at 3 on the P4
 constexpr int OPUS_BITRATE = 20000;
@@ -188,9 +188,9 @@ void onText(const char* payload, size_t len) {
   } else if (!strcmp(type, "tts")) {
     const char* st = d["state"] | "";
     if (!strcmp(st, "start")) {
+      // Stays "thinking" until audio arrives: the server sends this before the LLM answers.
       s_ttsDone = false;
       agentAudioCapture(false);
-      enter(AGENT_SPEAKING);
     } else if (!strcmp(st, "sentence_start")) {
       setText(s_reply, d["text"] | "");
     } else if (!strcmp(st, "stop")) {
@@ -207,6 +207,7 @@ void onBinary(const uint8_t* p, size_t len) {
   const int n = opus_decode(s_dec, p, (opus_int32)len, pcm, sizeof(pcm) / sizeof(pcm[0]), 0);
   if (n <= 0) return;
   s_downFrames++;
+  if (s_state == AGENT_THINKING) enter(AGENT_SPEAKING);
   size_t off = 0;
   const uint32_t t0 = millis();
   // The server paces in real time; a full ring only waits briefly.
@@ -313,6 +314,7 @@ void pumpMic() {
       sendListen("stop");
       s_turns++;
       s_gotStt = false;
+      s_ttsDone = false;  // left true by the previous reply
       enter(AGENT_THINKING);
     }
   }
@@ -334,6 +336,8 @@ void tick() {
     endSession(nullptr);
   } else if (st == AGENT_THINKING && !s_gotStt && now - s_since > STT_WAIT_MS) {
     startListening();  // the server judged the turn noise and stays silent
+  } else if (st == AGENT_THINKING && s_ttsDone) {
+    startListening();  // a reply with no audio
   } else if (st == AGENT_THINKING && now - s_since > REPLY_WAIT_MS) {
     endSession("no reply from the server");
   } else if (st == AGENT_SPEAKING && s_ttsDone && !agentAudioQueued() &&

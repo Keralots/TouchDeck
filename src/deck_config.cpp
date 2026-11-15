@@ -96,6 +96,8 @@ bool parseAction(JsonVariantConst v, TileAction& a, String* err, const String& w
     a.kind = ACT_TOGGLE;
   } else if (!strcmp(kind, "more-info")) {
     a.kind = ACT_MORE_INFO;
+  } else if (!strcmp(kind, "agent")) {
+    a.kind = ACT_AGENT;
   } else if (!strcmp(kind, "page")) {
     a.kind = ACT_PAGE;
     a.page = (const char*)(v["page"] | "");
@@ -359,6 +361,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       else if (!strcmp(tt, "clock")) t.type = TILE_CLOCK;
       else if (!strcmp(tt, "media")) t.type = TILE_MEDIA;
       else if (!strcmp(tt, "viz")) t.type = TILE_VIZ;
+      else if (!strcmp(tt, "agent")) t.type = TILE_AGENT;
       else if (!strcmp(tt, "printer")) t.type = TILE_PRINTER;
       else if (!strcmp(tt, "cover")) t.type = TILE_COVER;
       else if (!strcmp(tt, "weather")) t.type = TILE_WEATHER;
@@ -535,6 +538,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       if (tv["tap"].isNull() && t.type == TILE_TOGGLE)
         t.tap.kind = t.entity.startsWith("climate.") ? ACT_MORE_INFO : ACT_TOGGLE;
       if (tv["tap"].isNull() && t.type == TILE_COVER) t.tap.kind = ACT_TOGGLE;
+      if (tv["tap"].isNull() && t.type == TILE_AGENT) t.tap.kind = ACT_AGENT;
       // A read-only sensor opens its card on a tap too.
       if (tv["tap"].isNull() && t.type == TILE_SENSOR && !t.http.enabled) t.tap.kind = ACT_MORE_INFO;
       // A slider toggles on a tap; a number has no on/off, so its card opens.
@@ -548,7 +552,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         t.tap.pc = t.pc;
         t.tap.cmd = "volume_mute";
       }
-      if (tv["hold"].isNull() && !t.http.enabled && !t.pcVolume) t.hold.kind = ACT_MORE_INFO;
+      if (tv["hold"].isNull() && !t.http.enabled && !t.pcVolume && t.type != TILE_AGENT) t.hold.kind = ACT_MORE_INFO;
       p.tiles.push_back(t);
     }
     cfg.pages.push_back(p);

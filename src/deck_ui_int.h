@@ -454,6 +454,10 @@ extern bool s_zonesDirty;
 void fitMedia(TileRt& r, int cw, int ch);
 void fitClock(TileRt& r, int cw, int ch);
 
+// deck_ui_agent.cpp
+String agentTileSub();
+void agentTileSync();
+
 // deck_ui_viz.cpp
 void vizFree(VizRt* v);
 void makeVizContent(TileRt& r, lv_obj_t* t);

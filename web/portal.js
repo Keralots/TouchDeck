@@ -606,12 +606,13 @@
     $("audioState").textContent = au.enabled ? "on" : "disabled";
     const ag = c.agent || {};
     if ($("navAgent")) $("navAgent").classList.toggle("hidden", !ag.mic);
+    window.snAgent = !!ag.mic;
     setCheck("agentEnabled", ag.enabled);
     setVal("agentUrl", ag.url || "");
     setVal("agentToken", "");
     $("agentToken").placeholder = ag.tokenSet ? "unchanged" : "none";
     setCheck("agentTokenClear", false);
-    setVal("agentVolume", ag.volume == null ? 100 : ag.volume);
+    setVal("agentVolume", ag.volume == null ? 30 : ag.volume);
     setVal("agentPga", ag.pga == null ? 12 : ag.pga);
     setVal("agentBoost", ag.boost == null ? 6 : ag.boost);
     setVal("agentPause", ag.endPauseMs || 1100);

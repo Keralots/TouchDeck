@@ -1413,6 +1413,7 @@ void deckTick() {
     heroTick();
     vizTick();
     wxTick();
+    agentTileSync();
   }
   // Draw the animation frame now, not at LVGL's next refresh.
   if (s_animPainted) {

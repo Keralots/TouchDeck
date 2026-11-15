@@ -267,7 +267,7 @@ void loadSettings() {
   agentSettings.pga = min<uint8_t>(prefs.getUChar("agpga", 12), AGENT_PGA_MAX);
   agentSettings.boostDb = min<uint8_t>(prefs.getUChar("agboost", 6), AGENT_BOOST_MAX);
   if (prefs.isKey("agcid")) prefs.getString("agcid", agentSettings.clientId, sizeof(agentSettings.clientId));
-  agentSettings.volume = min<uint8_t>(prefs.getUChar("agvol", 100), 100);
+  agentSettings.volume = min<uint8_t>(prefs.getUChar("agvol", 30), 100);
   agentSettings.endPauseMs = constrain(prefs.getUShort("agpause", 1100), AGENT_PAUSE_MIN_MS, AGENT_PAUSE_MAX_MS);
   agentSettings.idleSec = constrain(prefs.getUChar("agidle", 8), AGENT_IDLE_MIN_S, AGENT_IDLE_MAX_S);
   agentSettings.chimes = prefs.getBool("agchime", true);
