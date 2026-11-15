@@ -495,9 +495,11 @@ void destroyPages(bool keepGlass = false) {
     if (r.pts) lv_free(r.pts);
     sparkFree(r.spark);
     vizFree(r.vz);
+    wxFree(r.wx);
     prnFxFree(r.pfx);
   }
   s_tiles.clear();
+  wxMoonFree();
   portENTER_CRITICAL(&s_mux);
   sh.count = 0;
   for (int i = 0; i < MAX_PAGES; i++) sh.valid[i] = false;
@@ -1079,6 +1081,7 @@ bool deckBegin(uint8_t rotation) {
   String source, err;
   deckConfigLoad(s_cfg, &source, &err);
   Serial.printf("Deck: config from %s, %u pages\n", source.c_str(), (unsigned)s_cfg.pages.size());
+  wxSync();
 
   lv_init();
   lv_tick_set_cb(tickCb);
@@ -1245,11 +1248,13 @@ void deckTick() {
   lap(PP_PCSYNC);
   mediaArtTick();
   pcVolumeTick();
+  weatherTick();
   lap(PP_MEDIA);
   if (!systemScreen) {
     sparkTick();
     heroTick();
     vizTick();
+    wxTick();
   }
   syncSwipeZones();
   lap(PP_ANIM);
@@ -1396,6 +1401,7 @@ bool deckApplyConfig(const String& text, String& err) {
   stopGestures();
   destroyPages(true);
   s_cfg = next;
+  wxSync();
   buildPages();
   s_gen++;
   lv_obj_invalidate(lv_screen_active());
@@ -1561,7 +1567,7 @@ bool deckTestTap(const String& tileId, bool hold) {
   if (s_ed.root) return false;
   for (TileRt& r : s_tiles) {
     if (r.def->id != tileId || r.off || r.def->type == TILE_METRIC || r.def->type == TILE_CLOCK ||
-        r.def->type == TILE_MEDIA || r.def->type == TILE_VIZ) continue;
+        r.def->type == TILE_MEDIA || r.def->type == TILE_VIZ || r.def->type == TILE_WEATHER) continue;
     const TileAction& a = hold ? r.def->hold : r.def->tap;
     if (a.kind == ACT_PC) return false;  // PC commands require a real touch.
     requestAction(r, hold);

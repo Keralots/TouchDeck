@@ -265,6 +265,14 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
     if (err) *err = "led entity must be an input_boolean, input_number or light";
     return false;
   }
+  cfg.weatherLat = doc["weather"]["lat"] | 0.0f;
+  cfg.weatherLon = doc["weather"]["lon"] | 0.0f;
+  if (!(fabsf(cfg.weatherLat) <= 90.0f) || !(fabsf(cfg.weatherLon) <= 180.0f)) {
+    if (err) *err = "weather: lat must be -90..90 and lon -180..180";
+    return false;
+  }
+  cfg.weatherImperial = !strcmp(doc["weather"]["units"] | "metric", "imperial");
+  cfg.weatherName = (const char*)(doc["weather"]["name"] | "");
   auto printerKnown = [&](const String& id) {
     for (const PrinterDef& d : cfg.printers)
       if (d.id == id) return true;
@@ -353,6 +361,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       else if (!strcmp(tt, "viz")) t.type = TILE_VIZ;
       else if (!strcmp(tt, "printer")) t.type = TILE_PRINTER;
       else if (!strcmp(tt, "cover")) t.type = TILE_COVER;
+      else if (!strcmp(tt, "weather")) t.type = TILE_WEATHER;
       else {
         if (err) *err = where + ": unknown type '" + tt + "'";
         return false;
@@ -443,7 +452,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         t.hasWarn = tv["warn"].is<float>() && isfinite(t.warn);
         t.hasCrit = tv["crit"].is<float>() && isfinite(t.crit);
       }
-      if (t.type == TILE_CLOCK || t.type == TILE_MEDIA || t.type == TILE_VIZ) {
+      if (t.type == TILE_CLOCK || t.type == TILE_MEDIA || t.type == TILE_VIZ || t.type == TILE_WEATHER) {
         if (t.type == TILE_MEDIA) {
           t.pc = (const char*)(tv["pc"] | "");
           // entity = a Home Assistant player instead of a PC (#6).
@@ -455,6 +464,11 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         }
         if (t.type == TILE_VIZ) t.vizScope = !strcmp(tv["style"] | "bars", "scope");
         if (t.type == TILE_CLOCK) t.clockDate = !strcmp(tv["date"] | "", "always");
+        if (t.type == TILE_WEATHER) {
+          const char* fc = tv["forecast"] | "days";
+          t.wxForecast = !strcmp(fc, "hours") ? 1 : !strcmp(fc, "none") ? 2 : 0;
+          t.wxStill = !(tv["animate"] | true);
+        }
         p.tiles.push_back(t);
         continue;
       }

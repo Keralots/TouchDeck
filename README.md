@@ -56,6 +56,7 @@ Recorded frame by frame from the display. Pick a set under **Display > Animation
 - **Home Assistant:** switches, sliders, scenes and scripts, sensors with history charts and warning thresholds, a detail card on long press. Material Design Icons, plus optional [brand icons](GUIDE.md#brand-icons).
 - **PC stats and control** from the [TouchDeck Companion](GUIDE.md#pc-stats-and-control-touchdeck-companion) (Windows, Linux): metric tiles, media keys, volume, now playing, hotkeys, sleep and shut down.
 - **Bambu Lab printers:** up to two, over the LAN or through Home Assistant, with printer and AMS pages. [More](GUIDE.md#bambu-lab-printers)
+- **Weather:** now and the next days or hours with animated icons, from Open-Meteo without an account. [More](GUIDE.md#pages-and-tiles)
 - **HTTP buttons and sensors** for LAN devices without Home Assistant (Tasmota, Node-RED, your own projects). [Buttons](GUIDE.md#http-buttons), [sensors](GUIDE.md#http-sensors)
 - **Conditional tiles and pages:** shown only while a PC is on or off, or while an entity is in a state. [More](GUIDE.md#conditional-tiles)
 - **Themes:** Midnight, Daylight and Glass over your own pictures or daily Windows Spotlight wallpapers, per-tile colours and icon styles. [Wallpapers](GUIDE.md#wallpapers-and-microsd)

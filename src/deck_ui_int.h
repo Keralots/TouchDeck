@@ -10,6 +10,7 @@
 #include "deck_sys.h"
 #include "deck_touch.h"
 #include "deck_wall.h"
+#include "deck_weather.h"
 #include <src/misc/cache/instance/lv_image_cache.h>
 #include "display_ui.h"
 #include "settings.h"
@@ -141,6 +142,7 @@ struct TileRt {
   struct VizRt* vz;        // visualizer tiles: bar levels
   lv_obj_t* box;           // cover tiles: holds icon, state and name beside the buttons
   lv_obj_t* coverBtns[3];  // cover tiles: up, stop, down
+  struct WxRt* wx;         // weather tiles: data and layout
   // Glass auto text: the colour picked from the picture under the tile.
   uint32_t autoText;
   bool hasAuto;
@@ -438,6 +440,16 @@ void makeVizContent(TileRt& r, lv_obj_t* t);
 void fitViz(TileRt& r, int cw, int ch);
 void vizDrawEvent(lv_event_t* e);
 void vizTick();
+
+// deck_ui_weather.cpp
+void wxFree(WxRt* w);
+void wxMoonFree();
+void makeWeatherContent(TileRt& r, lv_obj_t* t);
+void fitWeather(TileRt& r, int cw, int ch);
+void wxDrawEvent(lv_event_t* e);
+void wxTap(lv_event_t* e);
+void wxTick();
+void wxSync();
 
 // deck_ui_printer.cpp
 void readPrinters();
