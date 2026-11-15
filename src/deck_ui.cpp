@@ -524,7 +524,7 @@ void syncSwipeZones() {
       lv_obj_get_coords(r.obj, &t);
       if (vol) lv_obj_get_coords(r.volBar, &t);
       z[n++] = {(int16_t)(t.x1 - root.x1), (int16_t)(t.y1 - root.y1), (int16_t)(t.x2 - root.x1),
-                (int16_t)(t.y2 - root.y1)};
+                (int16_t)(t.y2 - root.y1), !vol};
     }
   }
   portENTER_CRITICAL(&s_mux);
@@ -1725,13 +1725,19 @@ bool uiSwipeOwnsTouch() {
   return own;
 }
 
+bool uiSideEdge(int x) {
+  const int w = logicalW(), strip = std::max(24, w / 24);
+  return x < strip || x >= w - strip;
+}
+
 bool uiNoSwipeAt(int x, int y) {
   bool hit = false;
+  const bool edge = uiSideEdge(x);
   portENTER_CRITICAL(&s_mux);
   const int n = sh.panelOpen || sh.modalOpen ? 0 : sh.nZones;  // those cover the tiles
   for (int i = 0; i < n && !hit; i++) {
     const Shared::Zone& z = sh.zones[i];
-    hit = x >= z.x1 && x <= z.x2 && y >= z.y1 && y <= z.y2;
+    hit = !(edge && z.slider) && x >= z.x1 && x <= z.x2 && y >= z.y1 && y <= z.y2;
   }
   portEXIT_CRITICAL(&s_mux);
   return hit;

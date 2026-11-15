@@ -180,6 +180,7 @@ struct Shared {
   // never a page swipe.
   struct Zone {
     int16_t x1, y1, x2, y2;
+    bool slider;  // a slider tile: its side edge strip still swipes (uiSideEdge)
   } zones[MAX_PAGE_TILES] = {};
   int nZones = 0;
 };
