@@ -60,6 +60,13 @@
 // { "type": "media", "pc": "<pc_id>" (optional), "color": "#7DB5FF" }.
 // Takes "when" like other tiles; touches are built in, with no tap/hold actions.
 //
+// "type": "weather": now, and the next days or hours when the tile has room,
+// from Open-Meteo (no key). { "type": "weather", "forecast": "days" | "hours" |
+//   "none", "animate": false, "color": "#4FA3FF" (rain chance) }.
+// A tap flips days and hours. The place is one for the deck:
+// "weather": { "lat": 52.23, "lon": 21.01, "name": "Warsaw",
+//   "units": "metric" | "imperial" }.
+//
 // "textColor": "#RRGGBB" (optional) colours the tile's text; for a metric
 // tile "chartColor" colours the chart or bar line apart from "color" (the name).
 // Tile look, all optional, else the theme: "bgColor" (background while off,
@@ -130,7 +137,7 @@ constexpr int MAX_PAGE_TILES = BOARD_MAX_PAGE_TILES;
 // Cells per grid side; tiles sit and span in half cells.
 constexpr int GRID_MAX = BOARD_GRID_MAX;
 
-enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER, TILE_CLOCK, TILE_PRINTER, TILE_MEDIA, TILE_VIZ, TILE_COVER };
+enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER, TILE_CLOCK, TILE_PRINTER, TILE_MEDIA, TILE_VIZ, TILE_COVER, TILE_WEATHER };
 enum PrinterShow : uint8_t { PS_HERO = 0, PS_NOZZLE, PS_BED, PS_CHAMBER, PS_FILAMENT, PS_LAYER, PS_LIGHT, PS_AMS, PS_SLOTS, PS_SUMMARY };
 constexpr int MAX_PRINTERS = 2;
 enum MetricStyle : uint8_t { METRIC_NUMBER = 0, METRIC_CHART, METRIC_BAR };
@@ -227,6 +234,8 @@ struct TileDef {
   bool mediaAuto = false;  // TILE_MEDIA: "auto": the PC or the HA player, whichever plays
   bool vizScope = false;   // TILE_VIZ: "style": "scope" (waveform) instead of bars
   bool clockDate = false;  // TILE_CLOCK: "date": "always" (default: only when it fits)
+  uint8_t wxForecast = 0;  // TILE_WEATHER: "forecast": 0 days, 1 hours, 2 none
+  bool wxStill = false;    // TILE_WEATHER: "animate": false (icons at rest)
   WhenDef when;
   bool shown = true;  // runtime: "when" as the pages were last built
 };
@@ -256,6 +265,9 @@ struct DeckConfig {
   uint8_t schema = 1;
   String theme;
   String ledEntity;  // HA entity the LED's day level follows, empty = none
+  float weatherLat = 0, weatherLon = 0;  // "weather": the place of the weather tiles, 0,0 = not set
+  bool weatherImperial = false;
+  String weatherName;  // shown on big weather tiles without a label of their own
   std::vector<PrinterDef> printers;
   std::vector<PageDef> pages;
 };

@@ -525,7 +525,7 @@
     if (wide) return '<div class="dk-grp wide">' + secH(title) + inner + "</div>";
     return '<div class="dk-grp flat" style="--t:&quot;' + title + '&quot;">' + inner + "</div>";
   }
-  const canOn = (t) => !["metric", "sensor", "clock", "media", "viz", "cover"].includes(t.type);
+  const canOn = (t) => !["metric", "sensor", "clock", "media", "viz", "cover", "weather"].includes(t.type);
   /* Colours, then the on state; icon colours sit with them, the icon's style in iconFields. */
   function colorField(t, i) {
     const tx = TXT.concat(SW),
@@ -535,6 +535,14 @@
         "Colours",
         colRow(t, i, "color", "Time colour", "#E6E8EC", theme, { sw: tx, warn: readHint(t.color) }) +
           colRow(t, i, "textColor", "Date colour", "#E6E8EC", theme, { sw: tx, warn: readHint(t.textColor) }) +
+          lookOff(t, i),
+        true,
+      );
+    if (t.type === "weather")
+      return grp(
+        "Colours",
+        colRow(t, i, "color", "Rain chance", "#4FA3FF", "Colour of the rain chance in the forecast.", { sw: tx }) +
+          colRow(t, i, "textColor", "Text colour", "#E6E8EC", theme, { sw: tx, warn: readHint(t.textColor) }) +
           lookOff(t, i),
         true,
       );
@@ -1143,6 +1151,65 @@
       i +
       '" title="Remove">&#215;</button></div>' +
       (i === more ? '<div class="dk-more">' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
+      "</div>"
+    );
+  }
+  /* Weather from Open-Meteo: one place for the deck (deck.weather), the rest per tile. */
+  function wxPlace() {
+    const w = deck.weather;
+    if (!w || (!w.lat && !w.lon)) return "No place set yet: open More options";
+    return (w.name ? w.name + " " : "") + "(" + (+w.lat).toFixed(2) + ", " + (+w.lon).toFixed(2) + ")";
+  }
+  function wxField(t) {
+    const w = deck.weather || {};
+    return grp(
+      "Place and look",
+      '<div class="dk-row"><input type="text" id="dkWxCity" placeholder="City name" value="' +
+        esc(w.name || "") +
+        '" style="flex:1"><button type="button" class="btn" id="dkWxFind">Find</button></div>' +
+        '<div class="grid-2"><div class="field"><label class="field-label" for="dkWxLat">Latitude</label><input type="number" id="dkWxLat" step="0.0001" min="-90" max="90" value="' +
+        (w.lat || "") +
+        '"></div><div class="field"><label class="field-label" for="dkWxLon">Longitude</label><input type="number" id="dkWxLon" step="0.0001" min="-180" max="180" value="' +
+        (w.lon || "") +
+        '"></div><div class="field"><label class="field-label" for="dkWxUnits">Units</label><select id="dkWxUnits">' +
+        opt("metric", "\u00B0C, km/h", w.units !== "imperial") +
+        opt("imperial", "\u00B0F, mph", w.units === "imperial") +
+        "</select></div></div>" +
+        '<p class="field-hint wide" id="dkWxMsg">One place for every weather tile. Forecast by Open-Meteo, no account needed.</p>' +
+        '<label class="check-row standalone"><input type="checkbox" id="dkWxAnim"' +
+        (t.animate === false ? "" : " checked") +
+        '><span class="check-box"></span><span class="check-text"><strong>Animated icons</strong><span class="ct-hint">The icons move: sun rays, drifting clouds, falling rain and snow.</span></span></label>',
+      true,
+    );
+  }
+  function weatherRow(t, i) {
+    const fc = t.forecast || "days";
+    return (
+      '<div class="dk-tile' +
+      (i === sel ? " sel" : "") +
+      '"><div class="dk-ic" style="background:' +
+      (t.color || "#4FA3FF") +
+      '">\u00B0</div><div class="dk-tmain"><b>Weather</b><div class="dk-tsub">' +
+      esc(wxPlace()) +
+      "</div></div>" +
+      '<div class="dk-tact"><select data-wf="' +
+      i +
+      '" style="width:auto" title="Shown when the tile has room; a tap on the tile flips days and hours">' +
+      opt("days", "Next days", fc === "days") +
+      opt("hours", "Next hours", fc === "hours") +
+      opt("none", "No forecast", fc === "none") +
+      "</select>" +
+      sizeSel(t, i) +
+      '<button type="button" class="btn' +
+      (i === more ? " on" : "") +
+      '" data-mo="' +
+      i +
+      '" title="More options">&#8943;</button><button type="button" class="btn" data-u="' +
+      i +
+      '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
+      i +
+      '" title="Remove">&#215;</button></div>' +
+      (i === more ? '<div class="dk-more">' + wxField(t) + colorField(t, i) + whenField(t, i) + "</div>" : "") +
       "</div>"
     );
   }
@@ -2101,12 +2168,15 @@
       ck = t.type === "clock",
       pr = t.type === "printer",
       vz = t.type === "viz",
+      wx = t.type === "weather",
       col =
         t.color ||
-        (m ? PAL[((t.metric || 1) - 1) % 8] : ck ? "#E6E8EC" : pr ? "#F5B83D" : COL[d] || "#7DB5FF"),
-      cp = m || ck || pr || np || vz ? 0 : tileCp(t);
+        (m ? PAL[((t.metric || 1) - 1) % 8] : ck ? "#E6E8EC" : pr ? "#F5B83D" : wx ? "#4FA3FF" : COL[d] || "#7DB5FF"),
+      cp = m || ck || pr || np || vz || wx ? 0 : tileCp(t);
     const nm = np
       ? "Now playing"
+      : wx
+        ? "Weather"
       : vz
         ? t.style === "scope"
           ? "Oscilloscope"
@@ -2453,6 +2523,7 @@
           if (t.type === "clock") return clockRow(t, i);
           if (t.type === "media") return mediaRow(t, i);
           if (t.type === "viz") return vizRow(t, i);
+          if (t.type === "weather") return weatherRow(t, i);
           if (isPcVol(t)) return pcVolRow(t, i);
           if (t.type === "printer") return offT(t) ? "" : printerRow(t, i);
           const d = domainOf(t.entity);
@@ -2535,7 +2606,7 @@
       +cells.toFixed(2) +
       " of " +
       c * r +
-      ' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddPcCmd">+ Add PC control</button><button type="button" class="btn" id="dkAddPcVol">+ Add PC volume</button><button type="button" class="btn" id="dkAddMedia">+ Add now playing</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddViz">+ Add visualizer</button><button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button>' +
+      ' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddPcCmd">+ Add PC control</button><button type="button" class="btn" id="dkAddPcVol">+ Add PC volume</button><button type="button" class="btn" id="dkAddMedia">+ Add now playing</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddViz">+ Add visualizer</button><button type="button" class="btn" id="dkAddWeather">+ Add weather</button><button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button>' +
       (prnOn() && (deck.printers || []).length
         ? '<button type="button" class="btn" id="dkAddPrinter">+ Add printer tile</button>'
         : "") +
@@ -3097,6 +3168,69 @@
           renderPage();
         }),
     );
+    $("dkAddWeather").onclick = () => {
+      const t = { id: "w" + Date.now().toString(36), type: "weather" };
+      setSize(t, "2x2");
+      p.tiles.push(t);
+      /* A deck without a place: open the new tile's options on the place fields. */
+      if (!deck.weather || (!deck.weather.lat && !deck.weather.lon)) more = p.tiles.length - 1;
+      setDirty(true);
+      renderPage();
+    };
+    el.querySelectorAll("[data-wf]").forEach(
+      (x) =>
+        (x.onchange = () => {
+          const t = p.tiles[+x.dataset.wf];
+          if (x.value === "days") delete t.forecast;
+          else t.forecast = x.value;
+          setDirty(true);
+          renderPage();
+        }),
+    );
+    if ($("dkWxFind")) {
+      const t = p.tiles[more],
+        msg = $("dkWxMsg");
+      const place = () => {
+        const lat = parseFloat($("dkWxLat").value),
+          lon = parseFloat($("dkWxLon").value);
+        if (!(Math.abs(lat) <= 90) || !(Math.abs(lon) <= 180)) return;
+        const w = { lat: +lat.toFixed(4), lon: +lon.toFixed(4) },
+          name = $("dkWxCity").value.trim();
+        if (name) w.name = name;
+        if ($("dkWxUnits").value === "imperial") w.units = "imperial";
+        deck.weather = w;
+        setDirty(true);
+      };
+      ["dkWxLat", "dkWxLon", "dkWxCity", "dkWxUnits"].forEach((id) => ($(id).onchange = place));
+      $("dkWxAnim").onchange = () => {
+        if ($("dkWxAnim").checked) delete t.animate;
+        else t.animate = false;
+        setDirty(true);
+      };
+      /* The browser asks Open-Meteo's geocoder; the deck itself only needs the coordinates. */
+      $("dkWxFind").onclick = () => {
+        const q = $("dkWxCity").value.trim();
+        if (!q) return;
+        msg.textContent = "Searching...";
+        fetch("https://geocoding-api.open-meteo.com/v1/search?count=1&name=" + encodeURIComponent(q))
+          .then((r) => r.json())
+          .then((r) => {
+            const g = r.results && r.results[0];
+            if (!g) {
+              msg.textContent = "Nothing found for that name. Enter the coordinates by hand.";
+              return;
+            }
+            $("dkWxLat").value = g.latitude.toFixed(4);
+            $("dkWxLon").value = g.longitude.toFixed(4);
+            $("dkWxCity").value = g.name;
+            place();
+            msg.textContent = "Found " + g.name + (g.country ? ", " + g.country : "") + ". Save to apply.";
+          })
+          .catch(() => {
+            msg.textContent = "Search failed (no internet in this browser?). Enter the coordinates by hand.";
+          });
+      };
+    }
     $("dkAddClock").onclick = () => {
       const t = { id: "k" + Date.now().toString(36), type: "clock" };
       setSize(t, "2x1");
