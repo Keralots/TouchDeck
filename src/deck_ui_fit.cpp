@@ -574,6 +574,7 @@ void fitTile(TileRt& r) {
   else if (r.def->type == TILE_PRINTER) fitPrinter(r, cw, ch);
   else if (r.def->type == TILE_SENSOR) fitSensor(r, cw, ch);
   else if (r.def->type == TILE_COVER) fitCover(r, cw, ch);
+  else if (r.presetBtns[0]) fitPresets(r, cw, ch);
   else if (r.def->type == TILE_WEATHER) fitWeather(r, cw, ch);
   else fitButton(r, cw, ch);
   markPageStale(r.page);

@@ -576,6 +576,7 @@ void applyHaToTile(TileRt& r, bool force) {
     else lv_label_set_text(r.sub, (control ? wishText(d.entity, e, false) : prettyState(domain, e)).c_str());
     fitValue(r);
   }
+  if (r.presetBtns[0]) applyPresets(r, e);
   markPageStale(r.page);
 }
 

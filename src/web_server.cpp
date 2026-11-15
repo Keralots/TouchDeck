@@ -2403,10 +2403,11 @@ static void handlePcForget() {
   sendJsonMessage(ok ? 200 : 404, ok, ok ? "PC removed" : "No such PC");
 }
 
-// POST /api/deck/tap?tile=<id>[&hold=1] - bench hook, a tap or hold on a tile
-// (runs its action, or opens the confirm card).
+// POST /api/deck/tap?tile=<id>[&hold=1 | &preset=<n>] - bench hook, a tap or hold
+// on a tile (runs its action, or opens the confirm card), or on a light preset key.
 static void handleDeckTap() {
-  const bool ok = deckTestTap(server.arg("tile"), server.arg("hold") == "1");
+  const bool ok = server.hasArg("preset") ? deckTestPreset(server.arg("tile"), server.arg("preset").toInt())
+                                          : deckTestTap(server.arg("tile"), server.arg("hold") == "1");
   sendJsonMessage(ok ? 200 : 404, ok, ok ? "Tapped" : "No such tile");
 }
 

@@ -1592,10 +1592,86 @@
       '<div class="dk-more">' +
       (sensorPart ? grp("Sensor", sensorPart, true) : "") +
       grp(t.type === "sensor" ? "Tap" : "Action", h, wideAct) +
+      (presetTile(t) ? presetField(t, i) : "") +
       whenField(t, i) +
       iconFields(t, i) +
       colorField(t, i) +
       "</div>"
+    );
+  }
+  /* Light presets: up to 4 round keys on the tile and its card, each a colour or a white shade. */
+  const presetTile = (t) => (t.type === "toggle" || t.type === "slider") && domainOf(t.entity) === "light";
+  /* Approximate colour of a white shade, the same fit the deck uses for the key. */
+  function kelvinHex(k) {
+    const t = k / 100,
+      c = (v) => Math.max(0, Math.min(255, Math.round(v)));
+    const r = t <= 66 ? 255 : 329.698727446 * Math.pow(t - 60, -0.1332047592),
+      g = t <= 66 ? 99.4708025861 * Math.log(t) - 161.1195681661 : 288.1221695283 * Math.pow(t - 60, -0.0755148492),
+      b = t >= 66 ? 255 : t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307;
+    return "#" + [r, g, b].map((v) => c(v).toString(16).padStart(2, "0")).join("").toUpperCase();
+  }
+  const WHITES = [
+    [2200, "Candle 2200 K"],
+    [2700, "Warm 2700 K"],
+    [3000, "Soft 3000 K"],
+    [4000, "Neutral 4000 K"],
+    [5000, "Daylight 5000 K"],
+    [6500, "Cool 6500 K"],
+  ];
+  function presetField(t, i) {
+    const ps = t.presets || [];
+    let h = "";
+    ps.forEach((p, j) => {
+      const white = p.kelvin != null,
+        k = p.kelvin || 2700,
+        ks = WHITES.some((w) => w[0] === k) ? WHITES : WHITES.concat([[k, k + " K"]]);
+      h +=
+        '<div class="dk-row dk-sw" style="margin-bottom:6px;flex-wrap:nowrap"><span class="dk-swb" style="background:' +
+        (white ? kelvinHex(k) : p.color || "#FF8800") +
+        ';cursor:default;flex:none"></span><select data-lpk="' +
+        i +
+        '" data-lpj="' +
+        j +
+        '" style="width:auto">' +
+        opt("color", "Colour", !white) +
+        opt("kelvin", "White", white) +
+        "</select>" +
+        (white
+          ? '<select data-lpkv="' +
+            i +
+            '" data-lpj="' +
+            j +
+            '" style="width:auto">' +
+            ks.map((w) => opt(w[0], w[1], w[0] === k)).join("") +
+            "</select>"
+          : '<input type="color" data-lpc="' +
+            i +
+            '" data-lpj="' +
+            j +
+            '" value="' +
+            (p.color || "#FF8800").toLowerCase() +
+            '" title="Colour">') +
+        '<button type="button" class="btn" data-lpx="' +
+        i +
+        '" data-lpj="' +
+        j +
+        '" title="Remove">&#215;</button></div>';
+    });
+    if (ps.length < 4)
+      h +=
+        '<button type="button" class="btn" data-lpa="' +
+        i +
+        '">+ Add preset</button>';
+    return grp(
+      "Presets",
+      '<div class="field wide">' +
+        lbl(
+          "Light presets",
+          "Round keys on the tile and on its card: a tap turns the light on in that colour or white shade, a ring marks the one it shows now. Small tiles have no room for them; a slider tile also sets brightness by dragging.",
+        ) +
+        h +
+        "</div>",
+      true,
     );
   }
   function parseHdrs(s) {
@@ -2974,6 +3050,57 @@
           renderPage();
         }),
     );
+    const presetOf = (x, k) => (p.tiles[+x.dataset[k]].presets || [])[+x.dataset.lpj];
+    el.querySelectorAll("[data-lpa]").forEach(
+      (x) =>
+        (x.onclick = () => {
+          const t = p.tiles[+x.dataset.lpa];
+          (t.presets = t.presets || []).push(t.presets.length % 2 ? { kelvin: 2700 } : { color: "#FF8800" });
+          setDirty(true);
+          renderPage();
+        }),
+    );
+    el.querySelectorAll("[data-lpx]").forEach(
+      (x) =>
+        (x.onclick = () => {
+          const t = p.tiles[+x.dataset.lpx];
+          t.presets.splice(+x.dataset.lpj, 1);
+          if (!t.presets.length) delete t.presets;
+          setDirty(true);
+          renderPage();
+        }),
+    );
+    el.querySelectorAll("[data-lpk]").forEach(
+      (x) =>
+        (x.onchange = (e) => {
+          const q = presetOf(x, "lpk");
+          if (e.target.value === "kelvin") {
+            delete q.color;
+            q.kelvin = 2700;
+          } else {
+            delete q.kelvin;
+            q.color = "#FF8800";
+          }
+          setDirty(true);
+          renderPage();
+        }),
+    );
+    el.querySelectorAll("[data-lpkv]").forEach(
+      (x) =>
+        (x.onchange = (e) => {
+          presetOf(x, "lpkv").kelvin = +e.target.value;
+          setDirty(true);
+          renderPage();
+        }),
+    );
+    el.querySelectorAll("[data-lpc]").forEach((x) => {
+      x.oninput = (e) => {
+        presetOf(x, "lpc").color = e.target.value.toUpperCase();
+        x.previousElementSibling.previousElementSibling.style.background = e.target.value;
+        setDirty(true);
+      };
+      x.onchange = () => renderPage();
+    });
     el.querySelectorAll("[data-is]").forEach(
       (x) =>
         (x.onchange = (e) => {

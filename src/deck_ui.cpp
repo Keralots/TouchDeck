@@ -1575,6 +1575,13 @@ bool deckTestTap(const String& tileId, bool hold) {
   return false;
 }
 
+bool deckTestPreset(const String& tileId, int preset) {
+  if (frameActive() || s_ed.root) return false;
+  for (TileRt& r : s_tiles)
+    if (r.def->id == tileId && !r.off && hasPresets(*r.def)) return presetPress(*r.def, preset);
+  return false;
+}
+
 bool deckTestSlide(const String& tileId, int pct) {
   if (frameActive()) return false;
   for (TileRt& r : s_tiles) {
