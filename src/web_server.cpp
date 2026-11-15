@@ -10,6 +10,7 @@
 #include "led.h"
 #include "haptic.h"
 #include "audio.h"
+#include "agent.h"
 #include "config.h"
 #include "web_assets.h"
 #include "deck_ui.h"
@@ -1141,6 +1142,57 @@ static void handleAudioTest() {
     return;
   }
   sendJsonMessage(400, false, err.c_str());
+}
+
+static void handleAgentGet() {
+  JsonDocument doc;
+  JsonObject st = doc["status"].to<JsonObject>();
+  agentStatusJson(st);
+  doc["url"] = agentSettings.url;
+  doc["tokenSet"] = agentSettings.token[0] != 0;
+  doc["pga"] = agentSettings.pga;
+  doc["boost"] = agentSettings.boostDb;
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+// Form save from the AI Agent page; an empty token field keeps the stored one.
+static void handleSaveAgent() {
+  AgentSettings next = agentSettings;
+  next.enabled = server.hasArg("agentEnabled");
+  if (server.hasArg("agentUrl")) {
+    String u = server.arg("agentUrl");
+    u.trim();
+    strlcpy(next.url, u.c_str(), sizeof(next.url));
+  }
+  const String tok = server.arg("agentToken");
+  if (tok.length()) strlcpy(next.token, tok.c_str(), sizeof(next.token));
+  if (server.hasArg("agentTokenClear")) next.token[0] = 0;
+  next.pga = (uint8_t)clampedArg("agentPga", next.pga, 0, AGENT_PGA_MAX);
+  next.boostDb = (uint8_t)clampedArg("agentBoost", next.boostDb, 0, AGENT_BOOST_MAX);
+  if (next.enabled && strncmp(next.url, "ws://", 5) != 0) {
+    sendJsonMessage(400, false, "The server address must start with ws://");
+    return;
+  }
+  if (!next.enabled) agentStop();
+  agentSettings = next;
+  saveSettings();
+  sendJsonMessage(200, true, "Saved.");
+}
+
+static void handleAgentStart() {
+  if (!agentAvailable()) {
+    sendJsonMessage(400, false, "The AI agent is off or this board has no microphones.");
+    return;
+  }
+  agentStart();
+  sendJsonMessage(200, true, "Starting.");
+}
+
+static void handleAgentStop() {
+  agentStop();
+  sendJsonMessage(200, true, "Stopping.");
 }
 
 static void handleAudioStop() {
@@ -2653,6 +2705,10 @@ void initWebServer() {
   server.on("/api/audio", HTTP_GET, handleAudioGet);
   server.on("/api/audio/test", HTTP_POST, handleAudioTest);
   server.on("/api/audio/stop", HTTP_POST, handleAudioStop);
+  server.on("/api/agent", HTTP_GET, handleAgentGet);
+  server.on("/save/agent", HTTP_POST, handleSaveAgent);
+  server.on("/api/agent/start", HTTP_POST, handleAgentStart);
+  server.on("/api/agent/stop", HTTP_POST, handleAgentStop);
   server.on("/api/audio/upload", HTTP_POST, handleAudioUploadFinish, handleAudioUpload);
   server.on("/api/audio/delete", HTTP_POST, handleAudioDelete);
   server.on("/save/clock", HTTP_POST, handleSaveClock);

@@ -33,7 +33,7 @@ struct Clip {
   uint32_t rate;
 };
 
-enum ReqType : uint8_t { REQ_SOUND, REQ_TONE, REQ_WARM };
+enum ReqType : uint8_t { REQ_SOUND, REQ_TONE, REQ_WARM, REQ_EXCL };
 
 struct Req {
   ReqType type;
@@ -43,6 +43,8 @@ struct Req {
   uint16_t hz, ms;
   uint32_t reqMs;
   char file[AUDIO_FILE_LEN];
+  void (*fn)(void*);  // REQ_EXCL
+  void* arg;
 };
 
 struct CachedFile {
@@ -464,6 +466,13 @@ void audioTask(void*) {
       if (!woke) closeChannel();
       continue;
     }
+    if (r.type == REQ_EXCL) {
+      closeChannel();
+      vTaskPrioritySet(nullptr, PRIO_PLAY);
+      r.fn(r.arg);
+      vTaskPrioritySet(nullptr, PRIO_WORK);
+      continue;
+    }
     if (r.type == REQ_WARM) {
       for (int i = 0; i < SND_COUNT; i++)
         if (!s_builtin[i]) s_builtin[i] = render((AudioSound)i);
@@ -578,6 +587,17 @@ bool audioPlayTone(uint16_t hz, uint16_t ms, uint8_t vol) {
   r.reqMs = millis();
   return submit(r);
 }
+
+bool audioRunExclusive(void (*fn)(void*), void* arg) {
+  Req r = {};
+  r.type = REQ_EXCL;
+  r.fn = fn;
+  r.arg = arg;
+  r.reqMs = millis();
+  return submit(r);
+}
+
+uint16_t audioGainQ12() { return gainFor(audioSettings.volume); }
 
 void audioStop() {
   portENTER_CRITICAL(&s_mux);

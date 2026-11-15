@@ -16,6 +16,7 @@ AdvancedSettings advSettings = {};
 PresenceSettings presenceSettings;
 HapticSettings hapticSettings;
 AudioSettings audioSettings;
+AgentSettings agentSettings;
 PrinterSettings printerSettings;
 
 bool validFrameEvery(int minutes) {
@@ -260,6 +261,12 @@ void loadSettings() {
   if (prefs.isKey("audffin")) prefs.getString("audffin", audioSettings.fileFinished, AUDIO_FILE_LEN);
   if (prefs.isKey("audferr")) prefs.getString("audferr", audioSettings.fileError, AUDIO_FILE_LEN);
   if (prefs.isKey("audfcool")) prefs.getString("audfcool", audioSettings.fileCooled, AUDIO_FILE_LEN);
+  agentSettings.enabled = prefs.getBool("agon", false);
+  if (prefs.isKey("agurl")) prefs.getString("agurl", agentSettings.url, AGENT_URL_LEN);
+  if (prefs.isKey("agtok")) prefs.getString("agtok", agentSettings.token, AGENT_TOKEN_LEN);
+  agentSettings.pga = min<uint8_t>(prefs.getUChar("agpga", 12), AGENT_PGA_MAX);
+  agentSettings.boostDb = min<uint8_t>(prefs.getUChar("agboost", 6), AGENT_BOOST_MAX);
+  if (prefs.isKey("agcid")) prefs.getString("agcid", agentSettings.clientId, sizeof(agentSettings.clientId));
   // Entity ids, comma-separated.
   const String ids = prefs.getString("pent", "");
   for (size_t i = 0, from = 0; i < MAX_PRESENCE_ENTITIES && from < ids.length(); i++) {
@@ -351,6 +358,12 @@ void saveSettings() {
   prefs.putBool("audfin", audioSettings.finished);
   prefs.putBool("auderr", audioSettings.error);
   prefs.putBool("audcool", audioSettings.cooled);
+  prefs.putBool("agon", agentSettings.enabled);
+  prefs.putString("agurl", agentSettings.url);
+  prefs.putString("agtok", agentSettings.token);
+  prefs.putUChar("agpga", agentSettings.pga);
+  prefs.putUChar("agboost", agentSettings.boostDb);
+  prefs.putString("agcid", agentSettings.clientId);
   prefs.putUShort("audwake", audioSettings.wakeMs);
   prefs.putUInt("audkeep", audioSettings.keepOnMs);
   prefs.putString("audffin", audioSettings.fileFinished);

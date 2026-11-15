@@ -1,0 +1,12 @@
+{
+  "name": "es7210",
+  "version": "1.0.0",
+  "description": "Espressif ES7210 ADC driver as shipped in the Waveshare ESP32-P4-WIFI6-Touch-LCD-7B Arduino example 10_Mic_Record (I2C through Wire). Vendored unchanged except non-ASCII comment characters.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/waveshareteam/ESP32-P4-WIFI6-Touch-LCD-7B"
+  },
+  "license": "MIT",
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}

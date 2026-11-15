@@ -18,6 +18,10 @@ void audioClick();
 bool audioTest(AudioSound s, uint8_t vol, const String& file, String& err);
 bool audioPlayTone(uint16_t hz, uint16_t ms, uint8_t vol);
 void audioStop();
+// Runs fn on the audio task with the speaker channel closed; other sounds wait.
+bool audioRunExclusive(void (*fn)(void*), void* arg);
+// Sample gain (Q12) for the user's volume, with the board's cap.
+uint16_t audioGainQ12();
 
 const char* audioDir();
 bool audioValidName(const String& name);
