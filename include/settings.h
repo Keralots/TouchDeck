@@ -136,6 +136,8 @@ constexpr size_t AGENT_URL_LEN = 128;
 constexpr size_t AGENT_TOKEN_LEN = 128;
 constexpr uint8_t AGENT_PGA_MAX = 14;     // ES7210 gain steps: 0 = 0 dB .. 14 = 37.5 dB
 constexpr uint8_t AGENT_BOOST_MAX = 24;   // digital gain, dB
+constexpr uint16_t AGENT_PAUSE_MIN_MS = 500, AGENT_PAUSE_MAX_MS = 3000;
+constexpr uint8_t AGENT_IDLE_MIN_S = 3, AGENT_IDLE_MAX_S = 60;
 
 struct AgentSettings {
   bool enabled = false;
@@ -143,6 +145,10 @@ struct AgentSettings {
   char token[AGENT_TOKEN_LEN] = "";  // sent as Authorization: Bearer
   uint8_t pga = 12;                   // 34.5 dB
   uint8_t boostDb = 6;
+  uint8_t volume = 100;               // voice, 0..100 (board cap applies)
+  uint16_t endPauseMs = 1100;         // quiet that ends what the user says
+  uint8_t idleSec = 8;                // listening with nobody talking ends the chat
+  bool chimes = true;                 // notes when listening starts and the chat ends
   char clientId[40] = "";            // UUID, made once
 };
 

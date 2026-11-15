@@ -14,8 +14,10 @@ enum AgentState : uint8_t {
   AGENT_THINKING,    // turn sent, no reply audio yet
   AGENT_SPEAKING,
   AGENT_ERROR,       // last session failed; shown until the next start
+  AGENT_MICTEST,     // portal mic test: levels only, no server
 };
 
+bool agentHasMic();
 // The board has microphones and the feature is switched on.
 bool agentAvailable();
 void agentStart();
@@ -28,5 +30,7 @@ float agentLevel();
 // Latest user and reply lines (copies).
 void agentTexts(String& user, String& reply);
 void agentStatusJson(JsonObject o);
+// Portal: run the mics for 20 s with these gains and report levels; agentStop ends it.
+void agentMicTest(uint8_t pga, uint8_t boostDb);
 
 #endif  // AGENT_H

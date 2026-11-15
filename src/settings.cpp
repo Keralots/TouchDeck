@@ -267,6 +267,10 @@ void loadSettings() {
   agentSettings.pga = min<uint8_t>(prefs.getUChar("agpga", 12), AGENT_PGA_MAX);
   agentSettings.boostDb = min<uint8_t>(prefs.getUChar("agboost", 6), AGENT_BOOST_MAX);
   if (prefs.isKey("agcid")) prefs.getString("agcid", agentSettings.clientId, sizeof(agentSettings.clientId));
+  agentSettings.volume = min<uint8_t>(prefs.getUChar("agvol", 100), 100);
+  agentSettings.endPauseMs = constrain(prefs.getUShort("agpause", 1100), AGENT_PAUSE_MIN_MS, AGENT_PAUSE_MAX_MS);
+  agentSettings.idleSec = constrain(prefs.getUChar("agidle", 8), AGENT_IDLE_MIN_S, AGENT_IDLE_MAX_S);
+  agentSettings.chimes = prefs.getBool("agchime", true);
   // Entity ids, comma-separated.
   const String ids = prefs.getString("pent", "");
   for (size_t i = 0, from = 0; i < MAX_PRESENCE_ENTITIES && from < ids.length(); i++) {
@@ -364,6 +368,10 @@ void saveSettings() {
   prefs.putUChar("agpga", agentSettings.pga);
   prefs.putUChar("agboost", agentSettings.boostDb);
   prefs.putString("agcid", agentSettings.clientId);
+  prefs.putUChar("agvol", agentSettings.volume);
+  prefs.putUShort("agpause", agentSettings.endPauseMs);
+  prefs.putUChar("agidle", agentSettings.idleSec);
+  prefs.putBool("agchime", agentSettings.chimes);
   prefs.putUShort("audwake", audioSettings.wakeMs);
   prefs.putUInt("audkeep", audioSettings.keepOnMs);
   prefs.putString("audffin", audioSettings.fileFinished);

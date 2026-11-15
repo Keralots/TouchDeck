@@ -94,6 +94,7 @@
     if (name !== "hardware") stopLedPreview();
     if (name === "light" || name === "hardware") loadEntityLists();
     if (name === "hardware") loadAudio();
+    agentPolling(name === "agent");
     qa(".page").forEach((p) => p.classList.toggle("active", p.dataset.page === name));
     qa(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
     const button = document.querySelector('.nav-item[data-nav="' + name + '"]');
@@ -163,6 +164,9 @@
     $("hapticStrengthVal").textContent = $("hapticStrength").value + "%";
     $("hapticMsVal").textContent = $("hapticMs").value + " ms";
     $("audioVolumeVal").textContent = $("audioVolume").value + "%";
+    $("agentVolumeVal").textContent = $("agentVolume").value + "%";
+    $("agentPgaVal").textContent = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 34.5, 36, 37.5][Number($("agentPga").value)] + " dB";
+    $("agentBoostVal").textContent = "+" + $("agentBoost").value + " dB";
   }
   [
     "brightness",
@@ -179,6 +183,9 @@
     "hapticStrength",
     "hapticMs",
     "audioVolume",
+    "agentVolume",
+    "agentPga",
+    "agentBoost",
   ].forEach((id) => $(id).addEventListener("input", updateRangeLabels));
   function updateGlassFields() {
     const g = $("theme").value === "2";
@@ -290,6 +297,81 @@
     $("audioFields").classList.toggle("hidden", !$("audioEnabled").checked);
   }
   $("audioEnabled").addEventListener("change", updateAudioFields);
+
+  // AI Agent page: settings, live mic meter and the last conversation.
+  let agentTimer = null,
+    agentGainTimer = null;
+  function updateAgentFields() {
+    $("agentFields").classList.toggle("hidden", !$("agentEnabled").checked);
+  }
+  $("agentEnabled").addEventListener("change", updateAgentFields);
+  function agentMeterPos(db) {
+    return Math.max(0, Math.min(100, ((Number(db) + 80) * 100) / 80));
+  }
+  async function pollAgent() {
+    try {
+      const d = await getJson("/api/agent?t=" + Date.now());
+      const st = d.status || {};
+      const on = $("agentEnabled").checked;
+      $("agentStateTag").textContent = !on && st.state === "idle" ? "off" : st.state || "--";
+      const live = st.state && st.state !== "idle" && st.state !== "error";
+      $("agentMeterBar").style.width = (live ? agentMeterPos(st.level) : 0) + "%";
+      $("agentMeterFloor").style.left = agentMeterPos(st.floor) + "%";
+      if (live)
+        $("agentMeterText").textContent =
+          "Level " + Number(st.level).toFixed(0) + " dBFS, room " + Number(st.floor).toFixed(0) +
+          " dBFS (" + (Number(st.level) - Number(st.floor)).toFixed(0) + " dB above the room).";
+      $("agentMicTest").textContent = st.state === "mic test" ? "Stop the test" : "Test microphones";
+      $("agentUser").textContent = st.user || "--";
+      $("agentReply").textContent = st.reply || "--";
+      $("agentError").textContent = st.error ? "Last error: " + st.error : "";
+      $("agentLog").textContent = (st.events || []).join("\n");
+    } catch (e) {}
+  }
+  function agentPolling(on) {
+    clearInterval(agentTimer);
+    agentTimer = on ? setInterval(pollAgent, 400) : null;
+    if (on) pollAgent();
+  }
+  $("agentMicTest").addEventListener("click", async () => {
+    try {
+      if ($("agentMicTest").textContent === "Stop the test") await getJson("/api/agent/stop", { method: "POST" });
+      else
+        await getJson("/api/agent/mictest", {
+          method: "POST",
+          body: new URLSearchParams({ pga: $("agentPga").value, boost: $("agentBoost").value }),
+        });
+      pollAgent();
+    } catch (e) {
+      showToast(e.message, true);
+    }
+  });
+  // Moving a slider during a test changes the gain live; Save keeps it.
+  ["agentPga", "agentBoost"].forEach((id) =>
+    $(id).addEventListener("input", () => {
+      if ($("agentStateTag").textContent !== "mic test") return;
+      clearTimeout(agentGainTimer);
+      agentGainTimer = setTimeout(() => {
+        getJson("/api/agent/gain", {
+          method: "POST",
+          body: new URLSearchParams({ pga: $("agentPga").value, boost: $("agentBoost").value }),
+        }).catch(() => {});
+      }, 120);
+    }),
+  );
+  $("agentStart").addEventListener("click", async () => {
+    if (dirty) {
+      showToast("Save the changes first.", true);
+      return;
+    }
+    try {
+      await getJson("/api/agent/start", { method: "POST" });
+      pollAgent();
+    } catch (e) {
+      showToast(e.message, true);
+    }
+  });
+  $("agentStop").addEventListener("click", () => getJson("/api/agent/stop", { method: "POST" }).catch(() => {}));
   const audioPickValues = () => AUDIO_PICKS.map((id) => $(id).value);
   function fillAudioPicks(values) {
     AUDIO_PICKS.forEach((id, i) => {
@@ -522,6 +604,20 @@
     fillAudioPicks([au.fileFinished, au.fileError, au.fileCooled]);
     updateAudioFields();
     $("audioState").textContent = au.enabled ? "on" : "disabled";
+    const ag = c.agent || {};
+    if ($("navAgent")) $("navAgent").classList.toggle("hidden", !ag.mic);
+    setCheck("agentEnabled", ag.enabled);
+    setVal("agentUrl", ag.url || "");
+    setVal("agentToken", "");
+    $("agentToken").placeholder = ag.tokenSet ? "unchanged" : "none";
+    setCheck("agentTokenClear", false);
+    setVal("agentVolume", ag.volume == null ? 100 : ag.volume);
+    setVal("agentPga", ag.pga == null ? 12 : ag.pga);
+    setVal("agentBoost", ag.boost == null ? 6 : ag.boost);
+    setVal("agentPause", ag.endPauseMs || 1100);
+    setVal("agentIdle", ag.idleSec || 8);
+    setCheck("agentChimes", ag.chimes !== false);
+    updateAgentFields();
     setVal("ledEntity", l.entity || "");
     updateLedFields();
     window.snLedEntity = l.entity || "";

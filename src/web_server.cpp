@@ -11,6 +11,7 @@
 #include "haptic.h"
 #include "audio.h"
 #include "agent.h"
+#include "agent_audio.h"
 #include "config.h"
 #include "web_assets.h"
 #include "deck_ui.h"
@@ -199,6 +200,20 @@ static bool validEntityId(const String& id) {
   return true;
 }
 
+// The token never leaves the deck: the portal and backups only learn whether one is set.
+static void agentSettingsJson(JsonObject o) {
+  o["mic"] = agentHasMic();
+  o["enabled"] = agentSettings.enabled;
+  o["url"] = agentSettings.url;
+  o["tokenSet"] = agentSettings.token[0] != 0;
+  o["pga"] = agentSettings.pga;
+  o["boost"] = agentSettings.boostDb;
+  o["volume"] = agentSettings.volume;
+  o["endPauseMs"] = agentSettings.endPauseMs;
+  o["idleSec"] = agentSettings.idleSec;
+  o["chimes"] = agentSettings.chimes;
+}
+
 static void handleApiConfig() {
   JsonDocument doc(psramJson());
   doc["product"] = PRODUCT_NAME;
@@ -294,6 +309,7 @@ static void handleApiConfig() {
   haptic["strength"] = hapticSettings.strength;
   haptic["pulseMs"] = hapticSettings.pulseMs;
   audioSettingsJson(doc["audio"].to<JsonObject>());
+  agentSettingsJson(doc["agent"].to<JsonObject>());
 
   JsonObject clock = doc["clock"].to<JsonObject>();
   clock["use24h"] = netSettings.use24h;
@@ -414,6 +430,7 @@ static void handleConfigExport() {
   haptic["strength"] = hapticSettings.strength;
   haptic["pulseMs"] = hapticSettings.pulseMs;
   audioSettingsJson(doc["audio"].to<JsonObject>());
+  agentSettingsJson(doc["agent"].to<JsonObject>());
   doc["advanced"]["printers"] = advSettings.printers;
   doc["advanced"]["weather60"] = advSettings.weather60;
   doc["advanced"]["charts60"] = advSettings.charts60;
@@ -815,6 +832,24 @@ static void handleConfigImport() {
       strlcpy(targets[i], v, AUDIO_FILE_LEN);
     }
   }
+  AgentSettings nextAgent = agentSettings;  // keeps the token and client id
+  JsonObjectConst agent = root["agent"].as<JsonObjectConst>();
+  if (!agent.isNull()) {
+    READ_BOOL(agent, "enabled", nextAgent.enabled);
+    const char* u = agent["url"] | "";
+    if (strlen(u) >= sizeof(nextAgent.url)) {
+      sendJsonMessage(400, false, "agent.url is too long");
+      return;
+    }
+    strlcpy(nextAgent.url, u, sizeof(nextAgent.url));
+    if (!agent["pga"].isNull()) READ_INT(agent, "pga", 0, AGENT_PGA_MAX, nextAgent.pga, uint8_t);
+    if (!agent["boost"].isNull()) READ_INT(agent, "boost", 0, AGENT_BOOST_MAX, nextAgent.boostDb, uint8_t);
+    if (!agent["volume"].isNull()) READ_INT(agent, "volume", 0, 100, nextAgent.volume, uint8_t);
+    if (!agent["endPauseMs"].isNull())
+      READ_INT(agent, "endPauseMs", AGENT_PAUSE_MIN_MS, AGENT_PAUSE_MAX_MS, nextAgent.endPauseMs, uint16_t);
+    if (!agent["idleSec"].isNull()) READ_INT(agent, "idleSec", AGENT_IDLE_MIN_S, AGENT_IDLE_MAX_S, nextAgent.idleSec, uint8_t);
+    if (!agent["chimes"].isNull()) READ_BOOL(agent, "chimes", nextAgent.chimes);
+  }
   PresenceSettings nextPresence;  // older backups: never sleeps
   JsonObjectConst presence = root["presence"].as<JsonObjectConst>();
   if (!presence.isNull()) {
@@ -905,6 +940,7 @@ static void handleConfigImport() {
   printerSettings = nextPrn;
   presenceSettings = nextPresence;
   audioSettings = nextAudio;
+  agentSettings = nextAgent;
   saveSettings();
   deckSetHeader(nextHeader);
 
@@ -1148,10 +1184,7 @@ static void handleAgentGet() {
   JsonDocument doc;
   JsonObject st = doc["status"].to<JsonObject>();
   agentStatusJson(st);
-  doc["url"] = agentSettings.url;
-  doc["tokenSet"] = agentSettings.token[0] != 0;
-  doc["pga"] = agentSettings.pga;
-  doc["boost"] = agentSettings.boostDb;
+  agentSettingsJson(doc["settings"].to<JsonObject>());
   String out;
   serializeJson(doc, out);
   server.send(200, "application/json", out);
@@ -1171,6 +1204,10 @@ static void handleSaveAgent() {
   if (server.hasArg("agentTokenClear")) next.token[0] = 0;
   next.pga = (uint8_t)clampedArg("agentPga", next.pga, 0, AGENT_PGA_MAX);
   next.boostDb = (uint8_t)clampedArg("agentBoost", next.boostDb, 0, AGENT_BOOST_MAX);
+  next.volume = (uint8_t)clampedArg("agentVolume", next.volume, 0, 100);
+  next.endPauseMs = (uint16_t)clampedArg("agentPause", next.endPauseMs, AGENT_PAUSE_MIN_MS, AGENT_PAUSE_MAX_MS);
+  next.idleSec = (uint8_t)clampedArg("agentIdle", next.idleSec, AGENT_IDLE_MIN_S, AGENT_IDLE_MAX_S);
+  next.chimes = server.hasArg("agentChimes");
   if (next.enabled && strncmp(next.url, "ws://", 5) != 0) {
     sendJsonMessage(400, false, "The server address must start with ws://");
     return;
@@ -1188,6 +1225,47 @@ static void handleAgentStart() {
   }
   agentStart();
   sendJsonMessage(200, true, "Starting.");
+}
+
+static void handleAgentMicTest() {
+  if (!agentHasMic()) {
+    sendJsonMessage(400, false, "This board has no microphones.");
+    return;
+  }
+  agentMicTest((uint8_t)clampedArg("pga", agentSettings.pga, 0, AGENT_PGA_MAX),
+               (uint8_t)clampedArg("boost", agentSettings.boostDb, 0, AGENT_BOOST_MAX));
+  sendJsonMessage(200, true, "Listening for 20 s.");
+}
+
+static void handleAgentGain() {
+  agentAudioSetGain((uint8_t)clampedArg("pga", agentSettings.pga, 0, AGENT_PGA_MAX),
+                    (uint8_t)clampedArg("boost", agentSettings.boostDb, 0, AGENT_BOOST_MAX));
+  sendJsonMessage(200, true, "Gain set.");
+}
+
+// Debug: the last 30 s of a conversation, left = microphones, right = speaker.
+static void handleAgentRecord() {
+  const uint32_t frames = agentAudioRecFrames();
+  if (!frames) {
+    server.send(404, "text/plain", "nothing recorded yet");
+    return;
+  }
+  const uint32_t bytes = frames * 4;
+  uint8_t h[44];
+  auto u32 = [&](int o, uint32_t v) { memcpy(h + o, &v, 4); };
+  auto u16 = [&](int o, uint16_t v) { memcpy(h + o, &v, 2); };
+  memcpy(h, "RIFF", 4); u32(4, 36 + bytes); memcpy(h + 8, "WAVEfmt ", 8);
+  u32(16, 16); u16(20, 1); u16(22, 2); u32(24, AGENT_RATE); u32(28, AGENT_RATE * 4); u16(32, 4); u16(34, 16);
+  memcpy(h + 36, "data", 4); u32(40, bytes);
+  server.setContentLength(44 + bytes);
+  server.send(200, "audio/wav", "");
+  server.sendContent((const char*)h, 44);
+  static int16_t buf[2048];
+  for (uint32_t f = 0; f < frames; f += 1024) {
+    const uint32_t n = min<uint32_t>(1024, frames - f);
+    agentAudioRecRead(f, buf, n);
+    server.sendContent((const char*)buf, n * 4);
+  }
 }
 
 static void handleAgentStop() {
@@ -2709,6 +2787,9 @@ void initWebServer() {
   server.on("/save/agent", HTTP_POST, handleSaveAgent);
   server.on("/api/agent/start", HTTP_POST, handleAgentStart);
   server.on("/api/agent/stop", HTTP_POST, handleAgentStop);
+  server.on("/api/agent/mictest", HTTP_POST, handleAgentMicTest);
+  server.on("/api/agent/gain", HTTP_POST, handleAgentGain);
+  server.on("/api/agent/record.wav", HTTP_GET, handleAgentRecord);
   server.on("/api/audio/upload", HTTP_POST, handleAudioUploadFinish, handleAudioUpload);
   server.on("/api/audio/delete", HTTP_POST, handleAudioDelete);
   server.on("/save/clock", HTTP_POST, handleSaveClock);

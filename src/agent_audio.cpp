@@ -32,7 +32,13 @@ int16_t* s_up = nullptr;     // UP_FRAMES x AGENT_FRAME
 float s_upDb[UP_FRAMES];
 int16_t* s_play = nullptr;   // PLAY_CAP
 uint8_t s_pga = 12;
-int32_t s_boostQ8 = 256;
+std::atomic<int32_t> s_boostQ8{256};
+std::atomic<int> s_pgaReq{-1};  // a new mic gain for the engine to write
+int32_t s_playQ12 = 4096;
+// Last 30 s of a session for /api/agent/record.wav: [mic, speaker] pairs.
+constexpr uint32_t REC_FRAMES = AGENT_RATE * 30;
+int16_t* s_rec = nullptr;
+std::atomic<uint32_t> s_recN{0};
 
 float dbfs(const int16_t* x, size_t n) {
   int64_t acc = 0;
@@ -68,7 +74,7 @@ void engine(void*) {
   size_t accN = 0;
   uint32_t settle = AGENT_RATE / 5;  // the ES7210 starts on near-zero samples
   i2s_chan_handle_t tx = nullptr, rx = nullptr;
-  const int32_t playQ12 = audioGainQ12();
+  const int32_t playQ12 = s_playQ12;
   esp_err_t e;
 
   i2s_chan_config_t cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
@@ -111,6 +117,8 @@ void engine(void*) {
 
   while (e == ESP_OK && !s_stopReq) {
     if (s_flushReq.exchange(false)) s_playTail.store(s_playHead.load());
+    const int pga = s_pgaReq.exchange(-1);
+    if (pga >= 0) es7210_adc_set_gain((es7210_input_mics_t)(ES7210_INPUT_MIC1 | ES7210_INPUT_MIC2), (es7210_gain_value_t)pga);
     const uint32_t head = s_playHead.load(std::memory_order_acquire);
     uint32_t tail = s_playTail.load();
     const uint32_t n = min<uint32_t>(head - tail, CHUNK);
@@ -135,8 +143,15 @@ void engine(void*) {
       continue;
     }
     for (size_t i = 0; i < got; i++) {
-      const int32_t m = ((int32_t)rxBuf[i * SLOTS + SLOT_MIC1] + rxBuf[i * SLOTS + SLOT_MIC2]) * s_boostQ8 >> 9;
-      acc[accN++] = (int16_t)constrain(m, -32768, 32767);
+      const int32_t m = ((int32_t)rxBuf[i * SLOTS + SLOT_MIC1] + rxBuf[i * SLOTS + SLOT_MIC2]) * s_boostQ8.load(std::memory_order_relaxed) >> 9;
+      acc[accN] = (int16_t)constrain(m, -32768, 32767);
+      if (s_rec) {
+        const uint32_t r = s_recN.load() % REC_FRAMES;
+        s_rec[2 * r] = acc[accN];
+        s_rec[2 * r + 1] = txBuf[i * SLOTS];
+        s_recN.fetch_add(1);
+      }
+      accN++;
       if (accN < AGENT_FRAME) continue;
       accN = 0;
       const float lv = dbfs(acc, AGENT_FRAME);
@@ -169,13 +184,17 @@ void engine(void*) {
 
 }  // namespace
 
-bool agentAudioStart(uint8_t pga, uint8_t boostDb) {
+bool agentAudioStart(uint8_t pga, uint8_t boostDb, uint8_t volume) {
   if (s_running) return false;
   if (!s_up) s_up = (int16_t*)heap_caps_malloc(UP_FRAMES * AGENT_FRAME * sizeof(int16_t), MALLOC_CAP_SPIRAM);
   if (!s_play) s_play = (int16_t*)heap_caps_malloc(PLAY_CAP * sizeof(int16_t), MALLOC_CAP_SPIRAM);
   if (!s_up || !s_play) return false;
+  if (!s_rec) s_rec = (int16_t*)heap_caps_malloc(REC_FRAMES * 2 * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+  s_recN = 0;
+  s_playQ12 = (int32_t)min<uint8_t>(volume, 100) * 4096 * BOARD_AUDIO_MAX_GAIN_PCT / 10000;
   s_pga = min<uint8_t>(pga, 14);
   s_boostQ8 = (int32_t)lroundf(256.0f * powf(10.0f, boostDb / 20.0f));
+  s_pgaReq = -1;
   s_upHead = s_upTail = 0;
   s_levelsN = 0;
   s_playHead = s_playTail = 0;
@@ -191,6 +210,11 @@ bool agentAudioStart(uint8_t pga, uint8_t boostDb) {
 }
 
 void agentAudioStop() { s_stopReq = true; }
+
+void agentAudioSetGain(uint8_t pga, uint8_t boostDb) {
+  s_boostQ8 = (int32_t)lroundf(256.0f * powf(10.0f, boostDb / 20.0f));
+  s_pgaReq = min<uint8_t>(pga, 14);
+}
 bool agentAudioRunning() { return s_running; }
 void agentAudioCapture(bool on) { s_capture = on; }
 float agentAudioMicLevel() { return s_micLevelCenti.load() / 100.0f; }
@@ -220,10 +244,23 @@ uint32_t agentAudioQueued() { return s_playHead.load() - s_playTail.load(); }
 void agentAudioFlush() { s_flushReq = true; }
 uint32_t agentAudioLastPlayMs() { return s_lastPlayMs.load(); }
 
+uint32_t agentAudioRecFrames() { return s_rec ? min<uint32_t>(s_recN.load(), REC_FRAMES) : 0; }
+
+void agentAudioRecRead(uint32_t from, int16_t* dst, uint32_t n) {
+  const uint32_t total = s_recN.load();
+  const uint32_t first = total > REC_FRAMES ? total - REC_FRAMES : 0;
+  for (uint32_t i = 0; i < n; i++) {
+    const uint32_t r = (first + from + i) % REC_FRAMES;
+    dst[2 * i] = s_rec[2 * r];
+    dst[2 * i + 1] = s_rec[2 * r + 1];
+  }
+}
+
 #else
 
-bool agentAudioStart(uint8_t, uint8_t) { return false; }
+bool agentAudioStart(uint8_t, uint8_t, uint8_t) { return false; }
 void agentAudioStop() {}
+void agentAudioSetGain(uint8_t, uint8_t) {}
 bool agentAudioRunning() { return false; }
 void agentAudioCapture(bool) {}
 bool agentAudioPopFrame(int16_t*, float&) { return false; }
@@ -234,5 +271,7 @@ size_t agentAudioPush(const int16_t*, size_t) { return 0; }
 uint32_t agentAudioQueued() { return 0; }
 void agentAudioFlush() {}
 uint32_t agentAudioLastPlayMs() { return 0; }
+uint32_t agentAudioRecFrames() { return 0; }
+void agentAudioRecRead(uint32_t, int16_t*, uint32_t) {}
 
 #endif  // BOARD_MIC_ES7210

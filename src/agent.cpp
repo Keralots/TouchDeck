@@ -15,8 +15,7 @@ namespace {
 constexpr float VOICE_OVER_FLOOR_DB = 9.0f;
 constexpr float VOICE_MIN_DBFS = -60.0f;
 constexpr int SPEECH_START_FRAMES = 3;    // 180 ms of voice opens a turn
-constexpr int SPEECH_END_FRAMES = 18;     // 1.08 s of quiet closes it
-constexpr uint32_t NO_SPEECH_MS = 8000;   // listening with nobody talking ends the chat
+constexpr uint32_t MIC_TEST_MS = 20000;
 constexpr uint32_t MAX_TURN_MS = 20000;
 constexpr uint32_t CONNECT_MS = 10000;    // socket + server hello
 constexpr uint32_t STT_WAIT_MS = 4000;    // no transcript = server dropped the turn as noise
@@ -27,7 +26,8 @@ constexpr int OPUS_BITRATE = 20000;
 constexpr size_t TEXT_MAX = 240;
 
 std::atomic<AgentState> s_state{AGENT_IDLE};
-std::atomic<bool> s_startReq{false}, s_stopReq{false};
+std::atomic<bool> s_startReq{false}, s_stopReq{false}, s_testReq{false};
+uint8_t s_testPga = 12, s_testBoost = 6;
 TaskHandle_t s_task = nullptr;
 WebSocketsClient s_ws;
 OpusEncoder* s_enc = nullptr;
@@ -45,6 +45,28 @@ bool s_inSpeech = false;
 bool s_micOpen = false;  // capture starts once the chime or reply has finished playing
 uint32_t s_turnFrames = 0, s_upFrames = 0, s_downFrames = 0, s_turns = 0;
 
+// Session event log for /api/agent: what happened when, relative to the tap.
+constexpr int EV_MAX = 48;
+struct Ev { uint32_t ms; char msg[44]; };
+Ev s_ev[EV_MAX];
+int s_evN = 0;
+uint32_t s_evT0 = 0;
+
+void ev(const char* fmt, ...) {
+  char m[44];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(m, sizeof(m), fmt, ap);
+  va_end(ap);
+  portENTER_CRITICAL(&s_mux);
+  Ev& e = s_ev[s_evN++ % EV_MAX];
+  e.ms = millis() - s_evT0;
+  memcpy(e.msg, m, sizeof(m));
+  portEXIT_CRITICAL(&s_mux);
+}
+
+const char* const STATE_NAMES[] = {"idle", "connecting", "listening", "thinking", "speaking", "error", "mic test"};
+
 void setText(char* dst, const char* src) {
   portENTER_CRITICAL(&s_mux);
   strlcpy(dst, src, TEXT_MAX);
@@ -59,6 +81,7 @@ void setError(const char* why) {
 }
 
 void enter(AgentState st) {
+  if (st != s_state) ev("%s", STATE_NAMES[st]);
   s_state = st;
   s_since = millis();
 }
@@ -132,7 +155,7 @@ void startListening() {
 
 void endSession(const char* why) {
   agentAudioCapture(false);
-  if (!why) chime(false);
+  if (!why && agentSettings.chimes) chime(false);
   // A goodbye arrives just before the server closes: let it finish playing.
   for (uint32_t t0 = millis(); !why && agentAudioQueued() && millis() - t0 < 3000;) vTaskDelay(pdMS_TO_TICKS(20));
   if (s_connected) s_ws.disconnect();
@@ -155,12 +178,13 @@ void onText(const char* payload, size_t len) {
   if (!strcmp(type, "hello")) {
     s_sessionId = (const char*)(d["session_id"] | "");
     if (s_state == AGENT_CONNECTING) {
-      chime(true);
+      if (agentSettings.chimes) chime(true);
       startListening();
     }
   } else if (!strcmp(type, "stt")) {
     s_gotStt = true;
     setText(s_user, d["text"] | "");
+    ev("stt %.36s", (const char*)(d["text"] | ""));
   } else if (!strcmp(type, "tts")) {
     const char* st = d["state"] | "";
     if (!strcmp(st, "start")) {
@@ -171,6 +195,7 @@ void onText(const char* payload, size_t len) {
       setText(s_reply, d["text"] | "");
     } else if (!strcmp(st, "stop")) {
       s_ttsDone = true;
+      ev("tts stop");
     }
   } else if (!strcmp(type, "alert")) {
     setText(s_reply, d["message"] | "");
@@ -246,7 +271,7 @@ bool beginSession() {
   if (!s_enc || !s_dec) { setError("Opus init failed"); return false; }
   opus_encoder_ctl(s_enc, OPUS_RESET_STATE);
   opus_decoder_ctl(s_dec, OPUS_RESET_STATE);
-  if (!agentAudioStart(agentSettings.pga, agentSettings.boostDb)) { setError("audio is busy"); return false; }
+  if (!agentAudioStart(agentSettings.pga, agentSettings.boostDb, agentSettings.volume)) { setError("audio is busy"); return false; }
   ensureClientId();
   String hdr = "Protocol-Version: 1\r\nDevice-Id: " + WiFi.macAddress() + "\r\nClient-Id: " + agentSettings.clientId;
   if (agentSettings.token[0]) hdr = "Authorization: Bearer " + String(agentSettings.token) + "\r\n" + hdr;
@@ -271,7 +296,10 @@ void pumpMic() {
     if (voice) {
       s_voiced++;
       s_quiet = 0;
-      if (s_voiced >= SPEECH_START_FRAMES) s_inSpeech = true;
+      if (s_voiced >= SPEECH_START_FRAMES && !s_inSpeech) {
+        s_inSpeech = true;
+        ev("speech %.1f dB, floor %.1f", db, agentAudioFloor());
+      }
     } else {
       s_quiet++;
       if (!s_inSpeech) s_voiced = 0;
@@ -279,7 +307,8 @@ void pumpMic() {
     const int n = opus_encode(s_enc, frame, AGENT_FRAME, pkt, sizeof(pkt));
     if (n > 0 && s_ws.sendBIN(pkt, n)) s_upFrames++;
     s_turnFrames++;
-    if (s_inSpeech && (s_quiet >= SPEECH_END_FRAMES || s_turnFrames * 60 >= MAX_TURN_MS)) {
+    if (s_inSpeech && (s_quiet * 60 >= agentSettings.endPauseMs || s_turnFrames * 60 >= MAX_TURN_MS)) {
+      ev("turn end, %u frames", (unsigned)s_turnFrames);
       agentAudioCapture(false);
       sendListen("stop");
       s_turns++;
@@ -298,9 +327,10 @@ void tick() {
     if (!agentAudioQueued() && now - agentAudioLastPlayMs() > DRAIN_MS) {
       s_micOpen = true;
       agentAudioCapture(true);
+      ev("mic open");
       s_since = now;
     }
-  } else if (st == AGENT_LISTENING && !s_inSpeech && now - s_since > NO_SPEECH_MS) {
+  } else if (st == AGENT_LISTENING && !s_inSpeech && now - s_since > agentSettings.idleSec * 1000u) {
     endSession(nullptr);
   } else if (st == AGENT_THINKING && !s_gotStt && now - s_since > STT_WAIT_MS) {
     startListening();  // the server judged the turn noise and stays silent
@@ -322,11 +352,25 @@ void agentTask(void*) {
         continue;
       }
       s_stopReq = false;
+      if (s_testReq.exchange(false)) {
+        if (agentAudioStart(s_testPga, s_testBoost, 0)) enter(AGENT_MICTEST);
+        continue;
+      }
       if (!s_startReq.exchange(false)) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         continue;
       }
+      s_evN = 0;
+      s_evT0 = millis();
       beginSession();
+      continue;
+    }
+    if (st == AGENT_MICTEST) {
+      if (s_stopReq.exchange(false) || millis() - s_since > MIC_TEST_MS) {
+        agentAudioStop();
+        enter(AGENT_IDLE);
+      }
+      vTaskDelay(pdMS_TO_TICKS(20));
       continue;
     }
     if (s_stopReq.exchange(false)) {
@@ -351,6 +395,7 @@ void kick() {
 
 }  // namespace
 
+bool agentHasMic() { return true; }
 bool agentAvailable() { return agentSettings.enabled; }
 
 void agentStart() {
@@ -384,10 +429,9 @@ void agentTexts(String& user, String& reply) {
 }
 
 void agentStatusJson(JsonObject o) {
-  static const char* const names[] = {"idle", "connecting", "listening", "thinking", "speaking", "error"};
   o["mic"] = true;
   o["enabled"] = agentSettings.enabled;
-  o["state"] = names[s_state.load()];
+  o["state"] = STATE_NAMES[s_state.load()];
   o["level"] = agentAudioMicLevel();
   o["floor"] = agentAudioFloor();
   o["turns"] = s_turns;
@@ -404,10 +448,26 @@ void agentStatusJson(JsonObject o) {
   portEXIT_CRITICAL(&s_mux);
   o["error"] = e;
   o["task_stack_free"] = s_task ? uxTaskGetStackHighWaterMark(s_task) : 0;
+  o["record_frames"] = agentAudioRecFrames();
+  JsonArray evs = o["events"].to<JsonArray>();
+  portENTER_CRITICAL(&s_mux);
+  const int n = min(s_evN, EV_MAX);
+  Ev copy[EV_MAX];
+  for (int i = 0; i < n; i++) copy[i] = s_ev[(s_evN - n + i) % EV_MAX];
+  portEXIT_CRITICAL(&s_mux);
+  for (int i = 0; i < n; i++) evs.add(String(copy[i].ms) + " " + copy[i].msg);
+}
+
+void agentMicTest(uint8_t pga, uint8_t boostDb) {
+  s_testPga = min<uint8_t>(pga, AGENT_PGA_MAX);
+  s_testBoost = min<uint8_t>(boostDb, AGENT_BOOST_MAX);
+  s_testReq = true;
+  kick();
 }
 
 #else
 
+bool agentHasMic() { return false; }
 bool agentAvailable() { return false; }
 void agentStart() {}
 void agentStop() {}
@@ -416,5 +476,6 @@ AgentState agentState() { return AGENT_IDLE; }
 float agentLevel() { return -96.0f; }
 void agentTexts(String& user, String& reply) { user = reply = ""; }
 void agentStatusJson(JsonObject o) { o["mic"] = false; }
+void agentMicTest(uint8_t, uint8_t) {}
 
 #endif  // BOARD_MIC_ES7210
