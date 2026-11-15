@@ -139,6 +139,8 @@ struct TileRt {
   lv_obj_t* volIcons[2];  // minus and plus on it
   bool volHeld;           // a drag or a held half is moving the level
   struct VizRt* vz;        // visualizer tiles: bar levels
+  lv_obj_t* box;           // cover tiles: holds icon, state and name beside the buttons
+  lv_obj_t* coverBtns[3];  // cover tiles: up, stop, down
   // Glass auto text: the colour picked from the picture under the tile.
   uint32_t autoText;
   bool hasAuto;
@@ -319,6 +321,7 @@ String wishText(const String& entity, const HaEntity& e, bool slider);
 bool setWish(const String& entity, bool level, float value, bool dragging = false);
 void holdLevel(const String& entity, float value);
 void releaseLevel(const String& entity);
+void dropWish(const String& entity);
 void setSliderFill(TileRt& r, float frac);
 void applyHaToTile(TileRt& r, bool force);
 bool ledToHa(uint8_t v);
@@ -406,6 +409,17 @@ void fitNameText(TileRt& r);
 void layoutRows(TileRt& r);
 void fitValue(TileRt& r);
 void fitEvent(lv_event_t* e);
+void fitButton(TileRt& r, int cw, int ch);
+
+// deck_ui_cover.cpp
+bool coverMoving(const HaEntity& e);
+void coverCommand(const String& entity, int button);  // 0 up, 1 stop, 2 down
+void applyCover(TileRt& r, const HaEntity& e);
+void makeCoverButtons(TileRt& r, size_t idx, uint32_t accent);
+void fitCover(TileRt& r, int cw, int ch);
+void coverCardBuild(lv_obj_t* c, int cw, int y, uint32_t accent);
+void coverCardRefresh(const String& entity, const HaEntity* e);
+void coverCardClose();
 
 // deck_ui_media.cpp
 void mediaGlyph(lv_obj_t* label, const char* name, const char* fallback, int px);

@@ -115,7 +115,8 @@
   const SENSOR = ["sensor", "binary_sensor", "weather", "sun", "person", "device_tracker", "zone"];
   /* Domains a slider tile can drive (brightness, position, speed, volume, value). */
   const SLIDER = ["light", "cover", "fan", "media_player", "input_number", "number"];
-  const autoType = (d) => (TOGGLE.includes(d) ? "toggle" : SENSOR.includes(d) ? "sensor" : "action");
+  const autoType = (d) =>
+    d === "cover" ? "cover" : TOGGLE.includes(d) ? "toggle" : SENSOR.includes(d) ? "sensor" : "action";
   const DOMS = [
     ["", "All"],
     ["light", "Lights"],
@@ -524,7 +525,7 @@
     if (wide) return '<div class="dk-grp wide">' + secH(title) + inner + "</div>";
     return '<div class="dk-grp flat" style="--t:&quot;' + title + '&quot;">' + inner + "</div>";
   }
-  const canOn = (t) => !["metric", "sensor", "clock", "media", "viz"].includes(t.type);
+  const canOn = (t) => !["metric", "sensor", "clock", "media", "viz", "cover"].includes(t.type);
   /* Colours, then the on state; icon colours sit with them, the icon's style in iconFields. */
   function colorField(t, i) {
     const tx = TXT.concat(SW),
@@ -552,7 +553,9 @@
         ? "the icon, and the whole tile while it is on, unless they have their own colours"
         : t.type === "slider"
           ? "the icon and the level fill"
-          : "the icon";
+          : t.type === "cover"
+            ? "the icon, the shade and a pressed button"
+            : "the icon";
     let h = colRow(
       t,
       i,
@@ -728,7 +731,7 @@
     return grp("Icon", h);
   }
   /* Tiles with an icon chip: icon style and icon colours apply. */
-  const iconTile = (t) => ["action", "toggle", "slider", "sensor"].includes(t.type) && !isPcVol(t);
+  const iconTile = (t) => ["action", "toggle", "slider", "sensor", "cover"].includes(t.type) && !isPcVol(t);
   /* The clock tile: no entity or actions, just its size and colours. */
   /* Bambu printers: deck.printers is saved with the deck; serial and code go
    straight to the device and are never read back. */
@@ -1293,6 +1296,7 @@
     const d = domainOf(t.entity);
     if (t.type === "sensor" || d === "input_number" || d === "number") return "Open its card";
     if (t.type === "toggle" && d === "climate") return "Open its card";
+    if (t.type === "cover") return "Open or close, stop while moving";
     return "Toggle";
   }
   function setAct(t, key, v) {
@@ -2503,6 +2507,9 @@
                 ">Sensor</option>" +
                 (SLIDER.includes(d) || t.type === "slider"
                   ? '<option value="slider"' + (t.type === "slider" ? " selected" : "") + ">Slider</option>"
+                  : "") +
+                (d === "cover" || t.type === "cover"
+                  ? '<option value="cover"' + (t.type === "cover" ? " selected" : "") + ">Cover</option>"
                   : "") +
                 "</select>") +
             sizeSel(t, i) +

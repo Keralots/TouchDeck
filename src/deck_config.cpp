@@ -352,6 +352,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       else if (!strcmp(tt, "media")) t.type = TILE_MEDIA;
       else if (!strcmp(tt, "viz")) t.type = TILE_VIZ;
       else if (!strcmp(tt, "printer")) t.type = TILE_PRINTER;
+      else if (!strcmp(tt, "cover")) t.type = TILE_COVER;
       else {
         if (err) *err = where + ": unknown type '" + tt + "'";
         return false;
@@ -362,7 +363,12 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       t.noName = tv["label"].is<const char*>() && !t.label.length();
       t.sub = (const char*)(tv["sub"] | "");
       t.icon = (const char*)(tv["icon"] | "");
-      if (t.type == TILE_ACTION || t.type == TILE_TOGGLE || t.type == TILE_SLIDER || t.type == TILE_SENSOR) {
+      if (t.type == TILE_COVER && !t.entity.startsWith("cover.")) {
+        if (err) *err = where + ": a cover tile needs a cover entity";
+        return false;
+      }
+      if (t.type == TILE_ACTION || t.type == TILE_TOGGLE || t.type == TILE_SLIDER || t.type == TILE_SENSOR ||
+          t.type == TILE_COVER) {
         t.iconPlain = !strcmp(tv["iconStyle"] | "", "plain");
         t.onIcon = (const char*)(tv["onIcon"] | "");
         t.lightIcon = tv["lightIcon"] | false;
@@ -490,6 +496,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       // A thermostat opens its card: a stray tap would turn the heating off (#8).
       if (tv["tap"].isNull() && t.type == TILE_TOGGLE)
         t.tap.kind = t.entity.startsWith("climate.") ? ACT_MORE_INFO : ACT_TOGGLE;
+      if (tv["tap"].isNull() && t.type == TILE_COVER) t.tap.kind = ACT_TOGGLE;
       // A read-only sensor opens its card on a tap too.
       if (tv["tap"].isNull() && t.type == TILE_SENSOR && !t.http.enabled) t.tap.kind = ACT_MORE_INFO;
       // A slider toggles on a tap; a number has no on/off, so its card opens.

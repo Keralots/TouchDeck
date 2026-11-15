@@ -362,6 +362,14 @@ void clearWish(Wish& w) {
   w.answered = false;
 }
 
+// A stopped cover: what the finger asked before no longer stands.
+void dropWish(const String& entity) {
+  if (Wish* w = findWish(entity)) {
+    clearWish(*w);
+    showWish(entity);
+  }
+}
+
 bool sendWish(Wish& w) {
   if (w.call || (!w.on.dirty && !w.level.dirty)) return true;
   const bool level = w.level.dirty && (!w.on.dirty || (int32_t)(w.level.order - w.on.order) < 0);
@@ -529,7 +537,7 @@ void applyHaToTile(TileRt& r, bool force) {
   r.haVersion = e.version;
   const String domain = entityDomain(d.entity);
   const bool avail = e.known && e.state != "unavailable" && e.state != "unknown";
-  const bool control = d.type == TILE_TOGGLE || d.type == TILE_SLIDER || d.tap.kind == ACT_TOGGLE;
+  const bool control = d.type == TILE_TOGGLE || d.type == TILE_SLIDER || d.type == TILE_COVER || d.tap.kind == ACT_TOGGLE;
   const bool on = control ? wishOn(d.entity, e) : avail && haStateOn(domain, e.state);
   if (control) r.on = on;
   if (d.type == TILE_TOGGLE) setTileOn(r, on, &e);
@@ -554,6 +562,8 @@ void applyHaToTile(TileRt& r, bool force) {
     lv_label_set_text(r.sub, d.sub.length() ? d.sub.c_str() : numeric ? text : prettyState(domain, e).c_str());
     lv_label_set_text(r.unit, numeric && !dur && !d.sub.length() ? e.unit.c_str() : "");
     fitValue(r);
+  } else if (d.type == TILE_COVER) {
+    applyCover(r, e);
   } else if (d.type == TILE_SLIDER) {
     setSliderFill(r, wishFrac(d.entity, e));
     if (!d.sub.length()) lv_label_set_text(r.sub, wishText(d.entity, e, true).c_str());
@@ -961,7 +971,8 @@ void runAction(TileRt& r, const TileAction& a) {
       } else {
         HaEntity e;
         haGetEntity(entity, e);
-        setWish(entity, false, wishOn(entity, e) ? 0 : 1);
+        if (domain == "cover" && coverMoving(e)) coverCommand(entity, 1);  // a tap stops it
+        else setWish(entity, false, wishOn(entity, e) ? 0 : 1);
       }
       break;
     }
@@ -1028,7 +1039,11 @@ const char* actionVerb(const TileRt& r, const TileAction& a) {
   const String domain = entityDomain(r.def->entity);
   if (a.kind == ACT_TOGGLE) {
     if (domain == "lock") return r.on ? "Unlock" : "Lock";
-    if (domain == "cover") return r.on ? "Close" : "Open";
+    if (domain == "cover") {
+      HaEntity e;
+      if (haGetEntity(r.def->entity, e) && coverMoving(e)) return "Stop";
+      return r.on ? "Close" : "Open";
+    }
     if (domain == "media_player") return "Play / pause";
     if (domain == "scene" || domain == "script") return "Run";
     if (domain == "button" || domain == "input_button") return "Press";

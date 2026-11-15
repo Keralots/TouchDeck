@@ -573,6 +573,7 @@ void fitTile(TileRt& r) {
   else if (r.def->type == TILE_VIZ) fitViz(r, cw, ch);
   else if (r.def->type == TILE_PRINTER) fitPrinter(r, cw, ch);
   else if (r.def->type == TILE_SENSOR) fitSensor(r, cw, ch);
+  else if (r.def->type == TILE_COVER) fitCover(r, cw, ch);
   else fitButton(r, cw, ch);
   markPageStale(r.page);
 }

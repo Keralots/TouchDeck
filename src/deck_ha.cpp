@@ -362,6 +362,8 @@ void entityFromAttrs(HaEntity& e, JsonObjectConst a) {
       e.rgb = c.size() == 3 ? (int32_t)((c[0].as<int>() & 255) << 16 | (c[1].as<int>() & 255) << 8 | (c[2].as<int>() & 255)) : -1;
     } else if (!strcmp(k, "current_position") || !strcmp(k, "percentage")) {
       e.level = kv.value().is<float>() ? (int)lroundf(kv.value().as<float>()) : -1;
+    } else if (!strcmp(k, "supported_features")) {
+      e.features = kv.value().is<int32_t>() ? kv.value().as<int32_t>() : -1;
     } else if (!strcmp(k, "volume_level")) {
       e.level = kv.value().is<float>() ? (int)lroundf(kv.value().as<float>() * 100) : -1;
     } else if (float* f = climateField(e, k)) {
@@ -418,6 +420,7 @@ void applyEvent(JsonObjectConst ev) {
     e.brightness = -1;
     e.rgb = -1;
     e.level = -1;
+    e.features = -1;
     e.numMin = e.numMax = e.numStep = NAN;
     clearClimate(e);
     clearMedia(e);
@@ -441,6 +444,7 @@ void applyEvent(JsonObjectConst ev) {
       else if (!strcmp(key, "current_position") || !strcmp(key, "percentage") ||
                !strcmp(key, "volume_level"))
         e.level = -1;
+      else if (!strcmp(key, "supported_features")) e.features = -1;
       else if (float* f = climateField(e, key)) *f = NAN;
       else if (mediaField(e, key, JsonVariantConst())) {}
       else if (!strcmp(key, "hvac_action")) e.hvacAction = "";

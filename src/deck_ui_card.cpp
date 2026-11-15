@@ -460,6 +460,7 @@ void closeModal() {
     }
   }
   climateClose();
+  coverCardClose();
   if (s_modalCard) lv_obj_delete(s_modalCard);
   if (s_modalScrim) lv_obj_delete(s_modalScrim);
   if (s_modalUnder) lv_obj_delete(s_modalUnder);
@@ -582,6 +583,7 @@ void refreshModal() {
       lv_label_set_text(s_modalRange, range);
     }
   }
+  coverCardRefresh(r.def->entity, haKnown ? &e : nullptr);
   const bool on = haKnown && wishOn(r.def->entity, e);
   s_modalIconCp = showIcon(s_modalIcon, *r.def, haKnown ? &e : nullptr, on, 28, s_modalIconCp);
 }
@@ -618,6 +620,10 @@ void openModal(int tileIdx) {
     for (int i = 0, n = he.hvacModes.length(); i < n; i++) nModes += i == 0 || he.hvacModes[i] == ',';
   if (climate) ch = 74 + 52 + 8 + lv_font_get_line_height(&deck_font_14) + 10 +
                     (nModes > 1 ? 46 : 0) + 10 + 44 + 16;
+  // Cover: up / stop / down under the position slider.
+  const bool cover = entityDomain(d.entity) == "cover" && !d.http.enabled;
+  const int coverY = light ? 160 : 118;
+  if (cover) ch = coverY + 48 + 12 + 44 + 16;
   fxCardOpenBegin(tileIdx, {(int16_t)((w - cw) / 2), (int16_t)((h - ch) / 2), (int16_t)cw, (int16_t)ch}, 22);
 
   s_modalScrim = makeScrim(false);  // filled below, while the animation runs
@@ -694,6 +700,8 @@ void openModal(int tileIdx) {
     lv_obj_add_event_cb(sl, onModalSlider, LV_EVENT_PRESS_LOST, nullptr);
   }
 
+  if (cover) coverCardBuild(c, cw, coverY, accent);
+
   if (graph) {
     s_modalHours = d.style == METRIC_CHART ? d.hours : 24;
     s_modalPoints = (int32_t*)heap_caps_malloc(sizeof(int32_t) * HA_HISTORY_POINTS, MALLOC_CAP_SPIRAM);
@@ -731,7 +739,7 @@ void openModal(int tileIdx) {
   lv_obj_add_event_cb(primary, onModalPrimary, LV_EVENT_CLICKED, nullptr);
   // Nothing to run when the tap only opens this card (sensors, numbers).
   const ActionKind pk = cardAction(d).kind;
-  const bool noPrimary = d.type == TILE_SENSOR || pk == ACT_MORE_INFO || pk == ACT_NOTHING;
+  const bool noPrimary = d.type == TILE_SENSOR || pk == ACT_MORE_INFO || pk == ACT_NOTHING || cover;
   if (noPrimary) lv_obj_add_flag(primary, LV_OBJ_FLAG_HIDDEN);
   lv_obj_t* close = qpButton(c, noPrimary ? 16 : 16 + bw + 10, by, noPrimary ? cw - 32 : bw, "Close", false);
   lv_obj_set_height(close, 44);

@@ -393,7 +393,9 @@ bool edAdd(const String& entity, const String& name) {
   d.id = "d" + String(millis()) + "_" + String(s_addSeq++);
   const int dot = entity.indexOf('.');
   const String dom = dot > 0 ? entity.substring(0, dot) : String();
-  d.type = !strcmp(edAutoType(dom), "toggle") ? TILE_TOGGLE : !strcmp(edAutoType(dom), "sensor") ? TILE_SENSOR : TILE_ACTION;
+  d.type = dom == "cover" ? TILE_COVER
+           : !strcmp(edAutoType(dom), "toggle") ? TILE_TOGGLE
+           : !strcmp(edAutoType(dom), "sensor") ? TILE_SENSOR : TILE_ACTION;
   d.entity = entity;
   s_ed.added.push_back(d);
   const int k = (int)s_ed.tiles.size();
@@ -810,7 +812,7 @@ bool edBuild(String& out, String& err) {
     const TileDef& d = s_ed.added[j];
     JsonObject tv = tiles.add<JsonObject>();
     tv["id"] = d.id;
-    tv["type"] = d.type == TILE_TOGGLE ? "toggle" : d.type == TILE_SENSOR ? "sensor" : "action";
+    tv["type"] = d.type == TILE_TOGGLE ? "toggle" : d.type == TILE_SENSOR ? "sensor" : d.type == TILE_COVER ? "cover" : "action";
     tv["entity"] = d.entity;
     JsonObject q = tv["pos"][key].to<JsonObject>();
     putHalves(q, t.c);

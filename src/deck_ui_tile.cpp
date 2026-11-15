@@ -154,7 +154,8 @@ int tileOnOpa(const TileDef& d) { return d.onOpacity >= 0 ? d.onOpacity : dispSe
 // e: the tile's entity if the caller has it, else looked up when needed.
 void tileIconColor(TileRt& r, const HaEntity* e) {
   const TileDef& d = *r.def;
-  if (!r.chip || (d.type != TILE_ACTION && d.type != TILE_TOGGLE && d.type != TILE_SLIDER && d.type != TILE_SENSOR))
+  if (!r.chip || (d.type != TILE_ACTION && d.type != TILE_TOGGLE && d.type != TILE_SLIDER && d.type != TILE_SENSOR &&
+                  d.type != TILE_COVER))
     return;
   const bool on = lv_obj_has_state(r.obj, LV_STATE_CHECKED);
   HaEntity own;
@@ -413,9 +414,10 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     return;
   }
 
-  // Slider: the level fill goes in first so it stays behind the content.
+  // Slider: the level fill goes in first so it stays behind the content; a
+  // cover's fill is the shade, from the top.
   lv_obj_t* fill = nullptr;
-  if (def.type == TILE_SLIDER) {
+  if (def.type == TILE_SLIDER || def.type == TILE_COVER) {
     fill = lv_obj_create(t);
     lv_obj_remove_style_all(fill);
     lv_obj_add_flag(fill, (lv_obj_flag_t)(LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_HIDDEN));
@@ -423,10 +425,18 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     lv_obj_set_style_radius(fill, 16, 0);
     lv_obj_set_style_bg_color(fill, lv_color_hex(accent), 0);
     lv_obj_set_style_bg_opa(fill, s_theme == THEME_DAYLIGHT ? LV_OPA_40 : LV_OPA_50, 0);
-    lv_obj_add_flag(t, LV_OBJ_FLAG_PRESS_LOCK);  // the drag may leave the tile
+    if (def.type == TILE_SLIDER) lv_obj_add_flag(t, LV_OBJ_FLAG_PRESS_LOCK);  // the drag may leave the tile
+  }
+  // Cover: icon, state and name share a box that leaves room for the buttons.
+  lv_obj_t* host = t;
+  lv_obj_t* box = nullptr;
+  if (def.type == TILE_COVER) {
+    host = box = lv_obj_create(t);
+    lv_obj_remove_style_all(box);
+    lv_obj_remove_flag(box, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
   }
 
-  lv_obj_t* chip = lv_obj_create(t);
+  lv_obj_t* chip = lv_obj_create(host);
   lv_obj_remove_flag(chip, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
   lv_obj_set_size(chip, 30, 30);
   lv_obj_set_style_radius(chip, LV_RADIUS_CIRCLE, 0);
@@ -439,10 +449,10 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_center(ic);
 
   // Fonts and places come from fitTile once the tile has its size.
-  lv_obj_t* name = lv_label_create(t);
+  lv_obj_t* name = lv_label_create(host);
   lv_label_set_text(name, def.noName ? "" : tileLabel(def).c_str());
   lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
-  lv_obj_t* sub = lv_label_create(t);
+  lv_obj_t* sub = lv_label_create(host);
   lv_label_set_long_mode(sub, LV_LABEL_LONG_MODE_DOTS);
   if (def.type == TILE_SENSOR) {
     lv_obj_set_style_text_opa(name, LV_OPA_70, 0);
@@ -463,6 +473,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   r.iconPx = iconPx;
   r.iconCp = showIcon(ic, def, nullptr, false, iconPx, 0);
   r.fill = fill;
+  r.box = box;
   if (def.type == TILE_SENSOR) {
     r.detail = makeDetail(t, def);
     r.rows = makeRows(t, def);
@@ -470,11 +481,12 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_label_set_text(sub, tileSub(r).c_str());
   const size_t idx = s_tiles.size();
   s_tiles.push_back(r);
+  if (box) makeCoverButtons(s_tiles.back(), idx, accent);
   if (def.tap.kind == ACT_PC) applyPcStateToTile(s_tiles.back());
   lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
   lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
   lv_obj_add_event_cb(t, tileEvent, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)idx);
-  if (fill)
+  if (def.type == TILE_SLIDER)
     for (lv_event_code_t c : {LV_EVENT_PRESSED, LV_EVENT_PRESSING, LV_EVENT_RELEASED, LV_EVENT_PRESS_LOST,
                               LV_EVENT_SIZE_CHANGED})
       lv_obj_add_event_cb(t, sliderEvent, c, (void*)(uintptr_t)idx);
