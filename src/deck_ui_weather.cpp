@@ -1,14 +1,22 @@
 // Deck UI: the weather tile. One custom-drawn object lays itself out for the
-// room it gets; only the big icon animates.
+// room it gets; its icons are small images the deck rasterizes itself.
 #include "deck_ui_int.h"
 #include "deck_weather.h"
 
 namespace deckui {
 
-constexpr uint32_t WX_FRAME_MS = 40;
+constexpr uint32_t WX_FRAME_MS = 33;
 constexpr uint32_t WX_STALE_MS = 3UL * 60UL * 60UL * 1000UL;  // older than this is not "now"
 constexpr uint32_t C_SUN = 0xFFC533, C_RAIN = 0x4FA3FF, C_BOLT = 0xFFD23F;
 constexpr uint32_t C_COLD = 0x5AA9FF, C_WARM = 0xFFB03D;
+constexpr int WX_SPOTS = 1 + WEATHER_HOURS;  // now, and a forecast's icons
+
+// One icon on the tile: where it is, what it shows, and its image.
+struct Spot {
+  int16_t x, y, s;
+  uint8_t kind;
+  bool day;
+};
 
 struct WxRt {
   WeatherData d;
@@ -18,205 +26,270 @@ struct WxRt {
   bool flips;         // a forecast is on the tile, so a tap has something to flip
   bool animate;
   bool shown;         // d is fresh enough to show
-  lv_area_t icon;     // the animated icon inside the object, empty when x2 < x1
+  uint8_t nSpots;
+  uint8_t at;         // the next spot while painting
+  Spot spots[WX_SPOTS];
+  lv_draw_buf_t* buf[WX_SPOTS][3];  // A8, spot size, one per colour of the icon
+  lv_area_t dirty[WX_SPOTS][3];     // what the last frame drew on, empty when y2 < y1
+  uint32_t color[WX_SPOTS][3];
 };
 
 static uint32_t s_wxMs = 0;
 
 void wxFree(WxRt* w) {
-  if (w) lv_free(w);
+  if (!w) return;
+  for (auto& spot : w->buf)
+    for (lv_draw_buf_t* b : spot)
+      if (b) lv_draw_buf_destroy(b);
+  lv_free(w);
 }
 
 // --- Icons ---------------------------------------------------------------------
+// LVGL places its shapes on whole pixels, so a slow drift steps visibly. These
+// are drawn here with the edge coverage worked out per pixel instead, into one
+// A8 image per colour: a byte a pixel keeps the PSRAM traffic of a frame small.
 
-struct Pen {
-  lv_layer_t* layer;
-  bool light;  // Daylight theme: clouds and snow need to be darker than the tile
+// The S3's FPU multiplies but has no square root, and newlib's sqrtf, floorf
+// and ceilf are slow software: these stand in for them in the pixel loops.
+static inline float fsqrt(float x) {
+  if (x <= 0) return 0;
+  union {
+    float f;
+    uint32_t i;
+  } u = {x};
+  u.i = 0x5f3759df - (u.i >> 1);
+  float y = u.f;
+  y = y * (1.5f - 0.5f * x * y * y);
+  y = y * (1.5f - 0.5f * x * y * y);
+  return x * y;
+}
+static inline int ifloor(float v) { return (int)(v + 4096.0f) - 4096; }
+static inline int iceil(float v) { return 4096 - (int)(4096.0f - v); }
+
+struct Cv {
+  uint8_t* px;
+  int w, h, stride;
+  int x1, y1, x2, y2;  // what was drawn on, for the next clear
 };
 
-static void disc(const Pen& p, float cx, float cy, float r, uint32_t color, lv_opa_t opa = LV_OPA_COVER) {
-  lv_draw_rect_dsc_t d;
-  lv_draw_rect_dsc_init(&d);
-  d.bg_color = lv_color_hex(color);
-  d.bg_opa = opa;
-  d.radius = LV_RADIUS_CIRCLE;
-  const lv_area_t a = {(int32_t)lroundf(cx - r), (int32_t)lroundf(cy - r), (int32_t)lroundf(cx + r) - 1,
-                       (int32_t)lroundf(cy + r) - 1};
-  if (a.x2 >= a.x1 && a.y2 >= a.y1) lv_draw_rect(p.layer, &d, &a);
+static inline void put(Cv& c, int x, int y, float cover, int opa) {
+  const int a = (int)(cover * (float)opa);
+  uint8_t& p = c.px[y * c.stride + x];
+  if (a > p) p = (uint8_t)a;
 }
 
-static void pill(const Pen& p, float x1, float y1, float x2, float y2, uint32_t color, lv_opa_t opa = LV_OPA_COVER) {
-  lv_draw_rect_dsc_t d;
-  lv_draw_rect_dsc_init(&d);
-  d.bg_color = lv_color_hex(color);
-  d.bg_opa = opa;
-  d.radius = LV_RADIUS_CIRCLE;
-  const lv_area_t a = {(int32_t)lroundf(x1), (int32_t)lroundf(y1), (int32_t)lroundf(x2) - 1, (int32_t)lroundf(y2) - 1};
-  if (a.x2 >= a.x1 && a.y2 >= a.y1) lv_draw_rect(p.layer, &d, &a);
+static void touch(Cv& c, int x1, int y1, int x2, int y2) {
+  c.x1 = std::min(c.x1, x1);
+  c.y1 = std::min(c.y1, y1);
+  c.x2 = std::max(c.x2, x2);
+  c.y2 = std::max(c.y2, y2);
 }
 
-static void stroke(const Pen& p, float x1, float y1, float x2, float y2, float width, uint32_t color,
-                   lv_opa_t opa = LV_OPA_COVER) {
-  lv_draw_line_dsc_t d;
-  lv_draw_line_dsc_init(&d);
-  d.color = lv_color_hex(color);
-  d.opa = opa;
-  d.width = std::max(1, (int)lroundf(width));
-  d.round_start = d.round_end = 1;
-  d.p1 = {(lv_value_precise_t)x1, (lv_value_precise_t)y1};
-  d.p2 = {(lv_value_precise_t)x2, (lv_value_precise_t)y2};
-  lv_draw_line(p.layer, &d);
+// Coverage from the squared distance to a shape r thick: the root is taken on
+// the edge only (the S3 has no hardware square root).
+static inline float edge(float d2, float r) {
+  const float in = r - 0.5f, out = r + 0.5f;
+  if (d2 >= out * out) return 0;
+  if (in > 0 && d2 <= in * in) return 1;
+  return r - fsqrt(d2) + 0.5f;
 }
 
-static void tri(const Pen& p, float x1, float y1, float x2, float y2, float x3, float y3, uint32_t color, lv_opa_t opa) {
-  lv_draw_triangle_dsc_t d;
-  lv_draw_triangle_dsc_init(&d);
-  d.color = lv_color_hex(color);
-  d.opa = opa;
-  d.p[0] = {(lv_value_precise_t)x1, (lv_value_precise_t)y1};
-  d.p[1] = {(lv_value_precise_t)x2, (lv_value_precise_t)y2};
-  d.p[2] = {(lv_value_precise_t)x3, (lv_value_precise_t)y3};
-  lv_draw_triangle(p.layer, &d);
-}
-
-static void sun(const Pen& p, float cx, float cy, float s, uint32_t t) {
-  const float turn = (float)(t % 16000) / 16000.0f * 2.0f * (float)M_PI;
-  const float pulse = 0.015f * sinf((float)(t % 3000) / 3000.0f * 2.0f * (float)M_PI);
-  const float r1 = s * 0.33f, r2 = s * (0.45f + pulse);
-  for (int i = 0; i < 8; i++) {
-    const float a = turn + (float)i * (float)M_PI / 4.0f, c = cosf(a), sn = sinf(a);
-    stroke(p, cx + c * r1, cy + sn * r1, cx + c * r2, cy + sn * r2, s / 14.0f + 1.0f, C_SUN);
-  }
-  disc(p, cx, cy, s * 0.24f, C_SUN);
-}
-
-// A crescent as an A8 image: LVGL has no way to cut one disc out of another.
-// One per size in use; freed with the pages, never while a frame may still draw one.
-constexpr int MOONS = 6;
-static lv_draw_buf_t* s_moon[MOONS] = {};
-
-void wxMoonFree() {
-  for (lv_draw_buf_t*& b : s_moon) {
-    if (b) lv_draw_buf_destroy(b);
-    b = nullptr;
-  }
-}
-
-static lv_draw_buf_t* moonImage(int px) {
-  int slot = -1;
-  for (int i = 0; i < MOONS; i++)
-    if (s_moon[i] && (int)s_moon[i]->header.w == px) return s_moon[i];
-  for (int i = 0; i < MOONS && slot < 0; i++)
-    if (!s_moon[i]) slot = i;
-  if (slot < 0) return nullptr;
-  lv_draw_buf_t* b = lv_draw_buf_create(px, px, LV_COLOR_FORMAT_A8, 0);
-  if (!b) return nullptr;
-  const float R = px / 2.0f - 0.5f, c = px / 2.0f;
-  const float ix = c + R * 0.42f, iy = c - R * 0.22f, Ri = R * 0.86f;
-  for (int y = 0; y < px; y++)
-    for (int x = 0; x < px; x++) {
-      const float fx = x + 0.5f, fy = y + 0.5f;
-      const float in = constrain(R - hypotf(fx - c, fy - c) + 0.5f, 0.0f, 1.0f);
-      const float out = constrain(hypotf(fx - ix, fy - iy) - Ri + 0.5f, 0.0f, 1.0f);
-      b->data[y * b->header.stride + x] = (uint8_t)(255.0f * in * out);
+// A horizontal bar with round ends from ax to bx (a disc when they are equal),
+// r thick on each side. Row by row: the inside of a row is one run of whole
+// pixels, and only the few pixels on its ends get their coverage worked out.
+static void stadium(Cv& c, float ax, float bx, float cy, float r, int opa = 255) {
+  const int y1 = std::max(0, ifloor(cy - r - 1)), y2 = std::min(c.h - 1, iceil(cy + r + 1));
+  if (y2 < y1) return;
+  const float rin = r - 0.5f, rout = r + 0.5f;
+  touch(c, std::max(0, ifloor(ax - rout - 1)), y1, std::min(c.w - 1, iceil(bx + rout + 1)), y2);
+  auto at = [&](int x, int y, float dy) {
+    const float px = (float)x + 0.5f, dx = px < ax ? ax - px : px > bx ? px - bx : 0;
+    const float cover = edge(dx * dx + dy * dy, r);
+    if (cover > 0) put(c, x, y, std::min(cover, 1.0f), opa);
+  };
+  for (int y = y1; y <= y2; y++) {
+    const float dy = (float)y + 0.5f - cy, o2 = rout * rout - dy * dy;
+    if (o2 <= 0) continue;
+    const float ho = fsqrt(o2), i2 = rin > 0 ? rin * rin - dy * dy : -1;
+    const int xo1 = std::max(0, ifloor(ax - ho - 0.5f)), xo2 = std::min(c.w - 1, iceil(bx + ho - 0.5f));
+    int xs = xo2 + 1, xe = xo2;  // the whole pixels, none by default
+    if (i2 > 0) {
+      const float hi = fsqrt(i2);
+      xs = std::max(0, iceil(ax - hi - 0.5f));
+      xe = std::min(c.w - 1, ifloor(bx + hi - 0.5f));
+      if (xe < xs) xs = xo2 + 1, xe = xo2;
     }
-  s_moon[slot] = b;
-  return b;
-}
-
-static void moon(const Pen& p, float cx, float cy, float s, uint32_t t, bool stars) {
-  const int px = std::max(8, (int)lroundf(s * 0.62f));
-  const uint32_t color = p.light ? 0x8592AB : 0xE3E8F2;
-  if (lv_draw_buf_t* b = moonImage(px)) {
-    lv_draw_image_dsc_t d;
-    lv_draw_image_dsc_init(&d);
-    d.src = b;
-    d.recolor = lv_color_hex(color);
-    d.recolor_opa = LV_OPA_COVER;
-    const int x = (int)lroundf(cx - px / 2.0f), y = (int)lroundf(cy - px / 2.0f);
-    const lv_area_t a = {x, y, x + px - 1, y + px - 1};
-    lv_draw_image(p.layer, &d, &a);
-  } else {
-    disc(p, cx, cy, px / 2.0f, color);
-  }
-  if (!stars || s < 30) return;
-  static const float at[2][2] = {{0.30f, -0.26f}, {0.36f, 0.20f}};
-  for (int i = 0; i < 2; i++) {
-    const float ph = (float)((t + i * 900) % 2600) / 2600.0f;
-    const float k = 0.5f + 0.5f * sinf(ph * 2.0f * (float)M_PI);
-    disc(p, cx + at[i][0] * s, cy + at[i][1] * s, std::max(1.0f, s / 30.0f), color, (lv_opa_t)(90 + 165 * k));
+    for (int x = xo1; x < xs && x <= xo2; x++) at(x, y, dy);
+    if (xe < xs) continue;
+    uint8_t* p = c.px + y * c.stride + xs;
+    if (opa >= 255) memset(p, 255, (size_t)(xe - xs + 1));
+    else
+      for (int x = xs; x <= xe; x++, p++)
+        if (opa > *p) *p = (uint8_t)opa;
+    for (int x = xe + 1; x <= xo2; x++) at(x, y, dy);
   }
 }
 
-// Spans 0.72 sc wide and 0.52 sc high around (cx, cy).
-static void cloud(const Pen& p, float cx, float cy, float sc, uint32_t color) {
-  pill(p, cx - 0.36f * sc, cy, cx + 0.36f * sc, cy + 0.26f * sc, color);
-  disc(p, cx - 0.14f * sc, cy + 0.04f * sc, 0.16f * sc, color);
-  disc(p, cx + 0.08f * sc, cy - 0.04f * sc, 0.22f * sc, color);
+static void disc(Cv& c, float cx, float cy, float r, int opa = 255) { stadium(c, cx, cx, cy, r, opa); }
+
+// A line with round ends at any angle, r thick on each side. Small shapes only.
+static void capsule(Cv& c, float ax, float ay, float bx, float by, float r, int opa = 255) {
+  const int x1 = std::max(0, ifloor(std::min(ax, bx) - r - 1)), x2 = std::min(c.w - 1, iceil(std::max(ax, bx) + r + 1));
+  const int y1 = std::max(0, ifloor(std::min(ay, by) - r - 1)), y2 = std::min(c.h - 1, iceil(std::max(ay, by) + r + 1));
+  if (x2 < x1 || y2 < y1) return;
+  touch(c, x1, y1, x2, y2);
+  const float vx = bx - ax, vy = by - ay, len2 = vx * vx + vy * vy, inv = len2 > 0 ? 1.0f / len2 : 0;
+  for (int y = y1; y <= y2; y++)
+    for (int x = x1; x <= x2; x++) {
+      const float px = (float)x + 0.5f - ax, py = (float)y + 0.5f - ay;
+      const float u = constrain((px * vx + py * vy) * inv, 0.0f, 1.0f);
+      const float dx = px - u * vx, dy = py - u * vy;
+      const float cover = edge(dx * dx + dy * dy, r);
+      if (cover > 0) put(c, x, y, std::min(cover, 1.0f), opa);
+    }
+}
+
+static float wave(uint32_t t, uint32_t period, float phase = 0) {
+  return sinf(((float)(t % period) / (float)period + phase) * 2.0f * (float)M_PI);
 }
 
 static float fract(float v) { return v - floorf(v); }
 
-// t = 0 and still = true: the icon at rest, for the small forecast icons.
-static void wxIcon(const Pen& p, WeatherKind kind, bool day, float cx, float cy, float s, uint32_t t, bool still) {
-  const uint32_t front = p.light ? 0xA9B4C4 : 0xDDE3EC, back = p.light ? 0xC6CEDA : 0x8E9AAD;
-  const float drift = still ? 0 : 0.03f * s * sinf((float)(t % 7000) / 7000.0f * 2.0f * (float)M_PI);
-  auto drops = [&](float top, int n, float spread, bool snow) {
+static void sun(Cv& c, float cx, float cy, float s, uint32_t t) {
+  const float turn = (float)(t % 16000) / 16000.0f * 2.0f * (float)M_PI;
+  const float r1 = s * 0.33f, r2 = s * (0.44f + 0.02f * wave(t, 3000));
+  for (int i = 0; i < 8; i++) {
+    const float a = turn + (float)i * (float)M_PI / 4.0f, co = cosf(a), si = sinf(a);
+    capsule(c, cx + co * r1, cy + si * r1, cx + co * r2, cy + si * r2, s / 28.0f + 0.5f);
+  }
+  disc(c, cx, cy, s * 0.24f);
+}
+
+// A crescent: one disc with another cut out of it.
+static void moon(Cv& c, float cx, float cy, float s, uint32_t t, bool stars) {
+  const float R = s * 0.31f, ix = cx + R * 0.42f, iy = cy - R * 0.22f, Ri = R * 0.86f;
+  const int x1 = std::max(0, ifloor(cx - R - 1)), x2 = std::min(c.w - 1, iceil(cx + R + 1));
+  const int y1 = std::max(0, ifloor(cy - R - 1)), y2 = std::min(c.h - 1, iceil(cy + R + 1));
+  touch(c, x1, y1, x2, y2);
+  for (int y = y1; y <= y2; y++)
+    for (int x = x1; x <= x2; x++) {
+      const float fx = (float)x + 0.5f, fy = (float)y + 0.5f;
+      const float in = edge((fx - cx) * (fx - cx) + (fy - cy) * (fy - cy), R);
+      if (in <= 0) continue;
+      const float out = 1.0f - edge((fx - ix) * (fx - ix) + (fy - iy) * (fy - iy), Ri);
+      if (out > 0) put(c, x, y, in * out, 255);
+    }
+  if (!stars || s < 30) return;
+  static const float at[2][2] = {{0.30f, -0.26f}, {0.36f, 0.20f}};
+  for (int i = 0; i < 2; i++)
+    disc(c, cx + at[i][0] * s, cy + at[i][1] * s, std::max(1.0f, s / 30.0f),
+         (int)(150.0f + 105.0f * wave(t, 2600, (float)i * 0.35f)));
+}
+
+// Spans 0.72 sc wide and 0.52 sc high around (cx, cy).
+static void cloud(Cv& c, float cx, float cy, float sc) {
+  stadium(c, cx - 0.23f * sc, cx + 0.23f * sc, cy + 0.13f * sc, 0.13f * sc);
+  disc(c, cx - 0.14f * sc, cy + 0.04f * sc, 0.16f * sc);
+  disc(c, cx + 0.08f * sc, cy - 0.04f * sc, 0.22f * sc);
+}
+
+constexpr int WX_LAYERS = 3;
+
+// Images an icon is made of, one per colour, drawn in this order.
+static int wxLayers(WeatherKind kind) {
+  return kind == WX_CLEAR || kind == WX_FOG ? 1 : kind == WX_STORM ? 3 : 2;
+}
+
+// Each layer image is the whole icon. still: at rest, for a tile with the
+// animation off. light: the Daylight theme, where clouds and snow go darker.
+static void wxIcon(Cv* c, uint32_t* color, WeatherKind kind, bool day, uint32_t t, bool still, bool light) {
+  const float s = (float)c[0].w, cx = s / 2.0f, cy = s / 2.0f;
+  const uint32_t front = light ? 0xA9B4C4 : 0xDDE3EC, back = light ? 0xC6CEDA : 0x8E9AAD;
+  const uint32_t night = light ? 0x8592AB : 0xE3E8F2;
+  if (still) t = 0;
+  const float drift = still ? 0 : 0.035f * s * wave(t, 7000);
+  auto drops = [&](Cv& l, float top, int n, float spread, bool snow) {
     static const float rest[3] = {0.25f, 0.65f, 0.45f};
     for (int i = 0; i < n; i++) {
-      const float ph = still ? rest[i] : fract((float)(t % 36000) / (snow ? 2400.0f : 950.0f) + (float)i * 0.37f);
+      const float ph = still ? rest[i] : fract((float)(t % 45600) / (snow ? 2400.0f : 950.0f) + (float)i * 0.37f);
       const float x = cx + ((float)i - (float)(n - 1) / 2.0f) * spread;
-      const float bottom = cy + 0.48f * s, len = snow ? 0 : 0.10f * s;
+      const float bottom = cy + 0.47f * s, len = snow ? 0 : 0.10f * s;
       const float y = top + ph * (bottom - top - len);
-      const lv_opa_t opa = (lv_opa_t)(ph > 0.75f ? 255.0f * (1.0f - ph) / 0.25f : 255);
-      if (snow) {
-        const float sway = 0.035f * s * sinf(ph * 2.0f * (float)M_PI + (float)i);
-        disc(p, x + sway, y, std::max(1.5f, s / 20.0f), p.light ? 0x7FB6E8 : 0xFFFFFF, opa);
-      } else {
-        stroke(p, x, y, x - 0.04f * s, y + len, s / 18.0f + 1.0f, C_RAIN, opa);
-      }
+      const int opa = ph > 0.75f ? (int)(255.0f * (1.0f - ph) / 0.25f) : ph < 0.1f ? (int)(255.0f * ph / 0.1f) : 255;
+      if (snow) disc(l, x + 0.035f * s * sinf(ph * 2.0f * (float)M_PI + (float)i), y, std::max(1.2f, s / 22.0f), opa);
+      else capsule(l, x, y, x - 0.04f * s, y + len, s / 40.0f + 0.5f, opa);
     }
   };
   switch (kind) {
     case WX_CLEAR:
-      if (day) sun(p, cx, cy, s, still ? 0 : t);
-      else moon(p, cx, cy, s, t, !still);
+      color[0] = day ? C_SUN : night;
+      if (day) sun(c[0], cx, cy, s, t);
+      else moon(c[0], cx, cy, s, t, !still);
       break;
     case WX_PARTLY:
-      if (day) sun(p, cx - 0.15f * s, cy - 0.14f * s, s * 0.62f, still ? 0 : t);
-      else moon(p, cx - 0.15f * s, cy - 0.14f * s, s * 0.8f, t, false);
-      cloud(p, cx + 0.07f * s + drift, cy + 0.10f * s, 0.8f * s, front);
+      color[0] = day ? C_SUN : night;
+      color[1] = front;
+      if (day) sun(c[0], cx - 0.15f * s, cy - 0.14f * s, s * 0.62f, t);
+      else moon(c[0], cx - 0.15f * s, cy - 0.14f * s, s * 0.8f, t, false);
+      cloud(c[1], cx + 0.07f * s + drift, cy + 0.10f * s, 0.8f * s);
       break;
     case WX_CLOUD:
-      cloud(p, cx + 0.15f * s - drift, cy - 0.14f * s, 0.6f * s, back);
-      cloud(p, cx - 0.04f * s + drift, cy + 0.04f * s, 0.85f * s, front);
+      color[0] = back;
+      color[1] = front;
+      cloud(c[0], cx + 0.15f * s - drift, cy - 0.14f * s, 0.6f * s);
+      cloud(c[1], cx - 0.04f * s + drift, cy + 0.04f * s, 0.85f * s);
       break;
     case WX_FOG: {
-      cloud(p, cx, cy - 0.20f * s, 0.75f * s, front);
+      color[0] = front;
+      cloud(c[0], cx, cy - 0.20f * s, 0.75f * s);
       static const float half[3] = {0.32f, 0.22f, 0.27f};
       for (int i = 0; i < 3; i++) {
-        const float dx = still ? 0 : 0.05f * s * sinf((float)((t + i * 1300) % 5200) / 5200.0f * 2.0f * (float)M_PI);
-        const float y = cy + (0.14f + 0.13f * (float)i) * s;
-        stroke(p, cx - half[i] * s + dx, y, cx + half[i] * s + dx, y, s / 16.0f + 1.0f, front, LV_OPA_70);
+        const float dx = still ? 0 : 0.05f * s * wave(t, 5200, (float)i * 0.25f);
+        stadium(c[0], cx - half[i] * s + dx, cx + half[i] * s + dx, cy + (0.14f + 0.13f * (float)i) * s,
+                s / 32.0f + 0.5f, 180);
       }
       break;
     }
     case WX_RAIN:
     case WX_SNOW:
-      cloud(p, cx + drift, cy - 0.18f * s, 0.85f * s, front);
-      drops(cy + 0.10f * s, 3, 0.2f * s, kind == WX_SNOW);
+      color[0] = front;
+      color[1] = kind == WX_RAIN ? C_RAIN : light ? 0x7FB6E8 : 0xFFFFFF;
+      cloud(c[0], cx + drift, cy - 0.18f * s, 0.85f * s);
+      drops(c[1], cy + 0.10f * s, 3, 0.2f * s, kind == WX_SNOW);
       break;
     case WX_STORM: {
-      const uint32_t q = still ? 0 : t % 2600;
-      const bool flash = !still && (q < 120 || (q > 220 && q < 300));
-      cloud(p, cx, cy - 0.18f * s, 0.85f * s, flash ? front : 0x7C8798);
-      drops(cy + 0.10f * s, 2, 0.5f * s, false);
-      const lv_opa_t opa = still || flash ? LV_OPA_COVER : (lv_opa_t)170;
-      tri(p, cx + 0.08f * s, cy + 0.02f * s, cx - 0.12f * s, cy + 0.27f * s, cx + 0.04f * s, cy + 0.24f * s, C_BOLT, opa);
-      tri(p, cx - 0.04f * s, cy + 0.20f * s, cx + 0.14f * s, cy + 0.18f * s, cx - 0.08f * s, cy + 0.48f * s, C_BOLT, opa);
+      // Two quick flashes every 2.6 s, fading out rather than switching.
+      const float q = (float)(t % 2600);
+      const float flash = still ? 0 : q < 120 ? 1 : q < 220 ? 0.2f : q < 300 ? 1 : q < 700 ? (700 - q) / 400.0f : 0;
+      color[0] = lv_color_to_u32(lv_color_mix(lv_color_hex(front), lv_color_hex(0x7C8798), (uint8_t)(flash * 255))) & 0xFFFFFF;
+      color[1] = C_RAIN;
+      color[2] = C_BOLT;
+      cloud(c[0], cx, cy - 0.18f * s, 0.85f * s);
+      drops(c[1], cy + 0.10f * s, 2, 0.5f * s, false);
+      const int opa = still ? 255 : 150 + (int)(105.0f * flash);
+      const float r = std::max(1.0f, 0.035f * s);
+      capsule(c[2], cx + 0.07f * s, cy + 0.04f * s, cx - 0.07f * s, cy + 0.24f * s, r, opa);
+      capsule(c[2], cx - 0.07f * s, cy + 0.24f * s, cx + 0.07f * s, cy + 0.22f * s, r, opa);
+      capsule(c[2], cx + 0.07f * s, cy + 0.22f * s, cx - 0.05f * s, cy + 0.44f * s, r, opa);
       break;
     }
   }
+}
+
+// Draws one spot's images afresh: last frame's pixels are wiped first.
+static void spotRender(WxRt& w, int i, uint32_t t) {
+  const Spot& p = w.spots[i];
+  Cv c[WX_LAYERS];
+  const int n = wxLayers((WeatherKind)p.kind);
+  for (int l = 0; l < n; l++) {
+    lv_draw_buf_t* b = w.buf[i][l];
+    if (!b) return;
+    lv_area_t& d = w.dirty[i][l];
+    for (int y = d.y1; y <= d.y2; y++) memset(b->data + y * b->header.stride + d.x1, 0, (size_t)(d.x2 - d.x1 + 1));
+    c[l] = {b->data, (int)b->header.w, (int)b->header.h, (int)b->header.stride, p.s, p.s, -1, -1};
+  }
+  wxIcon(c, w.color[i], (WeatherKind)p.kind, p.day, t, !w.animate, s_theme == THEME_DAYLIGHT);
+  for (int l = 0; l < n; l++) w.dirty[i][l] = {c[l].x1, c[l].y1, c[l].x2, c[l].y2};
 }
 
 // --- Layout and paint ------------------------------------------------------------
@@ -253,10 +326,42 @@ static void box(const Ink& k, int x, int y, int w, int h, lv_color_t color, lv_o
   lv_draw_rect(k.layer, &d, &a);
 }
 
-static void still(const Ink& k, WeatherKind kind, bool day, int x, int y, int s) {
-  if (!k.layer || s < 8) return;
-  const Pen p = {k.layer, s_theme == THEME_DAYLIGHT};
-  wxIcon(p, kind, day, (float)(k.x0 + x) + s / 2.0f, (float)(k.y0 + y) + s / 2.0f, (float)s, 0, true);
+// The box around spots from..to-1 inside the object, empty (x2 < x1) for none.
+static lv_area_t spotArea(const WxRt& w, int from, int to) {
+  lv_area_t r = {INT16_MAX, INT16_MAX, -1, -1};
+  for (int i = from; i < to && i < w.nSpots; i++) {
+    const Spot& p = w.spots[i];
+    r.x1 = std::min<int32_t>(r.x1, p.x);
+    r.y1 = std::min<int32_t>(r.y1, p.y);
+    r.x2 = std::max<int32_t>(r.x2, p.x + p.s - 1);
+    r.y2 = std::max<int32_t>(r.y2, p.y + p.s - 1);
+  }
+  return r;
+}
+
+static void spotDraw(const Ink& k, const WxRt& w, int i) {
+  const Spot& p = w.spots[i];
+  const lv_area_t a = {k.x0 + p.x, k.y0 + p.y, k.x0 + p.x + p.s - 1, k.y0 + p.y + p.s - 1};
+  for (int l = 0; l < WX_LAYERS; l++) {
+    const lv_draw_buf_t* b = w.buf[i][l];
+    if (!b || (int)b->header.w != p.s) continue;
+    lv_draw_image_dsc_t d;
+    lv_draw_image_dsc_init(&d);
+    d.src = b;
+    d.recolor = lv_color_hex(w.color[i][l]);
+    d.recolor_opa = LV_OPA_COVER;
+    lv_draw_image(k.layer, &d, &a);
+  }
+}
+
+// An icon: measuring books its place, painting draws the image made for it.
+static void spot(const Ink& k, WxRt& w, WeatherKind kind, bool day, int x, int y, int s) {
+  if (s < 8) return;
+  if (k.layer) {
+    if (w.at < w.nSpots) spotDraw(k, w, w.at++);
+    return;
+  }
+  if (w.nSpots < WX_SPOTS) w.spots[w.nSpots++] = {(int16_t)x, (int16_t)y, (int16_t)s, (uint8_t)kind, day};
 }
 
 static void degText(float v, char* out, size_t n) {
@@ -342,7 +447,7 @@ static void rainText(const Ink& k, const WxRt& w, const Slot& s, const lv_font_t
 }
 
 // Forecast as columns: label, icon, temperatures.
-static void columns(const Ink& k, const WxRt& w, int x, int y, int wd, int h) {
+static void columns(const Ink& k, WxRt& w, int x, int y, int wd, int h) {
   const bool big = h >= 104 && wd >= 5 * 58;
   const lv_font_t* lf = big ? &deck_font_14 : &deck_font_12;
   const lv_font_t* tf = &deck_font_14;
@@ -360,7 +465,7 @@ static void columns(const Ink& k, const WxRt& w, int x, int y, int wd, int h) {
     int yy = top;
     say(k, s[i].label, lf, cx, yy, cw, LV_TEXT_ALIGN_CENTER, LV_OPA_70);
     yy += lh + gap;
-    still(k, s[i].kind, s[i].day, cx + (cw - icon) / 2, yy, icon);
+    spot(k, w, s[i].kind, s[i].day, cx + (cw - icon) / 2, yy, icon);
     yy += icon + gap;
     char t[12];
     degText(s[i].hi, t, sizeof(t));
@@ -377,7 +482,7 @@ static void columns(const Ink& k, const WxRt& w, int x, int y, int wd, int h) {
 }
 
 // Forecast as rows: label, icon, and a bar from the day's low to its high where there is room.
-static void rows(const Ink& k, const WxRt& w, int x, int y, int wd, int h) {
+static void rows(const Ink& k, WxRt& w, int x, int y, int wd, int h) {
   Slot s[WEATHER_HOURS];
   const int n = slots(w, s, std::min(h / 22, (int)WEATHER_HOURS), true);
   if (n <= 0) return;
@@ -396,7 +501,7 @@ static void rows(const Ink& k, const WxRt& w, int x, int y, int wd, int h) {
   for (int i = 0; i < n; i++) {
     const int ry = top + i * rh, ty = ry + (rh - fh) / 2;
     say(k, s[i].label, f, x, ty, lw, LV_TEXT_ALIGN_LEFT, LV_OPA_70);
-    still(k, s[i].kind, s[i].day, x + lw + 2, ry + (rh - icon) / 2, icon);
+    spot(k, w, s[i].kind, s[i].day, x + lw + 2, ry + (rh - icon) / 2, icon);
     char t[12];
     degText(s[i].hi, t, sizeof(t));
     say(k, t, f, x + wd - tw, ty, tw, LV_TEXT_ALIGN_RIGHT);
@@ -450,7 +555,7 @@ static void header(const Ink& k, WxRt& w, const TileDef& def, int x, int y, int 
     const bool range = h >= 44 + th + sh;
     const int s = constrain(std::min(wd - 8, h - th - (range ? sh : 0) - 2), 20, 96);
     const int used = s + th + (range ? sh : 0), top = y + (h - used) / 2;
-    w.icon = {x + (wd - s) / 2, top, x + (wd - s) / 2 + s - 1, top + s - 1};
+    spot(k, w, weatherKind(d.code), d.day, x + (wd - s) / 2, top, s);
     degText(d.temp, t, sizeof(t));
     say(k, t, f, x, top + s, wd, LV_TEXT_ALIGN_CENTER);
     if (range) say(k, hl, &deck_font_12, x, top + s + th, wd, LV_TEXT_ALIGN_CENTER, LV_OPA_70);
@@ -458,7 +563,7 @@ static void header(const Ink& k, WxRt& w, const TileDef& def, int x, int y, int 
   }
   // Wide: icon, then temperature over condition and range, then the extras.
   const int s = constrain(std::min(h, wd * 2 / 5), 28, 124);
-  w.icon = {x, y + (h - s) / 2, x + s - 1, y + (h - s) / 2 + s - 1};
+  spot(k, w, weatherKind(d.code), d.day, x, y + (h - s) / 2, s);
   const int tx = x + s + std::max(6, s / 8), room = x + wd - tx;
   const lv_font_t* f = h >= 124 && room >= 150 ? &deck_font_clock_72
                        : h >= 78 && room >= 110 ? &deck_font_clock_56 : &deck_font_28;
@@ -500,16 +605,15 @@ static void header(const Ink& k, WxRt& w, const TileDef& def, int x, int y, int 
   for (int i = 0; i < 3; i++) say(k, e[i], ef, x + wd - ew - 2, ey + i * eh, ew + 2, LV_TEXT_ALIGN_RIGHT, LV_OPA_70);
 }
 
-// Everything on the tile. Without a layer it only works out the layout (icon place, tap).
+// Everything on the tile. Without a layer it only works out the layout (icon places, tap).
 static void paint(const Ink& k, WxRt& w, const TileDef& def, int wd, int h) {
-  w.icon = {0, 0, -1, -1};
   w.flips = false;
   if (!w.shown) {
     const char* text = !weatherPlaceSet() ? "Set a place" : "No data yet";
     const lv_font_t* f = wd >= 110 ? &deck_font_14 : &deck_font_12;
     const int s = constrain(std::min(wd, h - lineH(f)) * 3 / 5, 0, 64);
     const int top = (h - s - lineH(f)) / 2;
-    still(k, WX_CLOUD, true, (wd - s) / 2, top, s);
+    spot(k, w, WX_CLOUD, true, (wd - s) / 2, top, s);
     if (textW(text, f) <= wd) say(k, text, f, 0, top + s, wd, LV_TEXT_ALIGN_CENTER, LV_OPA_70);
     return;
   }
@@ -553,10 +657,31 @@ void makeWeatherContent(TileRt& r, lv_obj_t* t) {
   lv_obj_remove_flag(r.viz, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
 }
 
+// Works out the layout and gives every icon an image of its size. Never
+// called from a draw event: a frame in progress may still use the old images.
 static void wxMeasure(TileRt& r) {
   if (!r.wx) return;
+  WxRt& w = *r.wx;
   const Ink k = {nullptr, lv_color_white(), 0, 0};
-  paint(k, *r.wx, *r.def, lv_obj_get_width(r.viz), lv_obj_get_height(r.viz));
+  w.nSpots = 0;
+  paint(k, w, *r.def, lv_obj_get_width(r.viz), lv_obj_get_height(r.viz));
+  const uint32_t now = millis();
+  for (int i = 0; i < WX_SPOTS; i++) {
+    const int s = i < w.nSpots ? w.spots[i].s : 0;
+    const int layers = s ? wxLayers((WeatherKind)w.spots[i].kind) : 0;
+    for (int l = 0; l < WX_LAYERS; l++) {
+      lv_draw_buf_t*& b = w.buf[i][l];
+      if (b && (l >= layers || (int)b->header.w != s)) {
+        lv_draw_buf_destroy(b);
+        b = nullptr;
+      }
+      if (l < layers && !b) {
+        b = lv_draw_buf_create(s, s, LV_COLOR_FORMAT_A8, 0);
+        if (b) w.dirty[i][l] = {0, 0, s - 1, s - 1};  // new memory: wipe all of it
+      }
+    }
+    if (s) spotRender(w, i, now);
+  }
 }
 
 void fitWeather(TileRt& r, int cw, int ch) {
@@ -574,16 +699,22 @@ void wxDrawEvent(lv_event_t* e) {
   lv_area_t a;
   lv_obj_get_coords(o, &a);
   const Ink k = {lv_event_get_layer(e), lv_obj_get_style_text_color(o, LV_PART_MAIN), a.x1, a.y1};
-  // An animation frame redraws the icon alone.
-  const lv_area_t ic = {a.x1 + w.icon.x1, a.y1 + w.icon.y1, a.x1 + w.icon.x2, a.y1 + w.icon.y2};
+  // An animation frame redraws the icon of now, or the strip the forecast's
+  // icons stand in: nothing else is in either.
   const lv_area_t& cl = k.layer->_clip_area;
-  const bool iconOnly = w.icon.x2 >= w.icon.x1 && cl.x1 >= ic.x1 && cl.y1 >= ic.y1 && cl.x2 <= ic.x2 && cl.y2 <= ic.y2;
-  if (!iconOnly) paint(k, w, *r.def, lv_area_get_width(&a), lv_area_get_height(&a));
-  if (w.icon.x2 < w.icon.x1) return;
-  const Pen p = {k.layer, s_theme == THEME_DAYLIGHT};
-  const float s = (float)lv_area_get_width(&w.icon);
-  wxIcon(p, weatherKind(w.d.code), w.d.day, (float)(a.x1 + w.icon.x1) + s / 2.0f, (float)(a.y1 + w.icon.y1) + s / 2.0f,
-         s, millis(), !w.animate);
+  auto within = [&](const lv_area_t& r) {
+    return r.x2 >= r.x1 && cl.x1 >= a.x1 + r.x1 && cl.y1 >= a.y1 + r.y1 && cl.x2 <= a.x1 + r.x2 && cl.y2 <= a.y1 + r.y2;
+  };
+  if (w.nSpots && within(spotArea(w, 0, 1))) {
+    spotDraw(k, w, 0);
+    return;
+  }
+  if (within(spotArea(w, 1, w.nSpots))) {
+    for (int i = 1; i < w.nSpots; i++) spotDraw(k, w, i);
+    return;
+  }
+  w.at = 0;
+  paint(k, w, *r.def, lv_area_get_width(&a), lv_area_get_height(&a));
 }
 
 // A tap flips the forecast between days and hours.
@@ -593,6 +724,7 @@ void wxTap(lv_event_t* e) {
   TileRt& r = s_tiles[idx];
   if (!r.wx->flips || !r.wx->shown) return;
   r.wx->forecast = r.wx->forecast == 1 ? 0 : 1;
+  wxMeasure(r);
   lv_obj_invalidate(r.viz);
   markPageStale(r.page);
 }
@@ -604,7 +736,8 @@ static bool wxShowing() {
 void wxTick() {
   const uint32_t now = millis();
   if (now - s_wxMs < WX_FRAME_MS) return;
-  s_wxMs = now;
+  // Fixed steps, so loop jitter does not stretch the frame period.
+  s_wxMs = now - s_wxMs < 2 * WX_FRAME_MS ? s_wxMs + WX_FRAME_MS : now;
   const uint32_t serial = weatherSerial();
   const bool showing = wxShowing();
   bool painted = false;
@@ -620,12 +753,18 @@ void wxTick() {
       markPageStale(r.page);
       continue;
     }
-    if (!showing || r.page != sh.active || !w->animate || !w->shown || w->icon.x2 < w->icon.x1) continue;
+    if (!showing || r.page != sh.active || !w->animate || !w->shown) continue;
     lv_area_t a;
     lv_obj_get_coords(r.viz, &a);
-    const lv_area_t d = {a.x1 + w->icon.x1, a.y1 + w->icon.y1, a.x1 + w->icon.x2, a.y1 + w->icon.y2};
-    lv_obj_invalidate_area(r.viz, &d);
-    painted = true;
+    for (int i = 0; i < w->nSpots; i++) spotRender(*w, i, now);
+    // Two areas a tile at most: every area LVGL redraws has a cost of its own.
+    for (int part = 0; part < 2; part++) {
+      const lv_area_t s = part ? spotArea(*w, 1, w->nSpots) : spotArea(*w, 0, 1);
+      if (s.x2 < s.x1) continue;
+      const lv_area_t d = {a.x1 + s.x1, a.y1 + s.y1, a.x1 + s.x2, a.y1 + s.y2};
+      lv_obj_invalidate_area(r.viz, &d);
+      painted = true;
+    }
   }
   if (painted) s_sparkPaintMs = now;  // like a gliding chart: other pages snapshot rarely meanwhile
 }

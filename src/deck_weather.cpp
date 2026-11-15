@@ -201,6 +201,24 @@ void weatherError(char* out, size_t n) {
   portEXIT_CRITICAL(&s_mux);
 }
 
+bool weatherPreview(int code, bool day) {
+  static const uint8_t kinds[] = {0, 2, 3, 45, 63, 73, 95};
+  portENTER_CRITICAL(&s_mux);
+  const bool ok = s_data.valid;
+  if (ok) {
+    s_data.code = (uint8_t)code;
+    s_data.day = day;
+    for (int i = 1; i < s_data.nDays; i++) s_data.days[i].code = kinds[(i - 1) % 7];
+    for (int i = 1; i < s_data.nHours; i++) {
+      s_data.hours[i].code = kinds[(i - 1) % 7];
+      s_data.hours[i].day = day;
+    }
+    s_data.serial++;
+  }
+  portEXIT_CRITICAL(&s_mux);
+  return ok;
+}
+
 WeatherKind weatherKind(int code) {
   if (code == 0) return WX_CLEAR;
   if (code <= 2) return WX_PARTLY;

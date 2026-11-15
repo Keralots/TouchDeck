@@ -443,7 +443,6 @@ void vizTick();
 
 // deck_ui_weather.cpp
 void wxFree(WxRt* w);
-void wxMoonFree();
 void makeWeatherContent(TileRt& r, lv_obj_t* t);
 void fitWeather(TileRt& r, int cw, int ch);
 void wxDrawEvent(lv_event_t* e);

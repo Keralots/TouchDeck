@@ -18,6 +18,7 @@
 #include "deck_ha.h"
 #include "deck_http.h"
 #include "deck_mqtt.h"
+#include "deck_weather.h"
 #include "deck_icons.h"
 #include "deck_wall.h"
 #include "deck_panel.h"
@@ -2241,6 +2242,13 @@ static void handlePerf() {
   server.send(200, "application/json", out);
 }
 
+// POST /api/deck/weather-preview?code=95[&night=1] - bench hook: weather tiles
+// show this WMO code and every icon kind in the forecast until the next fetch.
+static void handleWeatherPreview() {
+  const bool ok = deck::weatherPreview(constrain((int)server.arg("code").toInt(), 0, 99), server.arg("night") != "1");
+  sendJsonMessage(ok ? 200 : 409, ok, ok ? "Preview shown until the next fetch" : "No weather data yet");
+}
+
 static void handleFrameGet() {
   JsonDocument doc;
   deckFrameJson(doc.to<JsonObject>());
@@ -2665,6 +2673,7 @@ void initWebServer() {
   server.on("/api/deck/wallpaper/remove", HTTP_POST, handleWallRemove);
   server.on("/api/deck/bench", HTTP_POST, handleDeckBench);
   server.on("/api/deck/perf", HTTP_GET, handlePerf);
+  server.on("/api/deck/weather-preview", HTTP_POST, handleWeatherPreview);
   server.on("/api/deck/frame", HTTP_GET, handleFrameGet);
   server.on("/api/deck/frame", HTTP_POST, handleFramePost);
   server.on("/api/deck/prefs", HTTP_POST, handleDeckPrefs);

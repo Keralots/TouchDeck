@@ -1178,7 +1178,7 @@
         '<p class="field-hint wide" id="dkWxMsg">One place for every weather tile. Forecast by Open-Meteo, no account needed.</p>' +
         '<label class="check-row standalone"><input type="checkbox" id="dkWxAnim"' +
         (t.animate === false ? "" : " checked") +
-        '><span class="check-box"></span><span class="check-text"><strong>Animated icon</strong><span class="ct-hint">The big icon moves: sun rays, drifting clouds, falling rain and snow.</span></span></label>',
+        '><span class="check-box"></span><span class="check-text"><strong>Animated icons</strong><span class="ct-hint">The icons move: sun rays, drifting clouds, falling rain and snow.</span></span></label>',
       true,
     );
   }

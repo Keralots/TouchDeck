@@ -499,7 +499,6 @@ void destroyPages(bool keepGlass = false) {
     prnFxFree(r.pfx);
   }
   s_tiles.clear();
-  wxMoonFree();
   portENTER_CRITICAL(&s_mux);
   sh.count = 0;
   for (int i = 0; i < MAX_PAGES; i++) sh.valid[i] = false;

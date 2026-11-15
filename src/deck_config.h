@@ -235,7 +235,7 @@ struct TileDef {
   bool vizScope = false;   // TILE_VIZ: "style": "scope" (waveform) instead of bars
   bool clockDate = false;  // TILE_CLOCK: "date": "always" (default: only when it fits)
   uint8_t wxForecast = 0;  // TILE_WEATHER: "forecast": 0 days, 1 hours, 2 none
-  bool wxStill = false;    // TILE_WEATHER: "animate": false
+  bool wxStill = false;    // TILE_WEATHER: "animate": false (icons at rest)
   WhenDef when;
   bool shown = true;  // runtime: "when" as the pages were last built
 };

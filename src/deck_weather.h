@@ -50,6 +50,9 @@ uint32_t weatherSerial();
 void weatherGet(WeatherData& out);
 // Why the last fetch failed, "" after a good one.
 void weatherError(char* out, size_t n);
+// Bench hook: show this WMO code now and the other icon kinds in the forecast
+// until the next fetch; false without data to dress up.
+bool weatherPreview(int wmoCode, bool day);
 WeatherKind weatherKind(int wmoCode);
 const char* weatherText(int wmoCode);
 
