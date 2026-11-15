@@ -42,6 +42,7 @@ uint32_t s_since = 0;       // entered the current state
 bool s_connected = false, s_ttsDone = false, s_gotStt = false;
 int s_voiced = 0, s_quiet = 0;
 bool s_inSpeech = false;
+bool s_micOpen = false;  // capture starts once the chime or reply has finished playing
 uint32_t s_turnFrames = 0, s_upFrames = 0, s_downFrames = 0, s_turns = 0;
 
 void setText(char* dst, const char* src) {
@@ -103,6 +104,20 @@ void sendListen(const char* state) {
   sendJson(d);
 }
 
+// Two short notes, rising = "speak now", falling = "conversation over".
+void chime(bool rising) {
+  static int16_t buf[AGENT_RATE * 180 / 1000];
+  const size_t half = sizeof(buf) / sizeof(buf[0]) / 2;
+  for (size_t i = 0; i < 2 * half; i++) {
+    const bool second = i >= half;
+    const float hz = (second == rising) ? 1320.0f : 880.0f;
+    const size_t k = second ? i - half : i;
+    const float env = k < 160 ? k / 160.0f : (half - k < 400 ? (half - k) / 400.0f : 1.0f);
+    buf[i] = (int16_t)(6000.0f * env * sinf(2.0f * (float)M_PI * hz * k / AGENT_RATE));
+  }
+  agentAudioPush(buf, 2 * half);
+}
+
 void startListening() {
   s_voiced = s_quiet = 0;
   s_inSpeech = false;
@@ -111,12 +126,13 @@ void startListening() {
   float db;
   while (agentAudioPopFrame(drop, db)) {}  // stale frames from before the reply
   sendListen("start");
-  agentAudioCapture(true);
+  s_micOpen = false;
   enter(AGENT_LISTENING);
 }
 
 void endSession(const char* why) {
   agentAudioCapture(false);
+  if (!why) chime(false);
   // A goodbye arrives just before the server closes: let it finish playing.
   for (uint32_t t0 = millis(); !why && agentAudioQueued() && millis() - t0 < 3000;) vTaskDelay(pdMS_TO_TICKS(20));
   if (s_connected) s_ws.disconnect();
@@ -138,7 +154,10 @@ void onText(const char* payload, size_t len) {
   const char* type = d["type"] | "";
   if (!strcmp(type, "hello")) {
     s_sessionId = (const char*)(d["session_id"] | "");
-    if (s_state == AGENT_CONNECTING) startListening();
+    if (s_state == AGENT_CONNECTING) {
+      chime(true);
+      startListening();
+    }
   } else if (!strcmp(type, "stt")) {
     s_gotStt = true;
     setText(s_user, d["text"] | "");
@@ -275,6 +294,12 @@ void tick() {
   const AgentState st = s_state;
   if (st == AGENT_CONNECTING && now - s_since > CONNECT_MS) {
     endSession(s_connected ? "no hello from the server" : "server not reachable");
+  } else if (st == AGENT_LISTENING && !s_micOpen) {
+    if (!agentAudioQueued() && now - agentAudioLastPlayMs() > DRAIN_MS) {
+      s_micOpen = true;
+      agentAudioCapture(true);
+      s_since = now;
+    }
   } else if (st == AGENT_LISTENING && !s_inSpeech && now - s_since > NO_SPEECH_MS) {
     endSession(nullptr);
   } else if (st == AGENT_THINKING && !s_gotStt && now - s_since > STT_WAIT_MS) {
@@ -306,6 +331,9 @@ void agentTask(void*) {
     }
     if (s_stopReq.exchange(false)) {
       s_startReq = false;
+      // A tap mid-reply cuts it: drop the queue before the closing chime goes in.
+      agentAudioFlush();
+      for (int i = 0; i < 10 && agentAudioQueued(); i++) vTaskDelay(pdMS_TO_TICKS(10));
       endSession(nullptr);
       continue;
     }
