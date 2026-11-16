@@ -388,6 +388,7 @@ void setColumns(int active) {
 
 void buildPages() {
   fxQuiet();  // tiles get their first state: no animations
+  glassBakeStop();
   const int w = logicalW();
   if (s_theme == THEME_GLASS) wallLoad(w, logicalH(), dispSettings.glassBlur, dispSettings.glassDim);
   else wallFree();
@@ -471,6 +472,7 @@ void setPager(int page) {
 }
 
 void destroyPages(bool keepGlass = false) {
+  glassBakeRelease();
   clearGlassCache();
   edClose();
   closeModal();
@@ -698,19 +700,43 @@ void tickWallpaper() {
     // A touch may have started while the compositor was being quiesced.
     if (!wallPoll(logicalW(), logicalH(), millis() - touchLastActivity() >= WALL_IDLE_MS, !touchIsDown(), rotate))
       return;
+    glassBakeStop();
     wallCommit();
     for (int i = 0; i < s_built; i++) s_pages[i].wallBake = true;
-    bakeWallpaperPage(sh.active);
-    qpMarkStale();
-    ++s_gen;
     return;
   }
-  if (!safe || !baking) return;
-  for (int i = 0; i < s_built; i++) {
-    if (!s_pages[i].wallBake) continue;
-    bakeWallpaperPage(i);
-    break;
+  if (!baking) {
+    glassBakeRelease();
+    return;
   }
+  if (!safe) return;
+  // One page at a time on a worker, the shown page first.
+  auto shown = [](int page) {
+    if (page != sh.active) return;
+    qpMarkStale();
+    ++s_gen;
+  };
+  int page;
+  uint32_t ms;
+  if (glassBakeTake(page, ms)) {
+    if (page < 0) return;
+    s_pages[page].wallBake = false;
+    Serial.printf("Deck: wallpaper page %d bake %lu ms\n", page, (unsigned long)ms);
+    shown(page);
+    return;
+  }
+  if (glassBakeRunning()) return;
+  int next = sh.active;
+  for (int i = 0; i < s_built && !s_pages[next].wallBake; i++) next = i;
+  Page& p = s_pages[next];
+  if (!p.glassKey.empty() && p.glassKey == glassKey(p)) {
+    p.wallBake = false;  // baked meanwhile (its tiles moved)
+    shown(next);
+    return;
+  }
+  if (glassBakeStart(next)) return;
+  bakeWallpaperPage(next);
+  shown(next);
 }
 
 // The colon of the shown page's clocks blinks with the second; other pages
