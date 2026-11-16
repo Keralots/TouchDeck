@@ -497,6 +497,29 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         t.pc = (const char*)(tv["pc"] | "");
         t.entity = "";
       }
+      // Kept on other tiles' JSON (a type change in the portal) but not used.
+      JsonVariantConst presets = tv["presets"];
+      if (!presets.isNull() && (t.type == TILE_TOGGLE || t.type == TILE_SLIDER) && t.entity.startsWith("light.")) {
+        if (!presets.is<JsonArrayConst>() || presets.size() > MAX_LIGHT_PRESETS) {
+          if (err) *err = where + ": presets must be an array of up to " + String(MAX_LIGHT_PRESETS);
+          return false;
+        }
+        for (JsonVariantConst pr : presets.as<JsonArrayConst>()) {
+          LightPreset lp;
+          const int k = pr["kelvin"] | 0;
+          if (k) {
+            if (k < 1000 || k > 20000) {
+              if (err) *err = where + ": preset kelvin must be 1000..20000";
+              return false;
+            }
+            lp.kelvin = (uint16_t)k;
+          } else if (!parseColor(pr["color"] | (const char*)nullptr, lp.rgb)) {
+            if (err) *err = where + ": a preset needs \"color\": \"#RRGGBB\" or \"kelvin\"";
+            return false;
+          }
+          t.presets.push_back(lp);
+        }
+      }
       if (!parseAction(tv["tap"], t.tap, err, where + " tap")) return false;
       if (!parseAction(tv["hold"], t.hold, err, where + " hold")) return false;
       const char* cf = tv["confirm"] | "";

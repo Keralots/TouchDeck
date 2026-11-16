@@ -461,6 +461,7 @@ void closeModal() {
   }
   climateClose();
   coverCardClose();
+  presetCardClose();
   if (s_modalCard) lv_obj_delete(s_modalCard);
   if (s_modalScrim) lv_obj_delete(s_modalScrim);
   if (s_modalUnder) lv_obj_delete(s_modalUnder);
@@ -584,6 +585,7 @@ void refreshModal() {
     }
   }
   coverCardRefresh(r.def->entity, haKnown ? &e : nullptr);
+  presetCardRefresh(*r.def, haKnown ? &e : nullptr);
   const bool on = haKnown && wishOn(r.def->entity, e);
   s_modalIconCp = showIcon(s_modalIcon, *r.def, haKnown ? &e : nullptr, on, 28, s_modalIconCp);
 }
@@ -624,6 +626,9 @@ void openModal(int tileIdx) {
   const bool cover = entityDomain(d.entity) == "cover" && !d.http.enabled;
   const int coverY = light ? 160 : 118;
   if (cover) ch = coverY + 48 + 12 + 44 + 16;
+  // Light presets: the same row of keys, in the cover buttons' slot.
+  const bool presets = light && !climate && hasPresets(d);
+  if (presets) ch = 160 + 48 + 12 + 44 + 16;
   fxCardOpenBegin(tileIdx, {(int16_t)((w - cw) / 2), (int16_t)((h - ch) / 2), (int16_t)cw, (int16_t)ch}, 22);
 
   s_modalScrim = makeScrim(false);  // filled below, while the animation runs
@@ -701,6 +706,7 @@ void openModal(int tileIdx) {
   }
 
   if (cover) coverCardBuild(c, cw, coverY, accent);
+  if (presets) presetCardBuild(c, cw, 160, d);
 
   if (graph) {
     s_modalHours = d.style == METRIC_CHART ? d.hours : 24;

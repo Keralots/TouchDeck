@@ -140,8 +140,9 @@ struct TileRt {
   lv_obj_t* volIcons[2];  // minus and plus on it
   bool volHeld;           // a drag or a held half is moving the level
   struct VizRt* vz;        // visualizer tiles: bar levels
-  lv_obj_t* box;           // cover tiles: holds icon, state and name beside the buttons
+  lv_obj_t* box;           // cover and preset tiles: holds icon, state and name beside the buttons
   lv_obj_t* coverBtns[3];  // cover tiles: up, stop, down
+  lv_obj_t* presetBtns[MAX_LIGHT_PRESETS];  // light presets, as many as the tile has
   struct WxRt* wx;         // weather tiles: data and layout
   // Glass auto text: the colour picked from the picture under the tile.
   uint32_t autoText;
@@ -179,6 +180,7 @@ struct Shared {
   // never a page swipe.
   struct Zone {
     int16_t x1, y1, x2, y2;
+    bool slider;  // a slider tile: its side edge strip still swipes (uiSideEdge)
   } zones[MAX_PAGE_TILES] = {};
   int nZones = 0;
 };
@@ -422,6 +424,16 @@ void fitCover(TileRt& r, int cw, int ch);
 void coverCardBuild(lv_obj_t* c, int cw, int y, uint32_t accent);
 void coverCardRefresh(const String& entity, const HaEntity* e);
 void coverCardClose();
+
+// deck_ui_presets.cpp
+bool hasPresets(const TileDef& d);
+bool presetPress(const TileDef& d, int i);  // false when i is out of range or HA refused
+void makePresetButtons(TileRt& r, size_t idx);
+void fitPresets(TileRt& r, int cw, int ch);
+void applyPresets(TileRt& r, const HaEntity& e);
+void presetCardBuild(lv_obj_t* c, int cw, int y, const TileDef& d);
+void presetCardRefresh(const TileDef& d, const HaEntity* e);
+void presetCardClose();
 
 // deck_ui_media.cpp
 void mediaGlyph(lv_obj_t* label, const char* name, const char* fallback, int px);

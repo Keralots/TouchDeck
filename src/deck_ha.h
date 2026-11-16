@@ -40,6 +40,9 @@ struct HaEntity {
   String deviceClass;       // device_class (picks a default icon)
   int brightness = -1;      // 0..255 for lights that report it
   int32_t rgb = -1;         // 0xRRGGBB from rgb_color, lights that report it
+  int kelvin = -1;          // color_temp_kelvin: set only while the light is in white (color_temp) mode
+  int kelvinMin = -1;       // min_color_temp_kelvin / max_: the light's white range
+  int kelvinMax = -1;
   int level = -1;           // 0..100: cover position, fan percentage, media volume
   int32_t features = -1;    // supported_features bits, -1 = not reported
   float numMin = NAN;       // input_number range and step

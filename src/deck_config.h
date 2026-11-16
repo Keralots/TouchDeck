@@ -78,6 +78,10 @@
 // "color"; a plain icon while on: the text colour), "onIcon" (toggle) and
 // "lightIcon": true (the light's own colour).
 //
+// "presets": [{ "color": "#FF8800" }, { "kelvin": 2700 }] (1..4, toggle and
+// slider tiles of a light, ignored elsewhere): round keys on the tile and its
+// card that turn the light on in that colour or white shade.
+//
 // "type": "slider": the tile is a level control (light brightness, cover
 // position, fan speed, media volume, input_number / number); drag sideways to
 // set it, tap toggles (numbers: opens the card).
@@ -194,6 +198,12 @@ struct SensorRowDef {
   String value;  // optional text template like "detail"; the bar keeps path
 };
 
+constexpr int MAX_LIGHT_PRESETS = 4;
+struct LightPreset {
+  uint32_t rgb = 0;     // 0xRRGGBB, used when kelvin is 0
+  uint16_t kelvin = 0;  // a white shade
+};
+
 struct TileDef {
   String id;
   TileType type = TILE_ACTION;
@@ -236,6 +246,7 @@ struct TileDef {
   bool clockDate = false;  // TILE_CLOCK: "date": "always" (default: only when it fits)
   uint8_t wxForecast = 0;  // TILE_WEATHER: "forecast": 0 days, 1 hours, 2 none
   bool wxStill = false;    // TILE_WEATHER: "animate": false (icons at rest)
+  std::vector<LightPreset> presets;  // toggle / slider light tiles
   WhenDef when;
   bool shown = true;  // runtime: "when" as the pages were last built
 };

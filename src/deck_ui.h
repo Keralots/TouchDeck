@@ -80,6 +80,8 @@ bool deckTestCard(const String& tileId);
 // Bench hooks (/api/deck/tap, /api/deck/confirm): tap or hold a tile, answer
 // its confirm card.
 bool deckTestTap(const String& tileId, bool hold);
+// preset = 0-based light preset key of that tile (its tap on the tile).
+bool deckTestPreset(const String& tileId, int preset);
 bool deckTestConfirm(bool ok);
 // Bench hook (/api/deck/slide): a slider tile drag ending at pct.
 bool deckTestSlide(const String& tileId, int pct);
@@ -102,8 +104,11 @@ void uiSwipeAborted();
 // page that way (pages shown, no panel, card or editor over them).
 bool uiSwipeOwnsTouch();
 // Touch task: true when (x, y) is on a slider tile of the shown page, where a
-// drag moves the slider instead of the page.
+// drag moves the slider instead of the page (not in the side edge strips).
 bool uiNoSwipeAt(int x, int y);
+// x in the strip along the left or right screen edge where a drag on a slider
+// tile still swipes the page.
+bool uiSideEdge(int x);
 // Touch task: claim a quick-panel drag (opening = pull down, else push up).
 // Fills the panel image, the page under it, the starting offset and the
 // panel height in rows.

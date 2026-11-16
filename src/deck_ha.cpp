@@ -360,6 +360,12 @@ void entityFromAttrs(HaEntity& e, JsonObjectConst a) {
     } else if (!strcmp(k, "rgb_color")) {
       JsonArrayConst c = kv.value().as<JsonArrayConst>();
       e.rgb = c.size() == 3 ? (int32_t)((c[0].as<int>() & 255) << 16 | (c[1].as<int>() & 255) << 8 | (c[2].as<int>() & 255)) : -1;
+    } else if (!strcmp(k, "color_temp_kelvin")) {
+      e.kelvin = kv.value().is<int>() ? kv.value().as<int>() : -1;
+    } else if (!strcmp(k, "min_color_temp_kelvin")) {
+      e.kelvinMin = kv.value().is<int>() ? kv.value().as<int>() : -1;
+    } else if (!strcmp(k, "max_color_temp_kelvin")) {
+      e.kelvinMax = kv.value().is<int>() ? kv.value().as<int>() : -1;
     } else if (!strcmp(k, "current_position") || !strcmp(k, "percentage")) {
       e.level = kv.value().is<float>() ? (int)lroundf(kv.value().as<float>()) : -1;
     } else if (!strcmp(k, "supported_features")) {
@@ -419,6 +425,7 @@ void applyEvent(JsonObjectConst ev) {
     e.deviceClass = "";
     e.brightness = -1;
     e.rgb = -1;
+    e.kelvin = e.kelvinMin = e.kelvinMax = -1;
     e.level = -1;
     e.features = -1;
     e.numMin = e.numMax = e.numStep = NAN;
@@ -441,6 +448,9 @@ void applyEvent(JsonObjectConst ev) {
       const char* key = k | "";
       if (!strcmp(key, "brightness")) e.brightness = -1;
       else if (!strcmp(key, "rgb_color")) e.rgb = -1;
+      else if (!strcmp(key, "color_temp_kelvin")) e.kelvin = -1;
+      else if (!strcmp(key, "min_color_temp_kelvin")) e.kelvinMin = -1;
+      else if (!strcmp(key, "max_color_temp_kelvin")) e.kelvinMax = -1;
       else if (!strcmp(key, "current_position") || !strcmp(key, "percentage") ||
                !strcmp(key, "volume_level"))
         e.level = -1;

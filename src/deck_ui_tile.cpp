@@ -442,10 +442,10 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     lv_obj_set_style_bg_opa(fill, s_theme == THEME_DAYLIGHT ? LV_OPA_40 : LV_OPA_50, 0);
     if (def.type == TILE_SLIDER) lv_obj_add_flag(t, LV_OBJ_FLAG_PRESS_LOCK);  // the drag may leave the tile
   }
-  // Cover: icon, state and name share a box that leaves room for the buttons.
+  // Cover and light presets: icon, state and name share a box that leaves room for the buttons.
   lv_obj_t* host = t;
   lv_obj_t* box = nullptr;
-  if (def.type == TILE_COVER) {
+  if (def.type == TILE_COVER || hasPresets(def)) {
     host = box = lv_obj_create(t);
     lv_obj_remove_style_all(box);
     lv_obj_remove_flag(box, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
@@ -496,7 +496,8 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_label_set_text(sub, tileSub(r).c_str());
   const size_t idx = s_tiles.size();
   s_tiles.push_back(r);
-  if (box) makeCoverButtons(s_tiles.back(), idx, accent);
+  if (def.type == TILE_COVER) makeCoverButtons(s_tiles.back(), idx, accent);
+  else if (box) makePresetButtons(s_tiles.back(), idx);
   if (def.tap.kind == ACT_PC) applyPcStateToTile(s_tiles.back());
   lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
   lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);

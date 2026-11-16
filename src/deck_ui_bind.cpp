@@ -576,6 +576,7 @@ void applyHaToTile(TileRt& r, bool force) {
     else lv_label_set_text(r.sub, (control ? wishText(d.entity, e, false) : prettyState(domain, e)).c_str());
     fitValue(r);
   }
+  if (r.presetBtns[0]) applyPresets(r, e);
   markPageStale(r.page);
 }
 
@@ -1129,10 +1130,13 @@ void pcVolumeTick() {
   }
 }
 
+// From a side edge the page swipe (decided at 12 px) must win before the drag starts.
+static int sliderSlop(const TileRt& r) { return uiSideEdge(r.slX0) ? 24 : 8; }
+
 void pcVolumeDrag(TileRt& r, lv_event_code_t code, const lv_point_t& p) {
   if (code == LV_EVENT_PRESSING) {
     if (!r.sliding) {
-      if (!pcIsOnline(tilePcId(*r.def)) || modalShown() || abs(p.x - r.slX0) < 8) return;
+      if (!pcIsOnline(tilePcId(*r.def)) || modalShown() || abs(p.x - r.slX0) < sliderSlop(r)) return;
       r.sliding = true;
       r.slX0 = p.x;
       r.slFrac0 = r.slValue = r.frac;
@@ -1180,7 +1184,7 @@ void sliderEvent(lv_event_t* e) {
   const bool canSlide = r.def->entity.length() && haLink() == HA_CONNECTED && !modalShown();
   if (code == LV_EVENT_PRESSING) {
     if (!r.sliding) {
-      if (!canSlide || abs(p.x - r.slX0) < 8) return;
+      if (!canSlide || abs(p.x - r.slX0) < sliderSlop(r)) return;
       r.sliding = true;
       r.slX0 = p.x;
       r.slFrac0 = r.slValue = r.frac;
