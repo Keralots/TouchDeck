@@ -19,6 +19,8 @@ Two boards are supported. Nothing to wire on either.
 |:---:|:---:|
 | ![TouchDeck on the Guition JC3248W535 in its printed case](docs/images/case-front.jpg) | ![TouchDeck on the Waveshare ESP32-P4 7B in its printed case](docs/images/deck-7b.jpg) |
 
+![The 3.5" Guition deck next to the 7" Waveshare 7B](docs/images/boards-compare.jpg)
+
 Optional: a single-colour status LED on a free GPIO ([wiring](GUIDE.md#wiring-the-led)), a [vibration motor](GUIDE.md#vibration-motor) for tile taps and a microSD card for wallpapers and brand icons.
 
 ## Screenshots
