@@ -1,2 +1,2 @@
-0b4552d3428a7934d53be18c238ed07576de2d8653f68107d4c857a91cfd5915  TouchDeck-v1.3.0-full.bin
-33c5f2c32db2ff48bbdeed0cbd90aa81af2ddd99d3dfd885d71cd3d02ba5ead1  TouchDeck-v1.3.0-p4-7b-full.bin
+ff725760032f0f70b23ded2dbfad7f1454c24a473e499c570c58624fbb2fdc5c  TouchDeck-v1.3.1-full.bin
+a51cc5dbb9ba58d6c45cc52a7ebc55d51be424c498da28a2d6133b838c0fb438  TouchDeck-v1.3.1-p4-7b-full.bin
