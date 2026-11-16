@@ -659,12 +659,13 @@ void makeWeatherContent(TileRt& r, lv_obj_t* t) {
 
 // Works out the layout and gives every icon an image of its size. Never
 // called from a draw event: a frame in progress may still use the old images.
-static void wxMeasure(TileRt& r) {
+// Takes the size from fitWeather: right after lv_obj_set_size the coords are stale.
+static void wxMeasure(TileRt& r, int wd, int h) {
   if (!r.wx) return;
   WxRt& w = *r.wx;
   const Ink k = {nullptr, lv_color_white(), 0, 0};
   w.nSpots = 0;
-  paint(k, w, *r.def, lv_obj_get_width(r.viz), lv_obj_get_height(r.viz));
+  paint(k, w, *r.def, wd, h);
   const uint32_t now = millis();
   for (int i = 0; i < WX_SPOTS; i++) {
     const int s = i < w.nSpots ? w.spots[i].s : 0;
@@ -687,7 +688,7 @@ static void wxMeasure(TileRt& r) {
 void fitWeather(TileRt& r, int cw, int ch) {
   lv_obj_set_size(r.viz, cw, ch);
   lv_obj_set_pos(r.viz, 0, 0);
-  wxMeasure(r);
+  wxMeasure(r, cw, ch);
 }
 
 void wxDrawEvent(lv_event_t* e) {
@@ -724,7 +725,7 @@ void wxTap(lv_event_t* e) {
   TileRt& r = s_tiles[idx];
   if (!r.wx->flips || !r.wx->shown) return;
   r.wx->forecast = r.wx->forecast == 1 ? 0 : 1;
-  wxMeasure(r);
+  wxMeasure(r, lv_obj_get_width(r.viz), lv_obj_get_height(r.viz));
   lv_obj_invalidate(r.viz);
   markPageStale(r.page);
 }
@@ -748,7 +749,7 @@ void wxTick() {
       weatherGet(w->d);
       w->serial = w->d.serial;
       w->shown = wxFresh(w->d);
-      wxMeasure(r);
+      wxMeasure(r, lv_obj_get_width(r.viz), lv_obj_get_height(r.viz));
       lv_obj_invalidate(r.viz);
       markPageStale(r.page);
       continue;
