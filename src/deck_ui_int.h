@@ -534,6 +534,14 @@ void fxCardClose(lv_obj_t* card, int tileIdx);
 std::vector<uint32_t> glassKey(Page& p);
 void autoTextPage(Page& p);
 bool bakeGlass(Page& p, const lv_area_t* only = nullptr);
+// The same bake on a worker task. Take: a finished one was consumed; page is
+// the page that now shows it, -1 when its tiles moved meanwhile.
+bool glassBakeStart(int page);
+bool glassBakeRunning();
+bool glassBakeTake(int& page, uint32_t& ms);
+// Before the wallpaper images or the pages are freed.
+void glassBakeStop();
+void glassBakeRelease();
 
 // deck_ui_edit.cpp
 extern EditState s_ed;
