@@ -66,6 +66,7 @@ code { font-family: var(--mono); font-size: 0.9em; padding: 1px 5px; background:
 .hero h1 { margin: 0 0 20px; font-size: clamp(34px, 3.7vw, 48px); font-weight: 600; line-height: 1.12; letter-spacing: -0.04em; max-width: 24ch; text-wrap: balance; }
 .accent { color: var(--accent); }
 .hero p { margin: 0; max-width: 64ch; font-size: 16.5px; color: var(--mute); text-wrap: pretty; }
+.hero p + p { margin-top: 10px; }
 .showcase { margin-bottom: 30px; }
 .showcase h2 { font-size: 21px; letter-spacing: -0.02em; margin: 0 0 8px; }
 .showcase-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 20px; }

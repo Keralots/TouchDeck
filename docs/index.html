@@ -51,8 +51,9 @@
       </aside>
       <main class="main" id="main">
         <section class="hero">
-          <h1>Flash TouchDeck to your Guition 3.5&quot; deck <span class="accent">straight from your browser.</span></h1>
+          <h1>Flash TouchDeck <span class="accent">straight from your browser.</span></h1>
           <p>A touch control deck for Home Assistant, live PC stats from the TouchDeck Companion and Bambu Lab printers, set up from a web portal on the device. No cloud, no accounts.</p>
+          <p>Two boards are supported: the Guition JC3248W535 (3.5&quot;) and the Waveshare ESP32-P4-WIFI6-Touch-LCD-7B (7&quot;, beta).</p>
         </section>
 
         <section class="showcase" aria-labelledby="showcase-head">
@@ -82,7 +83,7 @@
             <li><strong>Desktop Chrome or Edge.</strong> Web Serial does not run on Firefox, Safari or mobile.</li>
             <li><strong>A real data USB-C cable.</strong> A power-only cable will not expose a serial port.</li>
             <li><strong>Guition JC3248W535.</strong> The ESP32-S3 N16R8 board. Find the <a href="https://makerworld.com/models/3463113" target="_blank" rel="noopener">printed case on MakerWorld</a>.</li>
-            <li><strong>Waveshare ESP32-P4-WIFI6-Touch-LCD-7B (beta).</strong> Only for P4 chip revision v3.x, tested on v3.2. Older v1.x boards are not supported and will not boot this image. Plug in the USB-C port marked <code>USB TO UART</code>. See the <a href="https://github.com/Keralots/TouchDeck/releases" target="_blank" rel="noopener">release notes</a> for known issues.</li>
+            <li><strong>Waveshare ESP32-P4-WIFI6-Touch-LCD-7B (beta).</strong> Only for P4 chip revision v3.x, tested on v3.2. Older v1.x boards are not supported and will not boot this image. Plug in the USB-C port marked <code>USB TO UART</code>. Board details on the <a href="https://docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-7B" target="_blank" rel="noopener">Waveshare wiki</a>, <a href="https://makerworld.com/en/models/3622177" target="_blank" rel="noopener">printed case on MakerWorld</a>. See the <a href="https://github.com/Keralots/TouchDeck/releases" target="_blank" rel="noopener">release notes</a> for known issues.</li>
             <li><strong>One button for both.</strong> The installer reads the chip and flashes the matching image.</li>
             <li><strong>Stuck in a connect / disconnect loop?</strong> Hold <code>BOOT</code>, plug in USB while holding, then release. Or hold <code>BOOT</code>, tap <code>RESET</code>, then release both.</li>
             <li><strong>Close anything that holds the serial port.</strong> The TouchDeck Companion talks to the deck over the USB cable when plugged in. Close it, Arduino IDE, PlatformIO Monitor and the serial monitor below before flashing.</li>
