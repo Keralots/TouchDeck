@@ -234,6 +234,11 @@ constexpr uint32_t C_PRN_HEAT = 0xF5B83D;  // heating, light on
 // older samples keep the left edge on real data while it catches up.
 constexpr int SPARK_FRAME_MS = 33;
 
+// One clock for the animated tiles, so they share a frame: animDue says this
+// loop pass draws one, animMs is the time it shows (see animClockTick).
+extern bool s_animDue, s_animPainted;
+extern uint32_t s_animMs;
+
 constexpr uint32_t SPARK_SNAP_MS = 5000;
 
 constexpr int SPARK_KEEP = PC_HISTORY_LEN + 4;

@@ -1162,8 +1162,34 @@ bool deckBegin(uint8_t rotation) {
 
 namespace deckui {
 
-// The shown page's PC charts glide at about 30 fps while the screen is lit
-// and nothing covers the page.
+bool s_animDue = false, s_animPainted = false;
+uint32_t s_animMs = 0;
+int64_t s_animAtUs = 0;
+
+// Every second refresh, timed for the refresh the frame reaches the glass on,
+// so steps match what the eye sees. Without a panel clock: 30 fps on millis().
+void animClockTick() {
+  s_animDue = false;
+  int64_t period = 0;
+  const int64_t at = panelAnimTargetUs(esp_timer_get_time(), &period);
+  if (!at) {
+    // Steps on a fixed grid, so loop jitter does not stretch the frame period.
+    static uint32_t grid = 0;
+    const uint32_t ms = millis();
+    if (ms - grid < SPARK_FRAME_MS) return;
+    grid = ms - grid < 2 * SPARK_FRAME_MS ? grid + SPARK_FRAME_MS : ms;
+    if ((int32_t)(ms - s_animMs) > 0) s_animMs = ms;  // never back from a refresh time
+    s_animDue = true;
+    return;
+  }
+  if (at - s_animAtUs < 2 * period - period / 2) return;
+  s_animAtUs = at;
+  s_animMs = (uint32_t)(at / 1000);
+  s_animDue = true;
+}
+
+// The shown page's PC charts glide on the animation clock while the screen is
+// lit and nothing covers the page.
 uint32_t s_sparkMs = 0;
 
 bool sparkGliding() {
@@ -1172,14 +1198,16 @@ bool sparkGliding() {
 }
 
 void sparkTick() {
-  const uint32_t now = millis();
+  if (!s_animDue) return;
+  const uint32_t now = s_animMs;
   const uint32_t dt = now - s_sparkMs;
-  if (dt < SPARK_FRAME_MS) return;
   s_sparkMs = now;
   if (!sparkGliding()) return;
   for (TileRt& r : s_tiles)
-    if (r.spark && r.page == sh.active && !r.off && sparkRender(r, now, true, std::min<uint32_t>(dt, 200)))
-      s_sparkPaintMs = now;
+    if (r.spark && r.page == sh.active && !r.off && sparkRender(r, now, true, std::min<uint32_t>(dt, 200))) {
+      s_sparkPaintMs = millis();
+      s_animPainted = true;
+    }
 }
 
 }  // namespace deckui
@@ -1276,10 +1304,17 @@ void deckTick() {
   weatherTick();
   lap(PP_MEDIA);
   if (!systemScreen) {
+    animClockTick();
     sparkTick();
     heroTick();
     vizTick();
     wxTick();
+  }
+  // Draw the animation frame now, not at LVGL's next refresh.
+  if (s_animPainted) {
+    s_animPainted = false;
+    panelLvShowAt(s_animAtUs);
+    lv_refr_now(nullptr);
   }
   syncSwipeZones();
   lap(PP_ANIM);

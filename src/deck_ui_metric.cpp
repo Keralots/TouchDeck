@@ -148,9 +148,11 @@ bool sparkStep(Spark& s, int w, int h, uint32_t now, bool ease, uint32_t dtMs) {
   const float target = std::min(0.0f, -1.0f + (float)(now - s.rxMs) / (float)s.gapMs);
   if (!dispSettings.smoothCharts || s.n < 3) s.off = 0;
   else if (!ease) s.off = target;
-  else s.off += (float)dtMs / (float)s.gapMs + (target - s.off) * std::min(1.0f, (float)dtMs / SPARK_SYNC_MS);
+  else s.off += std::max(0.0f, (float)dtMs / (float)s.gapMs + (target - s.off) * std::min(1.0f, (float)dtMs / SPARK_SYNC_MS));
   s.off = std::min(s.off, 0.0f);
-  if (s.n > SPARK_SPAN) s.off = std::max(s.off, (float)(SPARK_SPAN + 1 - s.n));  // left edge on data
+  // Left edge on data, once a spare sample allows: with none it would push
+  // the glide a whole sample ahead of the packet clock.
+  if (s.n >= SPARK_SPAN + 2) s.off = std::max(s.off, (float)(SPARK_SPAN + 1 - s.n));
   const int32_t key = (int32_t)floorf(s.off * (float)(w - 1) / SPARK_SPAN * 4);
   const float tol = (s.hi - s.lo) / 400;
   if (!s.dirty && key == s.key && fabsf(s.viewLo - s.paintLo) <= tol && fabsf(s.viewHi - s.paintHi) <= tol)

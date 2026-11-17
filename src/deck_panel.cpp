@@ -41,6 +41,7 @@ struct State {
   bool frameResult = false;
   PanelStats frameStats = {};
   bool lvPending = false;
+  int64_t lvAt = 0;  // panelLvShowAt of the pending LVGL frame
   DirtyMask lvDirty = {{}, true};  // areas of posted LVGL frames since the last plain frame went out
   int lvIdx = 0;
   uint32_t lvGen = 0;
@@ -1043,6 +1044,7 @@ bool decide(Frame& f) {
   f.releaseLv = false;
   f.build0Us = 0;
   f.frameLast = false;
+  f.showAtUs = 0;
   f.dotsV = s.dotsV;
   f.dotCount = (uint8_t)(s.dotsV ? s.vCount : s.pageCount);
   f.dotActive = (uint8_t)(s.dotsV ? s.vActive : s.pageActive);
@@ -1054,6 +1056,7 @@ bool decide(Frame& f) {
       f.comp = false;
       f.lv = s_fb[s.lvIdx];
       f.releaseLv = true;
+      f.showAtUs = s.lvAt;
       have = true;
     } else {
       // Superseded by the compositor. The buffer still holds a complete frame
@@ -1061,6 +1064,7 @@ bool decide(Frame& f) {
       give = true;
       st_lvDropped = st_lvDropped + 1;
     }
+    s.lvAt = 0;
   }
   if (!have && !s_quiescing && s.mode == COMP_FRAME) {
     const int64_t elapsed = frameTime - s.t0;
@@ -1252,6 +1256,8 @@ void panelShare(void (*fn)(void* ctx, int lo, int hi), void* ctx, int n, int bat
   }
 }
 
+int64_t panelAnimTargetUs(int64_t nowUs, int64_t* periodUs) { return transportAnimTargetUs(nowUs, periodUs); }
+
 uint32_t panelFrameClockMs() {
   const int64_t te = transportLastSyncUs();
   const int64_t now = esp_timer_get_time();
@@ -1314,10 +1320,15 @@ const uint16_t* panelLatestLvFrame() {
 
 void panelLvDirty(int x0, int y0, int x1, int y1) { s_lvNext.addRect(x0, y0, x1, y1); }
 
+int64_t s_lvNextAt = 0;  // loop task only, like s_lvNext
+void panelLvShowAt(int64_t us) { s_lvNextAt = us; }
+
 void panelPostLv(int idx, uint32_t gen) {
   portENTER_CRITICAL(&s_mux);
   s.lvDirty.add(s_lvNext);
   s_lvNext.clear();
+  if (s_lvNextAt > s.lvAt) s.lvAt = s_lvNextAt;  // a frame superseding it holds its content
+  s_lvNextAt = 0;
   const bool superseded = s.lvPending;  // never read: its buffer is free again
   s.lvPending = true;
   s.lvIdx = idx & 1;

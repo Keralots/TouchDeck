@@ -1475,13 +1475,9 @@ void printerEvents() {
 
 // The shown page's hero runs its nozzle along the fill's edge while
 // printing; otherwise the nozzle is hidden.
-uint32_t s_heroMs = 0;
-
 void heroTick() {
-  const uint32_t now = millis();
-  if (now - s_heroMs < SPARK_FRAME_MS) return;
-  // Steps on a fixed grid, so the time a redraw takes does not stretch them.
-  s_heroMs = now - s_heroMs < 2 * SPARK_FRAME_MS ? s_heroMs + SPARK_FRAME_MS : now;
+  if (!s_animDue) return;
+  const uint32_t now = s_animMs;
   const bool lit = !manualDisplayOff() && currentBacklightLevel() && !s_qp.open && !s_modalCard && !s_ed.root;
   bool moved = false;
   for (TileRt& r : s_tiles) {
@@ -1500,14 +1496,11 @@ void heroTick() {
     if (lv_obj_get_style_translate_y(r.detail, LV_PART_MAIN) == y) continue;
     lv_obj_set_style_translate_y(r.detail, y, 0);
     moved = true;
-    s_sparkPaintMs = now;  // like a chart glide: other pages snapshot rarely meanwhile
   }
-  if (prnFxTick(now, lit)) {
-    moved = true;
-    s_sparkPaintMs = now;
-  }
-  // Draw the step now, on its grid, not at LVGL's next refresh.
-  if (moved) lv_refr_now(nullptr);
+  if (prnFxTick(now, lit)) moved = true;
+  if (!moved) return;
+  s_sparkPaintMs = millis();  // like a chart glide: other pages snapshot rarely meanwhile
+  s_animPainted = true;
 }
 
 }  // namespace deckui

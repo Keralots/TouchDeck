@@ -37,6 +37,8 @@ constexpr int64_t PERIOD_US = (int64_t)(NATIVE_W + BOARD_DPI_HSYNC + BOARD_DPI_H
 // No swap is asked for this close before a refresh ends: the scan DMA has
 // started on its next framebuffer by the time refresh_done fires.
 constexpr int64_t SWAP_GUARD_US = 1500;
+// Loop render of an animation frame plus its dirty copy: p95 19 ms on the 7B.
+constexpr int64_t ANIM_LEAD_US = 20000;
 
 esp_lcd_panel_handle_t s_dpi = nullptr;
 uint16_t* s_fb[NFB] = {};
@@ -245,6 +247,11 @@ void presentFrame(const Frame& f, bool backToBack) {
   if (f.releaseLv) frameReleaseLv();
   settle();
   int64_t now = esp_timer_get_time();
+  // An animation frame built early waits for the refresh it was drawn for.
+  for (int k = 0; k < 3 && f.showAtUs && vsyncAfter(now) + PERIOD_US / 2 < f.showAtUs; k++) {
+    waitRefresh();
+    now = esp_timer_get_time();
+  }
   const int64_t v = lastVsyncUs();
   if (v && now - v < 3 * PERIOD_US && (now - v) % PERIOD_US > PERIOD_US - SWAP_GUARD_US) {
     waitRefresh();
@@ -275,6 +282,12 @@ int64_t transportPresentUs(int64_t nowUs) {
   if (!lastVsyncUs()) return 0;
   const int64_t t = vsyncAfter(nowUs + s_buildUs + SWAP_GUARD_US);
   return t > s_shownUs ? t : s_shownUs + PERIOD_US;
+}
+
+int64_t transportAnimTargetUs(int64_t nowUs, int64_t* periodUs) {
+  if (!lastVsyncUs()) return 0;
+  *periodUs = PERIOD_US;
+  return vsyncAfter(nowUs + ANIM_LEAD_US);
 }
 
 bool transportBegin() {
