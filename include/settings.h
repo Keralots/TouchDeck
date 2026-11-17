@@ -108,6 +108,20 @@ constexpr uint8_t HAPTIC_MIN_STRENGTH = 20;
 constexpr uint8_t HAPTIC_MIN_MS = 10;
 constexpr uint8_t HAPTIC_MAX_MS = 200;
 
+constexpr size_t ENCODER_COUNT = 2;
+constexpr uint8_t ENCODER_FOLLOW = 0, ENCODER_FIXED = 1;
+
+struct EncoderSettings {
+  bool enabled = false;
+  uint8_t pinA = 0, pinB = 0, pinKey = 0;
+  bool reverse = false;
+  uint8_t mode = ENCODER_FOLLOW;
+  uint8_t stepPct = 5;
+  uint8_t countsPerDetent = 4;
+  uint8_t popupY = 30;
+  char entity[72] = "";
+};
+
 // NS4168 speaker (portal Hardware page); NVS scalars. A file name is a WAV in
 // audioDir(), "" = the built-in sound.
 constexpr size_t AUDIO_FILE_LEN = 40;
@@ -191,6 +205,10 @@ extern LedSettings ledSettings;
 extern AdvancedSettings advSettings;
 extern PresenceSettings presenceSettings;
 extern HapticSettings hapticSettings;
+#if BOARD_HAS_ENCODER
+extern EncoderSettings encoderSettings[ENCODER_COUNT];
+EncoderSettings defaultEncoderSettings(size_t i);
+#endif
 extern AudioSettings audioSettings;
 extern AgentSettings agentSettings;
 extern PrinterSettings printerSettings;

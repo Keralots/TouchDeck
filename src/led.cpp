@@ -1,4 +1,5 @@
 #include "led.h"
+#include "encoder.h"
 #include "config.h"
 #include "settings.h"
 #include "display_ui.h"
@@ -117,7 +118,7 @@ void initLed() {
     // bus or USB.
     const uint8_t saved = ledSettings.pin;
     detachAndForceLow();
-    if (saved != LED_DEFAULT_PIN && ledPinAllowed(saved)) {
+    if (saved != LED_DEFAULT_PIN && ledPinAllowed(saved) && !encoderUsesPin(saved)) {
       pinMode(saved, OUTPUT);
       digitalWrite(saved, LOW);
     }

@@ -350,6 +350,10 @@ String rowUnit(const TileDef& d);
 String rowText(const TileDef& d, size_t i, bool useTemplate);
 void httpSync();
 std::vector<String> entityIds();
+#if BOARD_HAS_ENCODER
+void encoderFocus(const String& entity);
+void encoderTick();
+#endif
 void collectEntities();
 void stopGestures();
 bool frameActive();

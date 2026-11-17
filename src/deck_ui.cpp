@@ -1357,6 +1357,9 @@ void deckTick() {
     wakeDisplayFromTouch();
     touchSuppressUntilRelease();
   }
+#if BOARD_HAS_ENCODER
+  encoderTick();
+#endif
   presenceTick();
   frameTick();
 

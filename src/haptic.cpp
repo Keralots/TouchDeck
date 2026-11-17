@@ -1,4 +1,5 @@
 #include "haptic.h"
+#include "encoder.h"
 #include "settings.h"
 #include "led.h"
 #include <esp_timer.h>
@@ -76,7 +77,7 @@ void initHaptic() {
   const uint8_t pin = hapticSettings.pin;
   if (!hapticSettings.enabled) {
     // Hold a wired but disabled module's input low instead of floating.
-    if (hapticPinAllowed(pin)) parkLow(pin);
+    if (hapticPinAllowed(pin) && !encoderUsesPin(pin)) parkLow(pin);
     Serial.println("Haptic: disabled");
     return;
   }
@@ -95,7 +96,7 @@ void hapticTap() {
 }
 
 bool hapticTest(uint8_t pin, uint8_t strength, uint8_t pulseMs) {
-  if (!hapticPinAllowed(pin)) return false;
+  if (!hapticPinAllowed(pin) || encoderUsesPin(pin)) return false;
   pulse(pin, constrain(strength, HAPTIC_MIN_STRENGTH, 100),
         constrain(pulseMs, HAPTIC_MIN_MS, HAPTIC_MAX_MS));
   return true;

@@ -1365,6 +1365,57 @@
                     >
                   </div>
                 </div>
+                <div class="card hidden" id="encoderCard">
+                  <div class="card-head">
+                    <h2 class="card-title">Rotary encoders</h2>
+                  </div>
+                  <input type="hidden" name="encodersPresent" value="1" disabled />
+                  <datalist id="encoderEntityList"></datalist>
+                  <div id="encoderRows"></div>
+                  <template id="encoderTemplate">
+                    <div class="subcard">
+                      <h3 class="field-label" data-encoder-title></h3>
+                      <label class="check-row standalone">
+                        <input type="checkbox" name="enabled" /><span class="check-box"></span>
+                        <span class="check-text"><strong>Enabled</strong></span>
+                      </label>
+                      <div class="grid-2">
+                        <label class="field"><span class="field-label">A (S1)</span><select name="pinA"></select></label>
+                        <label class="field"><span class="field-label">B (S2)</span><select name="pinB"></select></label>
+                        <label class="field"><span class="field-label">Key (KEY)</span><select name="pinKey"></select></label>
+                        <label class="check-row standalone">
+                          <input type="checkbox" name="reverse" /><span class="check-box"></span>
+                          <span class="check-text"><strong>Reverse direction</strong></span>
+                        </label>
+                        <label class="field">
+                          <span class="field-label">Mode</span>
+                          <select name="mode">
+                            <option value="0">Follow last touched light</option>
+                            <option value="1">Fixed light</option>
+                          </select>
+                        </label>
+                        <label class="field" data-encoder-entity>
+                          <span class="field-label">Light entity</span>
+                          <input name="entity" type="text" list="encoderEntityList" placeholder="light.xxx" maxlength="71" />
+                        </label>
+                        <label class="field">
+                          <span class="field-label">Step per detent (%)</span>
+                          <input name="stepPct" type="number" min="1" max="25" step="1" />
+                        </label>
+                        <label class="field">
+                          <span class="field-label">Counts per detent</span>
+                          <select name="countsPerDetent"><option value="2">2</option><option value="4">4</option></select>
+                        </label>
+                        <label class="field">
+                          <span class="field-label">Popup position (%)</span>
+                          <input name="popupY" type="number" min="5" max="95" step="1" />
+                        </label>
+                      </div>
+                      <p class="field-hint"><output data-encoder-status>Save to test the encoder.</output></p>
+                    </div>
+                  </template>
+                  <p class="field-hint">Power the module from 3V3, not 5V: the ESP32 pins are not 5 V tolerant.</p>
+                </div>
               </form>
             </section>
 

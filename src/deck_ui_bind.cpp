@@ -934,6 +934,10 @@ std::vector<String> entityIds() {
   if (s_cfg.ledEntity.length()) ids.push_back(s_cfg.ledEntity);
   for (const String& id : presenceSettings.entities)
     if (id.length()) ids.push_back(id);
+#if BOARD_HAS_ENCODER
+  for (const EncoderSettings& s : encoderSettings)
+    if (s.enabled && s.mode == ENCODER_FIXED && s.entity[0]) ids.emplace_back(s.entity);
+#endif
   return ids;
 }
 
@@ -1100,6 +1104,10 @@ void tileEvent(lv_event_t* e) {
   // SHORT_CLICKED, not CLICKED: CLICKED also fires on the release after a
   // long press, which would run the tap action as well as the hold action.
   if (r.sliding) return;  // the press was a slider drag
+#if BOARD_HAS_ENCODER
+  if (code == LV_EVENT_SHORT_CLICKED || code == LV_EVENT_LONG_PRESSED)
+    encoderFocus(r.def->entity);
+#endif
   hapticTap();
   audioClick();
   if (code == LV_EVENT_SHORT_CLICKED) requestAction(r, false);

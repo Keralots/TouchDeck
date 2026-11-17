@@ -2,6 +2,7 @@
 #include "config.h"
 #include "led.h"       // sanitizeLedPin()
 #include "haptic.h"    // sanitizeHapticPin()
+#include "encoder.h"
 #include "audio.h"     // audioVolumeFromLinear()
 #include <Preferences.h>
 
@@ -16,6 +17,15 @@ LedSettings ledSettings;
 AdvancedSettings advSettings = {};
 PresenceSettings presenceSettings;
 HapticSettings hapticSettings;
+#if BOARD_HAS_ENCODER
+EncoderSettings defaultEncoderSettings(size_t i) {
+  EncoderSettings s;
+  if (i == 1) s.popupY = 70;
+  return s;
+}
+
+EncoderSettings encoderSettings[ENCODER_COUNT] = {defaultEncoderSettings(0), defaultEncoderSettings(1)};
+#endif
 AudioSettings audioSettings;
 AgentSettings agentSettings;
 PrinterSettings printerSettings;
@@ -27,6 +37,52 @@ bool validFrameEvery(int minutes) {
 static Preferences prefs;
 static const uint8_t BACKLIGHT_SETTINGS_VERSION = 1;
 static const uint8_t LED_SETTINGS_VERSION = 2;
+
+#if BOARD_HAS_ENCODER
+struct EncoderKeys {
+  const char *on, *a, *b, *key, *reverse, *mode, *step, *counts, *popup, *entity;
+};
+
+static constexpr EncoderKeys encoderKeys[ENCODER_COUNT] = {
+  {"enc0on", "enc0a", "enc0b", "enc0key", "enc0rev", "enc0mode", "enc0step", "enc0cnt", "enc0y", "enc0id"},
+  {"enc1on", "enc1a", "enc1b", "enc1key", "enc1rev", "enc1mode", "enc1step", "enc1cnt", "enc1y", "enc1id"},
+};
+
+static void loadEncoders() {
+  for (size_t i = 0; i < ENCODER_COUNT; i++) {
+    const EncoderKeys& k = encoderKeys[i];
+    EncoderSettings s = defaultEncoderSettings(i);
+    s.enabled = prefs.getBool(k.on, s.enabled);
+    s.pinA = prefs.getUChar(k.a, s.pinA);
+    s.pinB = prefs.getUChar(k.b, s.pinB);
+    s.pinKey = prefs.getUChar(k.key, s.pinKey);
+    s.reverse = prefs.getBool(k.reverse, s.reverse);
+    s.mode = prefs.getUChar(k.mode, s.mode);
+    s.stepPct = prefs.getUChar(k.step, s.stepPct);
+    s.countsPerDetent = prefs.getUChar(k.counts, s.countsPerDetent);
+    s.popupY = prefs.getUChar(k.popup, s.popupY);
+    if (prefs.isKey(k.entity)) prefs.getString(k.entity, s.entity, sizeof(s.entity));
+    encoderSettings[i] = s;
+  }
+}
+
+static void saveEncoders() {
+  for (size_t i = 0; i < ENCODER_COUNT; i++) {
+    const EncoderKeys& k = encoderKeys[i];
+    const EncoderSettings& s = encoderSettings[i];
+    prefs.putBool(k.on, s.enabled);
+    prefs.putUChar(k.a, s.pinA);
+    prefs.putUChar(k.b, s.pinB);
+    prefs.putUChar(k.key, s.pinKey);
+    prefs.putBool(k.reverse, s.reverse);
+    prefs.putUChar(k.mode, s.mode);
+    prefs.putUChar(k.step, s.stepPct);
+    prefs.putUChar(k.counts, s.countsPerDetent);
+    prefs.putUChar(k.popup, s.popupY);
+    prefs.putString(k.entity, s.entity);
+  }
+}
+#endif
 
 // ---------------------------------------------------------------------------
 //  StatNode migration
@@ -248,6 +304,9 @@ void loadSettings() {
   hapticSettings.pin = prefs.getUChar("happin", 0);
   hapticSettings.strength = constrain(prefs.getUChar("hapstr", 100), HAPTIC_MIN_STRENGTH, 100);
   hapticSettings.pulseMs = constrain(prefs.getUChar("hapms", 40), HAPTIC_MIN_MS, HAPTIC_MAX_MS);
+#if BOARD_HAS_ENCODER
+  loadEncoders();
+#endif
   audioSettings.enabled = prefs.getBool("audon", false);
   // "audvol" held the old linear volume, "audvdb" the dB scale.
   audioSettings.volume = prefs.isKey("audvdb") ? min<uint8_t>(prefs.getUChar("audvdb"), 100)
@@ -295,11 +354,17 @@ void loadSettings() {
   netSettings.timezoneStr[sizeof(netSettings.timezoneStr) - 1] = '\0';
   sanitizeLedPin();
   sanitizeHapticPin();
+#if BOARD_HAS_ENCODER
+  sanitizeEncoderSettings();
+#endif
 }
 
 void saveSettings() {
   sanitizeLedPin();
   sanitizeHapticPin();
+#if BOARD_HAS_ENCODER
+  sanitizeEncoderSettings();
+#endif
   prefs.begin(NVS_NAMESPACE, false);
   prefs.putUChar("rot", dispSettings.rotation);
   prefs.putUShort("tscale", dispSettings.tempScaleMax);
@@ -359,6 +424,9 @@ void saveSettings() {
   prefs.putUChar("happin", hapticSettings.pin);
   prefs.putUChar("hapstr", hapticSettings.strength);
   prefs.putUChar("hapms", hapticSettings.pulseMs);
+#if BOARD_HAS_ENCODER
+  saveEncoders();
+#endif
   prefs.putBool("audon", audioSettings.enabled);
   prefs.putUChar("audvdb", audioSettings.volume);
   prefs.putBool("audnight", audioSettings.nightMute);

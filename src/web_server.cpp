@@ -9,6 +9,7 @@
 #include "pc_metrics.h"
 #include "led.h"
 #include "haptic.h"
+#include "encoder.h"
 #include "audio.h"
 #include "agent.h"
 #include "agent_audio.h"
@@ -201,6 +202,57 @@ static bool validEntityId(const String& id) {
   return true;
 }
 
+static void encoderSettingsJson(JsonObject out, bool includePins) {
+#if BOARD_HAS_ENCODER
+  out["supported"] = true;
+  if (includePins) {
+    JsonArray pins = out["allowedPins"].to<JsonArray>();
+    for (uint8_t pin = 1; pin <= GPIO_PIN_MAX; pin++)
+      if (ledPinAllowed(pin)) pins.add(pin);
+  }
+  JsonArray items = out["items"].to<JsonArray>();
+  for (const EncoderSettings& s : encoderSettings) {
+    JsonObject item = items.add<JsonObject>();
+    item["enabled"] = s.enabled;
+    item["pinA"] = s.pinA;
+    item["pinB"] = s.pinB;
+    item["pinKey"] = s.pinKey;
+    item["reverse"] = s.reverse;
+    item["mode"] = s.mode;
+    item["stepPct"] = s.stepPct;
+    item["countsPerDetent"] = s.countsPerDetent;
+    item["popupY"] = s.popupY;
+    item["entity"] = s.entity;
+  }
+#else
+  out["supported"] = false;
+  out["items"].to<JsonArray>();
+  if (includePins) out["allowedPins"].to<JsonArray>();
+#endif
+}
+
+#if BOARD_HAS_ENCODER
+static bool validateEncoders(const EncoderSettings* items, const LedSettings& led,
+                             const HapticSettings& haptic, bool sdCard) {
+  for (size_t i = 0; i < ENCODER_COUNT; i++) {
+    const EncoderSettings& s = items[i];
+    String error = encoderPinError(items, i, led, haptic, sdCard);
+    const String entity(s.entity);
+    if (!error.length() &&
+        ((s.enabled && s.mode == ENCODER_FIXED && !entity.length()) ||
+         (entity.length() && (!entity.startsWith("light.") || !validEntityId(entity)))))
+      error = "needs a valid light entity ID for fixed mode.";
+    if (!error.length() && s.countsPerDetent != 2 && s.countsPerDetent != 4)
+      error = "needs 2 or 4 counts per detent.";
+    if (error.length()) {
+      sendJsonMessage(400, false, (String("Encoder ") + (i + 1) + " " + error).c_str());
+      return false;
+    }
+  }
+  return true;
+}
+#endif
+
 // The token never leaves the deck: the portal and backups only learn whether one is set.
 static void agentSettingsJson(JsonObject o) {
   o["mic"] = agentHasMic();
@@ -310,6 +362,7 @@ static void handleApiConfig() {
   haptic["pin"] = hapticSettings.pin;
   haptic["strength"] = hapticSettings.strength;
   haptic["pulseMs"] = hapticSettings.pulseMs;
+  encoderSettingsJson(doc["encoders"].to<JsonObject>(), true);
   audioSettingsJson(doc["audio"].to<JsonObject>());
   agentSettingsJson(doc["agent"].to<JsonObject>());
 
@@ -431,6 +484,7 @@ static void handleConfigExport() {
   haptic["pin"] = hapticSettings.pin;
   haptic["strength"] = hapticSettings.strength;
   haptic["pulseMs"] = hapticSettings.pulseMs;
+  encoderSettingsJson(doc["encoders"].to<JsonObject>(), false);
   audioSettingsJson(doc["audio"].to<JsonObject>());
   agentSettingsJson(doc["agent"].to<JsonObject>());
   doc["advanced"]["printers"] = advSettings.printers;
@@ -730,6 +784,37 @@ static void handleConfigImport() {
     }
   }
 
+#if BOARD_HAS_ENCODER
+  EncoderSettings nextEncoders[ENCODER_COUNT] = {defaultEncoderSettings(0), defaultEncoderSettings(1)};
+  if (!root["encoders"].isNull()) {
+    JsonArrayConst items = root["encoders"]["items"].as<JsonArrayConst>();
+    if (items.isNull() || items.size() > ENCODER_COUNT) {
+      sendJsonMessage(400, false, "Invalid encoder settings in the backup.");
+      return;
+    }
+    size_t i = 0;
+    for (JsonObjectConst item : items) {
+      EncoderSettings& s = nextEncoders[i++];
+      READ_BOOL(item, "enabled", s.enabled);
+      READ_INT(item, "pinA", 0, GPIO_PIN_MAX, s.pinA, uint8_t);
+      READ_INT(item, "pinB", 0, GPIO_PIN_MAX, s.pinB, uint8_t);
+      READ_INT(item, "pinKey", 0, GPIO_PIN_MAX, s.pinKey, uint8_t);
+      READ_BOOL(item, "reverse", s.reverse);
+      READ_INT(item, "mode", ENCODER_FOLLOW, ENCODER_FIXED, s.mode, uint8_t);
+      READ_INT(item, "stepPct", 1, 25, s.stepPct, uint8_t);
+      READ_INT(item, "countsPerDetent", 2, 4, s.countsPerDetent, uint8_t);
+      READ_INT(item, "popupY", 5, 95, s.popupY, uint8_t);
+      const char* entity;
+      if (!readBackupString(item, "entity", sizeof(s.entity) - 1, entity, error, "encoders.entity")) {
+        sendJsonMessage(400, false, error.c_str());
+        return;
+      }
+      strlcpy(s.entity, entity, sizeof(s.entity));
+    }
+  }
+  if (!validateEncoders(nextEncoders, nextLed, nextHaptic, nextDisplay.sdCard)) return;
+#endif
+
   READ_BOOL(clock, "use24h", nextNetwork.use24h);
   const char* textValue = nullptr;
   if (!readBackupString(clock, "timezone", sizeof(nextNetwork.timezoneStr) - 1,
@@ -942,6 +1027,10 @@ static void handleConfigImport() {
   backlightSettings = nextBacklight;
   ledSettings = nextLed;
   hapticSettings = nextHaptic;
+#if BOARD_HAS_ENCODER
+  stopEncoders();
+  std::copy_n(nextEncoders, ENCODER_COUNT, encoderSettings);
+#endif
   brightness = nextBrightness;
   advSettings.printers = nextPrinters;
   advSettings.weather60 = nextWeather60;
@@ -1009,6 +1098,50 @@ static void handleSaveLight() {
 }
 
 // Hardware page: status LED, vibration motor, speaker.
+#if BOARD_HAS_ENCODER
+static bool readEncoderForm(EncoderSettings* items) {
+  for (size_t i = 0; i < ENCODER_COUNT; i++) {
+    const String prefix = String("enc") + i;
+    if (!server.hasArg("encodersPresent") && !server.hasArg(prefix + "enabled") &&
+        !server.hasArg(prefix + "pinA") && !server.hasArg(prefix + "pinB")) continue;
+    EncoderSettings& s = items[i];
+    s.enabled = server.hasArg(prefix + "enabled");
+    s.reverse = server.hasArg(prefix + "reverse");
+    const char* const fields[] = {"pinA", "pinB", "pinKey"};
+    uint8_t* const pins[] = {&s.pinA, &s.pinB, &s.pinKey};
+    for (size_t j = 0; j < 3; j++) {
+      const String arg = prefix + fields[j];
+      if (!server.hasArg(arg)) continue;
+      const String text = server.arg(arg);
+      char* end;
+      const long pin = strtol(text.c_str(), &end, 10);
+      if (!text.length() || *end || pin < 0 || pin > GPIO_PIN_MAX) {
+        sendJsonMessage(400, false, (String("Invalid GPIO for Encoder ") + (i + 1) + ".").c_str());
+        return false;
+      }
+      *pins[j] = pin;
+    }
+    s.mode = clampedArg((prefix + "mode").c_str(), s.mode, ENCODER_FOLLOW, ENCODER_FIXED);
+    s.stepPct = clampedArg((prefix + "stepPct").c_str(), s.stepPct, 1, 25);
+    s.popupY = clampedArg((prefix + "popupY").c_str(), s.popupY, 5, 95);
+    if (server.hasArg(prefix + "countsPerDetent")) {
+      const String counts = server.arg(prefix + "countsPerDetent");
+      s.countsPerDetent = counts == "2" ? 2 : counts == "4" ? 4 : 0;
+    }
+    if (server.hasArg(prefix + "entity")) {
+      String entity = server.arg(prefix + "entity");
+      entity.trim();
+      if (entity.length() >= sizeof(s.entity)) {
+        sendJsonMessage(400, false, (String("Encoder ") + (i + 1) + " entity ID is too long.").c_str());
+        return false;
+      }
+      strlcpy(s.entity, entity.c_str(), sizeof(s.entity));
+    }
+  }
+  return true;
+}
+#endif
+
 static void handleSaveHardware() {
   LedSettings nextLed = ledSettings;
   nextLed.enabled = server.hasArg("ledEnabled") ? 1 : 0;
@@ -1040,6 +1173,12 @@ static void handleSaveHardware() {
     sendJsonMessage(400, false, "The status LED and the vibration motor cannot share a GPIO.");
     return;
   }
+#if BOARD_HAS_ENCODER
+  EncoderSettings nextEncoders[ENCODER_COUNT];
+  std::copy_n(encoderSettings, ENCODER_COUNT, nextEncoders);
+  if (!readEncoderForm(nextEncoders) ||
+      !validateEncoders(nextEncoders, nextLed, nextHaptic, dispSettings.sdCard)) return;
+#endif
   String ledEntity = server.arg("ledEntity");
   ledEntity.trim();
   if (ledEntity.length() && !ledEntity.startsWith("input_boolean.") &&
@@ -1070,11 +1209,20 @@ static void handleSaveHardware() {
   }
   ledSettings = nextLed;
   hapticSettings = nextHaptic;
+#if BOARD_HAS_ENCODER
+  // Release old encoder pins before LED and haptic claim their new pins.
+  stopEncoders();
+  std::copy_n(nextEncoders, ENCODER_COUNT, encoderSettings);
+#endif
   audioSettings = nextAudio;
   if (!ledEntity.length()) ledSetHaLevel(LED_HA_NONE);  // the saved level replaces one set over MQTT
   saveSettings();
   initLed();
   initHaptic();
+#if BOARD_HAS_ENCODER
+  initEncoders();
+  deckEncodersApply();
+#endif
   audioInit();
   refreshBacklightControl();  // the LED's own night interval
   String err;
@@ -1127,7 +1275,8 @@ static void handleLedPreview() {
     sendJsonMessage(200, true, "Preview ended.");
     return;
   }
-  if (enabled && (!ledPinAllowed(pin) || (hapticSettings.enabled && hapticSettings.pin == pin))) {
+  if (enabled && (!ledPinAllowed(pin) || (hapticSettings.enabled && hapticSettings.pin == pin) ||
+                  encoderUsesPin(pin))) {
     sendJsonMessage(400, false,
                     "That LED GPIO is reserved, in use, or unsupported on this board.");
     return;
@@ -1143,7 +1292,7 @@ static void handleHapticTest() {
   const uint8_t ms = (uint8_t)clampedArg("hapticMs", hapticSettings.pulseMs, HAPTIC_MIN_MS, HAPTIC_MAX_MS);
   if (!hapticTest(pin, strength, ms)) {
     sendJsonMessage(400, false,
-                    "That GPIO is reserved, used by the status LED, or unsupported on this board.");
+                    "That vibration motor GPIO is reserved, in use, or unsupported on this board.");
     return;
   }
   sendJsonMessage(200, true, "Pulse sent.");
@@ -1417,6 +1566,15 @@ static void handleSaveSd() {
   if (on && ledSettings.enabled && boardSdPin(ledSettings.pin)) user = "status LED", pin = ledSettings.pin;
   else if (on && hapticSettings.enabled && boardSdPin(hapticSettings.pin))
     user = "vibration motor", pin = hapticSettings.pin;
+#if BOARD_HAS_ENCODER
+  if (on && !user) {
+    for (const EncoderSettings& s : encoderSettings) {
+      if (!s.enabled) continue;
+      for (uint8_t p : {s.pinA, s.pinB, s.pinKey})
+        if (p && boardSdPin(p)) user = "rotary encoder", pin = p;
+    }
+  }
+#endif
   if (user) {
     const String msg = String("The ") + user + " uses GPIO " + pin +
                        ", which the microSD card needs. Move or disable it first.";
@@ -1700,6 +1858,19 @@ static void handleApiStatus() {
   doc["led_duty"] = ledCurrentDuty();
   doc["led_night"] = ledNightActive();
   doc["led_ha"] = ledHaLevel();  // -1 not linked, -2 on at the local level
+#if BOARD_HAS_ENCODER
+  JsonArray encoders = doc["encoders"].to<JsonArray>();
+  for (size_t i = 0; i < ENCODER_COUNT; i++) {
+    int count;
+    bool key;
+    encoderStatus(i, count, key);
+    JsonObject item = encoders.add<JsonObject>();
+    item["count"] = count;
+    item["key"] = key;
+  }
+#else
+  doc["encoders"].to<JsonArray>();
+#endif
   doc["free_heap"]    = ESP.getFreeHeap();
   doc["max_block"]    = ESP.getMaxAllocHeap();
   doc["internal_free"] = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
