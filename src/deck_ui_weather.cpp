@@ -765,6 +765,7 @@ void wxTick() {
   if (!painted) return;
   s_sparkPaintMs = millis();  // like a gliding chart: other pages snapshot rarely meanwhile
   s_animPainted = true;
+  danim(DA_WX, (int32_t)now, advSettings.weather60 ? 2 : 1);
 }
 
 // The place and whether any tile wants the weather, after a config load.

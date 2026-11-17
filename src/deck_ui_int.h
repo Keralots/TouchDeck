@@ -19,6 +19,7 @@
 #include "audio.h"
 #include "pc_metrics.h"
 #include "metric_format.h"
+#include "debug_anim.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <Preferences.h>

@@ -2,6 +2,7 @@
 // captive-portal redirects. Static UI assets are streamed from PROGMEM in
 // bounded chunks so the full page is never assembled in heap.
 #include "web_server.h"
+#include "debug_anim.h"
 #include "settings.h"
 #include "wifi_manager.h"
 #include "display_ui.h"
@@ -2256,6 +2257,19 @@ static void handlePerf() {
 
 // POST /api/deck/weather-preview?code=95[&night=1] - bench hook: weather tiles
 // show this WMO code and every icon kind in the forecast until the next fetch.
+// GET /api/debug/anim - bench hook: the animation timing events since the last
+// read (debug_anim.h). POST ?on=1|0 starts or stops the log; off by default.
+static void handleDebugAnimGet() {
+  String out;
+  danimDrain(out);
+  server.send(200, "text/plain", out);
+}
+
+static void handleDebugAnimPost() {
+  const bool on = danimEnable(server.arg("on") == "1");
+  server.send(200, "application/json", on ? "{\"on\":true}" : "{\"on\":false}");
+}
+
 static void handleWeatherPreview() {
   const bool ok = deck::weatherPreview(constrain((int)server.arg("code").toInt(), 0, 99), server.arg("night") != "1");
   sendJsonMessage(ok ? 200 : 409, ok, ok ? "Preview shown until the next fetch" : "No weather data yet");
@@ -2686,6 +2700,8 @@ void initWebServer() {
   server.on("/api/deck/wallpaper/remove", HTTP_POST, handleWallRemove);
   server.on("/api/deck/bench", HTTP_POST, handleDeckBench);
   server.on("/api/deck/perf", HTTP_GET, handlePerf);
+  server.on("/api/debug/anim", HTTP_GET, handleDebugAnimGet);
+  server.on("/api/debug/anim", HTTP_POST, handleDebugAnimPost);
   server.on("/api/deck/weather-preview", HTTP_POST, handleWeatherPreview);
   server.on("/api/deck/frame", HTTP_GET, handleFrameGet);
   server.on("/api/deck/frame", HTTP_POST, handleFramePost);

@@ -7,6 +7,7 @@
 #include "board.h"
 #if defined(BOARD_DISPLAY_MIPI_DSI)
 #include "deck_panel_int.h"
+#include "debug_anim.h"
 #include <esp_lcd_mipi_dsi.h>
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
@@ -266,6 +267,8 @@ void presentFrame(const Frame& f, bool backToBack) {
   s_shownUs = vsyncAfter(now);
   const int64_t end = esp_timer_get_time();
   frameFinished(f, f0, (uint32_t)(built - f0), (uint32_t)(end - built), (uint32_t)(end - f0));
+  danim(DA_FRAME, f.showAtUs ? (int32_t)((s_shownUs - f.showAtUs) / 100) : -999999, (int32_t)(s_shownUs - end),
+        (int32_t)(f.showAtUs % 1000000000), (int32_t)(end - f0));
 }
 
 bool fail(const char* step, esp_err_t e) {

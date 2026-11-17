@@ -104,6 +104,7 @@ uint32_t tickCb() { return panelFrameClockMs(); }
 int s_lvOut = 0;
 
 void flushCb(lv_display_t* d, const lv_area_t* a, uint8_t* px) {
+  danim(DA_AREA, a->x1 | (a->y1 << 16), a->x2 | (a->y2 << 16));
   panelLvDirty(a->x1, a->y1, a->x2, a->y2);
   if (!lv_display_flush_is_last(d)) {
     lv_display_flush_ready(d);
@@ -112,6 +113,7 @@ void flushCb(lv_display_t* d, const lv_area_t* a, uint8_t* px) {
   const uint8_t* fb1 = (const uint8_t*)panelLvBuffer(1);
   const int idx = (px >= fb1 && px < fb1 + FRAME_BYTES) ? 1 : 0;
   panelPostLv(idx, s_gen);
+  danim(DA_LVFLUSH, idx);
   s_lvOut++;
 }
 
