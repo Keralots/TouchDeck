@@ -238,6 +238,8 @@ int64_t transportLastSyncUs() {
 
 int64_t transportPresentUs(int64_t) { return 0; }
 
+int64_t transportAnimTargetUs(int64_t, int64_t*) { return 0; }
+
 bool transportBegin() {
   gpio_reset_pin((gpio_num_t)PIN_CS);
   gpio_set_direction((gpio_num_t)PIN_CS, GPIO_MODE_OUTPUT);

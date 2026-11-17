@@ -5,7 +5,6 @@
 
 namespace deckui {
 
-constexpr uint32_t WX_FRAME_MS = 33;
 constexpr uint32_t WX_STALE_MS = 3UL * 60UL * 60UL * 1000UL;  // older than this is not "now"
 constexpr uint32_t C_SUN = 0xFFC533, C_RAIN = 0x4FA3FF, C_BOLT = 0xFFD23F;
 constexpr uint32_t C_COLD = 0x5AA9FF, C_WARM = 0xFFB03D;
@@ -33,8 +32,6 @@ struct WxRt {
   lv_area_t dirty[WX_SPOTS][3];     // what the last frame drew on, empty when y2 < y1
   uint32_t color[WX_SPOTS][3];
 };
-
-static uint32_t s_wxMs = 0;
 
 void wxFree(WxRt* w) {
   if (!w) return;
@@ -735,10 +732,8 @@ static bool wxShowing() {
 }
 
 void wxTick() {
-  const uint32_t now = millis();
-  if (now - s_wxMs < WX_FRAME_MS) return;
-  // Fixed steps, so loop jitter does not stretch the frame period.
-  s_wxMs = now - s_wxMs < 2 * WX_FRAME_MS ? s_wxMs + WX_FRAME_MS : now;
+  if (!(advSettings.weather60 ? s_animFastDue : s_animDue)) return;
+  const uint32_t now = s_animMs;
   const uint32_t serial = weatherSerial();
   const bool showing = wxShowing();
   bool painted = false;
@@ -767,7 +762,10 @@ void wxTick() {
       painted = true;
     }
   }
-  if (painted) s_sparkPaintMs = now;  // like a gliding chart: other pages snapshot rarely meanwhile
+  if (!painted) return;
+  s_sparkPaintMs = millis();  // like a gliding chart: other pages snapshot rarely meanwhile
+  s_animPainted = true;
+  danim(DA_WX, (int32_t)now, advSettings.weather60 ? 2 : 1);
 }
 
 // The place and whether any tile wants the weather, after a config load.

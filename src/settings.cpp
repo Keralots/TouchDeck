@@ -193,6 +193,8 @@ void loadSettings() {
   dispSettings.fxPage = min<uint8_t>(prefs.getUChar("fxpage", 0), 4);
   dispSettings.fxCard = min<uint8_t>(prefs.getUChar("fxcard", 0), 3);
   advSettings.printers = prefs.getBool("prn", false);
+  advSettings.weather60 = prefs.getBool("wx60", false);
+  advSettings.charts60 = prefs.getBool("ch60", false);
   printerSettings.errors = prefs.getBool("perr", true);
   printerSettings.errorsAll = prefs.getBool("perrall", false);
   printerSettings.errorWake = prefs.getBool("pwake", true);
@@ -312,6 +314,8 @@ void saveSettings() {
   prefs.putUChar("fxpage", dispSettings.fxPage);
   prefs.putUChar("fxcard", dispSettings.fxCard);
   prefs.putBool("prn", advSettings.printers);
+  prefs.putBool("wx60", advSettings.weather60);
+  prefs.putBool("ch60", advSettings.charts60);
   prefs.putBool("perr", printerSettings.errors);
   prefs.putBool("perrall", printerSettings.errorsAll);
   prefs.putBool("pwake", printerSettings.errorWake);

@@ -92,6 +92,7 @@ struct Frame {
   bool dotsV;
   // Plain LVGL frame: what differs from the plain frame decided before it.
   DirtyMask dirty;
+  int64_t showAtUs;  // plain LVGL frame: not on the glass before this refresh, 0 = at once
 };
 
 // --- Compositor side, called from the transport's flush task ---
@@ -126,6 +127,8 @@ int64_t transportLastSyncUs();
 // When a frame decided now will be on the glass; 0 = no prediction, the
 // compositor uses the sync edge and the constants above.
 int64_t transportPresentUs(int64_t nowUs);
+// See panelAnimTargetUs.
+int64_t transportAnimTargetUs(int64_t nowUs, int64_t* periodUs);
 
 }  // namespace deck
 

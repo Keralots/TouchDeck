@@ -148,9 +148,13 @@ bool sparkStep(Spark& s, int w, int h, uint32_t now, bool ease, uint32_t dtMs) {
   const float target = std::min(0.0f, -1.0f + (float)(now - s.rxMs) / (float)s.gapMs);
   if (!dispSettings.smoothCharts || s.n < 3) s.off = 0;
   else if (!ease) s.off = target;
-  else s.off += (float)dtMs / (float)s.gapMs + (target - s.off) * std::min(1.0f, (float)dtMs / SPARK_SYNC_MS);
+  else s.off += std::max(0.0f, (float)dtMs / (float)s.gapMs + (target - s.off) * std::min(1.0f, (float)dtMs / SPARK_SYNC_MS));
   s.off = std::min(s.off, 0.0f);
-  if (s.n > SPARK_SPAN) s.off = std::max(s.off, (float)(SPARK_SPAN + 1 - s.n));  // left edge on data
+  danim(DA_SPARK, (int32_t)(s.off * 1e4f), (int32_t)(target * 1e4f), (int32_t)dtMs | (ease ? 0 : 0x40000000),
+        (int32_t)(((uintptr_t)&s >> 4) & 0xffff));
+  // Left edge on data, once a spare sample allows: with none it would push
+  // the glide a whole sample ahead of the packet clock.
+  if (s.n >= SPARK_SPAN + 2) s.off = std::max(s.off, (float)(SPARK_SPAN + 1 - s.n));
   const int32_t key = (int32_t)floorf(s.off * (float)(w - 1) / SPARK_SPAN * 4);
   const float tol = (s.hi - s.lo) / 400;
   if (!s.dirty && key == s.key && fabsf(s.viewLo - s.paintLo) <= tol && fabsf(s.viewHi - s.paintHi) <= tol)
@@ -215,6 +219,7 @@ bool sparkFeed(TileRt& r, const PcSource& pc, const SlotHistory& hs, int n, floa
   } else if (hs.head != s.head || hs.count != s.cnt || !s.n) {
     fed = true;
     const uint32_t dt = pc.data.sampleMs - s.rxMs;
+    const float offWas = s.off;
     if (s.rxMs && dt >= 150 && dt <= 10000) s.gapMs = (s.gapMs * 3 + dt) / 4;
     s.rxMs = pc.data.sampleMs;
     const bool next = s.n && hs.count >= s.cnt && (hs.head + PC_HISTORY_LEN - s.head) % PC_HISTORY_LEN == 1;
@@ -230,6 +235,8 @@ bool sparkFeed(TileRt& r, const PcSource& pc, const SlotHistory& hs, int n, floa
     }
     s.head = hs.head;
     s.cnt = hs.count;
+    danim(DA_FEED, next | (int32_t)((((uintptr_t)&s >> 4) & 0xffff) << 1), (int32_t)(offWas * 1e4f),
+          (int32_t)(s.off * 1e4f), (int32_t)dt);
   }
   float lo = 1e9f, hi = -1e9f;
   for (int i = std::max(0, s.n - PC_HISTORY_LEN); i < s.n; i++) {

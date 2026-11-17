@@ -1,6 +1,9 @@
 // Guition JC3248W535 deck UI. See deck_ui.h for the threading contract.
 #include "deck_ui_int.h"
 #include <src/misc/lv_anim_private.h>  // lv_anim_enable_vsync_mode
+#include <src/core/lv_refr_private.h>     // snapBand
+#include <src/display/lv_display_private.h>
+#include <src/draw/lv_draw_private.h>
 #include "deck_mqtt.h"
 #include "psram_json.h"
 #include "deck_viz.h"
@@ -101,6 +104,7 @@ uint32_t tickCb() { return panelFrameClockMs(); }
 int s_lvOut = 0;
 
 void flushCb(lv_display_t* d, const lv_area_t* a, uint8_t* px) {
+  danim(DA_AREA, a->x1 | (a->y1 << 16), a->x2 | (a->y2 << 16));
   panelLvDirty(a->x1, a->y1, a->x2, a->y2);
   if (!lv_display_flush_is_last(d)) {
     lv_display_flush_ready(d);
@@ -109,6 +113,7 @@ void flushCb(lv_display_t* d, const lv_area_t* a, uint8_t* px) {
   const uint8_t* fb1 = (const uint8_t*)panelLvBuffer(1);
   const int idx = (px >= fb1 && px < fb1 + FRAME_BYTES) ? 1 : 0;
   panelPostLv(idx, s_gen);
+  danim(DA_LVFLUSH, idx);
   s_lvOut++;
 }
 
@@ -471,7 +476,9 @@ void setPager(int page) {
   panelSetPager(sh.nCols, c, sh.colLen[c], page - sh.colFirst[c]);
 }
 
+void bandCancel();
 void destroyPages(bool keepGlass = false) {
+  bandCancel();
   glassBakeRelease();
   clearGlassCache();
   edClose();
@@ -575,9 +582,14 @@ void stopGestures() {
   releaseSwipe();
 }
 
+bool bandRun(uint32_t now);
+bool bandStart(int pick);
+bool s_animDrewPass = false;  // this loop pass drew an animation frame
+
 void refreshOneSnapshot() {
   if (touchIsDown() || compMode() != COMP_NONE) return;
   const uint32_t now = millis();
+  if (bandRun(now)) return;
   if (now - s_lastSnapMs < SNAP_SPACING_MS) return;
   // An open panel is what the next gesture slides; it goes first. So does a
   // panel with no image or an old one: busy pages (a print, gliding charts)
@@ -632,7 +644,93 @@ void refreshOneSnapshot() {
     refreshPanelSnapshot();
     return;
   }
+  if (busy && bandStart(pick)) return;
   snapPage(pick);
+}
+
+// lv_snapshot_take_to_draw_buf (LVGL 9.5) limited to rows y0..y1 of obj.
+static void snapBand(lv_obj_t* obj, lv_draw_buf_t* buf, int32_t y0, int32_t y1) {
+  lv_area_t all;
+  lv_obj_get_coords(obj, &all);
+  lv_area_t clip = all;
+  clip.y1 = all.y1 + y0;
+  clip.y2 = all.y1 + y1;
+  lv_layer_t layer;
+  lv_layer_init(&layer);
+  layer.draw_buf = buf;
+  layer.buf_area = {all.x1, all.y1, all.x1 + (int32_t)buf->header.w - 1, all.y1 + (int32_t)buf->header.h - 1};
+  layer.color_format = LV_COLOR_FORMAT_RGB565;
+  layer._clip_area = clip;
+  layer.phy_clip_area = clip;
+  lv_draw_unit_send_event(NULL, LV_EVENT_CHILD_CREATED, &layer);
+  lv_display_t* dispOld = lv_refr_get_disp_refreshing();
+  lv_display_t* disp = lv_obj_get_display(obj);
+  lv_layer_t* layerOld = disp->layer_head;
+  disp->layer_head = &layer;
+  lv_refr_set_disp_refreshing(disp);
+  lv_obj_redraw(&layer, obj);
+  layer.all_tasks_added = true;
+  while (layer.draw_task_head) {
+    lv_draw_dispatch_wait_for_request();
+    lv_draw_dispatch();
+  }
+  disp->layer_head = layerOld;
+  lv_refr_set_disp_refreshing(dispOld);
+  lv_draw_unit_send_event(NULL, LV_EVENT_SCREEN_LOAD_START, &layer);
+  lv_draw_unit_send_event(NULL, LV_EVENT_CHILD_DELETED, &layer);
+}
+
+// While tiles animate, a page image is redrawn in bands, one after each
+// animation frame, in place: a whole snapshot would stall the animation, and
+// a second image buffer costs PSRAM the wallpaper needs (7B). A swipe meanwhile
+// may show older and newer bands of the same page.
+constexpr int SNAP_BANDS = 6;
+struct BandSnap {
+  int page = -1;
+  int band = 0;
+  uint32_t ms = 0;
+};
+BandSnap s_band;
+
+void bandCancel() {
+  if (s_band.page >= 0 && s_band.page < s_count) s_pages[s_band.page].stale = true;
+  s_band.page = -1;
+}
+
+void bandStep();
+
+bool bandStart(int pick) {
+  Page& pg = s_pages[pick];
+  if (!pg.snap || lv_snapshot_reshape_draw_buf(pg.root, pg.snap) != LV_RESULT_OK) return false;
+  s_band.page = pick;
+  s_band.band = 0;
+  pg.stale = false;  // a change while the bands run makes it stale again
+  bandStep();
+  return true;
+}
+
+bool bandRun(uint32_t now) {
+  if (s_band.page < 0) return false;
+  if (s_animDrewPass || now - s_band.ms >= SNAP_SPACING_MS) bandStep();
+  return true;
+}
+
+void bandStep() {
+  Page& pg = s_pages[s_band.page];
+  const int32_t h = (int32_t)pg.snap->header.h;
+  const uint32_t t0 = micros();
+  snapBand(pg.root, pg.snap, h * s_band.band / SNAP_BANDS, h * (s_band.band + 1) / SNAP_BANDS - 1);
+  const uint32_t dt = micros() - t0;
+  if (dt > s_snapUsMax) s_snapUsMax = dt;
+  s_band.ms = millis();
+  if (++s_band.band < SNAP_BANDS) return;
+  const int p = s_band.page;
+  portENTER_CRITICAL(&s_mux);
+  sh.src[p] = {(const uint16_t*)pg.snap->data, (uint16_t)(pg.snap->header.stride / 2), true};
+  sh.valid[p] = true;
+  portEXIT_CRITICAL(&s_mux);
+  s_band.page = -1;
+  pg.snapMs = s_lastSnapMs = millis();
 }
 
 bool snapPage(int pick) {
@@ -964,6 +1062,7 @@ bool arrangePages() {
     if (now && !was[k]) {
       p.stale = true;  // snapPage gives it a swipe image
     } else if (!now && was[k]) {
+      if (k == s_band.page) bandCancel();
       if (p.snap) lv_draw_buf_destroy(p.snap);
       p.snap = nullptr;
     }
@@ -1162,8 +1261,38 @@ bool deckBegin(uint8_t rotation) {
 
 namespace deckui {
 
-// The shown page's PC charts glide at about 30 fps while the screen is lit
-// and nothing covers the page.
+bool s_animDue = false, s_animPainted = false, s_animFastDue = false;
+uint32_t s_animMs = 0;
+int64_t s_animAtUs = 0, s_animFastAtUs = 0;
+
+// animDue every second refresh, animFastDue every refresh, timed for the
+// refresh the frame reaches the glass on, so steps match what the eye sees.
+// Without a panel clock both are 30 fps on millis().
+void animClockTick() {
+  s_animDue = s_animFastDue = false;
+  int64_t period = 0;
+  const int64_t at = panelAnimTargetUs(esp_timer_get_time(), &period);
+  if (!at) {
+    // Steps on a fixed grid, so loop jitter does not stretch the frame period.
+    static uint32_t grid = 0;
+    const uint32_t ms = millis();
+    if (ms - grid < SPARK_FRAME_MS) return;
+    grid = ms - grid < 2 * SPARK_FRAME_MS ? grid + SPARK_FRAME_MS : ms;
+    if ((int32_t)(ms - s_animMs) > 0) s_animMs = ms;  // never back from a refresh time
+    s_animDue = s_animFastDue = true;
+    return;
+  }
+  if (at - s_animFastAtUs < period / 2) return;
+  s_animFastAtUs = at;
+  s_animMs = (uint32_t)(at / 1000);
+  s_animFastDue = true;
+  if (at - s_animAtUs < 2 * period - period / 2) return;
+  s_animAtUs = at;
+  s_animDue = true;
+}
+
+// The shown page's PC charts glide on the animation clock while the screen is
+// lit and nothing covers the page.
 uint32_t s_sparkMs = 0;
 
 bool sparkGliding() {
@@ -1172,14 +1301,16 @@ bool sparkGliding() {
 }
 
 void sparkTick() {
-  const uint32_t now = millis();
+  if (!(advSettings.charts60 ? s_animFastDue : s_animDue)) return;
+  const uint32_t now = s_animMs;
   const uint32_t dt = now - s_sparkMs;
-  if (dt < SPARK_FRAME_MS) return;
   s_sparkMs = now;
   if (!sparkGliding()) return;
   for (TileRt& r : s_tiles)
-    if (r.spark && r.page == sh.active && !r.off && sparkRender(r, now, true, std::min<uint32_t>(dt, 200)))
-      s_sparkPaintMs = now;
+    if (r.spark && r.page == sh.active && !r.off && sparkRender(r, now, true, std::min<uint32_t>(dt, 200))) {
+      s_sparkPaintMs = millis();
+      s_animPainted = true;
+    }
 }
 
 }  // namespace deckui
@@ -1275,11 +1406,20 @@ void deckTick() {
   pcVolumeTick();
   weatherTick();
   lap(PP_MEDIA);
+  s_animDrewPass = false;
   if (!systemScreen) {
+    animClockTick();
     sparkTick();
     heroTick();
     vizTick();
     wxTick();
+  }
+  // Draw the animation frame now, not at LVGL's next refresh.
+  if (s_animPainted) {
+    s_animPainted = false;
+    panelLvShowAt(s_animFastAtUs);
+    lv_refr_now(nullptr);
+    s_animDrewPass = s_animDue;
   }
   syncSwipeZones();
   lap(PP_ANIM);
@@ -1328,6 +1468,11 @@ void deckPerfJson(String& out, uint32_t minUs) {
   s_perfPanel = {};
   t0 = millis();
   viz0 = vizSerial();
+}
+
+bool deckRefreshClock() {
+  int64_t period = 0;
+  return panelAnimTargetUs(esp_timer_get_time(), &period) != 0;
 }
 
 void deckToast(const char* text) {

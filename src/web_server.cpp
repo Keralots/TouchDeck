@@ -2,6 +2,7 @@
 // captive-portal redirects. Static UI assets are streamed from PROGMEM in
 // bounded chunks so the full page is never assembled in heap.
 #include "web_server.h"
+#include "debug_anim.h"
 #include "settings.h"
 #include "wifi_manager.h"
 #include "display_ui.h"
@@ -276,6 +277,9 @@ static void handleApiConfig() {
   led["offlineOff"] = ledSettings.offlineOff != 0;
   led["entity"] = deckLedEntity();
   doc["advanced"]["printers"] = advSettings.printers;
+  doc["advanced"]["weather60"] = advSettings.weather60;
+  doc["advanced"]["charts60"] = advSettings.charts60;
+  doc["advanced"]["fps60"] = deckRefreshClock();
   printerSettingsJson(doc["printers"].to<JsonObject>());
   mqttConfigJson(doc["mqtt"].to<JsonObject>(), true);
   presenceJson(doc["presence"].to<JsonObject>());
@@ -410,6 +414,8 @@ static void handleConfigExport() {
   haptic["pulseMs"] = hapticSettings.pulseMs;
   audioSettingsJson(doc["audio"].to<JsonObject>());
   doc["advanced"]["printers"] = advSettings.printers;
+  doc["advanced"]["weather60"] = advSettings.weather60;
+  doc["advanced"]["charts60"] = advSettings.charts60;
   printerSettingsJson(doc["printers"].to<JsonObject>());
   mqttConfigJson(doc["mqtt"].to<JsonObject>(), false);
   presenceJson(doc["presence"].to<JsonObject>());
@@ -759,6 +765,9 @@ static void handleConfigImport() {
   bool nextPrinters = false;  // backups from before the Advanced page: the default
   JsonObjectConst advanced = root["advanced"].as<JsonObjectConst>();
   if (!advanced.isNull() && !advanced["printers"].isNull()) READ_BOOL(advanced, "printers", nextPrinters);
+  bool nextWeather60 = false, nextCharts60 = false;
+  if (!advanced.isNull() && !advanced["weather60"].isNull()) READ_BOOL(advanced, "weather60", nextWeather60);
+  if (!advanced.isNull() && !advanced["charts60"].isNull()) READ_BOOL(advanced, "charts60", nextCharts60);
   PrinterSettings nextPrn;  // older backups: the defaults
   JsonObjectConst prnIn = root["printers"].as<JsonObjectConst>();
   if (!prnIn.isNull()) {
@@ -890,6 +899,8 @@ static void handleConfigImport() {
   hapticSettings = nextHaptic;
   brightness = nextBrightness;
   advSettings.printers = nextPrinters;
+  advSettings.weather60 = nextWeather60;
+  advSettings.charts60 = nextCharts60;
   printerSettings = nextPrn;
   presenceSettings = nextPresence;
   audioSettings = nextAudio;
@@ -1054,6 +1065,8 @@ static void handleSaveAdvanced() {
     return;
   }
   deckSetPrinters(server.hasArg("printers"));
+  advSettings.weather60 = server.hasArg("weather60");
+  advSettings.charts60 = server.hasArg("charts60");
   saveSettings();
   sendJsonMessage(200, true, "Advanced settings applied.");
 }
@@ -2244,6 +2257,19 @@ static void handlePerf() {
 
 // POST /api/deck/weather-preview?code=95[&night=1] - bench hook: weather tiles
 // show this WMO code and every icon kind in the forecast until the next fetch.
+// GET /api/debug/anim - bench hook: the animation timing events since the last
+// read (debug_anim.h). POST ?on=1|0 starts or stops the log; off by default.
+static void handleDebugAnimGet() {
+  String out;
+  danimDrain(out);
+  server.send(200, "text/plain", out);
+}
+
+static void handleDebugAnimPost() {
+  const bool on = danimEnable(server.arg("on") == "1");
+  server.send(200, "application/json", on ? "{\"on\":true}" : "{\"on\":false}");
+}
+
 static void handleWeatherPreview() {
   const bool ok = deck::weatherPreview(constrain((int)server.arg("code").toInt(), 0, 99), server.arg("night") != "1");
   sendJsonMessage(ok ? 200 : 409, ok, ok ? "Preview shown until the next fetch" : "No weather data yet");
@@ -2674,6 +2700,8 @@ void initWebServer() {
   server.on("/api/deck/wallpaper/remove", HTTP_POST, handleWallRemove);
   server.on("/api/deck/bench", HTTP_POST, handleDeckBench);
   server.on("/api/deck/perf", HTTP_GET, handlePerf);
+  server.on("/api/debug/anim", HTTP_GET, handleDebugAnimGet);
+  server.on("/api/debug/anim", HTTP_POST, handleDebugAnimPost);
   server.on("/api/deck/weather-preview", HTTP_POST, handleWeatherPreview);
   server.on("/api/deck/frame", HTTP_GET, handleFrameGet);
   server.on("/api/deck/frame", HTTP_POST, handleFramePost);

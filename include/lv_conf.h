@@ -90,6 +90,10 @@
 /** Default display refresh, input device read and animation step period. */
 #define LV_DEF_REFR_PERIOD  16      /**< [ms] */
 
+/* Dirty areas kept per frame. Past this LVGL redraws the whole screen, which a
+ * printer page update (many small labels) hit every time with the stock 32. */
+#define LV_INV_BUF_SIZE 128
+
 /** Default Dots Per Inch. Used to initialize default sizes such as widgets sized, style paddings.
  * (Not so important, you can adjust it to modify default sizes and spaces.) */
 #define LV_DPI_DEF 130              /**< [px/inch] */

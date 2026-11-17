@@ -19,6 +19,7 @@
 #include "audio.h"
 #include "pc_metrics.h"
 #include "metric_format.h"
+#include "debug_anim.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <Preferences.h>
@@ -233,6 +234,12 @@ constexpr uint32_t C_PRN_HEAT = 0xF5B83D;  // heating, light on
 // than snapping to it, so an early or late packet causes no jump; a few extra
 // older samples keep the left edge on real data while it catches up.
 constexpr int SPARK_FRAME_MS = 33;
+
+// One clock for the animated tiles, so they share a frame: animDue says this
+// loop pass draws one, animMs is the time it shows (see animClockTick).
+extern bool s_animDue, s_animPainted;
+extern bool s_animFastDue;  // every refresh, for the Advanced 60 fps options
+extern uint32_t s_animMs;
 
 constexpr uint32_t SPARK_SNAP_MS = 5000;
 

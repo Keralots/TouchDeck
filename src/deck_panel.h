@@ -43,6 +43,12 @@ bool panelBegin(uint8_t rotation);
 // Monotonic across wrap; called only by the loop task.
 uint32_t panelFrameClockMs();
 
+// The refresh a frame the loop starts drawing now should reach the glass on
+// (esp_timer us), and the refresh period. 0 when the transport has no clock.
+int64_t panelAnimTargetUs(int64_t nowUs, int64_t* periodUs);
+// The next LVGL frame posted goes on the glass no earlier than that refresh.
+void panelLvShowAt(int64_t us);
+
 // fn(ctx, lo, hi) over 0..n in batches, shared with a helper on core 0 when it
 // is free. Returns when all batches are done.
 void panelShare(void (*fn)(void* ctx, int lo, int hi), void* ctx, int n, int batch);
