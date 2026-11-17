@@ -832,7 +832,7 @@ void openConfirm(int tileIdx, bool hold) {
   lv_obj_set_style_text_font(name, &deck_font_20, 0);
   lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
   lv_obj_set_size(name, cw - 88, lv_font_get_line_height(&deck_font_20));
-  const String state = haKnown ? prettyState(entityDomain(d.entity), he) : tileSub(r);
+  const String state = haKnown ? prettyState(entityDomain(d.entity), he, d.decimals) : tileSub(r);
   lv_obj_set_pos(name, 72, state.length() ? 15 : 26);
   if (state.length()) {
     lv_obj_t* st = lv_label_create(c);

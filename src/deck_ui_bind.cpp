@@ -95,6 +95,24 @@ void formatReading(float v, char* out, size_t n) {
   snprintf(out, n, fabsf(v - roundf(v)) < 0.05f ? "%.0f" : "%.1f", v);
 }
 
+// A sensor value with the tile's decimal places; auto = formatReading, but
+// below 1 up to two decimals so 0.13 does not become 0.1 (#9).
+void formatValue(float v, int8_t decimals, char* out, size_t n) {
+  if (decimals >= 0) {
+    snprintf(out, n, "%.*f", decimals, v);
+    return;
+  }
+  if (fabsf(v) >= 1 || !isfinite(v)) {
+    formatReading(v, out, n);
+    return;
+  }
+  snprintf(out, n, "%.2f", v);
+  char* end = out + strlen(out);
+  while (end > out && end[-1] == '0') *--end = 0;
+  if (end > out && end[-1] == '.') *--end = 0;
+  if (!strcmp(out, "-0")) strcpy(out, "0");
+}
+
 // A number in s / min / h / d as "45s", "31m", "1h 49m", "3d 2h"; false for
 // other units.
 bool formatDuration(float v, const String& unit, char* out, size_t n) {
@@ -144,7 +162,7 @@ String climateTarget(const HaEntity& e) {
   return "";
 }
 
-String prettyState(const String& domain, const HaEntity& e) {
+String prettyState(const String& domain, const HaEntity& e, int8_t decimals) {
   if (!e.known) return "Unavailable";
   const String& st = e.state;
   if (st == "unavailable" || st == "unknown") return "Unavailable";
@@ -159,13 +177,11 @@ String prettyState(const String& domain, const HaEntity& e) {
   if (domain == "script") return st == "on" ? "Running" : "Script";
   if (domain == "button" || domain == "input_button") return "Press";
   if (e.unit.length()) {
-    // Numeric reading: at most one decimal, then the unit.
     char* end = nullptr;
     const float v = strtof(st.c_str(), &end);
     if (end && *end == 0 && st.length()) {
       char buf[24];
-      if (fabsf(v - roundf(v)) < 0.05f) snprintf(buf, sizeof(buf), "%.0f", v);
-      else snprintf(buf, sizeof(buf), "%.1f", v);
+      formatValue(v, decimals, buf, sizeof(buf));
       // "25.9°C" (no space before a degree sign) saves the width that
       // decides whether a reading fits a small tile.
       return String(buf) + (e.unit.startsWith("\xC2\xB0") ? "" : " ") + e.unit;
@@ -558,7 +574,7 @@ void applyHaToTile(TileRt& r, bool force) {
     const bool numeric = e.known && haNumericState(e.state, value);
     char text[32];
     const bool dur = numeric && d.duration && formatDuration(value, e.unit, text, sizeof(text));
-    if (numeric && !dur) formatReading(value, text, sizeof(text));
+    if (numeric && !dur) formatValue(value, d.decimals, text, sizeof(text));
     lv_label_set_text(r.sub, d.sub.length() ? d.sub.c_str() : numeric ? text : prettyState(domain, e).c_str());
     lv_label_set_text(r.unit, numeric && !dur && !d.sub.length() ? e.unit.c_str() : "");
     fitValue(r);
@@ -573,7 +589,7 @@ void applyHaToTile(TileRt& r, bool force) {
     if (d.type == TILE_SENSOR && d.duration && e.known && haNumericState(e.state, value) &&
         formatDuration(value, e.unit, text, sizeof(text)))
       lv_label_set_text(r.sub, text);
-    else lv_label_set_text(r.sub, (control ? wishText(d.entity, e, false) : prettyState(domain, e)).c_str());
+    else lv_label_set_text(r.sub, (control ? wishText(d.entity, e, false) : prettyState(domain, e, d.decimals)).c_str());
     fitValue(r);
   }
   if (r.presetBtns[0]) applyPresets(r, e);
@@ -802,7 +818,7 @@ String httpTemplate(const TileDef& d, const String& tmpl) {
     else if (!v.numeric) out += v.text ? v.text.get() : "--";
     else {
       if (!part.unit.length() || !formatDuration(v.number, part.unit, buf, sizeof(buf)))
-        formatReading(v.number, buf, sizeof(buf));
+        formatValue(v.number, d.decimals, buf, sizeof(buf));
       out += buf;
     }
   }
@@ -824,7 +840,7 @@ String rowText(const TileDef& d, size_t i, bool useTemplate) {
   if (!v.numeric) return v.text ? v.text.get() : "--";
   char number[48];
   if (d.duration && formatDuration(v.number, d.unit, number, sizeof(number))) return number;
-  formatReading(v.number, number, sizeof(number));
+  formatValue(v.number, d.decimals, number, sizeof(number));
   return String(number) + rowUnit(d);
 }
 
@@ -872,7 +888,7 @@ void applyHttpToTile(TileRt& r) {
   const bool dur = numeric && d.duration && formatDuration(value.number, d.unit, number, sizeof(number));
   if (dur) text = number;
   else if (numeric) {
-    formatReading(value.number, number, sizeof(number));
+    formatValue(value.number, d.decimals, number, sizeof(number));
     text = number;
     if (d.style != METRIC_CHART && d.unit.length())
       text += (d.unit.startsWith("\xC2\xB0") ? "" : " ") + d.unit;

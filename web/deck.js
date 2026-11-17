@@ -1429,6 +1429,14 @@
         '">' +
         opt("", "Value", t.format !== "duration") +
         opt("duration", "Duration (s, min, h, d)", t.format === "duration") +
+        "</select></div>" +
+        '<div class="field">' +
+        lbl("Decimals", "Auto shows one decimal, two below 1.") +
+        '<select data-dp="' +
+        i +
+        '">' +
+        opt("", "Auto", t.decimals == null) +
+        [0, 1, 2, 3].map((n) => opt(String(n), String(n), t.decimals === n)).join("") +
         "</select></div>";
       if (t.style === "chart" && !isHttpSensor(t))
         h +=
@@ -3120,6 +3128,15 @@
           const t = p.tiles[+x.dataset.fm];
           if (e.target.value) t.format = e.target.value;
           else delete t.format;
+          setDirty(true);
+        }),
+    );
+    el.querySelectorAll("[data-dp]").forEach(
+      (x) =>
+        (x.onchange = (e) => {
+          const t = p.tiles[+x.dataset.dp];
+          if (e.target.value) t.decimals = +e.target.value;
+          else delete t.decimals;
           setDirty(true);
         }),
     );

@@ -446,6 +446,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         }
         t.style = !strcmp(tv["style"] | "number", "chart") && t.rows.empty() ? METRIC_CHART : METRIC_NUMBER;
         t.duration = !strcmp(tv["format"] | "", "duration");
+        if (tv["decimals"].is<int>()) t.decimals = (int8_t)constrain(tv["decimals"].as<int>(), 0, 3);
         t.hours = (uint8_t)constrain((int)(tv["hours"] | 24), 1, 168);
         t.warn = tv["warn"] | 0.0f;
         t.crit = tv["crit"] | 0.0f;

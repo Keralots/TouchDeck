@@ -24,6 +24,7 @@
 //   "warn": 25, "crit": 30 } (thresholds optional, in the sensor unit).
 // crit < warn means lower is worse; otherwise higher is worse.
 // "format": "duration" shows a number in s / min / h / d as "1h 49m".
+// "decimals": 0..3 fixes the decimal places; absent = auto (#9).
 //
 // An HTTP sensor uses "http" instead of "entity":
 // { "type": "sensor", "http": { "url": "http://host/usage",
@@ -217,6 +218,7 @@ struct TileDef {
   String detail;  // HTTP sensor: second line template, see above
   std::vector<SensorRowDef> rows;  // HTTP sensor: label + bar + value lines
   bool duration = false;  // sensor: "format": "duration"
+  int8_t decimals = -1;   // sensor: "decimals" 0..3, -1 = auto
   bool hasColor = false;
   uint32_t color = 0;
   bool hasTextColor = false, hasChartColor = false;
