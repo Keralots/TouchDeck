@@ -7,6 +7,7 @@
 #include "board.h"
 #if defined(BOARD_DISPLAY_MIPI_DSI)
 #include "deck_panel_int.h"
+#include "settings.h"
 #include "debug_anim.h"
 #include <esp_lcd_mipi_dsi.h>
 #include <esp_lcd_panel_io.h>
@@ -379,7 +380,9 @@ bool transportBegin() {
   cbs.on_refresh_done = onRefreshDone;
   if ((e = esp_lcd_dpi_panel_register_event_callbacks(s_dpi, &cbs, nullptr)) != ESP_OK)
     return fail("callbacks", e);
-  ringBegin(fb);
+  // The ring guards against flash-write flashes but costs every second refresh (30 fps).
+  if (advSettings.smoothDisplay) Serial.println("Deck panel: smooth display, scan ring off");
+  else ringBegin(fb);
   return true;
 }
 

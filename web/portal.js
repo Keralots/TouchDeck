@@ -728,6 +728,7 @@
     setCheck("printersEnabled", adv.printers);
     setCheck("weather60", adv.weather60);
     setCheck("charts60", adv.charts60);
+    setCheck("smoothDisplay", adv.smoothDisplay);
     $("fps60Card").classList.toggle("hidden", !adv.fps60);
     const mqtt = c.mqtt || {};
     setCheck("mqttEnabled", mqtt.enabled);
