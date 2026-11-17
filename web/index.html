@@ -42,6 +42,35 @@
       [data-mode="dark"] input[type="time"] {
         color-scheme: dark;
       }
+      .agent-meter {
+        position: relative;
+        height: 12px;
+        margin: 14px 0 6px;
+        border-radius: 6px;
+        background: var(--line);
+        overflow: hidden;
+      }
+      .agent-meter-bar {
+        height: 100%;
+        width: 0;
+        background: var(--accent);
+        transition: width 0.12s linear;
+      }
+      .agent-meter-floor {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        left: 0;
+        background: var(--ink);
+        opacity: 0.6;
+      }
+      .agent-log {
+        max-height: 260px;
+        overflow: auto;
+        font-size: 12px;
+        white-space: pre-wrap;
+      }
       .maintenance-copy {
         margin: 8px 0 17px;
         color: var(--mute);
@@ -142,6 +171,7 @@
               ><button type="button" class="nav-item" data-nav="wallpapers">Wallpapers</button
               ><button type="button" class="nav-item" data-nav="light">Screen</button
               ><button type="button" class="nav-item" data-nav="hardware">Hardware</button
+              ><button type="button" class="nav-item hidden" data-nav="agent" id="navAgent">AI Agent</button
               ><button type="button" class="nav-item" data-nav="clock">Time</button>
             </div>
             <div class="nav-group">
@@ -1330,6 +1360,176 @@
                       to start, so 3.3 V is not enough for VCC.</span
                     >
                   </div>
+                </div>
+              </form>
+            </section>
+
+            <section class="page" data-page="agent">
+              <div class="page-header">
+                <h1 class="page-h1">AI Agent</h1>
+                <p class="page-lede">Talk to a voice assistant through the deck's microphones and speaker.</p>
+              </div>
+              <form
+                id="agentForm"
+                class="portal-form"
+                data-endpoint="/save/agent"
+                data-save-label="Save AI agent"
+              >
+                <div class="card">
+                  <div class="card-head">
+                    <h2 class="card-title">Voice server</h2>
+                    <span class="tag" id="agentStateTag">off</span>
+                  </div>
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="agentEnabled" name="agentEnabled" /><span class="check-box"></span
+                    ><span class="check-text"
+                      ><strong>Enable the AI agent</strong
+                      ><span class="ct-hint"
+                        >Talks to Home Assistant's voice assistant or to a server that speaks the xiaozhi WebSocket
+                        protocol. Add an AI Agent tile on the Deck page and tap it to start a conversation.</span
+                      ></span
+                    ></label
+                  >
+                  <div class="subcard hidden" id="agentFields">
+                    <div class="field">
+                      <label class="field-label" for="agentBackend">Backend</label>
+                      <div class="select-wrap">
+                        <select id="agentBackend" name="agentBackend">
+                          <option value="ha">Home Assistant (Assist)</option>
+                          <option value="xiaozhi">Custom server (xiaozhi)</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div id="agentHaFields">
+                      <div class="field">
+                        <label class="field-label" for="agentPipeline">Assist pipeline ID</label>
+                        <input type="text" id="agentPipeline" name="agentPipeline" maxlength="39" placeholder="empty = the preferred pipeline" spellcheck="false" />
+                        <p class="field-hint">
+                          Uses the Home Assistant connection from the Deck page. Set up speech-to-text and
+                          text-to-speech first in Home Assistant under Settings &gt; Voice assistants. Leave the ID
+                          empty to use the assistant marked as preferred there.
+                        </p>
+                      </div>
+                    </div>
+                    <div id="agentXzFields">
+                      <div class="field">
+                        <label class="field-label" for="agentUrl">Server address</label>
+                        <input type="text" id="agentUrl" name="agentUrl" maxlength="127" placeholder="ws://192.168.1.10:8000/xiaozhi/v1/" spellcheck="false" />
+                      </div>
+                      <div class="field">
+                        <label class="field-label" for="agentToken">Access token</label>
+                        <input type="password" id="agentToken" name="agentToken" maxlength="127" autocomplete="off" />
+                        <p class="field-hint">Sent as "Authorization: Bearer". Leave empty to keep the stored one.</p>
+                        <label class="check-row"
+                          ><input type="checkbox" id="agentTokenClear" name="agentTokenClear" /><span class="check-box"></span
+                          ><span class="check-text"><strong>Remove the stored token</strong></span></label
+                        >
+                      </div>
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="agentVolume">Voice volume</label>
+                      <div class="range-row">
+                        <input type="range" id="agentVolume" name="agentVolume" min="0" max="100" step="5" /><span
+                          class="range-val"
+                          id="agentVolumeVal"
+                          >--</span
+                        >
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="card">
+                  <div class="card-head">
+                    <h2 class="card-title">Microphones</h2>
+                  </div>
+                  <div class="grid-2">
+                    <div class="field">
+                      <label class="field-label" for="agentPga">Microphone gain</label>
+                      <div class="range-row">
+                        <input type="range" id="agentPga" name="agentPga" min="0" max="14" step="1" /><span
+                          class="range-val"
+                          id="agentPgaVal"
+                          >--</span
+                        >
+                      </div>
+                      <p class="field-hint">Analogue gain in the microphone chip. Raise it first.</p>
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="agentBoost">Digital boost</label>
+                      <div class="range-row">
+                        <input type="range" id="agentBoost" name="agentBoost" min="0" max="24" step="1" /><span
+                          class="range-val"
+                          id="agentBoostVal"
+                          >--</span
+                        >
+                      </div>
+                      <p class="field-hint">Extra gain after the chip. Lifts the room noise along with the voice.</p>
+                    </div>
+                  </div>
+                  <div class="agent-meter" aria-hidden="true">
+                    <div class="agent-meter-bar" id="agentMeterBar"></div>
+                    <div class="agent-meter-floor" id="agentMeterFloor"></div>
+                  </div>
+                  <p class="field-hint" id="agentMeterText">
+                    Test the microphones, then speak as you normally would from where you usually stand. Your
+                    voice should read at least 15 dB above the room.
+                  </p>
+                  <div class="maintenance-actions">
+                    <button type="button" class="btn" id="agentMicTest">Test microphones</button>
+                  </div>
+                </div>
+
+                <div class="card">
+                  <div class="card-head">
+                    <h2 class="card-title">Conversation</h2>
+                  </div>
+                  <div class="grid-2">
+                    <div class="field">
+                      <label class="field-label" for="agentPause">End of sentence pause (ms)</label>
+                      <input type="number" id="agentPause" name="agentPause" min="500" max="3000" step="100" />
+                      <p class="field-hint">Quiet that counts as "done talking". Raise it if the agent cuts you off.</p>
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="agentIdle">End after silence (s)</label>
+                      <input type="number" id="agentIdle" name="agentIdle" min="3" max="60" step="1" />
+                      <p class="field-hint">The conversation ends when nobody speaks for this long.</p>
+                    </div>
+                  </div>
+                  <label class="check-row"
+                    ><input type="checkbox" id="agentChimes" name="agentChimes" /><span class="check-box"></span
+                    ><span class="check-text"
+                      ><strong>Chimes</strong
+                      ><span class="ct-hint">Two rising notes when the agent starts listening, falling ones when the conversation ends.</span></span
+                    ></label
+                  >
+                </div>
+
+                <div class="card">
+                  <div class="card-head">
+                    <h2 class="card-title">Last conversation</h2>
+                  </div>
+                  <dl class="facts">
+                    <div>
+                      <dt>You said</dt>
+                      <dd id="agentUser">--</dd>
+                    </div>
+                    <div>
+                      <dt>Reply</dt>
+                      <dd id="agentReply">--</dd>
+                    </div>
+                  </dl>
+                  <p class="field-hint" id="agentError" role="status"></p>
+                  <div class="maintenance-actions">
+                    <button type="button" class="btn" id="agentStart">Start a conversation</button
+                    ><button type="button" class="btn" id="agentStop">Stop</button
+                    ><a class="btn" href="/api/agent/record.wav" download="agent-last-30s.wav">Download recording</a>
+                  </div>
+                  <p class="field-hint">The recording holds the last 30 s: microphones on the left, speaker on the right.</p>
+                  <details>
+                    <summary>Event log</summary>
+                    <pre class="agent-log" id="agentLog"></pre>
+                  </details>
                 </div>
               </form>
             </section>

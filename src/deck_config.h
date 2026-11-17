@@ -142,7 +142,7 @@ constexpr int MAX_PAGE_TILES = BOARD_MAX_PAGE_TILES;
 // Cells per grid side; tiles sit and span in half cells.
 constexpr int GRID_MAX = BOARD_GRID_MAX;
 
-enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER, TILE_CLOCK, TILE_PRINTER, TILE_MEDIA, TILE_VIZ, TILE_COVER, TILE_WEATHER };
+enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER, TILE_CLOCK, TILE_PRINTER, TILE_MEDIA, TILE_VIZ, TILE_COVER, TILE_WEATHER, TILE_AGENT };
 enum PrinterShow : uint8_t { PS_HERO = 0, PS_NOZZLE, PS_BED, PS_CHAMBER, PS_FILAMENT, PS_LAYER, PS_LIGHT, PS_AMS, PS_SLOTS, PS_SUMMARY };
 constexpr int MAX_PRINTERS = 2;
 enum MetricStyle : uint8_t { METRIC_NUMBER = 0, METRIC_CHART, METRIC_BAR };
@@ -155,6 +155,7 @@ enum ActionKind : uint8_t {
   ACT_HTTP,          // {method, url, body, contentType, headers}
   ACT_PC,            // {pc, cmd}: a command to a paired PC's companion
   ACT_NOTHING,       // "action": "none" set on purpose (ACT_NONE runs the entity's default)
+  ACT_AGENT,         // start or end an AI agent conversation
 };
 enum ConfirmMode : uint8_t { CONFIRM_NONE = 0, CONFIRM_OFF, CONFIRM_ALWAYS };
 enum WhenKind : uint8_t {

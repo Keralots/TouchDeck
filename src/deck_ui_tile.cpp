@@ -119,6 +119,7 @@ String tileLabel(const TileDef& t) {
   if (t.type == TILE_MEDIA) return "Now playing";
   if (t.type == TILE_VIZ) return "Audio";
   if (t.type == TILE_WEATHER) return "Weather";
+  if (t.type == TILE_AGENT) return "AI Agent";
   const int dot = t.entity.indexOf('.');
   if (dot > 0) return t.entity.substring(dot + 1);
   return t.id.length() ? t.id : String("Tile");
@@ -128,6 +129,7 @@ String tileSub(const TileRt& r) {
   const TileDef& t = *r.def;
   if (t.sub.length()) return t.sub;
   if (t.type == TILE_TOGGLE) return r.on ? "On" : "Off";
+  if (t.type == TILE_AGENT) return agentTileSub();
   const String d = entityDomain(t.entity);
   if (d == "scene") return "Scene";
   if (d == "script") return "Script";
@@ -156,7 +158,7 @@ int tileOnOpa(const TileDef& d) { return d.onOpacity >= 0 ? d.onOpacity : dispSe
 void tileIconColor(TileRt& r, const HaEntity* e) {
   const TileDef& d = *r.def;
   if (!r.chip || (d.type != TILE_ACTION && d.type != TILE_TOGGLE && d.type != TILE_SLIDER && d.type != TILE_SENSOR &&
-                  d.type != TILE_COVER))
+                  d.type != TILE_COVER && d.type != TILE_AGENT))
     return;
   const bool on = lv_obj_has_state(r.obj, LV_STATE_CHECKED);
   HaEntity own;

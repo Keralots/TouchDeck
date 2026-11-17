@@ -1803,6 +1803,20 @@ String haBaseUrl() {
   return "http://" + host + ":" + String(port);
 }
 
+bool haEndpoint(String& host, uint16_t& port, String& token, String& err) {
+  String url;
+  if (s_lock) {
+    Lock g;
+    url = s_url;
+    token = s_token;
+  }
+  if (!url.length() || !token.length()) {
+    err = "Home Assistant is not set up";
+    return false;
+  }
+  return parseUrl(url, host, port, err);
+}
+
 bool haRenderTemplate(const String& tmpl, String& out, String& err) {
   char* text = nullptr;
   size_t len = 0;

@@ -76,13 +76,17 @@
 #define BOARD_I2S_BCLK 12
 #define BOARD_I2S_WS 10
 #define BOARD_I2S_DOUT 9
-#define BOARD_I2S_DIN 11        // ES7210 mics, unused
+#define BOARD_I2S_DIN 11        // ES7210 SDOUT1 (TDM: all four ADCs)
 #define BOARD_AMP_EN 53         // speaker amplifier, high = on
 // Speaker defaults (portal adjustable). By ear: 120 ms of wake-up drops the
 // first click, 200 ms does not; kept on 30 s with no audible hiss.
 #define BOARD_AUDIO_WAKE_MS 200
 #define BOARD_AUDIO_KEEP_ON_MS 30000
 #define BOARD_AUDIO_MAX_GAIN_PCT 70  // 100 % in settings; full scale crackles on the kit speaker
+// ES7210 at 0x40: MIC1/MIC2 = the two mics, MIC3 = ES8311 output (echo reference),
+// MIC4 unused. TDM frame order [MIC1, MIC3, MIC2, MIC4] (measured on the 7B).
+#define BOARD_MIC_ES7210 1
+#define BOARD_MIC_ADDR 0x40
 
 // --- microSD: 4-bit SD on slot 0 (IO MUX pins), card powered from LDO_VO4 ---
 // Power handling as Arduino's SD_MMC does for the P4 variant.
