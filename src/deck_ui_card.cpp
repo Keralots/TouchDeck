@@ -241,6 +241,32 @@ bool climateHasSetpoint(const HaEntity& e) {
          (isfinite(e.target) || climateRange(e));
 }
 
+bool climateAdjust(const HaEntity& e, int detents, float& low, float& high) {
+  if (!climateRange(e)) {
+    const float base = isfinite(low) ? low : e.target;
+    low = climateClamp(e, base + climateStep(e) * detents);
+    high = NAN;
+    return true;
+  }
+
+  float lo = isfinite(low) ? low : e.targetLow;
+  float hi = isfinite(high) ? high : e.targetHigh;
+  const int dir = detents > 0 ? 1 : -1;
+  const float step = climateStep(e) * dir;
+  bool moved = false;
+  // Move the range together and stop at either limit.
+  for (; detents; detents -= dir) {
+    if ((isfinite(e.tempMin) && lo + step < e.tempMin) || (isfinite(e.tempMax) && hi + step > e.tempMax)) break;
+    low = climateClamp(e, lo + step);
+    high = climateClamp(e, hi + step);
+    moved = true;
+    if (low == lo && high == hi) break;
+    lo = low;
+    hi = high;
+  }
+  return moved;
+}
+
 void climateWantClear() {
   s_climWant = s_climWantHigh = NAN;
   s_climSent = false;
@@ -248,12 +274,12 @@ void climateWantClear() {
   s_climTimer = nullptr;
 }
 
-bool climateSend(const String& entity) {
+bool climateSendTemperature(const String& entity, float low, float high) {
   char data[80];
   char a[16], b[16];
-  snprintf(a, sizeof a, "%.4g", s_climWant);
-  if (isfinite(s_climWantHigh)) {
-    snprintf(b, sizeof b, "%.4g", s_climWantHigh);
+  snprintf(a, sizeof a, "%.4g", low);
+  if (isfinite(high)) {
+    snprintf(b, sizeof b, "%.4g", high);
     snprintf(data, sizeof data, "{\"target_temp_low\":%s,\"target_temp_high\":%s}", a, b);
   } else {
     snprintf(data, sizeof data, "{\"temperature\":%s}", a);
@@ -271,7 +297,7 @@ void onClimateTimer(lv_timer_t*) {
     refreshModal();
     return;
   }
-  if (!climateSend(modalEntity())) {
+  if (!climateSendTemperature(modalEntity(), s_climWant, s_climWantHigh)) {
     climateWantClear();
     refreshModal();
     return;
@@ -292,20 +318,7 @@ void onClimateStep(lv_event_t* ev) {
   const int dir = (int)(intptr_t)lv_event_get_user_data(ev);
   HaEntity e;
   if (!haGetEntity(modalEntity(), e) || !climateHasSetpoint(e)) return;
-  const float step = climateStep(e) * dir;
-  if (climateRange(e)) {
-    float lo = isfinite(s_climWant) ? s_climWant : e.targetLow;
-    float hi = isfinite(s_climWantHigh) ? s_climWantHigh : e.targetHigh;
-    // The range moves as one, and stops at either limit.
-    if ((isfinite(e.tempMin) && lo + step < e.tempMin) || (isfinite(e.tempMax) && hi + step > e.tempMax))
-      return;
-    s_climWant = climateClamp(e, lo + step);
-    s_climWantHigh = climateClamp(e, hi + step);
-  } else {
-    const float base = isfinite(s_climWant) ? s_climWant : e.target;
-    s_climWant = climateClamp(e, base + step);
-    s_climWantHigh = NAN;
-  }
+  if (!climateAdjust(e, dir, s_climWant, s_climWantHigh)) return;
   s_climSent = false;
   climateArm(CLIMATE_SEND_MS);
   refreshModal();
@@ -329,7 +342,7 @@ void onClimateMode(lv_event_t* ev) {
 // A setpoint still waiting for its call goes out when the card closes.
 void climateClose() {
   if (s_climate && modalTileOk() && isfinite(s_climWant) && !s_climSent)
-    climateSend(modalEntity());
+    climateSendTemperature(modalEntity(), s_climWant, s_climWantHigh);
   climateWantClear();
   s_climate = false;
   s_climMinus = s_climPlus = s_climInfo = nullptr;
@@ -352,14 +365,25 @@ void climateRefresh(const HaEntity* e) {
       ((known && e->state == s_climModeWant) || millis() - s_climModeMs >= CLIMATE_SETTLE_MS))
     s_climModeWant = "";
   const bool setpoint = known && climateHasSetpoint(*e);
+  float low = NAN, high = NAN;
+  const char* mode = "";
+#if BOARD_HAS_ENCODER
+  if (known) encoderClimatePreview(modalEntity(), low, high, mode);
+#endif
+  if (isfinite(s_climWant)) {
+    low = s_climWant;
+    high = s_climWantHigh;
+  } else if (!setpoint) {
+    low = NAN;
+  }
   String big;
   if (!known || !e->known || e->state == "unavailable" || e->state == "unknown") big = "Unavailable";
-  else if (isfinite(s_climWant)) {
-    if (isfinite(s_climWantHigh)) {
+  else if (isfinite(low)) {
+    if (isfinite(high)) {
       char lo[16];
-      formatReading(s_climWant, lo, sizeof lo);
-      big = String(lo) + "-" + formatTemp(s_climWantHigh);
-    } else big = formatTemp(s_climWant);
+      formatReading(low, lo, sizeof lo);
+      big = String(lo) + "-" + formatTemp(high);
+    } else big = formatTemp(low);
   } else if (setpoint) big = climateTarget(*e);
   else big = climateWord(e->state);
   lv_label_set_text(s_modalState, big.c_str());
@@ -375,7 +399,8 @@ void climateRefresh(const HaEntity* e) {
     info += climateWord(e->hvacAction);
   }
   lv_label_set_text(s_climInfo, info.c_str());
-  const String& mode = s_climModeWant.length() ? s_climModeWant : known ? e->state : String();
+  if (s_climModeWant.length()) mode = s_climModeWant.c_str();
+  else if (!*mode && known) mode = e->state.c_str();
   for (size_t i = 0; i < s_climModeBtns.size(); i++) {
     if (s_climModes[i] == mode) lv_obj_add_state(s_climModeBtns[i], LV_STATE_CHECKED);
     else lv_obj_remove_state(s_climModeBtns[i], LV_STATE_CHECKED);

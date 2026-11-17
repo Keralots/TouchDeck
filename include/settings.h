@@ -109,7 +109,7 @@ constexpr uint8_t HAPTIC_MIN_MS = 10;
 constexpr uint8_t HAPTIC_MAX_MS = 200;
 
 constexpr size_t ENCODER_COUNT = 2;
-constexpr uint8_t ENCODER_FOLLOW = 0, ENCODER_FIXED = 1;
+constexpr uint8_t ENCODER_FOLLOW = 0, ENCODER_FIXED = 1, ENCODER_PC = 2;
 
 struct EncoderSettings {
   bool enabled = false;

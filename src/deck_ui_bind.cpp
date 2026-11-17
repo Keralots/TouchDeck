@@ -2,6 +2,7 @@
 #include "deck_ui_int.h"
 #include "deck_viz.h"
 #include "agent.h"
+#include "encoder.h"
 
 namespace deckui {
 
@@ -138,14 +139,29 @@ String formatTemp(float v) {
   return String(buf) + "\xC2\xB0";
 }
 
+static const char* climateWordAlias(const char* s) {
+  if (!s) return "";
+  if (!strcmp(s, "heat_cool")) return "Heat/Cool";
+  if (!strcmp(s, "fan_only")) return "Fan";
+  return nullptr;
+}
+
 // HVAC modes and actions as words: "heat_cool" -> "Heat/Cool".
 String climateWord(const String& s) {
-  if (s == "heat_cool") return "Heat/Cool";
-  if (s == "fan_only") return "Fan";
+  if (const char* alias = climateWordAlias(s.c_str())) return alias;
   String w = s;
   w.replace('_', ' ');
   if (w.length()) w.setCharAt(0, toupper(w[0]));
   return w;
+}
+
+void climateWord(const char* s, char* out, size_t n) {
+  if (!n) return;
+  if (const char* alias = climateWordAlias(s)) s = alias;
+  snprintf(out, n, "%s", s);
+  for (char* c = out; *c; ++c)
+    if (*c == '_') *c = ' ';
+  if (out[0]) out[0] = toupper((unsigned char)out[0]);
 }
 
 bool climateRange(const HaEntity& e) {
@@ -342,7 +358,8 @@ bool wishOn(const String& entity, const HaEntity& e) {
 
 float wishFrac(const String& entity, const HaEntity& e) {
   const Wish* w = findWish(entity);
-  if (w && w->on.active && (!w->level.active || (int32_t)(w->on.order - w->level.order) > 0))
+  if (w && w->on.active && !entity.startsWith("media_player.") &&
+      (!w->level.active || (int32_t)(w->on.order - w->level.order) > 0))
     return w->on.value == 0 ? 0 : w->lastLevel > 0 ? w->lastLevel : 1;
   if (w && w->level.active) return w->level.value;
   return sliderFrac(entityDomain(entity), e);
@@ -352,7 +369,7 @@ String wishText(const String& entity, const HaEntity& e, bool slider) {
   const String domain = entityDomain(entity);
   const Wish* w = findWish(entity);
   if (slider) {
-    if (w && w->on.active && !w->on.value &&
+    if (w && w->on.active && !w->on.value && domain != "media_player" &&
         (!w->level.active || (int32_t)(w->on.order - w->level.order) > 0)) return "Off";
     return sliderText(domain, e, wishFrac(entity, e));
   }
@@ -936,7 +953,7 @@ std::vector<String> entityIds() {
     if (id.length()) ids.push_back(id);
 #if BOARD_HAS_ENCODER
   for (const EncoderSettings& s : encoderSettings)
-    if (s.enabled && s.mode == ENCODER_FIXED && s.entity[0]) ids.emplace_back(s.entity);
+    if (s.enabled && s.mode == ENCODER_FIXED && encoderHaEntity(s.entity)) ids.emplace_back(s.entity);
 #endif
   return ids;
 }
@@ -1106,7 +1123,7 @@ void tileEvent(lv_event_t* e) {
   if (r.sliding) return;  // the press was a slider drag
 #if BOARD_HAS_ENCODER
   if (code == LV_EVENT_SHORT_CLICKED || code == LV_EVENT_LONG_PRESSED)
-    encoderFocus(r.def->entity);
+    encoderFocus(r);
 #endif
   hapticTap();
   audioClick();
@@ -1126,18 +1143,28 @@ struct PcVolume {
 };
 PcVolume s_pcVol;
 
-bool pcVolHeld() { return (int32_t)(millis() - s_pcVol.holdUntil) < 0; }
+static bool pcVolHeld() { return (int32_t)(millis() - s_pcVol.holdUntil) < 0; }
 
-// Now playing tile: ask for a level, and the level still asked for (-1 = none).
+static bool samePc(const String& a, const String& b) {
+  if (a == b) return true;
+  const PcSource* source = pcSource(a);
+  return source && source == pcSource(b);
+}
+
+// Queue the requested volume and show it on matching tiles.
 void pcVolumeAsk(const String& pc, int pct) {
-  if (s_pcVol.pc != pc) s_pcVol.sent = -1;
+  if (!samePc(s_pcVol.pc, pc)) s_pcVol.sent = -1;
   s_pcVol.pc = pc;
   s_pcVol.want = pct;
   s_pcVol.holdUntil = millis() + PC_VOL_HOLD_MS;
   s_pcVol.reapply = true;
+  for (TileRt& r : s_tiles) {
+    if (r.def->pcVolume && samePc(tilePcId(*r.def), pc)) applyPcStateToTile(r);
+    else if (r.def->type == TILE_MEDIA && !r.mediaHa && samePc(r.def->pc, pc)) refreshPcMediaVolume(r);
+  }
 }
 
-int pcVolWanted(const String& pc) { return pcVolHeld() && s_pcVol.pc == pc ? s_pcVol.want : -1; }
+int pcVolWanted(const String& pc) { return pcVolHeld() && samePc(s_pcVol.pc, pc) ? s_pcVol.want : -1; }
 
 void pcVolumeTick() {
   const uint32_t now = millis();
@@ -1154,7 +1181,7 @@ void pcVolumeTick() {
     s_pcVol.reapply = false;
     s_pcVol.want = s_pcVol.sent = -1;
     for (TileRt& r : s_tiles)
-      if (r.def->pcVolume && !r.sliding) applyPcStateToTile(r);
+      if (r.def->pcVolume) applyPcStateToTile(r);
       else if (r.def->type == TILE_MEDIA && !r.mediaHa) applyMedia(r);
   }
 }
@@ -1175,7 +1202,7 @@ void pcVolumeDrag(TileRt& r, lv_event_code_t code, const lv_point_t& p) {
     if (fabsf(f - r.slValue) < 0.005f) return;
     r.slValue = f;
     setSliderFill(r, f);
-    if (s_pcVol.pc != tilePcId(*r.def)) s_pcVol.sent = -1;
+    if (!samePc(s_pcVol.pc, tilePcId(*r.def))) s_pcVol.sent = -1;
     s_pcVol.pc = tilePcId(*r.def);
     s_pcVol.want = (int)lroundf(f * 100);
     if (!r.def->sub.length()) lv_label_set_text(r.sub, (String(s_pcVol.want) + "%").c_str());

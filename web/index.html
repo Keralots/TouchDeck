@@ -1394,13 +1394,15 @@
                         <label class="field">
                           <span class="field-label">Mode</span>
                           <select name="mode">
-                            <option value="0">Follow last touched light</option>
-                            <option value="1">Fixed light</option>
+                            <option value="0">Follow last touched tile</option>
+                            <option value="1">Fixed entity</option>
+                            <option value="2">PC volume</option>
                           </select>
                         </label>
-                        <label class="field" data-encoder-entity>
-                          <span class="field-label">Light entity</span>
-                          <input name="entity" type="text" list="encoderEntityList" placeholder="light.xxx" maxlength="71" />
+                        <label class="field hidden" data-encoder-entity>
+                          <span class="field-label">Entity</span>
+                          <input name="entity" type="text" list="encoderEntityList" maxlength="71" />
+                          <span class="field-hint">light, media_player or climate entity</span>
                         </label>
                         <label class="field">
                           <span class="field-label">Step per detent (%)</span>

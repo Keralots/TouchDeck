@@ -238,10 +238,9 @@ static bool validateEncoders(const EncoderSettings* items, const LedSettings& le
     const EncoderSettings& s = items[i];
     String error = encoderPinError(items, i, led, haptic, sdCard);
     const String entity(s.entity);
-    if (!error.length() &&
-        ((s.enabled && s.mode == ENCODER_FIXED && !entity.length()) ||
-         (entity.length() && (!entity.startsWith("light.") || !validEntityId(entity)))))
-      error = "needs a valid light entity ID for fixed mode.";
+    if (!error.length() && s.mode == ENCODER_FIXED && (s.enabled || entity.length()) &&
+        (!encoderHaEntity(s.entity) || !validEntityId(entity)))
+      error = "needs a valid light, media_player or climate entity ID for fixed mode.";
     if (!error.length() && s.countsPerDetent != 2 && s.countsPerDetent != 4)
       error = "needs 2 or 4 counts per detent.";
     if (error.length()) {
@@ -800,7 +799,7 @@ static void handleConfigImport() {
       READ_INT(item, "pinB", 0, GPIO_PIN_MAX, s.pinB, uint8_t);
       READ_INT(item, "pinKey", 0, GPIO_PIN_MAX, s.pinKey, uint8_t);
       READ_BOOL(item, "reverse", s.reverse);
-      READ_INT(item, "mode", ENCODER_FOLLOW, ENCODER_FIXED, s.mode, uint8_t);
+      READ_INT(item, "mode", ENCODER_FOLLOW, ENCODER_PC, s.mode, uint8_t);
       READ_INT(item, "stepPct", 1, 25, s.stepPct, uint8_t);
       READ_INT(item, "countsPerDetent", 2, 4, s.countsPerDetent, uint8_t);
       READ_INT(item, "popupY", 5, 95, s.popupY, uint8_t);
@@ -1040,6 +1039,9 @@ static void handleConfigImport() {
   audioSettings = nextAudio;
   agentSettings = nextAgent;
   saveSettings();
+#if BOARD_HAS_ENCODER
+  deckEncodersApply();
+#endif
   deckSetHeader(nextHeader);
 
   sendJsonMessage(200, true,
@@ -1121,7 +1123,7 @@ static bool readEncoderForm(EncoderSettings* items) {
       }
       *pins[j] = pin;
     }
-    s.mode = clampedArg((prefix + "mode").c_str(), s.mode, ENCODER_FOLLOW, ENCODER_FIXED);
+    s.mode = clampedArg((prefix + "mode").c_str(), s.mode, ENCODER_FOLLOW, ENCODER_PC);
     s.stepPct = clampedArg((prefix + "stepPct").c_str(), s.stepPct, 1, 25);
     s.popupY = clampedArg((prefix + "popupY").c_str(), s.popupY, 5, 95);
     if (server.hasArg(prefix + "countsPerDetent")) {

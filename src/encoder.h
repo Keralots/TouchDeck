@@ -21,6 +21,7 @@ void encoderDiscardRemainder(size_t i);
 void encoderStatus(size_t i, int& count, bool& key);
 
 bool encoderUsesPin(uint8_t pin);
+bool encoderHaEntity(const char* id);
 String encoderPinError(const EncoderSettings* items, size_t i, const LedSettings& led,
                        const HapticSettings& haptic, bool sdCard);
 void sanitizeEncoderSettings();

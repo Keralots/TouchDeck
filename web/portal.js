@@ -236,7 +236,7 @@
           .join(""));
       fill("presenceList", ["binary_sensor", "person", "device_tracker", "input_boolean", "switch"]);
       fill("ledEntityList", ["input_boolean", "input_number", "light"]);
-      fill("encoderEntityList", ["light"]);
+      fill("encoderEntityList", ["light", "media_player", "climate"]);
     } catch (e) {
       entityListsLoaded = false;
     }
@@ -299,8 +299,12 @@
       field.name = "enc" + i + field.name;
       field.disabled = true;
     });
-    const setMode = () =>
-      section.querySelector("[data-encoder-entity]").classList.toggle("hidden", fields.mode.value !== "1");
+    const entityField = section.querySelector("[data-encoder-entity]");
+    const setMode = () => {
+      const fixed = fields.mode.value === "1";
+      entityField.classList.toggle("hidden", !fixed);
+      fields.entity.disabled = !fixed;
+    };
     fields.mode.addEventListener("change", setMode);
     $("encoderRows").appendChild(section);
     return { fields, setMode, status: section.querySelector("[data-encoder-status]") };

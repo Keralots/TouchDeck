@@ -2,6 +2,7 @@
 
 #if BOARD_HAS_ENCODER
 #include "led.h"
+#include <cstring>
 #include <driver/gpio.h>
 #include <driver/pulse_cnt.h>
 
@@ -114,6 +115,10 @@ String encoderPinError(const EncoderSettings* items, size_t i, const LedSettings
   return {};
 }
 
+bool encoderHaEntity(const char* id) {
+  return id && (!strncmp(id, "light.", 6) || !strncmp(id, "media_player.", 13) || !strncmp(id, "climate.", 8));
+}
+
 void sanitizeEncoderSettings() {
   for (size_t i = 0; i < ENCODER_COUNT; i++) {
     EncoderSettings& s = encoderSettings[i];
@@ -125,7 +130,7 @@ void sanitizeEncoderSettings() {
     if (!ledPinAllowed(s.pinA)) s.pinA = 0;
     if (!ledPinAllowed(s.pinB)) s.pinB = 0;
     if (!ledPinAllowed(s.pinKey)) s.pinKey = 0;
-    if (s.mode != ENCODER_FIXED) s.mode = ENCODER_FOLLOW;
+    if (s.mode > ENCODER_PC) s.mode = ENCODER_FOLLOW;
     s.stepPct = constrain(s.stepPct, 1, 25);
     s.countsPerDetent = s.countsPerDetent == 2 ? 2 : 4;
     s.popupY = constrain(s.popupY, 5, 95);
