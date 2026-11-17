@@ -354,6 +354,7 @@ std::vector<String> entityIds();
 #if BOARD_HAS_ENCODER
 void encoderFocus(const TileRt& r);
 void encoderTick();
+void encoderAnimTick();
 void encoderClimatePreview(const String& entity, float& low, float& high, const char*& mode);
 #endif
 void collectEntities();

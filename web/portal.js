@@ -310,11 +310,45 @@
     return { fields, setMode, status: section.querySelector("[data-encoder-status]") };
   });
 
+  function updateEncoderPopupFields() {
+    $("encPopupOpacityVal").textContent = $("encPopupOpacity").value + "%";
+    $("encPopupHoldVal").textContent = (Number($("encPopupHoldMs").value) / 1000).toFixed(1) + " s";
+    $("encPopupAccentField").classList.toggle("hidden", $("encPopupEntityColor").checked);
+  }
+  $("encoderPopup").addEventListener("input", updateEncoderPopupFields);
+  ["input", "change"].forEach((type) => {
+    $("encPopupPreviewOn").addEventListener(type, (e) => e.stopPropagation());
+  });
+  $("encPopupPreview").addEventListener("click", async () => {
+    const encoder = $("encPopupPreviewOn").value;
+    const { fields } = encoderRows[Number(encoder)];
+    const body = new URLSearchParams({ encoder, popupY: fields.popupY.value, edge: fields.edge.value });
+    qa("input[name], select[name]", $("encoderPopup")).forEach((field) => {
+      if (field.type !== "checkbox" || field.checked) body.set(field.name, field.value);
+    });
+    try {
+      await getJson("/encoder/preview", { method: "POST", body });
+    } catch (e) {
+      showToast(e.message, true);
+    }
+  });
+
   function fillEncoders(encoders) {
     const card = $("encoderCard"), supported = !!encoders?.supported;
     card.classList.toggle("hidden", !supported);
-    qa("input, select", card).forEach((field) => (field.disabled = !supported));
+    qa("input, select, button", card).forEach((field) => (field.disabled = !supported));
     if (!supported) return;
+    const p = encoders.popup;
+    if (p) {
+      setVal("encPopupStyle", p.style);
+      setVal("encPopupSize", p.size);
+      setVal("encPopupOpacity", p.opacity);
+      setVal("encPopupHoldMs", p.holdMs);
+      setVal("encPopupAnim", p.anim);
+      setCheck("encPopupEntityColor", p.entityColor);
+      setVal("encPopupAccentColor", "#" + p.accentColor.toString(16).padStart(6, "0"));
+    }
+    updateEncoderPopupFields();
     encoderRows.forEach(({ fields, setMode, status }, i) => {
       const s = encoders.items[i];
       ["pinA", "pinB", "pinKey"].forEach((key) => {
@@ -326,6 +360,7 @@
       fields.enabled.checked = s.enabled;
       fields.reverse.checked = s.reverse;
       ["mode", "entity", "stepPct", "countsPerDetent", "popupY"].forEach((key) => (fields[key].value = s[key]));
+      fields.edge.value = s.edge ?? 0;
       setMode();
       status.textContent = s.enabled ? "Waiting for live counts..." : "Disabled";
     });

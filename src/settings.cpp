@@ -25,6 +25,7 @@ EncoderSettings defaultEncoderSettings(size_t i) {
 }
 
 EncoderSettings encoderSettings[ENCODER_COUNT] = {defaultEncoderSettings(0), defaultEncoderSettings(1)};
+EncoderPopupSettings encoderPopupSettings;
 #endif
 AudioSettings audioSettings;
 AgentSettings agentSettings;
@@ -40,15 +41,37 @@ static const uint8_t LED_SETTINGS_VERSION = 2;
 
 #if BOARD_HAS_ENCODER
 struct EncoderKeys {
-  const char *on, *a, *b, *key, *reverse, *mode, *step, *counts, *popup, *entity;
+  const char *on, *a, *b, *key, *reverse, *mode, *step, *counts, *popup, *edge, *entity;
 };
 
 static constexpr EncoderKeys encoderKeys[ENCODER_COUNT] = {
-  {"enc0on", "enc0a", "enc0b", "enc0key", "enc0rev", "enc0mode", "enc0step", "enc0cnt", "enc0y", "enc0id"},
-  {"enc1on", "enc1a", "enc1b", "enc1key", "enc1rev", "enc1mode", "enc1step", "enc1cnt", "enc1y", "enc1id"},
+  {"enc0on", "enc0a", "enc0b", "enc0key", "enc0rev", "enc0mode", "enc0step", "enc0cnt", "enc0y", "enc0edge", "enc0id"},
+  {"enc1on", "enc1a", "enc1b", "enc1key", "enc1rev", "enc1mode", "enc1step", "enc1cnt", "enc1y", "enc1edge", "enc1id"},
 };
 
+static void sanitizeEncoderPopups() {
+  EncoderPopupSettings& p = encoderPopupSettings;
+  const EncoderPopupSettings defaults;
+  if (p.style > ENCODER_POPUP_EDGE) p.style = defaults.style;
+  if (p.size > 2) p.size = defaults.size;
+  p.opacity = constrain(p.opacity, 40, 100);
+  p.holdMs = constrain(p.holdMs, 800, 4000);
+  if (p.anim > ENCODER_POPUP_NONE) p.anim = defaults.anim;
+  if (p.accentColor > 0xFFFFFF) p.accentColor = defaults.accentColor;
+  for (EncoderSettings& s : encoderSettings)
+    if (s.edge > 1) s.edge = 0;
+}
+
 static void loadEncoders() {
+  EncoderPopupSettings p;
+  p.style = prefs.getUChar("encPopStyle", p.style);
+  p.size = prefs.getUChar("encPopSize", p.size);
+  p.opacity = prefs.getUChar("encPopOpa", p.opacity);
+  p.holdMs = prefs.getUShort("encPopHold", p.holdMs);
+  p.anim = prefs.getUChar("encPopAnim", p.anim);
+  p.entityColor = prefs.getBool("encPopEntity", p.entityColor);
+  p.accentColor = prefs.getUInt("encPopAccent", p.accentColor);
+  encoderPopupSettings = p;
   for (size_t i = 0; i < ENCODER_COUNT; i++) {
     const EncoderKeys& k = encoderKeys[i];
     EncoderSettings s = defaultEncoderSettings(i);
@@ -61,12 +84,23 @@ static void loadEncoders() {
     s.stepPct = prefs.getUChar(k.step, s.stepPct);
     s.countsPerDetent = prefs.getUChar(k.counts, s.countsPerDetent);
     s.popupY = prefs.getUChar(k.popup, s.popupY);
+    s.edge = prefs.getUChar(k.edge, s.edge);
     if (prefs.isKey(k.entity)) prefs.getString(k.entity, s.entity, sizeof(s.entity));
     encoderSettings[i] = s;
   }
+  sanitizeEncoderPopups();
 }
 
 static void saveEncoders() {
+  sanitizeEncoderPopups();
+  const EncoderPopupSettings& p = encoderPopupSettings;
+  prefs.putUChar("encPopStyle", p.style);
+  prefs.putUChar("encPopSize", p.size);
+  prefs.putUChar("encPopOpa", p.opacity);
+  prefs.putUShort("encPopHold", p.holdMs);
+  prefs.putUChar("encPopAnim", p.anim);
+  prefs.putBool("encPopEntity", p.entityColor);
+  prefs.putUInt("encPopAccent", p.accentColor);
   for (size_t i = 0; i < ENCODER_COUNT; i++) {
     const EncoderKeys& k = encoderKeys[i];
     const EncoderSettings& s = encoderSettings[i];
@@ -79,6 +113,7 @@ static void saveEncoders() {
     prefs.putUChar(k.step, s.stepPct);
     prefs.putUChar(k.counts, s.countsPerDetent);
     prefs.putUChar(k.popup, s.popupY);
+    prefs.putUChar(k.edge, s.edge);
     prefs.putString(k.entity, s.entity);
   }
 }

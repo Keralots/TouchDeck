@@ -39,6 +39,7 @@
 #include <esp_heap_caps.h>
 #include "esp_ota_ops.h"
 #include <WiFi.h>
+#include <string.h>
 #include <time.h>
 #include <algorithm>
 
@@ -205,6 +206,15 @@ static bool validEntityId(const String& id) {
 static void encoderSettingsJson(JsonObject out, bool includePins) {
 #if BOARD_HAS_ENCODER
   out["supported"] = true;
+  JsonObject popup = out["popup"].to<JsonObject>();
+  const EncoderPopupSettings& p = encoderPopupSettings;
+  popup["style"] = p.style;
+  popup["size"] = p.size;
+  popup["opacity"] = p.opacity;
+  popup["holdMs"] = p.holdMs;
+  popup["anim"] = p.anim;
+  popup["entityColor"] = p.entityColor;
+  popup["accentColor"] = p.accentColor;
   if (includePins) {
     JsonArray pins = out["allowedPins"].to<JsonArray>();
     for (uint8_t pin = 1; pin <= GPIO_PIN_MAX; pin++)
@@ -222,6 +232,7 @@ static void encoderSettingsJson(JsonObject out, bool includePins) {
     item["stepPct"] = s.stepPct;
     item["countsPerDetent"] = s.countsPerDetent;
     item["popupY"] = s.popupY;
+    item["edge"] = s.edge;
     item["entity"] = s.entity;
   }
 #else
@@ -785,7 +796,19 @@ static void handleConfigImport() {
 
 #if BOARD_HAS_ENCODER
   EncoderSettings nextEncoders[ENCODER_COUNT] = {defaultEncoderSettings(0), defaultEncoderSettings(1)};
+  EncoderPopupSettings nextPopup;
   if (!root["encoders"].isNull()) {
+    const JsonVariantConst popupValue = root["encoders"]["popup"];
+    if (!popupValue.isNull()) {
+      const JsonObjectConst popup = popupValue.as<JsonObjectConst>();
+      READ_INT(popup, "style", ENCODER_POPUP_DROPLET, ENCODER_POPUP_EDGE, nextPopup.style, uint8_t);
+      READ_INT(popup, "size", 0, 2, nextPopup.size, uint8_t);
+      READ_INT(popup, "opacity", 40, 100, nextPopup.opacity, uint8_t);
+      READ_INT(popup, "holdMs", 800, 4000, nextPopup.holdMs, uint16_t);
+      READ_INT(popup, "anim", ENCODER_POPUP_STYLE, ENCODER_POPUP_NONE, nextPopup.anim, uint8_t);
+      READ_BOOL(popup, "entityColor", nextPopup.entityColor);
+      READ_INT(popup, "accentColor", 0, 0xFFFFFF, nextPopup.accentColor, uint32_t);
+    }
     JsonArrayConst items = root["encoders"]["items"].as<JsonArrayConst>();
     if (items.isNull() || items.size() > ENCODER_COUNT) {
       sendJsonMessage(400, false, "Invalid encoder settings in the backup.");
@@ -803,6 +826,9 @@ static void handleConfigImport() {
       READ_INT(item, "stepPct", 1, 25, s.stepPct, uint8_t);
       READ_INT(item, "countsPerDetent", 2, 4, s.countsPerDetent, uint8_t);
       READ_INT(item, "popupY", 5, 95, s.popupY, uint8_t);
+      if (!item["edge"].isNull()) {
+        READ_INT(item, "edge", 0, 1, s.edge, uint8_t);
+      }
       const char* entity;
       if (!readBackupString(item, "entity", sizeof(s.entity) - 1, entity, error, "encoders.entity")) {
         sendJsonMessage(400, false, error.c_str());
@@ -1029,6 +1055,7 @@ static void handleConfigImport() {
 #if BOARD_HAS_ENCODER
   stopEncoders();
   std::copy_n(nextEncoders, ENCODER_COUNT, encoderSettings);
+  encoderPopupSettings = nextPopup;
 #endif
   brightness = nextBrightness;
   advSettings.printers = nextPrinters;
@@ -1101,6 +1128,35 @@ static void handleSaveLight() {
 
 // Hardware page: status LED, vibration motor, speaker.
 #if BOARD_HAS_ENCODER
+static bool readEncoderPopupForm(EncoderPopupSettings& p) {
+  p.style = clampedArg("encPopupStyle", p.style, ENCODER_POPUP_DROPLET, ENCODER_POPUP_EDGE);
+  p.size = clampedArg("encPopupSize", p.size, 0, 2);
+  p.opacity = clampedArg("encPopupOpacity", p.opacity, 40, 100);
+  p.holdMs = clampedArg("encPopupHoldMs", p.holdMs, 800, 4000);
+  p.anim = clampedArg("encPopupAnim", p.anim, ENCODER_POPUP_STYLE, ENCODER_POPUP_NONE);
+  p.entityColor = server.hasArg("encPopupEntityColor");
+  if (server.hasArg("encPopupAccentColor")) {
+    const String color = server.arg("encPopupAccentColor");
+    if (color.length() != 7 || color[0] != '#' ||
+        strspn(color.c_str() + 1, "0123456789abcdefABCDEF") != 6) {
+      sendJsonMessage(400, false, "Choose a valid popup accent colour.");
+      return false;
+    }
+    p.accentColor = strtoul(color.c_str() + 1, nullptr, 16);
+  }
+  return true;
+}
+
+static void handleEncoderPreview() {
+  EncoderPopupSettings popup = encoderPopupSettings;
+  if (!readEncoderPopupForm(popup)) return;
+  const size_t index = clampedArg("encoder", 0, 0, ENCODER_COUNT - 1);
+  const uint8_t position = clampedArg("popupY", encoderSettings[index].popupY, 5, 95);
+  const uint8_t edge = clampedArg("edge", encoderSettings[index].edge, 0, 1);
+  deckEncoderPreview(index, position, edge, popup);
+  sendJsonMessage(200, true, "Popup preview requested.");
+}
+
 static bool readEncoderForm(EncoderSettings* items) {
   for (size_t i = 0; i < ENCODER_COUNT; i++) {
     const String prefix = String("enc") + i;
@@ -1126,6 +1182,7 @@ static bool readEncoderForm(EncoderSettings* items) {
     s.mode = clampedArg((prefix + "mode").c_str(), s.mode, ENCODER_FOLLOW, ENCODER_PC);
     s.stepPct = clampedArg((prefix + "stepPct").c_str(), s.stepPct, 1, 25);
     s.popupY = clampedArg((prefix + "popupY").c_str(), s.popupY, 5, 95);
+    s.edge = clampedArg((prefix + "edge").c_str(), s.edge, 0, 1);
     if (server.hasArg(prefix + "countsPerDetent")) {
       const String counts = server.arg(prefix + "countsPerDetent");
       s.countsPerDetent = counts == "2" ? 2 : counts == "4" ? 4 : 0;
@@ -1177,9 +1234,12 @@ static void handleSaveHardware() {
   }
 #if BOARD_HAS_ENCODER
   EncoderSettings nextEncoders[ENCODER_COUNT];
+  EncoderPopupSettings nextPopup = encoderPopupSettings;
   std::copy_n(encoderSettings, ENCODER_COUNT, nextEncoders);
   if (!readEncoderForm(nextEncoders) ||
       !validateEncoders(nextEncoders, nextLed, nextHaptic, dispSettings.sdCard)) return;
+  if (server.hasArg("encodersPresent") && server.hasArg("encPopupStyle") &&
+      !readEncoderPopupForm(nextPopup)) return;
 #endif
   String ledEntity = server.arg("ledEntity");
   ledEntity.trim();
@@ -1215,6 +1275,7 @@ static void handleSaveHardware() {
   // Release old encoder pins before LED and haptic claim their new pins.
   stopEncoders();
   std::copy_n(nextEncoders, ENCODER_COUNT, encoderSettings);
+  encoderPopupSettings = nextPopup;
 #endif
   audioSettings = nextAudio;
   if (!ledEntity.length()) ledSetHaLevel(LED_HA_NONE);  // the saved level replaces one set over MQTT
@@ -2968,6 +3029,9 @@ void initWebServer() {
   server.on("/save/wallpapers", HTTP_POST, handleSaveWallpapers);
   server.on("/save/light", HTTP_POST, handleSaveLight);
   server.on("/save/hardware", HTTP_POST, handleSaveHardware);
+#if BOARD_HAS_ENCODER
+  server.on("/encoder/preview", HTTP_POST, handleEncoderPreview);
+#endif
   server.on("/save/advanced", HTTP_POST, handleSaveAdvanced);
   server.on("/save/printers", HTTP_POST, handleSavePrinters);
   server.on("/led/preview", HTTP_POST, handleLedPreview);

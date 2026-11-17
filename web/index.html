@@ -1374,6 +1374,73 @@
                     ><span>Power the module from 3V3, not 5V: the ESP32 pins are not 5 V tolerant.</span>
                   </div>
                   <input type="hidden" name="encodersPresent" value="1" disabled />
+                  <div class="subcard" id="encoderPopup">
+                    <h3 class="field-label">Popup</h3>
+                    <div class="grid-2">
+                      <label class="field">
+                        <span class="field-label">Style</span>
+                        <select id="encPopupStyle" name="encPopupStyle">
+                          <option value="0">Droplet</option>
+                          <option value="1">Edge</option>
+                        </select>
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Size</span>
+                        <select id="encPopupSize" name="encPopupSize">
+                          <option value="0">S</option>
+                          <option value="1" selected>M</option>
+                          <option value="2">L</option>
+                        </select>
+                      </label>
+                      <div class="field">
+                        <label class="field-label" for="encPopupOpacity">Background opacity</label>
+                        <div class="range-row">
+                          <input type="range" id="encPopupOpacity" name="encPopupOpacity" min="40" max="100" value="88" />
+                          <output class="range-val" id="encPopupOpacityVal"></output>
+                        </div>
+                      </div>
+                      <div class="field">
+                        <label class="field-label" for="encPopupHoldMs">Hold time</label>
+                        <div class="range-row">
+                          <input
+                            type="range" id="encPopupHoldMs" name="encPopupHoldMs"
+                            min="800" max="4000" step="1" value="1500"
+                          />
+                          <output class="range-val" id="encPopupHoldVal"></output>
+                        </div>
+                      </div>
+                      <label class="field">
+                        <span class="field-label">Animation</span>
+                        <select id="encPopupAnim" name="encPopupAnim">
+                          <option value="0">Style default</option>
+                          <option value="1">Slide</option>
+                          <option value="2">Fade</option>
+                          <option value="3">None</option>
+                        </select>
+                      </label>
+                      <div>
+                        <label class="check-row standalone">
+                          <input id="encPopupEntityColor" name="encPopupEntityColor" type="checkbox" checked />
+                          <span class="check-box"></span>
+                          <span class="check-text"><strong>Colour from the entity</strong></span>
+                        </label>
+                        <label class="field hidden" id="encPopupAccentField">
+                          <span class="field-label">Accent colour</span>
+                          <input type="color" id="encPopupAccentColor" name="encPopupAccentColor" value="#ffb45c" />
+                        </label>
+                      </div>
+                      <label class="field">
+                        <span class="field-label">Preview on</span>
+                        <select id="encPopupPreviewOn">
+                          <option value="0">Encoder 1</option>
+                          <option value="1">Encoder 2</option>
+                        </select>
+                      </label>
+                      <div class="field">
+                        <button type="button" class="btn" id="encPopupPreview" disabled>Preview</button>
+                      </div>
+                    </div>
+                  </div>
                   <datalist id="encoderEntityList"></datalist>
                   <div id="encoderRows"></div>
                   <template id="encoderTemplate">
@@ -1415,6 +1482,10 @@
                         <label class="field">
                           <span class="field-label">Popup position (%)</span>
                           <input name="popupY" type="number" min="5" max="95" step="1" />
+                        </label>
+                        <label class="field">
+                          <span class="field-label">Edge</span>
+                          <select name="edge"><option value="0">Right</option><option value="1">Left</option></select>
                         </label>
                       </div>
                       <p class="field-hint"><output data-encoder-status>Save to test the encoder.</output></p>

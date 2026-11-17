@@ -28,7 +28,9 @@ void deckPrinterSettingsChanged();
 // presenceSettings changed: follow the new entities, restart the timer.
 void deckPresenceApply();
 #if BOARD_HAS_ENCODER
+struct EncoderPopupSettings;
 void deckEncodersApply();
+void deckEncoderPreview(size_t index, uint8_t position, uint8_t edge, const EncoderPopupSettings& settings);
 #endif
 // HA entity the LED's day level follows (deck.json "led"), "" = none.
 String deckLedEntity();

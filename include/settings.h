@@ -110,6 +110,19 @@ constexpr uint8_t HAPTIC_MAX_MS = 200;
 
 constexpr size_t ENCODER_COUNT = 2;
 constexpr uint8_t ENCODER_FOLLOW = 0, ENCODER_FIXED = 1, ENCODER_PC = 2;
+constexpr uint8_t ENCODER_POPUP_DROPLET = 0, ENCODER_POPUP_EDGE = 1;
+constexpr uint8_t ENCODER_POPUP_STYLE = 0, ENCODER_POPUP_SLIDE = 1,
+                  ENCODER_POPUP_FADE = 2, ENCODER_POPUP_NONE = 3;
+
+struct EncoderPopupSettings {
+  uint8_t style = ENCODER_POPUP_DROPLET;
+  uint8_t size = 1;
+  uint8_t opacity = 88;
+  uint16_t holdMs = 1500;
+  uint8_t anim = ENCODER_POPUP_STYLE;
+  bool entityColor = true;
+  uint32_t accentColor = 0xFFB45C;
+};
 
 struct EncoderSettings {
   bool enabled = false;
@@ -119,6 +132,7 @@ struct EncoderSettings {
   uint8_t stepPct = 5;
   uint8_t countsPerDetent = 4;
   uint8_t popupY = 30;
+  uint8_t edge = 0;
   char entity[72] = "";
 };
 
@@ -207,6 +221,7 @@ extern PresenceSettings presenceSettings;
 extern HapticSettings hapticSettings;
 #if BOARD_HAS_ENCODER
 extern EncoderSettings encoderSettings[ENCODER_COUNT];
+extern EncoderPopupSettings encoderPopupSettings;
 EncoderSettings defaultEncoderSettings(size_t i);
 #endif
 extern AudioSettings audioSettings;
