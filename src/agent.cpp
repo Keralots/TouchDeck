@@ -577,7 +577,7 @@ bool beginSession() {
     s_pipeGetId = s_runId = 0;
     s_hid = -1;
     s_sttOpen = false;
-    if (!agentAudioStart(agentSettings.pga, agentSettings.boostDb, agentSettings.volume)) { setError("audio is busy"); return false; }
+    if (!agentAudioStart(agentSettings.pga, agentSettings.boostDb)) { setError("audio is busy"); return false; }
     s_ws.setExtraHeaders("");
     s_ws.onEvent(onWsEvent);
     s_ws.setReconnectInterval(1000);
@@ -601,7 +601,7 @@ bool beginSession() {
   if (!s_enc || !s_dec) { setError("Opus init failed"); return false; }
   opus_encoder_ctl(s_enc, OPUS_RESET_STATE);
   opus_decoder_ctl(s_dec, OPUS_RESET_STATE);
-  if (!agentAudioStart(agentSettings.pga, agentSettings.boostDb, agentSettings.volume)) { setError("audio is busy"); return false; }
+  if (!agentAudioStart(agentSettings.pga, agentSettings.boostDb)) { setError("audio is busy"); return false; }
   ensureClientId();
   String hdr = "Protocol-Version: 1\r\nDevice-Id: " + WiFi.macAddress() + "\r\nClient-Id: " + agentSettings.clientId;
   if (agentSettings.token[0]) hdr = "Authorization: Bearer " + String(agentSettings.token) + "\r\n" + hdr;
@@ -709,7 +709,7 @@ void agentTask(void*) {
       }
       s_stopReq = false;
       if (s_testReq.exchange(false)) {
-        if (agentAudioStart(s_testPga, s_testBoost, 0)) enter(AGENT_MICTEST);
+        if (agentAudioStart(s_testPga, s_testBoost)) enter(AGENT_MICTEST);
         continue;
       }
       if (!s_startReq.exchange(false)) {

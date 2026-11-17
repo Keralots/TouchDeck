@@ -2,6 +2,7 @@
 #include "config.h"
 #include "led.h"       // sanitizeLedPin()
 #include "haptic.h"    // sanitizeHapticPin()
+#include "audio.h"     // audioVolumeFromLinear()
 #include <Preferences.h>
 
 char wifiSSID[33] = "";
@@ -248,7 +249,9 @@ void loadSettings() {
   hapticSettings.strength = constrain(prefs.getUChar("hapstr", 100), HAPTIC_MIN_STRENGTH, 100);
   hapticSettings.pulseMs = constrain(prefs.getUChar("hapms", 40), HAPTIC_MIN_MS, HAPTIC_MAX_MS);
   audioSettings.enabled = prefs.getBool("audon", false);
-  audioSettings.volume = min<uint8_t>(prefs.getUChar("audvol", 70), 100);
+  // "audvol" held the old linear volume, "audvdb" the dB scale.
+  audioSettings.volume = prefs.isKey("audvdb") ? min<uint8_t>(prefs.getUChar("audvdb"), 100)
+                                               : audioVolumeFromLinear(prefs.getUChar("audvol", 70));
   audioSettings.nightMute = prefs.getBool("audnight", true);
   audioSettings.click = prefs.getBool("audclk", false);
   audioSettings.finished = prefs.getBool("audfin", true);
@@ -269,7 +272,6 @@ void loadSettings() {
   agentSettings.pga = min<uint8_t>(prefs.getUChar("agpga", 12), AGENT_PGA_MAX);
   agentSettings.boostDb = min<uint8_t>(prefs.getUChar("agboost", 6), AGENT_BOOST_MAX);
   if (prefs.isKey("agcid")) prefs.getString("agcid", agentSettings.clientId, sizeof(agentSettings.clientId));
-  agentSettings.volume = min<uint8_t>(prefs.getUChar("agvol", 30), 100);
   agentSettings.endPauseMs = constrain(prefs.getUShort("agpause", 1100), AGENT_PAUSE_MIN_MS, AGENT_PAUSE_MAX_MS);
   agentSettings.idleSec = constrain(prefs.getUChar("agidle", 8), AGENT_IDLE_MIN_S, AGENT_IDLE_MAX_S);
   agentSettings.chimes = prefs.getBool("agchime", true);
@@ -358,7 +360,7 @@ void saveSettings() {
   prefs.putUChar("hapstr", hapticSettings.strength);
   prefs.putUChar("hapms", hapticSettings.pulseMs);
   prefs.putBool("audon", audioSettings.enabled);
-  prefs.putUChar("audvol", audioSettings.volume);
+  prefs.putUChar("audvdb", audioSettings.volume);
   prefs.putBool("audnight", audioSettings.nightMute);
   prefs.putBool("audclk", audioSettings.click);
   prefs.putBool("audfin", audioSettings.finished);
@@ -372,7 +374,6 @@ void saveSettings() {
   prefs.putUChar("agpga", agentSettings.pga);
   prefs.putUChar("agboost", agentSettings.boostDb);
   prefs.putString("agcid", agentSettings.clientId);
-  prefs.putUChar("agvol", agentSettings.volume);
   prefs.putUShort("agpause", agentSettings.endPauseMs);
   prefs.putUChar("agidle", agentSettings.idleSec);
   prefs.putBool("agchime", agentSettings.chimes);

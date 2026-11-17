@@ -1392,6 +1392,7 @@ void deckTick() {
   updateHeaders();
   blinkClocks();
   qpUpdateStatus(false);
+  qpCheckLayout();
   haSync();
   httpSync();
   printerSync();

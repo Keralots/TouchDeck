@@ -20,8 +20,11 @@ bool audioPlayTone(uint16_t hz, uint16_t ms, uint8_t vol);
 void audioStop();
 // Runs fn on the audio task with the speaker channel closed; other sounds wait.
 bool audioRunExclusive(void (*fn)(void*), void* arg);
-// Sample gain (Q12) for the user's volume, with the board's cap.
-uint16_t audioGainQ12();
+// Volume 0..100: 0 = silent, 1..100 = -49.5..0 dB in 0.5 dB steps, under the
+// board's cap. Shared by deck sounds and the AI agent's voice.
+uint16_t audioGainQ15(uint8_t vol);
+// A volume saved on the old linear scale (amplitude %) at the same loudness.
+uint8_t audioVolumeFromLinear(uint8_t linear);
 
 const char* audioDir();
 bool audioValidName(const String& name);

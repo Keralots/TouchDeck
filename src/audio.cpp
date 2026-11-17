@@ -39,7 +39,7 @@ struct Req {
   ReqType type;
   AudioSound sound;
   bool low;
-  uint16_t gain;  // Q12, 4096 = unity
+  uint16_t gain;  // Q15, 32768 = unity
   uint16_t hz, ms;
   uint32_t reqMs;
   char file[AUDIO_FILE_LEN];
@@ -86,9 +86,6 @@ Clip* newClip(uint32_t frames, uint32_t rate) {
   return new Clip{pcm, frames, rate};
 }
 
-uint16_t gainFor(uint8_t vol) {
-  return (uint16_t)((uint32_t)min<uint8_t>(vol, 100) * 4096 * BOARD_AUDIO_MAX_GAIN_PCT / 10000);
-}
 
 bool IRAM_ATTR onSendOvf(i2s_chan_handle_t, i2s_event_data_t*, void*) {
   if (s_playing) s_underruns = s_underruns + 1;
@@ -423,7 +420,7 @@ void playClip(const Clip* c, uint16_t gain, uint32_t reqMs, int16_t* buf) {
     const bool cut = s_stop || (s_has && !s_req.low);
     const uint32_t n = min<uint32_t>(cut ? FADE_FRAMES : CHUNK, c->frames - pos);
     for (uint32_t i = 0; i < n; i++) {
-      int32_t v = ((int32_t)c->pcm[pos + i] * gain) >> 12;
+      int32_t v = ((int32_t)c->pcm[pos + i] * gain) >> 15;
       if (cut) v = v * (int32_t)(n - i) / (int32_t)n;
       buf[i] = (int16_t)v;
     }
@@ -517,7 +514,7 @@ Req soundReq(AudioSound s, uint8_t vol, const char* file) {
   r.type = REQ_SOUND;
   r.sound = s;
   r.low = s == SND_CLICK;
-  r.gain = gainFor(vol);
+  r.gain = audioGainQ15(vol);
   r.reqMs = millis();
   if (file) strlcpy(r.file, file, sizeof(r.file));
   return r;
@@ -583,7 +580,7 @@ bool audioPlayTone(uint16_t hz, uint16_t ms, uint8_t vol) {
   r.type = REQ_TONE;
   r.hz = constrain(hz, 50, 10000);
   r.ms = constrain(ms, 10, 5000);
-  r.gain = gainFor(vol);
+  r.gain = audioGainQ15(vol);
   r.reqMs = millis();
   return submit(r);
 }
@@ -597,7 +594,17 @@ bool audioRunExclusive(void (*fn)(void*), void* arg) {
   return submit(r);
 }
 
-uint16_t audioGainQ12() { return gainFor(audioSettings.volume); }
+uint16_t audioGainQ15(uint8_t vol) {
+  if (!vol) return 0;
+  const float db = ((float)min<uint8_t>(vol, 100) - 100.0f) / 2.0f;
+  return (uint16_t)lroundf(32768.0f * BOARD_AUDIO_MAX_GAIN_PCT / 100.0f * powf(10.0f, db / 20.0f));
+}
+
+uint8_t audioVolumeFromLinear(uint8_t linear) {
+  if (!linear) return 0;
+  const float v = 100.0f + 40.0f * log10f(min<uint8_t>(linear, 100) / 100.0f);
+  return (uint8_t)constrain(lroundf(v), 1L, 100L);
+}
 
 void audioStop() {
   portENTER_CRITICAL(&s_mux);

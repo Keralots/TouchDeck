@@ -1,5 +1,6 @@
 // Deck UI: the quick panel and the frosted glass behind it.
 #include "deck_ui_int.h"
+#include "agent.h"
 
 namespace deckui {
 
@@ -8,10 +9,12 @@ namespace deckui {
 // never include it. The container is QP_LIP rows taller than what shows and
 // sits that much above the screen edge when open, which hides its top
 // rounded corners; the compositor skips those rows.
-constexpr int QP_H = 196;
+constexpr int QP_H_BASE = 196;
+constexpr int QP_ROW = 40;
 constexpr int QP_LIP = 20;
 constexpr uint32_t C_SCREEN_ACCENT = 0xF6C56B;
 constexpr uint32_t C_LIGHT_ACCENT = 0xFFB35C;
+constexpr uint32_t C_VOLUME_ACCENT = 0x7CC8FF;
 
 // Top bar (page name, WiFi, clock) shown; owner setting, NVS "deckui"/"hdr".
 bool s_header = true;
@@ -26,6 +29,11 @@ uint8_t& screenLevelRef() {
 }
 
 bool ledUsable() { return ledSettings.enabled && ledPinValid(); }
+
+// The Volume row: the speaker is on, or the AI agent talks through it.
+bool qpWantVolume() { return audioSettings.enabled || agentAvailable(); }
+
+int qpH() { return QP_H_BASE + (s_qp.volSlider ? QP_ROW : 0); }
 
 uint8_t& lightLevelRef() {
   return ledNightActive() ? ledSettings.nightBrightness : ledSettings.brightness;
@@ -46,6 +54,10 @@ void qpSyncValues() {
     lv_obj_add_state(s_qp.lightSlider, LV_STATE_DISABLED);
     lv_slider_set_value(s_qp.lightSlider, 0, LV_ANIM_OFF);
     lv_label_set_text(s_qp.lightVal, "off");
+  }
+  if (s_qp.volSlider) {
+    lv_slider_set_value(s_qp.volSlider, audioSettings.volume, LV_ANIM_OFF);
+    lv_label_set_text_fmt(s_qp.volVal, "%d%%", audioSettings.volume);
   }
   if (manualNightActive()) lv_obj_add_state(s_qp.nightBtn, LV_STATE_CHECKED);
   else lv_obj_remove_state(s_qp.nightBtn, LV_STATE_CHECKED);
@@ -142,6 +154,21 @@ void onLightSlider(lv_event_t* e) {
     if (!ledNightActive()) ledSetHaLevel(LED_HA_NONE);  // drops a level set over MQTT
     saveSettings();
     clearLedPreview();
+  }
+}
+
+// Live, also for an agent reply that is playing; a click previews the level.
+void onVolumeSlider(lv_event_t* e) {
+  const lv_event_code_t code = lv_event_get_code(e);
+  if (code == LV_EVENT_VALUE_CHANGED) {
+    audioSettings.volume = (uint8_t)lv_slider_get_value(s_qp.volSlider);
+    lv_label_set_text_fmt(s_qp.volVal, "%d%%", audioSettings.volume);
+    qpMarkStale();
+  } else if (code == LV_EVENT_RELEASED) {
+    saveSettings();
+    const AgentState st = agentState();
+    String err;
+    if (st == AGENT_IDLE || st == AGENT_ERROR) audioTest(SND_CLICK, audioSettings.volume, "", err);
   }
 }
 
@@ -314,7 +341,7 @@ void frostStyle(lv_obj_t* o, lv_draw_buf_t* glass) {
 // alone is on screen; it is re-frosted when the panel goes stale.
 void qpFrost() {
   if (s_theme != THEME_GLASS || !s_qp.box || s_qp.open || modalShown()) return;
-  lv_draw_buf_t* g = frostedCopy(0, -QP_LIP, logicalW(), QP_H + QP_LIP, 20);
+  lv_draw_buf_t* g = frostedCopy(0, -QP_LIP, logicalW(), qpH() + QP_LIP, 20);
   if (!g) return;
   frostStyle(s_qp.box, g);
   if (s_qp.glass) lv_draw_buf_destroy(s_qp.glass);
@@ -333,11 +360,13 @@ void buildQuickPanel() {
   lv_obj_add_flag(s_qp.scrim, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_event_cb(s_qp.scrim, onScrim, LV_EVENT_CLICKED, nullptr);
 
+  const bool vol = qpWantVolume();
+  const int qh = QP_H_BASE + (vol ? QP_ROW : 0);
   lv_obj_t* box = lv_obj_create(top);
   s_qp.box = box;
   lv_obj_remove_style_all(box);
-  lv_obj_set_size(box, w, QP_H + QP_LIP);
-  lv_obj_set_pos(box, 0, -(QP_H + QP_LIP + 8));  // parked above the screen
+  lv_obj_set_size(box, w, qh + QP_LIP);
+  lv_obj_set_pos(box, 0, -(qh + QP_LIP + 8));  // parked above the screen
   lv_obj_set_style_bg_color(box, lv_color_hex(C_PANEL), 0);
   lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
   lv_obj_set_style_radius(box, 20, 0);
@@ -380,17 +409,31 @@ void buildQuickPanel() {
   lv_obj_add_event_cb(s_qp.lightSlider, onLightSlider, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(s_qp.lightSlider, onLightSlider, LV_EVENT_RELEASED, nullptr);
 
+  int by = y0 + 132;
+  if (vol) {
+    lv_obj_t* volLbl = lv_label_create(box);
+    lv_label_set_text(volLbl, "Volume");
+    lv_obj_set_pos(volLbl, 16, y0 + 138);
+    s_qp.volSlider = qpSlider(box, slX, y0 + 143, slW, C_VOLUME_ACCENT);
+    lv_slider_set_range(s_qp.volSlider, 0, 100);
+    s_qp.volVal = lv_label_create(box);
+    lv_obj_set_pos(s_qp.volVal, w - valW - 10, y0 + 138);
+    lv_obj_add_event_cb(s_qp.volSlider, onVolumeSlider, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(s_qp.volSlider, onVolumeSlider, LV_EVENT_RELEASED, nullptr);
+    by += QP_ROW;
+  }
+
   // Four buttons; on a portrait screen they carry only their symbols.
   const int bw = (w - 16 * 2 - 3 * 10) / 4;
   const bool wide = w >= 400;
-  lv_obj_t* off = qpButton(box, 16, y0 + 132, bw, wide ? LV_SYMBOL_POWER "  Off" : LV_SYMBOL_POWER, false);
+  lv_obj_t* off = qpButton(box, 16, by, bw, wide ? LV_SYMBOL_POWER "  Off" : LV_SYMBOL_POWER, false);
   lv_obj_add_event_cb(off, onScreenOff, LV_EVENT_CLICKED, nullptr);
-  s_qp.nightBtn = qpButton(box, 16 + bw + 10, y0 + 132, bw, wide ? LV_SYMBOL_EYE_CLOSE "  Night" : LV_SYMBOL_EYE_CLOSE, true);
+  s_qp.nightBtn = qpButton(box, 16 + bw + 10, by, bw, wide ? LV_SYMBOL_EYE_CLOSE "  Night" : LV_SYMBOL_EYE_CLOSE, true);
   lv_obj_add_event_cb(s_qp.nightBtn, onNight, LV_EVENT_VALUE_CHANGED, nullptr);
-  s_qp.headerBtn = qpButton(box, 16 + 2 * (bw + 10), y0 + 132, bw, wide ? LV_SYMBOL_UP "  Top bar" : LV_SYMBOL_UP, true);
+  s_qp.headerBtn = qpButton(box, 16 + 2 * (bw + 10), by, bw, wide ? LV_SYMBOL_UP "  Top bar" : LV_SYMBOL_UP, true);
   if (s_header) lv_obj_add_state(s_qp.headerBtn, LV_STATE_CHECKED);
   lv_obj_add_event_cb(s_qp.headerBtn, onHeaderBtn, LV_EVENT_VALUE_CHANGED, nullptr);
-  lv_obj_t* edit = qpButton(box, 16 + 3 * (bw + 10), y0 + 132, bw, wide ? LV_SYMBOL_EDIT "  Edit" : LV_SYMBOL_EDIT, false);
+  lv_obj_t* edit = qpButton(box, 16 + 3 * (bw + 10), by, bw, wide ? LV_SYMBOL_EDIT "  Edit" : LV_SYMBOL_EDIT, false);
   lv_obj_add_event_cb(edit, onEditBtn, LV_EVENT_CLICKED, nullptr);
 
   lv_obj_t* grip = lv_obj_create(box);
@@ -401,7 +444,7 @@ void buildQuickPanel() {
   lv_obj_set_style_radius(grip, 2, 0);
   lv_obj_align(grip, LV_ALIGN_BOTTOM_MID, 0, -7);
 
-  s_qp.snap = lv_draw_buf_create(w, QP_H + QP_LIP, LV_COLOR_FORMAT_RGB565, 0);
+  s_qp.snap = lv_draw_buf_create(w, qh + QP_LIP, LV_COLOR_FORMAT_RGB565, 0);
   s_qp.open = false;
   qpUpdateStatus(true);
   qpSyncValues();
@@ -431,7 +474,7 @@ void showPanel(bool open) {
     // Closing slides the panel off the page image, so make it current.
     markPageStale(sh.active);
   } else {
-    lv_obj_set_y(s_qp.box, -(QP_H + QP_LIP + 8));
+    lv_obj_set_y(s_qp.box, -(qpH() + QP_LIP + 8));
     lv_obj_add_flag(s_qp.scrim, LV_OBJ_FLAG_HIDDEN);
   }
   portENTER_CRITICAL(&s_mux);
@@ -462,11 +505,23 @@ void refreshPanelSnapshot() {
   sh.panelBusy = false;
   sh.panelValid = ok;
   if (ok) {
-    sh.panelSrc = {(const uint16_t*)s_qp.snap->data + QP_LIP * stride, stride, true, (uint16_t)QP_H};
+    sh.panelSrc = {(const uint16_t*)s_qp.snap->data + QP_LIP * stride, stride, true, (uint16_t)qpH()};
   }
   portEXIT_CRITICAL(&s_mux);
   s_qp.stale = !ok;
   s_lastSnapMs = millis();
+}
+
+// Rebuild the closed panel when the Volume row should come or go.
+void qpCheckLayout() {
+  if (!s_qp.box || s_qp.open || (s_qp.volSlider != nullptr) == qpWantVolume()) return;
+  portENTER_CRITICAL(&s_mux);
+  const bool owned = sh.owned;
+  if (!owned) sh.panelValid = false;  // no gesture may start on the old snapshot
+  portEXIT_CRITICAL(&s_mux);
+  if (owned) return;
+  destroyQuickPanel();
+  buildQuickPanel();
 }
 
 void closePanelAnimated() {

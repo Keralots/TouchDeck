@@ -164,7 +164,6 @@
     $("hapticStrengthVal").textContent = $("hapticStrength").value + "%";
     $("hapticMsVal").textContent = $("hapticMs").value + " ms";
     $("audioVolumeVal").textContent = $("audioVolume").value + "%";
-    $("agentVolumeVal").textContent = $("agentVolume").value + "%";
     $("agentPgaVal").textContent = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 34.5, 36, 37.5][Number($("agentPga").value)] + " dB";
     $("agentBoostVal").textContent = "+" + $("agentBoost").value + " dB";
   }
@@ -183,7 +182,6 @@
     "hapticStrength",
     "hapticMs",
     "audioVolume",
-    "agentVolume",
     "agentPga",
     "agentBoost",
   ].forEach((id) => $(id).addEventListener("input", updateRangeLabels));
@@ -597,7 +595,7 @@
     updateHapticFields();
     const au = c.audio || {};
     setCheck("audioEnabled", au.enabled);
-    setVal("audioVolume", au.volume == null ? 70 : au.volume);
+    setVal("audioVolume", au.volume == null ? 94 : au.volume);
     setVal("audioWakeMs", au.wakeMs == null ? "" : au.wakeMs);
     setVal("audioKeepOnMs", au.keepOnMs == null ? "" : au.keepOnMs);
     setCheck("audioNight", au.nightMute !== false);
@@ -611,6 +609,7 @@
     const ag = c.agent || {};
     if ($("navAgent")) $("navAgent").classList.toggle("hidden", !ag.mic);
     window.snAgent = !!ag.mic;
+    $("audioVolumeAgent").classList.toggle("hidden", !ag.mic);
     setCheck("agentEnabled", ag.enabled);
     setVal("agentBackend", ag.backend === "ha" ? "ha" : "xiaozhi");
     setVal("agentPipeline", ag.pipeline || "");
@@ -618,7 +617,6 @@
     setVal("agentToken", "");
     $("agentToken").placeholder = ag.tokenSet ? "unchanged" : "none";
     setCheck("agentTokenClear", false);
-    setVal("agentVolume", ag.volume == null ? 30 : ag.volume);
     setVal("agentPga", ag.pga == null ? 12 : ag.pga);
     setVal("agentBoost", ag.boost == null ? 6 : ag.boost);
     setVal("agentPause", ag.endPauseMs || 1100);

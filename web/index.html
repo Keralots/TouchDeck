@@ -1082,17 +1082,21 @@
                       ></span
                     ></label
                   >
-                  <div class="subcard hidden" id="audioFields">
-                    <div class="field">
-                      <label class="field-label" for="audioVolume">Volume</label>
-                      <div class="range-row">
-                        <input type="range" id="audioVolume" name="audioVolume" min="0" max="100" step="5" /><span
-                          class="range-val"
-                          id="audioVolumeVal"
-                          >--</span
-                        >
-                      </div>
+                  <div class="field">
+                    <label class="field-label" for="audioVolume">Volume</label>
+                    <div class="range-row">
+                      <input type="range" id="audioVolume" name="audioVolume" min="0" max="100" step="1" /><span
+                        class="range-val"
+                        id="audioVolumeVal"
+                        >--</span
+                      >
                     </div>
+                    <p class="field-hint">
+                      Each step is 0.5 dB; 50 % is 25 dB quieter than 100 %. Also on the quick panel from the top
+                      edge.<span id="audioVolumeAgent" class="hidden"> The AI agent's voice uses it too.</span>
+                    </p>
+                  </div>
+                  <div class="subcard hidden" id="audioFields">
                     <div class="grid-2">
                       <div class="field">
                         <label class="field-label" for="audioWakeMs">Wake-up delay (ms)</label>
@@ -1426,16 +1430,9 @@
                         >
                       </div>
                     </div>
-                    <div class="field">
-                      <label class="field-label" for="agentVolume">Voice volume</label>
-                      <div class="range-row">
-                        <input type="range" id="agentVolume" name="agentVolume" min="0" max="100" step="5" /><span
-                          class="range-val"
-                          id="agentVolumeVal"
-                          >--</span
-                        >
-                      </div>
-                    </div>
+                    <p class="field-hint">
+                      The voice plays at the speaker volume (Hardware page, or the quick panel from the top edge).
+                    </p>
                   </div>
                 </div>
 

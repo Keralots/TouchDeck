@@ -37,7 +37,7 @@ Full reference for the deck's features. For installing and first-time setup, see
 - **Confirm before acting:** a tile can ask on the device before it turns something off (a printer mid-print) or before every action. Set it under the tile's "more options" button in the portal.
 - **Tile colours:** per tile, the accent, icon (off and on), text, off background and on fill colours, and in Glass its own glass and on opacity, all optional on top of the theme ("more options" in Pages & tiles).
 - **Icon style:** buttons, switches, sliders and sensors show their icon in a circle or without one (then it fills its place). A switch can show a different icon while on, and a light's icon can follow the light's own colour and brightness. The grid editor shows each tile's icon style and colour.
-- **Quick panel:** pull down from the top edge for screen and LED brightness, link status, screen off, night mode, the top bar switch and the page editor.
+- **Quick panel:** pull down from the top edge for screen and LED brightness, the speaker volume (while the speaker or the AI agent is on), link status, screen off, night mode, the top bar switch and the page editor.
 - **Edit on the device:** long press an empty spot of a page (or Edit in the quick panel) to move (swap works as in the portal), resize or remove its tiles, or add one with + (a list of Home Assistant entities by group, from the list cached with "Update from HA" in the portal); Done saves the page.
 - **System screens** for start-up, WiFi setup (with a QR code to join the setup network), connecting, and a firmware update screen with progress.
 
@@ -265,7 +265,7 @@ The companion UI opens at `http://127.0.0.1:8750`; point it at the device IP. Th
 
 ## Speaker
 
-The board has a built-in amplifier for a small speaker on its speaker connector. Turn it on under **Hardware > Speaker** (off by default) and set the volume; a very small speaker may need it at 100. It plays a sound when a print finishes, on a new printer error and when the bed has cooled (each one can be switched off), and optionally a short click on tile taps. "Quiet at night" keeps it silent during the screen's night schedule.
+The board has a built-in amplifier for a small speaker on its speaker connector. Turn it on under **Hardware > Speaker** (off by default) and set the volume; a very small speaker may need it at 100. The volume runs in 1 % steps of 0.5 dB each, so 50 % is 25 dB quieter than 100 % and 1 % is about 50 dB quieter. The quick panel's Volume slider sets it too, with a click at the new level. It plays a sound when a print finishes, on a new printer error and when the bed has cooled (each one can be switched off), and optionally a short click on tile taps. "Quiet at night" keeps it silent during the screen's night schedule.
 
 Each event uses a built-in sound or your own: add a 16-bit PCM WAV (mono or stereo, 8 to 48 kHz, up to 4 MB) under "Your sounds". Sounds are stored on the microSD card when it is in use, otherwise in the internal flash, which has little room. A missing or broken file falls back to the built-in sound. The Test buttons play the picked sound at the set volume before saving.
 
@@ -277,7 +277,7 @@ The Waveshare 7B can talk to a voice assistant through its two microphones and i
    - **Home Assistant (Assist):** uses the Home Assistant connection from the Pages & tiles page, no extra server or token. Set up speech-to-text and text-to-speech first in Home Assistant under **Settings > Voice assistants**. Leave the pipeline ID empty to use the assistant marked as preferred there. The assistant answers and controls the house the same way Assist does in the Home Assistant app, with the entities you exposed to it.
    - **Custom server (xiaozhi):** a server that speaks the xiaozhi WebSocket protocol: a `ws://` address and an optional access token, sent as `Authorization: Bearer`. Audio goes both ways as Opus.
 2. On the Pages & tiles page add a tile with "+ Add AI agent".
-3. Tap the tile and speak. A chime tells you it listens; the tile shows listening, thinking and speaking. After each reply it listens again for a follow-up, and the conversation ends when nobody speaks for "End after silence" seconds or when you tap the tile again. It does not listen while it speaks, so wait for the reply to finish.
+3. Tap the tile and speak. A chime tells you it listens; the tile shows listening, thinking and speaking. After each reply it listens again for a follow-up, and the conversation ends when nobody speaks for "End after silence" seconds or when you tap the tile again. It does not listen while it speaks, so wait for the reply to finish. The voice plays at the speaker volume (Hardware > Speaker); the quick panel's Volume slider changes it, also while a reply plays.
 
 Microphones: press **Test microphones** and speak from where you usually stand. Your voice should read at least 15 dB above the room; raise the microphone gain first, then the digital boost. If the agent cuts you off mid-sentence, raise "End of sentence pause".
 
