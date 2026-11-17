@@ -214,6 +214,8 @@ struct QuickPanel {
   lv_obj_t* lightLbl;
   lv_obj_t* lightSlider;
   lv_obj_t* lightVal;
+  lv_obj_t* volSlider;  // nullptr without the Volume row
+  lv_obj_t* volVal;
   lv_obj_t* nightBtn;
   lv_obj_t* headerBtn;
   lv_draw_buf_t* snap;
@@ -377,6 +379,7 @@ void qpMarkStale();
 uint8_t& screenLevelRef();
 void qpSyncValues();
 void qpUpdateStatus(bool force);
+void qpCheckLayout();
 lv_obj_t* qpButton(lv_obj_t* parent, int x, int y, int w, const char* text, bool checkable);
 const uint16_t* lastFrame();
 lv_draw_buf_t* frostedCopy(int x, int y, int w, int h, int rad);

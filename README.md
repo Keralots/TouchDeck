@@ -66,7 +66,7 @@ Recorded frame by frame from the display. Pick a set under **Display > Animation
 - **Screen sleep** on Home Assistant presence, night schedules for the backlight and the status LED. [More](GUIDE.md#screen-sleep)
 - **MQTT discovery:** the deck shows up in Home Assistant with its screen, page, night mode and a message toast. [More](GUIDE.md#mqtt-home-assistant-discovery)
 - **AI agent (Waveshare 7B):** tap a tile and talk to Home Assistant Assist or your own xiaozhi voice server through the deck's microphones. [More](GUIDE.md#ai-agent-waveshare-7b)
-- **Edit on the device:** long press an empty spot to move, resize, add or remove tiles. A quick panel from the top edge has brightness, night mode and link status.
+- **Edit on the device:** long press an empty spot to move, resize, add or remove tiles. A quick panel from the top edge has brightness, volume, night mode and link status.
 
 ## Getting started
 

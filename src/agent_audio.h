@@ -9,8 +9,8 @@ constexpr uint32_t AGENT_RATE = 16000;
 constexpr uint32_t AGENT_FRAME = AGENT_RATE * 60 / 1000;  // samples per 60 ms frame
 
 // Takes over the audio task; false when the board has no microphones or the
-// task is busy closing a previous run.
-bool agentAudioStart(uint8_t pga, uint8_t boostDb, uint8_t volume);
+// task is busy closing a previous run. The voice plays at audioSettings.volume.
+bool agentAudioStart(uint8_t pga, uint8_t boostDb);
 void agentAudioStop();
 // Mic gains while running (portal sliders during a mic test).
 void agentAudioSetGain(uint8_t pga, uint8_t boostDb);

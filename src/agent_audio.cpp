@@ -3,6 +3,7 @@
 #if defined(BOARD_MIC_ES7210)
 #include "audio.h"
 #include "audio_hw.h"
+#include "settings.h"
 #include <Wire.h>
 #include <atomic>
 #include <driver/i2s_tdm.h>
@@ -34,7 +35,6 @@ int16_t* s_play = nullptr;   // PLAY_CAP
 uint8_t s_pga = 12;
 std::atomic<int32_t> s_boostQ8{256};
 std::atomic<int> s_pgaReq{-1};  // a new mic gain for the engine to write
-int32_t s_playQ12 = 4096;
 // Last 30 s of a session for /api/agent/record.wav: [mic, speaker] pairs.
 constexpr uint32_t REC_FRAMES = AGENT_RATE * 30;
 int16_t* s_rec = nullptr;
@@ -74,7 +74,8 @@ void engine(void*) {
   size_t accN = 0;
   uint32_t settle = AGENT_RATE / 5;  // the ES7210 starts on near-zero samples
   i2s_chan_handle_t tx = nullptr, rx = nullptr;
-  const int32_t playQ12 = s_playQ12;
+  uint8_t vol = 255;
+  int32_t gain = 0;
   esp_err_t e;
 
   i2s_chan_config_t cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
@@ -119,12 +120,14 @@ void engine(void*) {
     if (s_flushReq.exchange(false)) s_playTail.store(s_playHead.load());
     const int pga = s_pgaReq.exchange(-1);
     if (pga >= 0) es7210_adc_set_gain((es7210_input_mics_t)(ES7210_INPUT_MIC1 | ES7210_INPUT_MIC2), (es7210_gain_value_t)pga);
+    // Live: the quick panel's Volume slider may move during a reply.
+    if (audioSettings.volume != vol) gain = audioGainQ15(vol = audioSettings.volume);
     const uint32_t head = s_playHead.load(std::memory_order_acquire);
     uint32_t tail = s_playTail.load();
     const uint32_t n = min<uint32_t>(head - tail, CHUNK);
     for (uint32_t i = 0; i < CHUNK; i++) {
       int16_t v = 0;
-      if (i < n) v = (int16_t)(((int32_t)s_play[(tail + i) & (PLAY_CAP - 1)] * playQ12) >> 12);
+      if (i < n) v = (int16_t)(((int32_t)s_play[(tail + i) & (PLAY_CAP - 1)] * gain) >> 15);
       for (int c = 0; c < SLOTS; c++) txBuf[i * SLOTS + c] = v;
     }
     if (n) {
@@ -184,14 +187,13 @@ void engine(void*) {
 
 }  // namespace
 
-bool agentAudioStart(uint8_t pga, uint8_t boostDb, uint8_t volume) {
+bool agentAudioStart(uint8_t pga, uint8_t boostDb) {
   if (s_running) return false;
   if (!s_up) s_up = (int16_t*)heap_caps_malloc(UP_FRAMES * AGENT_FRAME * sizeof(int16_t), MALLOC_CAP_SPIRAM);
   if (!s_play) s_play = (int16_t*)heap_caps_malloc(PLAY_CAP * sizeof(int16_t), MALLOC_CAP_SPIRAM);
   if (!s_up || !s_play) return false;
   if (!s_rec) s_rec = (int16_t*)heap_caps_malloc(REC_FRAMES * 2 * sizeof(int16_t), MALLOC_CAP_SPIRAM);
   s_recN = 0;
-  s_playQ12 = (int32_t)min<uint8_t>(volume, 100) * 4096 * BOARD_AUDIO_MAX_GAIN_PCT / 10000;
   s_pga = min<uint8_t>(pga, 14);
   s_boostQ8 = (int32_t)lroundf(256.0f * powf(10.0f, boostDb / 20.0f));
   s_pgaReq = -1;
@@ -259,7 +261,7 @@ void agentAudioRecRead(uint32_t from, int16_t* dst, uint32_t n) {
 
 #else
 
-bool agentAudioStart(uint8_t, uint8_t, uint8_t) { return false; }
+bool agentAudioStart(uint8_t, uint8_t) { return false; }
 void agentAudioStop() {}
 void agentAudioSetGain(uint8_t, uint8_t) {}
 bool agentAudioRunning() { return false; }

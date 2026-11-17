@@ -177,6 +177,7 @@ static void presenceJson(JsonObject out) {
 static void audioSettingsJson(JsonObject o) {
   o["enabled"] = audioSettings.enabled;
   o["volume"] = audioSettings.volume;
+  o["volumeScale"] = "db";  // backups without it hold the old linear volume
   o["nightMute"] = audioSettings.nightMute;
   o["click"] = audioSettings.click;
   o["finished"] = audioSettings.finished;
@@ -210,7 +211,6 @@ static void agentSettingsJson(JsonObject o) {
   o["tokenSet"] = agentSettings.token[0] != 0;
   o["pga"] = agentSettings.pga;
   o["boost"] = agentSettings.boostDb;
-  o["volume"] = agentSettings.volume;
   o["endPauseMs"] = agentSettings.endPauseMs;
   o["idleSec"] = agentSettings.idleSec;
   o["chimes"] = agentSettings.chimes;
@@ -815,6 +815,7 @@ static void handleConfigImport() {
   if (!audio.isNull()) {
     READ_BOOL(audio, "enabled", nextAudio.enabled);
     READ_INT(audio, "volume", 0, 100, nextAudio.volume, uint8_t);
+    if (strcmp(audio["volumeScale"] | "", "db") != 0) nextAudio.volume = audioVolumeFromLinear(nextAudio.volume);
     READ_BOOL(audio, "nightMute", nextAudio.nightMute);
     READ_BOOL(audio, "click", nextAudio.click);
     READ_BOOL(audio, "finished", nextAudio.finished);
@@ -853,7 +854,6 @@ static void handleConfigImport() {
     strlcpy(nextAgent.pipeline, pl, sizeof(nextAgent.pipeline));
     if (!agent["pga"].isNull()) READ_INT(agent, "pga", 0, AGENT_PGA_MAX, nextAgent.pga, uint8_t);
     if (!agent["boost"].isNull()) READ_INT(agent, "boost", 0, AGENT_BOOST_MAX, nextAgent.boostDb, uint8_t);
-    if (!agent["volume"].isNull()) READ_INT(agent, "volume", 0, 100, nextAgent.volume, uint8_t);
     if (!agent["endPauseMs"].isNull())
       READ_INT(agent, "endPauseMs", AGENT_PAUSE_MIN_MS, AGENT_PAUSE_MAX_MS, nextAgent.endPauseMs, uint16_t);
     if (!agent["idleSec"].isNull()) READ_INT(agent, "idleSec", AGENT_IDLE_MIN_S, AGENT_IDLE_MAX_S, nextAgent.idleSec, uint8_t);
@@ -1220,7 +1220,6 @@ static void handleSaveAgent() {
   if (server.hasArg("agentTokenClear")) next.token[0] = 0;
   next.pga = (uint8_t)clampedArg("agentPga", next.pga, 0, AGENT_PGA_MAX);
   next.boostDb = (uint8_t)clampedArg("agentBoost", next.boostDb, 0, AGENT_BOOST_MAX);
-  next.volume = (uint8_t)clampedArg("agentVolume", next.volume, 0, 100);
   next.endPauseMs = (uint16_t)clampedArg("agentPause", next.endPauseMs, AGENT_PAUSE_MIN_MS, AGENT_PAUSE_MAX_MS);
   next.idleSec = (uint8_t)clampedArg("agentIdle", next.idleSec, AGENT_IDLE_MIN_S, AGENT_IDLE_MAX_S);
   next.chimes = server.hasArg("agentChimes");
