@@ -1369,6 +1369,10 @@
                   <div class="card-head">
                     <h2 class="card-title">Rotary encoders</h2>
                   </div>
+                  <div class="note warn" style="margin-bottom: 16px">
+                    <span class="note-k">Caution</span
+                    ><span>Power the module from 3V3, not 5V: the ESP32 pins are not 5 V tolerant.</span>
+                  </div>
                   <input type="hidden" name="encodersPresent" value="1" disabled />
                   <datalist id="encoderEntityList"></datalist>
                   <div id="encoderRows"></div>
@@ -1414,7 +1418,6 @@
                       <p class="field-hint"><output data-encoder-status>Save to test the encoder.</output></p>
                     </div>
                   </template>
-                  <p class="field-hint">Power the module from 3V3, not 5V: the ESP32 pins are not 5 V tolerant.</p>
                 </div>
               </form>
             </section>
