@@ -48,6 +48,7 @@ int s_glass = 0;         // being scanned
 int s_pending = -1;      // presented, scanned from the next refresh on
 SemaphoreHandle_t s_swapped = nullptr;
 volatile bool s_swapPending = false;
+volatile int s_swapFb = -1;  // the swap is done once the scan reads it; -1 = any refresh
 portMUX_TYPE s_syncMux = portMUX_INITIALIZER_UNLOCKED;
 int64_t s_vsyncUs = 0;   // last refresh end (s_syncMux)
 int64_t s_shownUs = 0;   // refresh that shows the last presented frame
@@ -83,6 +84,18 @@ struct DpiPeek {
   intr_handle_t brgIntr;
   dw_gdma_link_list_handle_t linkLists[3];
 };
+
+// The framebuffer the scan DMA reads now, from its source address; -1 = unknown.
+int s_scanCh = -1;
+int IRAM_ATTR scanFb() {
+  if (s_scanCh < 0) return -1;
+  const uint32_t a = DW_GDMA.ch[s_scanCh].sar0.val;
+  for (int k = 0; k < NFB; k++) {
+    const uint32_t b = (uint32_t)s_fb[k];
+    if (a >= b && a < b + (uint32_t)NATIVE_W * NATIVE_H * 2) return k;
+  }
+  return -1;
+}
 
 // The item the DMA fetches next.
 inline int ringNext() {
@@ -127,6 +140,7 @@ bool ringBegin(void* const fb[NFB]) {
     Serial.println("Deck panel: unknown DPI driver layout, scan ring off");
     return false;
   }
+  dw_gdma_channel_get_id(p->dmaChan, &s_scanCh);
   dw_gdma_link_list_config_t lc = {};
   lc.num_items = RING;
   lc.link_type = DW_GDMA_LINKED_LIST_TYPE_CIRCULAR;
@@ -160,6 +174,9 @@ bool IRAM_ATTR onRefreshDone(esp_lcd_panel_handle_t, esp_lcd_dpi_panel_event_dat
   s_vsyncUs = now;
   portEXIT_CRITICAL_ISR(&s_syncMux);
   if (!s_swapPending) return false;
+  // The ring's next item is already fetched when a swap rewrites it, so the
+  // swap lands one refresh later: wait until the scan reads the new framebuffer.
+  if (s_ringOn && s_swapFb >= 0 && scanFb() != s_swapFb) return false;
   s_swapPending = false;
   BaseType_t woken = pdFALSE;
   xSemaphoreGiveFromISR(s_swapped, &woken);
@@ -180,6 +197,7 @@ int64_t vsyncAfter(int64_t t) {
 }
 
 void waitRefresh() {
+  s_swapFb = -1;
   s_swapPending = true;
   if (xSemaphoreTake(s_swapped, pdMS_TO_TICKS(50)) != pdTRUE) {
     s_swapPending = false;
@@ -262,6 +280,7 @@ void presentFrame(const Frame& f, bool backToBack) {
   // up after it: a refresh ending in between only costs one frame.
   esp_lcd_panel_draw_bitmap(s_dpi, 0, 0, NATIVE_W, NATIVE_H, dst);
   if (s_ringOn) ringShow(dst);
+  s_swapFb = x;
   s_swapPending = true;
   s_pending = x;
   s_shownUs = vsyncAfter(now);
