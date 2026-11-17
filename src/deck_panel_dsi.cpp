@@ -13,6 +13,10 @@
 #include <esp_ldo_regulator.h>
 #include <esp_timer.h>
 #include <esp32p4/rom/cache.h>
+#include <esp_lcd_panel_interface.h>
+#include <esp_private/dw_gdma.h>
+#include <hal/dw_gdma_ll.h>
+#include <hal/lcd_types.h>
 #include <soc/cache_reg.h>
 #include <soc/soc.h>
 
@@ -46,10 +50,109 @@ int64_t s_vsyncUs = 0;   // last refresh end (s_syncMux)
 int64_t s_shownUs = 0;   // refresh that shows the last presented frame
 uint32_t s_buildUs = 15000;  // composed frame build time, smoothed
 
+// Scan ring: the stock driver restarts the scan DMA from an ISR after every
+// frame, and a flash write holds that ISR off (green screen, arduino-esp32
+// #13026). These link list items loop on their own instead; the hardware
+// clears an item's valid bit as it goes, refresh_done sets them again.
+constexpr int RING = 120;  // ~2 s of scanning with no ISR
+dw_gdma_channel_handle_t s_dma = nullptr;
+dw_gdma_link_list_handle_t s_ring = nullptr;
+dw_gdma_link_list_item_t* s_lli[RING];  // uncached views
+uint32_t s_ringBase = 0;                // item 0 as the DMA addresses it
+volatile bool s_ringOn = false;
+
+// esp_lcd_dpi_panel_t from IDF 5.5.4 esp_lcd_panel_dpi.c, up to the DMA
+// link lists; ringBegin checks it against the public getters before use.
+struct DpiPeek {
+  esp_lcd_panel_t base;
+  esp_lcd_dsi_bus_handle_t bus;
+  uint8_t virtualChannel;
+  uint8_t curFb;
+  uint8_t numFbs;
+  uint8_t* fbs[3];
+  uint32_t hPixels;
+  uint32_t vPixels;
+  size_t fbSize;
+  size_t bitsPerPixel;
+  lcd_color_format_t inFormat;
+  lcd_color_format_t outFormat;
+  dw_gdma_channel_handle_t dmaChan;
+  intr_handle_t brgIntr;
+  dw_gdma_link_list_handle_t linkLists[3];
+};
+
+// The item the DMA fetches next.
+inline int ringNext() {
+  int ch = 0;
+  dw_gdma_channel_get_id(s_dma, &ch);
+  const uint32_t at = (uint32_t)dw_gdma_ll_channel_get_current_link_list_item_addr(&DW_GDMA, ch);
+  return (int)((at - s_ringBase) / sizeof(dw_gdma_link_list_item_t) % RING);
+}
+
+// Takes the channel over at a frame end, then never fires again.
+bool IRAM_ATTR onScanEnd(dw_gdma_channel_handle_t chan, const dw_gdma_trans_done_event_data_t*, void*) {
+  dw_gdma_channel_use_link_list(chan, s_ring);
+  dw_gdma_channel_enable_ctrl(chan, true);
+  s_ringOn = true;
+  return false;
+}
+
+void IRAM_ATTR ringArm() {
+  for (dw_gdma_link_list_item_t* l : s_lli) l->ctrl_hi.shadowreg_or_lli_valid = 1;
+}
+
+// The ring ran dry (ISRs held off longer than RING frames): resume it.
+bool IRAM_ATTR onRingDry(dw_gdma_channel_handle_t chan, const dw_gdma_break_event_data_t*, void*) {
+  ringArm();
+  dw_gdma_channel_continue(chan);
+  return false;
+}
+
+// Points every item at fb, the next one to be fetched first.
+void ringShow(const void* fb) {
+  const int n = ringNext();
+  for (int k = 0; k < RING; k++) s_lli[(n + k) % RING]->sar_lo.sar0 = (uint32_t)fb;
+}
+
+bool ringBegin(void* const fb[NFB]) {
+  auto* p = (DpiPeek*)s_dpi;
+  bool ok = p->numFbs == NFB && p->hPixels == NATIVE_W && p->vPixels == NATIVE_H &&
+            p->fbSize == (size_t)NATIVE_W * NATIVE_H * 2 && p->bitsPerPixel == 16 && p->dmaChan;
+  for (int k = 0; ok && k < NFB; k++) ok = p->fbs[k] == fb[k] && p->linkLists[k];
+  dw_gdma_link_list_item_t* tmpl = ok ? dw_gdma_link_list_get_item(p->linkLists[0], 0) : nullptr;
+  if (!tmpl || tmpl->sar_lo.sar0 != (uint32_t)fb[0]) {
+    Serial.println("Deck panel: unknown DPI driver layout, scan ring off");
+    return false;
+  }
+  dw_gdma_link_list_config_t lc = {};
+  lc.num_items = RING;
+  lc.link_type = DW_GDMA_LINKED_LIST_TYPE_CIRCULAR;
+  if (dw_gdma_new_link_list(&lc, &s_ring) != ESP_OK) return false;
+  for (int k = 0; k < RING; k++) s_lli[k] = dw_gdma_link_list_get_item(s_ring, k);
+  s_ringBase = (uint32_t)s_lli[RING - 1]->llp_lo.loc0 << 6;
+  for (int k = 0; k < RING; k++) {
+    memcpy((void*)s_lli[k], (const void*)tmpl, sizeof(dw_gdma_link_list_item_t));
+    dw_gdma_lli_set_next(s_lli[k], s_lli[(k + 1) % RING]);
+    dw_gdma_block_markers_t m = {};
+    m.is_valid = true;
+    dw_gdma_lli_set_block_markers(s_lli[k], m);
+  }
+  s_dma = p->dmaChan;
+  // Same user data as the driver's own callback, in case one more of those runs.
+  dw_gdma_event_callbacks_t cbs = {};
+  cbs.on_full_trans_done = onScanEnd;
+  cbs.on_invalid_block = onRingDry;
+  if (dw_gdma_channel_register_event_callbacks(s_dma, &cbs, p) != ESP_OK) return false;
+  for (int i = 0; i < 10 && !s_ringOn; i++) delay(10);
+  Serial.printf("Deck panel: scan ring %s\n", s_ringOn ? "on" : "NOT started");
+  return s_ringOn;
+}
+
 // The DPI DMA picks the last presented framebuffer when it restarts at the
 // end of a refresh, so the first refresh_done after a swap frees the old one.
 bool IRAM_ATTR onRefreshDone(esp_lcd_panel_handle_t, esp_lcd_dpi_panel_event_data_t*, void*) {
   const int64_t now = esp_timer_get_time();
+  if (s_ringOn) ringArm();
   portENTER_CRITICAL_ISR(&s_syncMux);
   s_vsyncUs = now;
   portEXIT_CRITICAL_ISR(&s_syncMux);
@@ -150,6 +253,7 @@ void presentFrame(const Frame& f, bool backToBack) {
   // Writes the cache back and selects dst for the next refresh. The flag goes
   // up after it: a refresh ending in between only costs one frame.
   esp_lcd_panel_draw_bitmap(s_dpi, 0, 0, NATIVE_W, NATIVE_H, dst);
+  if (s_ringOn) ringShow(dst);
   s_swapPending = true;
   s_pending = x;
   s_shownUs = vsyncAfter(now);
@@ -240,6 +344,7 @@ bool transportBegin() {
   cbs.on_refresh_done = onRefreshDone;
   if ((e = esp_lcd_dpi_panel_register_event_callbacks(s_dpi, &cbs, nullptr)) != ESP_OK)
     return fail("callbacks", e);
+  ringBegin(fb);
   return true;
 }
 
