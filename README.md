@@ -65,6 +65,7 @@ Recorded frame by frame from the display. Pick a set under **Display > Animation
 - **Themes:** Midnight, Daylight and Glass over your own pictures or daily Windows Spotlight wallpapers, per-tile colours and icon styles. [Wallpapers](GUIDE.md#wallpapers-and-microsd)
 - **Screen sleep** on Home Assistant presence, night schedules for the backlight and the status LED. [More](GUIDE.md#screen-sleep)
 - **MQTT discovery:** the deck shows up in Home Assistant with its screen, page, night mode and a message toast. [More](GUIDE.md#mqtt-home-assistant-discovery)
+- **AI agent (Waveshare 7B):** tap a tile and talk to Home Assistant Assist or your own xiaozhi voice server through the deck's microphones. [More](GUIDE.md#ai-agent-waveshare-7b)
 - **Edit on the device:** long press an empty spot to move, resize, add or remove tiles. A quick panel from the top edge has brightness, night mode and link status.
 
 ## Getting started
@@ -77,8 +78,8 @@ Updating a deck that already runs TouchDeck: upload `TouchDeck-<version>-ota.bin
 
 ## Credits
 
-Built on [LVGL](https://lvgl.io/), [ArduinoJson](https://github.com/bblanchon/ArduinoJson), [arduinoWebSockets](https://github.com/Links2004/arduinoWebSockets), [GFX Library for Arduino](https://github.com/moononournation/Arduino_GFX) (AXS15231B init table) and [Improv WiFi](https://www.improv-wifi.com/) (vendored under `lib/ImprovWiFi`). Fonts: Montserrat (SIL OFL 1.1) with the LVGL symbol set (Font Awesome Free); icons: Material Design Icons, installed on the device by the user. Weather data by [Open-Meteo](https://open-meteo.com/) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)).
+Built on [LVGL](https://lvgl.io/), [ArduinoJson](https://github.com/bblanchon/ArduinoJson), [arduinoWebSockets](https://github.com/Links2004/arduinoWebSockets), [GFX Library for Arduino](https://github.com/moononournation/Arduino_GFX) (AXS15231B init table), [Improv WiFi](https://www.improv-wifi.com/) (vendored under `lib/ImprovWiFi`), the [Opus](https://opus-codec.org/) codec through [codec-opus](https://github.com/pschatzmann/codec-opus) and Espressif's ES7210 driver (vendored under `lib/es7210`). Fonts: Montserrat (SIL OFL 1.1) with the LVGL symbol set (Font Awesome Free); icons: Material Design Icons, installed on the device by the user. Weather data by [Open-Meteo](https://open-meteo.com/) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)).
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The vendored Improv WiFi library keeps its own MIT license in `lib/ImprovWiFi/LICENSE`.
+MIT, see [LICENSE](LICENSE). The vendored Improv WiFi library keeps its own MIT license in `lib/ImprovWiFi/LICENSE`. The Opus codec (BSD-3-Clause) and the ES7210 driver (Espressif MIT) are built into the 7B firmware; their notices are in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

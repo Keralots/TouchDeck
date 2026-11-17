@@ -14,6 +14,7 @@ Full reference for the deck's features. For installing and first-time setup, see
 - [HTTP sensors](#http-sensors)
 - [Bambu Lab printers](#bambu-lab-printers)
 - [PC stats and control: TouchDeck Companion](#pc-stats-and-control-touchdeck-companion)
+- [AI agent (Waveshare 7B)](#ai-agent-waveshare-7b)
 - [Status LED](#status-led)
 - [Flashing without the web flasher](#flashing-without-the-web-flasher)
 - [Building from source](#building-from-source)
@@ -51,6 +52,7 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 - **Printers:** Bambu Lab printers, their errors and alerts, the energy of a print. Shown once printers are turned on under Advanced. See [Bambu Lab printers](#bambu-lab-printers).
 - **Screen:** day brightness and the night schedule, screen sleep and presence.
 - **Hardware:** the speaker, the status LED and its Home Assistant entity, the vibration motor.
+- **AI Agent:** the voice assistant, on a board with microphones (the Waveshare 7B). See [AI agent](#ai-agent-waveshare-7b).
 - **Time:** 12/24 h clock, timezone, and where the time comes from: network time (pool.ntp.org, the default) or Home Assistant, for a deck on a network that reaches only Home Assistant. With Home Assistant the deck reads its clock over the WebSocket on every connection and then hourly; the timezone is still the deck's own.
 - **Network:** WiFi, hostname / mDNS, static IP.
 - **Advanced:** optional features, off by default: Bambu Lab printers and MQTT.
@@ -266,6 +268,20 @@ The companion UI opens at `http://127.0.0.1:8750`; point it at the device IP. Th
 The board has a built-in amplifier for a small speaker on its speaker connector. Turn it on under **Hardware > Speaker** (off by default) and set the volume; a very small speaker may need it at 100. It plays a sound when a print finishes, on a new printer error and when the bed has cooled (each one can be switched off), and optionally a short click on tile taps. "Quiet at night" keeps it silent during the screen's night schedule.
 
 Each event uses a built-in sound or your own: add a 16-bit PCM WAV (mono or stereo, 8 to 48 kHz, up to 4 MB) under "Your sounds". Sounds are stored on the microSD card when it is in use, otherwise in the internal flash, which has little room. A missing or broken file falls back to the built-in sound. The Test buttons play the picked sound at the set volume before saving.
+
+## AI agent (Waveshare 7B)
+
+The Waveshare 7B can talk to a voice assistant through its two microphones and its speaker. The **AI Agent** page shows up in the portal only on a board with microphones, and the agent is off until you turn it on there.
+
+1. Turn on **Enable the AI agent** and pick a backend:
+   - **Home Assistant (Assist):** uses the Home Assistant connection from the Pages & tiles page, no extra server or token. Set up speech-to-text and text-to-speech first in Home Assistant under **Settings > Voice assistants**. Leave the pipeline ID empty to use the assistant marked as preferred there. The assistant answers and controls the house the same way Assist does in the Home Assistant app, with the entities you exposed to it.
+   - **Custom server (xiaozhi):** a server that speaks the xiaozhi WebSocket protocol: a `ws://` address and an optional access token, sent as `Authorization: Bearer`. Audio goes both ways as Opus.
+2. On the Pages & tiles page add a tile with "+ Add AI agent".
+3. Tap the tile and speak. A chime tells you it listens; the tile shows listening, thinking and speaking. After each reply it listens again for a follow-up, and the conversation ends when nobody speaks for "End after silence" seconds or when you tap the tile again. It does not listen while it speaks, so wait for the reply to finish.
+
+Microphones: press **Test microphones** and speak from where you usually stand. Your voice should read at least 15 dB above the room; raise the microphone gain first, then the digital boost. If the agent cuts you off mid-sentence, raise "End of sentence pause".
+
+"Last conversation" shows what the assistant heard and its reply, an event log, and a 30 s recording (microphones on the left channel, the speaker on the right) for troubleshooting. Words heard wrong come from the speech-to-text engine in Home Assistant or on your server, not from the deck.
 
 ## Status LED
 
