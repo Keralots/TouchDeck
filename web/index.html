@@ -1381,6 +1381,8 @@
                         <span class="field-label">Style</span>
                         <select id="encPopupStyle" name="encPopupStyle">
                           <option value="0">Droplet</option>
+                          <option value="2">Bead</option>
+                          <option value="3">Side pill</option>
                           <option value="1">Edge</option>
                         </select>
                       </label>
@@ -1400,6 +1402,13 @@
                         </div>
                       </div>
                       <div class="field">
+                        <label class="field-label" for="encPopupSpeed">Animation speed</label>
+                        <div class="range-row">
+                          <input type="range" id="encPopupSpeed" name="encPopupSpeed" min="50" max="200" step="10" value="100" />
+                          <output class="range-val" id="encPopupSpeedVal"></output>
+                        </div>
+                      </div>
+                      <div class="field">
                         <label class="field-label" for="encPopupHoldMs">Hold time</label>
                         <div class="range-row">
                           <input
@@ -1414,6 +1423,7 @@
                         <select id="encPopupAnim" name="encPopupAnim">
                           <option value="0">Style default</option>
                           <option value="1">Slide</option>
+                          <option value="4">Wobble</option>
                           <option value="2">Fade</option>
                           <option value="3">None</option>
                         </select>

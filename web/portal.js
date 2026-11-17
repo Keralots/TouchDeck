@@ -312,6 +312,7 @@
 
   function updateEncoderPopupFields() {
     $("encPopupOpacityVal").textContent = $("encPopupOpacity").value + "%";
+    $("encPopupSpeedVal").textContent = (Number($("encPopupSpeed").value) / 100).toFixed(1) + "x";
     $("encPopupHoldVal").textContent = (Number($("encPopupHoldMs").value) / 1000).toFixed(1) + " s";
     $("encPopupAccentField").classList.toggle("hidden", $("encPopupEntityColor").checked);
   }
@@ -340,11 +341,12 @@
     if (!supported) return;
     const p = encoders.popup;
     if (p) {
-      setVal("encPopupStyle", p.style);
+      setVal("encPopupStyle", p.style ?? 0);
       setVal("encPopupSize", p.size);
       setVal("encPopupOpacity", p.opacity);
+      setVal("encPopupSpeed", p.speed ?? 100);
       setVal("encPopupHoldMs", p.holdMs);
-      setVal("encPopupAnim", p.anim);
+      setVal("encPopupAnim", p.anim ?? 0);
       setCheck("encPopupEntityColor", p.entityColor);
       setVal("encPopupAccentColor", "#" + p.accentColor.toString(16).padStart(6, "0"));
     }

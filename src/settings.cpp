@@ -52,11 +52,12 @@ static constexpr EncoderKeys encoderKeys[ENCODER_COUNT] = {
 static void sanitizeEncoderPopups() {
   EncoderPopupSettings& p = encoderPopupSettings;
   const EncoderPopupSettings defaults;
-  if (p.style > ENCODER_POPUP_EDGE) p.style = defaults.style;
+  if (p.style > ENCODER_POPUP_SIDE_PILL) p.style = defaults.style;
   if (p.size > 2) p.size = defaults.size;
   p.opacity = constrain(p.opacity, 40, 100);
+  p.speed = constrain(p.speed, 50, 200);
   p.holdMs = constrain(p.holdMs, 800, 4000);
-  if (p.anim > ENCODER_POPUP_NONE) p.anim = defaults.anim;
+  if (p.anim > ENCODER_POPUP_WOBBLE) p.anim = defaults.anim;
   if (p.accentColor > 0xFFFFFF) p.accentColor = defaults.accentColor;
   for (EncoderSettings& s : encoderSettings)
     if (s.edge > 1) s.edge = 0;
@@ -67,6 +68,7 @@ static void loadEncoders() {
   p.style = prefs.getUChar("encPopStyle", p.style);
   p.size = prefs.getUChar("encPopSize", p.size);
   p.opacity = prefs.getUChar("encPopOpa", p.opacity);
+  p.speed = prefs.getUChar("encPopSpeed", p.speed);
   p.holdMs = prefs.getUShort("encPopHold", p.holdMs);
   p.anim = prefs.getUChar("encPopAnim", p.anim);
   p.entityColor = prefs.getBool("encPopEntity", p.entityColor);
@@ -97,6 +99,7 @@ static void saveEncoders() {
   prefs.putUChar("encPopStyle", p.style);
   prefs.putUChar("encPopSize", p.size);
   prefs.putUChar("encPopOpa", p.opacity);
+  prefs.putUChar("encPopSpeed", p.speed);
   prefs.putUShort("encPopHold", p.holdMs);
   prefs.putUChar("encPopAnim", p.anim);
   prefs.putBool("encPopEntity", p.entityColor);
