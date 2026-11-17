@@ -456,15 +456,17 @@ void makeMetricContent(TileRt& r, lv_obj_t* t) {
 void applyPcStateToTile(TileRt& r) {
   const TileDef& d = *r.def;
   if (d.tap.kind != ACT_PC || !r.sub) return;
-  if (d.pcVolume && (r.sliding || pcVolHeld())) return;  // the finger's level stands
+  if (d.pcVolume && r.sliding && lv_obj_has_state(r.obj, LV_STATE_PRESSED)) return;
   const String& cmd = d.tap.cmd;
   const PcState* st = pcStateOf(pcSource(d.tap.pc));
+  const int want = d.pcVolume && st ? pcVolWanted(d.tap.pc) : -1;
+  const int vol = want >= 0 ? want : st ? st->vol : -1;
   String sub;
   const char* icon = nullptr;
   bool on = false;
   if (st && cmd == "volume_mute") {
     on = st->mute == 1;
-    sub = on ? String("Muted") : st->vol >= 0 ? String(st->vol) + "%" : String();
+    sub = on ? String("Muted") : vol >= 0 ? String(vol) + "%" : String();
     if (st->mute >= 0) icon = on ? "volume-off" : "volume-high";
   } else if (st && (cmd == "volume_up" || cmd == "volume_down")) {
     if (st->vol >= 0) sub = String(st->vol) + "%";
@@ -473,9 +475,10 @@ void applyPcStateToTile(TileRt& r) {
     if (st->artist[0]) sub += sub.length() ? String(" - ") + st->artist : String(st->artist);
     if (cmd == "media_play_pause") icon = st->media == PC_MEDIA_PLAYING ? "pause" : "play";
   }
+  if (want >= 0) sub = String(want) + "%";
   bool changed = false;
   if (d.pcVolume) {
-    const float f = st && st->vol >= 0 ? st->vol / 100.0f : 0;
+    const float f = vol >= 0 ? vol / 100.0f : 0;
     if (fabsf(f - r.frac) > 0.001f) {
       setSliderFill(r, f);
       changed = true;

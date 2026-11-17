@@ -96,6 +96,8 @@
     if (name === "hardware") loadAudio();
     agentPolling(name === "agent");
     qa(".page").forEach((p) => p.classList.toggle("active", p.dataset.page === name));
+    if (name === "hardware" && encoderStatusVisible()) scheduleStatus(0);
+    else if (current === "hardware") scheduleStatus(2000);
     qa(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
     const button = document.querySelector('.nav-item[data-nav="' + name + '"]');
     $("crumb").textContent = button ? button.textContent.replace(/\s+/g, " ").trim() : "TouchDeck";
@@ -234,6 +236,7 @@
           .join(""));
       fill("presenceList", ["binary_sensor", "person", "device_tracker", "input_boolean", "switch"]);
       fill("ledEntityList", ["input_boolean", "input_number", "light"]);
+      fill("encoderEntityList", ["light", "media_player", "climate"]);
     } catch (e) {
       entityListsLoaded = false;
     }
@@ -286,6 +289,85 @@
       showToast(e.message, true);
     }
   });
+
+  const encoderRows = Array.from({ length: 2 }, (_, i) => {
+    const section = $("encoderTemplate").content.firstElementChild.cloneNode(true);
+    section.querySelector("[data-encoder-title]").textContent = "Encoder " + (i + 1);
+    const fields = {};
+    qa("[name]", section).forEach((field) => {
+      fields[field.name] = field;
+      field.name = "enc" + i + field.name;
+      field.disabled = true;
+    });
+    const entityField = section.querySelector("[data-encoder-entity]");
+    const setMode = () => {
+      const fixed = fields.mode.value === "1";
+      entityField.classList.toggle("hidden", !fixed);
+      fields.entity.disabled = !fixed;
+    };
+    fields.mode.addEventListener("change", setMode);
+    $("encoderRows").appendChild(section);
+    return { fields, setMode, status: section.querySelector("[data-encoder-status]") };
+  });
+
+  function updateEncoderPopupFields() {
+    $("encPopupOpacityVal").textContent = $("encPopupOpacity").value + "%";
+    $("encPopupSpeedVal").textContent = (Number($("encPopupSpeed").value) / 100).toFixed(1) + "x";
+    $("encPopupHoldVal").textContent = (Number($("encPopupHoldMs").value) / 1000).toFixed(1) + " s";
+    $("encPopupAccentField").classList.toggle("hidden", $("encPopupEntityColor").checked);
+  }
+  $("encoderPopup").addEventListener("input", updateEncoderPopupFields);
+  ["input", "change"].forEach((type) => {
+    $("encPopupPreviewOn").addEventListener(type, (e) => e.stopPropagation());
+  });
+  $("encPopupPreview").addEventListener("click", async () => {
+    const encoder = $("encPopupPreviewOn").value;
+    const { fields } = encoderRows[Number(encoder)];
+    const body = new URLSearchParams({ encoder, popupY: fields.popupY.value, edge: fields.edge.value });
+    qa("input[name], select[name]", $("encoderPopup")).forEach((field) => {
+      if (field.type !== "checkbox" || field.checked) body.set(field.name, field.value);
+    });
+    try {
+      await getJson("/encoder/preview", { method: "POST", body });
+    } catch (e) {
+      showToast(e.message, true);
+    }
+  });
+
+  function fillEncoders(encoders) {
+    const card = $("encoderCard"), supported = !!encoders?.supported;
+    card.classList.toggle("hidden", !supported);
+    qa("input, select, button", card).forEach((field) => (field.disabled = !supported));
+    if (!supported) return;
+    const p = encoders.popup;
+    if (p) {
+      setVal("encPopupStyle", p.style ?? 0);
+      setVal("encPopupSize", p.size);
+      setVal("encPopupOpacity", p.opacity);
+      setVal("encPopupSpeed", p.speed ?? 100);
+      setVal("encPopupHoldMs", p.holdMs);
+      setVal("encPopupAnim", p.anim ?? 0);
+      setCheck("encPopupEntityColor", p.entityColor);
+      setVal("encPopupAccentColor", "#" + p.accentColor.toString(16).padStart(6, "0"));
+    }
+    updateEncoderPopupFields();
+    encoderRows.forEach(({ fields, setMode, status }, i) => {
+      const s = encoders.items[i];
+      ["pinA", "pinB", "pinKey"].forEach((key) => {
+        const field = fields[key];
+        field.replaceChildren(new Option(key === "pinKey" ? "None" : "Choose GPIO", "0"));
+        encoders.allowedPins.forEach((pin) => field.add(new Option("GPIO " + pin, pin)));
+        field.value = s[key];
+      });
+      fields.enabled.checked = s.enabled;
+      fields.reverse.checked = s.reverse;
+      ["mode", "entity", "stepPct", "countsPerDetent", "popupY"].forEach((key) => (fields[key].value = s[key]));
+      fields.edge.value = s.edge ?? 0;
+      setMode();
+      status.textContent = s.enabled ? "Waiting for live counts..." : "Disabled";
+    });
+    if (encoderStatusVisible()) scheduleStatus(0);
+  }
   ["ledBrightness", "ledPin"].forEach((id) => $(id).addEventListener("input", queueLedPreview));
 
   // Speaker (Hardware page): sound pickers, Test buttons, WAV files.
@@ -593,6 +675,7 @@
     setVal("hapticMs", hp.pulseMs == null ? 40 : hp.pulseMs);
     $("hapticAllowedPins").textContent = $("ledAllowedPins").textContent;
     updateHapticFields();
+    fillEncoders(c.encoders);
     const au = c.audio || {};
     setCheck("audioEnabled", au.enabled);
     setVal("audioVolume", au.volume == null ? 94 : au.volume);
@@ -748,9 +831,33 @@
       { 1: "OK", 2: "Sensor API error", 3: "LHM offline", 4: "LHM starting" }[code] || "Waiting for telemetry"
     );
   }
+  let statusTimer = 0, statusBusy = false;
+  function encoderStatusVisible() {
+    return config?.encoders?.supported && !document.hidden &&
+      document.querySelector(".page.active")?.dataset.page === "hardware";
+  }
+  function scheduleStatus(delay) {
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(pollStatus, delay);
+  }
+  document.addEventListener("visibilitychange", () => scheduleStatus(encoderStatusVisible() ? 0 : 2000));
+
   async function pollStatus() {
+    if (statusBusy) return;
+    statusBusy = true;
+    const started = Date.now();
     try {
       const s = await getJson("/api/status?t=" + Date.now());
+      if (encoderStatusVisible()) {
+        encoderRows.forEach(({ status }, i) => {
+          const live = s.encoders?.[i], saved = config.encoders.items[i];
+          if (!live || !saved.enabled) return;
+          const detents = Math.trunc(live.count / saved.countsPerDetent);
+          const key = saved.pinKey ? (live.key ? "pressed" : "released") : "none";
+          const text = "Count " + live.count + " | Detents " + detents + " | Key " + key;
+          if (status.textContent !== text) status.textContent = text;
+        });
+      }
       $("srLed").classList.remove("offline");
       $("srTitle").textContent = s.ap_mode ? "setup access point" : "device online";
       $("srIp").textContent = s.ip || "--";
@@ -810,6 +917,15 @@
     } catch (e) {
       $("srLed").classList.add("offline");
       $("srTitle").textContent = "device unavailable";
+      if (encoderStatusVisible()) {
+        encoderRows.forEach(({ status }, i) => {
+          if (config.encoders.items[i].enabled) status.textContent = "Live counts unavailable";
+        });
+      }
+    } finally {
+      statusBusy = false;
+      const interval = encoderStatusVisible() ? 500 : 2000;
+      scheduleStatus(Math.max(0, interval - (Date.now() - started)));
     }
   }
 
@@ -1450,5 +1566,4 @@
   loadConfig();
   pollStatus();
   refreshPreview();
-  setInterval(pollStatus, 2000);
 })();

@@ -8,6 +8,7 @@
 
 #define BOARD_VARIANT "ws_p4_7b"
 #define BOARD_NAME "Waveshare_ESP32-P4-WIFI6-Touch-LCD-7B"
+#define BOARD_HAS_ENCODER 1
 
 // --- WiFi: ESP32-C6 over ESP-Hosted SDIO (CLK 18, CMD 19, D0-D3 14-17,
 // reset 54), the pins Arduino's esp32p4 variant already uses ---

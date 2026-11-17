@@ -14,6 +14,7 @@
 #include "pc_metrics.h"
 #include "led.h"
 #include "haptic.h"
+#include "encoder.h"
 #include "audio.h"
 #include "crash_log.h"
 #include "deck_mqtt.h"
@@ -58,6 +59,9 @@ void setup() {
   pcMetricsBegin();
   initLed();
   initHaptic();
+#if BOARD_HAS_ENCODER
+  initEncoders();
+#endif
   audioInit();
   mqttBegin();
 

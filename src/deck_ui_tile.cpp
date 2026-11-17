@@ -336,6 +336,9 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
       mediaGlyph(r.mediaIcons[i], icons[i], fallback[i], 24);
       lv_obj_center(r.mediaIcons[i]);
       lv_obj_add_event_cb(button, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 8 + i));
+#if BOARD_HAS_ENCODER
+      lv_obj_add_event_cb(button, mediaEvent, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)(idx * 8 + i));
+#endif
     }
     r.volBar = lv_bar_create(t);
     lv_obj_remove_style_all(r.volBar);
@@ -361,6 +364,9 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     s_tiles.push_back(r);
     applyMedia(s_tiles.back());
     lv_obj_add_event_cb(t, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 8 + 3));
+#if BOARD_HAS_ENCODER
+    lv_obj_add_event_cb(t, mediaEvent, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)(idx * 8 + 3));
+#endif
     lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
     return;
   }

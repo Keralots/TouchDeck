@@ -98,9 +98,7 @@ void touchTask(void*) {
     const uint32_t now = millis();
     int nx, ny;
     if (woke && touchHwRead(nx, ny)) {
-      portENTER_CRITICAL(&s_mux);
-      s_lastTouch = now;
-      portEXIT_CRITICAL(&s_mux);
+      touchNoteActivity();
       int16_t x, y;
       toLogical(nx, ny, x, y);
       if (!s_down) {
@@ -232,9 +230,7 @@ void touchTask(void*) {
         if (dur > SLIDE_MAX_MS) dur = SLIDE_MAX_MS;
         compRelease(target, dur, commit ? drag.landing : 0);
       }
-      portENTER_CRITICAL(&s_mux);
-      s_lastTouch = now;
-      portEXIT_CRITICAL(&s_mux);
+      touchNoteActivity();
       s_down = false;
       s_suppress = false;
       state = G_IDLE;
@@ -265,6 +261,12 @@ uint32_t touchLastActivity() {
   const uint32_t ms = s_lastTouch;
   portEXIT_CRITICAL(&s_mux);
   return ms;
+}
+
+void touchNoteActivity() {
+  portENTER_CRITICAL(&s_mux);
+  s_lastTouch = millis();
+  portEXIT_CRITICAL(&s_mux);
 }
 
 bool touchTakeActivity() {

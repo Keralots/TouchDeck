@@ -1357,6 +1357,9 @@ void deckTick() {
     wakeDisplayFromTouch();
     touchSuppressUntilRelease();
   }
+#if BOARD_HAS_ENCODER
+  encoderTick();
+#endif
   presenceTick();
   frameTick();
 
@@ -1434,6 +1437,9 @@ void deckTick() {
     vizTick();
     wxTick();
     agentTileSync();
+#if BOARD_HAS_ENCODER
+    encoderAnimTick();
+#endif
   }
   // Draw the animation frame now, not at LVGL's next refresh.
   if (s_animPainted) {

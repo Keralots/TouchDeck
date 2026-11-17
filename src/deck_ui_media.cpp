@@ -187,6 +187,15 @@ void mediaVolume(TileRt& r, const MediaNow& m) {
   if (changed) markPageStale(r.page);
 }
 
+void refreshPcMediaVolume(TileRt& r) {
+  MediaNow m;
+  if (const PcState* st = pcStateOf(pcSource(r.def->pc)); st && st->media >= 0) {
+    m.available = true;
+    m.vol = st->vol;
+  }
+  mediaVolume(r, m);
+}
+
 // Once a second: progress and a cover that may be due.
 void mediaTick(TileRt& r) {
   const MediaNow m = mediaNow(r);
@@ -202,7 +211,6 @@ void mediaVolSet(TileRt& r, int pct, bool dragging) {
     return;
   }
   pcVolumeAsk(r.def->pc, pct);
-  mediaVolume(r, mediaNow(r));
 }
 
 void mediaVolEnd(TileRt& r) {
@@ -235,6 +243,9 @@ void mediaVolEvent(lv_event_t* e) {
     r.slX0 = at;
     return;
   }
+#if BOARD_HAS_ENCODER
+  if (!r.sliding && (code == LV_EVENT_SHORT_CLICKED || code == LV_EVENT_LONG_PRESSED)) encoderFocus(r);
+#endif
   const int base = mediaVolShown(r, mediaNow(r));
   if (base < 0) return;
   const bool can = r.mediaHa ? haLink() == HA_CONNECTED : pcIsOnline(r.def->pc);
@@ -324,6 +335,10 @@ void mediaEvent(lv_event_t* e) {
   const size_t tag = (size_t)(uintptr_t)lv_event_get_user_data(e), idx = tag / 8;
   if (idx >= s_tiles.size()) return;
   TileRt& r = s_tiles[idx];
+#if BOARD_HAS_ENCODER
+  encoderFocus(r);
+  if (lv_event_get_code(e) == LV_EVENT_LONG_PRESSED) return;
+#endif
   const int button = tag % 8;
   if (button == 3 && r.mediaFull) return;
   hapticTap();
