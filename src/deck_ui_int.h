@@ -376,6 +376,8 @@ void sliderEvent(lv_event_t* e);
 extern bool s_header;
 extern QuickPanel s_qp;
 void qpMarkStale();
+// The page under the panel changed: also drops a frost being made.
+void qpMarkPageStale();
 uint8_t& screenLevelRef();
 void qpSyncValues();
 void qpUpdateStatus(bool force);
@@ -388,7 +390,8 @@ void buildQuickPanel();
 void destroyQuickPanel();
 void showPanel(bool open);
 void hidePanelNow();
-void refreshPanelSnapshot();
+// False when it did nothing (no panel, not stale, frost still on the worker).
+bool refreshPanelSnapshot();
 void closePanelAnimated();
 
 // deck_ui_card.cpp
@@ -584,6 +587,7 @@ extern int s_count;
 extern uint32_t s_gen;
 extern uint32_t s_lastSnapMs;
 extern uint32_t s_snapUsMax;
+extern uint32_t s_passT0;  // start of this deck loop pass (micros)
 extern lv_style_transition_dsc_t s_pressTrans;
 extern portMUX_TYPE s_mux;
 extern Shared sh;

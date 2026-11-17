@@ -20,8 +20,13 @@ constexpr uint32_t C_VOLUME_ACCENT = 0x7CC8FF;
 bool s_header = true;
 
 QuickPanel s_qp = {};
+uint32_t s_frostGen = 0;  // see PanelFrost
 
 void qpMarkStale() { s_qp.stale = true; }
+void qpMarkPageStale() {
+  s_qp.stale = true;
+  s_frostGen++;
+}
 
 uint8_t& screenLevelRef() {
   if (nightWakeActive()) return presenceSettings.nightWakeLevel;
@@ -226,7 +231,14 @@ struct Frost {
   uint8_t* plane[3];
   uint8_t* scratch[3];  // per blur plane, then per half of the upscale
   lv_draw_buf_t* out;
+  uint8_t* mem;    // planes, scratch and cols; freed by frostEnd
+  uint32_t* cols;  // per output column: left sample | right sample << 12 | weight << 24
 };
+
+// x / 1600 (x <= 408000) and x / 32640 (x < 2^21) as multiplies; both checked
+// exhaustively against the division over those ranges.
+inline uint32_t div1600(uint32_t x) { return (uint32_t)(((uint64_t)x * 2684355u) >> 32); }
+inline uint32_t div32640(uint32_t x) { return (uint32_t)(((uint64_t)x * 2105377u) >> 32) >> 4; }
 
 // Half resolution: cheaper, and the same blur radius reaches twice as far.
 void frostDown(void* ctx, int lo, int hi) {
@@ -254,9 +266,10 @@ void frostBlur(void* ctx, int lo, int hi) {
 void frostUp(void* ctx, int lo, int hi) {
   const Frost& f = *(const Frost*)ctx;
   const int w = f.w, h = f.h, hw = f.hw, hh = f.hh, rad = f.rad;
+  if (w <= 0) return;
   // Tint and blur in 1/1600: the bilinear sum is in 16ths.
-  const int tint[3] = {(int)(C_PANEL >> 16 & 0xFF) * FROST_TINT * 16, (int)(C_PANEL >> 8 & 0xFF) * FROST_TINT * 16,
-                       (int)(C_PANEL & 0xFF) * FROST_TINT * 16};
+  const uint32_t tint[3] = {(uint32_t)(C_PANEL >> 16 & 0xFF) * FROST_TINT * 16, (uint32_t)(C_PANEL >> 8 & 0xFF) * FROST_TINT * 16,
+                            (uint32_t)(C_PANEL & 0xFF) * FROST_TINT * 16};
   const uint32_t stride = f.out->header.stride;
   uint8_t* alpha = f.out->data + stride * h;  // RGB565A8: the A8 plane follows, half the stride
   // Bilinear between the half-resolution samples (centres at 2i + 0.5), in
@@ -267,10 +280,10 @@ void frostUp(void* ctx, int lo, int hi) {
   auto fill = [&](uint16_t* d, int j) {
     for (int k = 0; k < 3; k++) {
       const uint8_t* q = f.plane[k] + (size_t)j * hw;
+      uint16_t* dk = d + k * w;
       for (int xx = 0; xx < w; xx++) {
-        const int fx = constrain(2 * xx - 1, 0, 4 * (hw - 1));
-        const int i0 = fx >> 2, wx = fx & 3;
-        d[k * w + xx] = (uint16_t)(q[i0] * (4 - wx) + q[std::min(i0 + 1, hw - 1)] * wx);
+        const uint32_t c = f.cols[xx], wx = c >> 24;
+        dk[xx] = (uint16_t)(q[c & 0xFFF] * (4 - wx) + q[c >> 12 & 0xFFF] * wx);
       }
     }
   };
@@ -287,11 +300,19 @@ void frostUp(void* ctx, int lo, int hi) {
     if (rowOf[1] != j1) fill(across[1], rowOf[1] = j1);
     const uint16_t* a0 = across[0];
     const uint16_t* a1 = across[1];
+    // Same sums as wallDither565, divisions as multiplies.
+    uint32_t thr[8];
+    for (int i = 0; i < 8; i++) thr[i] = wallDitherT(f.x + i, f.y + yy);
+    const uint32_t w0 = (4 - wy) * (100 - FROST_TINT), w1 = wy * (100 - FROST_TINT);
     for (int xx = 0; xx < w; xx++) {
-      int c[3];
-      for (int k = 0; k < 3; k++)
-        c[k] = ((a0[k * w + xx] * (4 - wy) + a1[k * w + xx] * wy) * (100 - FROST_TINT) + tint[k]) / 1600;
-      row[xx] = wallDither565(c[0], c[1], c[2], f.x + xx, f.y + yy);
+      const uint32_t t = thr[xx & 7];
+      const uint32_t r = div1600(a0[xx] * w0 + a1[xx] * w1 + tint[0]);
+      const uint32_t g = div1600(a0[w + xx] * w0 + a1[w + xx] * w1 + tint[1]);
+      const uint32_t b = div1600(a0[2 * w + xx] * w0 + a1[2 * w + xx] * w1 + tint[2]);
+      const uint32_t r5 = std::min<uint32_t>(div32640(r * 31 * 128 + t), 31);
+      const uint32_t g6 = std::min<uint32_t>(div32640(g * 63 * 128 + t), 63);
+      const uint32_t b5 = std::min<uint32_t>(div32640(b * 31 * 128 + t), 31);
+      row[xx] = (uint16_t)(r5 << 11 | g6 << 5 | b5);
     }
     memset(arow, 255, w);
     const float cy = std::max(0.0f, std::max((float)rad - ((float)yy + 0.5f), (float)yy + 0.5f - (float)(h - rad)));
@@ -308,24 +329,51 @@ void frostUp(void* ctx, int lo, int hi) {
 
 // The last frame under (x, y, w, h), blurred and tinted, with corners of
 // radius rad cut by alpha (a background image ignores the radius). Pixels off
-// the screen repeat its edge. RGB565A8; nullptr when PSRAM is short.
-lv_draw_buf_t* frostedCopy(int x, int y, int w, int h, int rad) {
-  Frost f = {lastFrame(), logicalW(), logicalH(), x, y, w, h, rad, (w + 1) / 2, (h + 1) / 2};
+// the screen repeat its edge. frostBegin takes the half-size planes from the
+// frame (loop only); frostEnd blurs and scales up into f.out, on both cores
+// (shared) or on the calling task alone.
+bool frostBegin(Frost& f, int x, int y, int w, int h, int rad) {
+  f = {lastFrame(), logicalW(), logicalH(), x, y, w, h, rad, (w + 1) / 2, (h + 1) / 2};
   const size_t hn = (size_t)f.hw * f.hh, sn = std::max(hn, (size_t)w * 12);
-  uint8_t* pl = (uint8_t*)heap_caps_malloc(hn * 3 + sn * 3, MALLOC_CAP_SPIRAM);
-  f.out = pl ? lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565A8, 0) : nullptr;
+  f.mem = (uint8_t*)heap_caps_malloc(hn * 3 + sn * 3 + (size_t)w * 4, MALLOC_CAP_SPIRAM);
+  f.out = f.mem ? lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565A8, 0) : nullptr;
   if (!f.out) {
-    heap_caps_free(pl);
-    return nullptr;
+    heap_caps_free(f.mem);
+    f.mem = nullptr;
+    return false;
   }
   for (int k = 0; k < 3; k++) {
-    f.plane[k] = pl + k * hn;
-    f.scratch[k] = pl + 3 * hn + k * sn;
+    f.plane[k] = f.mem + k * hn;
+    f.scratch[k] = f.mem + 3 * hn + k * sn;
+  }
+  f.cols = (uint32_t*)(f.mem + 3 * hn + 3 * sn);
+  for (int xx = 0; xx < w; xx++) {
+    const int fx = constrain(2 * xx - 1, 0, 4 * (f.hw - 1));
+    const int i0 = fx >> 2;
+    f.cols[xx] = (uint32_t)(i0 | std::min(i0 + 1, f.hw - 1) << 12 | (fx & 3) << 24);
   }
   panelShare(frostDown, &f, f.hh, 16);
-  panelShare(frostBlur, &f, 3, 1);
-  panelShare(frostUp, &f, h, (h + 1) / 2);
-  heap_caps_free(pl);
+  return true;
+}
+
+void frostEnd(Frost& f, bool shared) {
+  if (shared) {
+    panelShare(frostBlur, &f, 3, 1);
+    panelShare(frostUp, &f, f.h, (f.h + 1) / 2);
+  } else {
+    frostBlur(&f, 0, 3);
+    frostUp(&f, 0, (f.h + 1) / 2);
+    frostUp(&f, (f.h + 1) / 2, f.h);
+  }
+  heap_caps_free(f.mem);
+  f.mem = nullptr;
+}
+
+// nullptr when PSRAM is short.
+lv_draw_buf_t* frostedCopy(int x, int y, int w, int h, int rad) {
+  Frost f;
+  if (!frostBegin(f, x, y, w, h, rad)) return nullptr;
+  frostEnd(f, true);
   return f.out;
 }
 
@@ -337,15 +385,54 @@ void frostStyle(lv_obj_t* o, lv_draw_buf_t* glass) {
   lv_obj_set_style_border_opa(o, LV_OPA_30, 0);
 }
 
-// Frost the panel from the page under its open place. Only while the page
-// alone is on screen; it is re-frosted when the panel goes stale.
-void qpFrost() {
-  if (s_theme != THEME_GLASS || !s_qp.box || s_qp.open || modalShown()) return;
-  lv_draw_buf_t* g = frostedCopy(0, -QP_LIP, logicalW(), qpH() + QP_LIP, 20);
-  if (!g) return;
+// The panel frost runs on a worker; s_frostGen moves when the page under the
+// panel changes or the panel is rebuilt, and a frost from before is dropped.
+enum { FROST_READY, FROST_STARTED, FROST_WAIT };
+struct PanelFrost {
+  Frost f;
+  volatile uint8_t state;  // 0 idle, 1 on the worker, 2 done
+  uint32_t gen;
+};
+PanelFrost s_pf = {};
+
+void panelFrostJob() {
+  frostEnd(s_pf.f, false);
+  __sync_synchronize();  // the pixels before the flag
+  s_pf.state = 2;
+}
+
+void qpUseFrost(lv_draw_buf_t* g) {
   frostStyle(s_qp.box, g);
   if (s_qp.glass) lv_draw_buf_destroy(s_qp.glass);
   s_qp.glass = g;
+}
+
+// Frost the panel from the page under its open place. Only while the page
+// alone is on screen; it is re-frosted when the panel goes stale.
+int qpFrost() {
+  const bool want = s_theme == THEME_GLASS && s_qp.box && !s_qp.open && !modalShown();
+  if (s_pf.state == 1) return want ? FROST_WAIT : FROST_READY;
+  if (s_pf.state == 2) {
+    s_pf.state = 0;
+    lv_draw_buf_t* g = s_pf.f.out;
+    s_pf.f.out = nullptr;
+    if (want && s_pf.gen == s_frostGen && (int)g->header.w == logicalW() && (int)g->header.h == qpH() + QP_LIP) {
+      qpUseFrost(g);
+      return FROST_READY;
+    }
+    lv_draw_buf_destroy(g);
+  }
+  if (!want) return FROST_READY;
+  if (s_pages[sh.active].wallBake) return FROST_WAIT;  // its new glass comes first
+  if (!frostBegin(s_pf.f, 0, -QP_LIP, logicalW(), qpH() + QP_LIP, 20)) return FROST_READY;
+  s_pf.gen = s_frostGen;
+  s_pf.state = 1;
+  if (wallRunWorker(panelFrostJob, false, "deck_frost")) return FROST_STARTED;
+  s_pf.state = 0;
+  frostEnd(s_pf.f, true);
+  qpUseFrost(s_pf.f.out);
+  s_pf.f.out = nullptr;
+  return FROST_READY;
 }
 
 void buildQuickPanel() {
@@ -456,6 +543,7 @@ void destroyQuickPanel() {
   if (s_qp.snap) lv_draw_buf_destroy(s_qp.snap);
   if (s_qp.glass) lv_draw_buf_destroy(s_qp.glass);
   s_qp = {};
+  s_frostGen++;
   portENTER_CRITICAL(&s_mux);
   sh.panelOpen = false;
   sh.panelValid = false;
@@ -487,14 +575,15 @@ void hidePanelNow() {
   if (s_qp.open) showPanel(false);
 }
 
-void refreshPanelSnapshot() {
-  if (!s_qp.box || !s_qp.snap || !s_qp.stale) return;
-  qpFrost();
+bool refreshPanelSnapshot() {
+  if (!s_qp.box || !s_qp.snap || !s_qp.stale) return false;
+  const int frost = qpFrost();
+  if (frost != FROST_READY) return frost == FROST_STARTED;
   portENTER_CRITICAL(&s_mux);
   const bool owned = sh.owned;
   if (!owned) sh.panelBusy = true;
   portEXIT_CRITICAL(&s_mux);
-  if (owned) return;
+  if (owned) return true;
   const uint32_t t0 = micros();
   lv_snapshot_reshape_draw_buf(s_qp.box, s_qp.snap);
   const bool ok = lv_snapshot_take_to_draw_buf(s_qp.box, LV_COLOR_FORMAT_RGB565, s_qp.snap) == LV_RESULT_OK;
@@ -510,6 +599,7 @@ void refreshPanelSnapshot() {
   portEXIT_CRITICAL(&s_mux);
   s_qp.stale = !ok;
   s_lastSnapMs = millis();
+  return true;
 }
 
 // Rebuild the closed panel when the Volume row should come or go.

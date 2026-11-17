@@ -86,6 +86,7 @@ int s_lastWifi = -1;
 uint32_t s_lastStats = 0;
 uint32_t s_waitTimeouts = 0;
 uint32_t s_snapUsMax = 0;
+uint32_t s_passT0 = 0;
 lv_style_transition_dsc_t s_pressTrans;
 
 // Shared with the touch task, guarded by s_mux. `active` is only written by
@@ -556,7 +557,7 @@ void switchTo(int page) {
   s_gen++;
   // New neighbours; cheap to re-take, and the page we left changed state.
   for (int i = 0; i < s_count; i++) s_pages[i].stale = true;
-  qpMarkStale();  // Glass: the panel frosts the new page
+  qpMarkPageStale();  // Glass: the panel frosts the new page
 }
 
 void releaseSwipe() {
@@ -586,9 +587,27 @@ bool bandRun(uint32_t now);
 bool bandStart(int pick);
 bool s_animDrewPass = false;  // this loop pass drew an animation frame
 
+// A pass already this long leaves image work to a later one, for at most
+// PASS_DEFER_MS: on busy pages most passes are long.
+constexpr uint32_t PASS_BUSY_US = 40000, PASS_DEFER_MS = 300;
+bool passBusy(uint32_t now) {
+  static uint32_t since = 0, last = 0;
+  if (now - last > 100) since = 0;  // not asked in a row: a new wait
+  last = now;
+  if (micros() - s_passT0 <= PASS_BUSY_US) {
+    since = 0;
+    return false;
+  }
+  if (!since) since = now | 1;
+  if (now - since < PASS_DEFER_MS) return true;
+  since = 0;
+  return false;
+}
+
 void refreshOneSnapshot() {
   if (touchIsDown() || compMode() != COMP_NONE) return;
   const uint32_t now = millis();
+  if (!s_qp.open && passBusy(now)) return;
   if (bandRun(now)) return;
   if (now - s_lastSnapMs < SNAP_SPACING_MS) return;
   // An open panel is what the next gesture slides; it goes first. So does a
@@ -597,9 +616,8 @@ void refreshOneSnapshot() {
   portENTER_CRITICAL(&s_mux);
   const bool panelOk = sh.panelValid;
   portEXIT_CRITICAL(&s_mux);
-  if (s_qp.stale && (s_qp.open || !panelOk || now - s_panelSnapMs >= PANEL_SNAP_MS)) {
+  if (s_qp.stale && (s_qp.open || !panelOk || now - s_panelSnapMs >= PANEL_SNAP_MS) && refreshPanelSnapshot()) {
     s_panelSnapMs = now;
-    refreshPanelSnapshot();
     return;
   }
   // The pages one gesture away first: next / previous column, then the
@@ -811,7 +829,7 @@ void tickWallpaper() {
   // One page at a time on a worker, the shown page first.
   auto shown = [](int page) {
     if (page != sh.active) return;
-    qpMarkStale();
+    qpMarkPageStale();
     ++s_gen;
   };
   int page;
@@ -1071,7 +1089,7 @@ bool arrangePages() {
   syncCascade();
   if (left) {
     s_gen++;
-    qpMarkStale();
+    qpMarkPageStale();
     lv_obj_invalidate(lv_screen_active());
   }
   releaseSwipe();
@@ -1381,6 +1399,7 @@ void deckTick() {
 
   uint32_t us[PP_N] = {deckPerfWebUs, deckPerfPcUs};
   uint32_t t = micros();
+  s_passT0 = t;
   const auto lap = [&](PerfPart p) {
     const uint32_t n = micros();
     us[p] += n - t;
@@ -1613,7 +1632,7 @@ void setHeader(bool on) {
   if (s_qp.headerBtn) {
     if (on) lv_obj_add_state(s_qp.headerBtn, LV_STATE_CHECKED);
     else lv_obj_remove_state(s_qp.headerBtn, LV_STATE_CHECKED);
-    qpMarkStale();
+    qpMarkPageStale();
   }
 }
 }  // namespace deckui
