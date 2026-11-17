@@ -1010,6 +1010,7 @@ bool arrangePages() {
   sh.owned = true;  // no swipe starts while the pages move
   portEXIT_CRITICAL(&s_mux);
   if (taken) return false;
+  bandCancel();  // s_band.page is an index the move below changes
 
   for (PageDef& pd : s_cfg.pages) {
     if (pd.when.kind == WHEN_ALWAYS || whenWanted(pd) == pd.shown) continue;
@@ -1062,7 +1063,6 @@ bool arrangePages() {
     if (now && !was[k]) {
       p.stale = true;  // snapPage gives it a swipe image
     } else if (!now && was[k]) {
-      if (k == s_band.page) bandCancel();
       if (p.snap) lv_draw_buf_destroy(p.snap);
       p.snap = nullptr;
     }
