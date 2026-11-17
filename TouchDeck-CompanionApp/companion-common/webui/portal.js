@@ -39,7 +39,9 @@ qa('.nav-item').forEach(function(button){button.addEventListener('click',functio
 $('navToggle').addEventListener('click',function(){var open=document.documentElement.classList.toggle('nav-open');this.setAttribute('aria-expanded',String(open))});
 $('navScrim').addEventListener('click',function(){document.documentElement.classList.remove('nav-open');$('navToggle').setAttribute('aria-expanded','false')});
 
-function renderSerialStatus(info){var link=info.serial_link||{};setText('serialStatus',link.connected?'Connected on '+link.port:'Not connected')}
+function renderSerialStatus(info){var link=info.serial_link||{};setText('serialStatus',link.connected?'Connected on '+link.port:info.serial_port==='off'?'Off: the USB port is free, for example for the web flasher':'Not connected')}
+// Saved on change, not with Save connection: Off has to free the port for flashing.
+async function saveSerial(){try{renderSerialStatus(await api('/api/serial',{method:'POST',body:new URLSearchParams({serial_port:$('serial_port').value})}));showToast('USB cable setting saved.')}catch(error){showToast(error.message,true)}}
 async function refreshSerialStatus(){try{renderSerialStatus(await api('/api/info'))}catch(error){}}
 function setSerialPort(value){var select=$('serial_port');qa('option[data-custom]',select).forEach(function(option){option.remove()});if(value!=='auto'&&value!=='off'){var option=new Option(value,value);option.dataset.custom='1';select.add(option)}select.value=value}
 
@@ -64,6 +66,7 @@ $('rescanBtn').addEventListener('click',async function(){this.disabled=true;try{
 
 async function saveConnection(){try{var data=await api('/api/connection',{method:'POST',body:formBody($('connectionForm'))});app.info.ip=data.esp32_ip;setText('srDevice',data.esp32_ip);showToast('Connection settings saved.');await refreshSerialStatus();await refreshDevice(true)}catch(error){showToast(error.message,true)}}
 $('saveConnBtn').addEventListener('click',saveConnection);
+$('serial_port').addEventListener('change',saveSerial);
 $('testConnBtn').addEventListener('click',async function(){this.disabled=true;var result=$('connResult');try{var data=await api('/api/test',{method:'POST',body:formBody($('connectionForm'))});result.classList.remove('hidden');result.classList.toggle('warn',!data.compatible);result.innerHTML='<span class="note-k">Test</span><span>'+esc(data.message)+'</span>';renderDevice(data)}catch(error){result.classList.remove('hidden');result.classList.add('warn');result.innerHTML='<span class="note-k">Test</span><span>'+esc(error.message)+'</span>'}finally{this.disabled=false}});
 
 function formatUptime(seconds){seconds=Number(seconds||0);var days=Math.floor(seconds/86400),hours=Math.floor(seconds%86400/3600),mins=Math.floor(seconds%3600/60);return (days?days+'d ':'')+hours+'h '+mins+'m'}

@@ -222,6 +222,23 @@ def apply_save(core, state):
         return {"success": True, "message": "Sensor stream configuration saved."}
 
 
+def apply_serial(core, state, form):
+    """USB cable choice, saved on change so Off frees the port at once."""
+    with _CONFIG_LOCK:
+        value = form.get("serial_port")
+        config = state.get_config()
+        config["serial_port"] = value[0] if isinstance(value, list) and value else "auto"
+        config = normalize_config(config)
+        if not core.save_config(config):
+            return {"success": False, "message": "Could not write the configuration file."}
+        state.set_config(config)
+    # The link thread closes the port within one 0.2 s pass.
+    deadline = time.monotonic() + 1.5
+    while config["serial_port"] == "off" and serial_link.status()["connected"] and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return {"success": True, "serial_port": config["serial_port"], "serial_link": serial_link.status()}
+
+
 def apply_connection(core, state, form):
     with _CONFIG_LOCK:
         def field(name, default=""):
@@ -722,6 +739,8 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json(apply_labels(state, data.get("labels", {})))
             if path == "/api/connection":
                 return self._json(apply_connection(core, state, self._form()))
+            if path == "/api/serial":
+                return self._json(apply_serial(core, state, self._form()))
             if path == "/api/test":
                 return self._json(do_test(state, self._form()))
             if path == "/api/audio":

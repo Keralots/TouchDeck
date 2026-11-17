@@ -123,6 +123,15 @@ class CompanionServerModel(unittest.TestCase):
         self.core = FakeCore()
         self.state = AppState(normalize_config(self.core.DEFAULT_CONFIG))
 
+    def test_usb_setting_saves_alone(self):
+        self.state.set_config(dict(self.state.get_config(), esp32_ip="192.168.0.46"))
+        result = server.apply_serial(self.core, self.state, {"serial_port": ["off"]})
+        self.assertTrue(result["success"])
+        self.assertEqual("off", self.core.saved["serial_port"])
+        self.assertEqual("192.168.0.46", self.core.saved["esp32_ip"])
+        server.apply_serial(self.core, self.state, {})
+        self.assertEqual("auto", self.state.get_config()["serial_port"])
+
     def test_selection_reordering_preserves_ids(self):
         server.apply_select(self.core, self.state, ["cpu", "gpu"])
         first = {m["wmi_identifier"]: m["id"] for m in self.state.get_config()["metrics"]}
