@@ -55,8 +55,6 @@ constexpr struct { int at, across, along; } WOBBLE_KEYS[] = {
 
 struct Popup {
   lv_obj_t* root = nullptr;
-  lv_obj_t* shine = nullptr;
-  lv_obj_t* beadShine = nullptr;
   lv_obj_t* arc = nullptr;
   lv_obj_t* capsule = nullptr;
   lv_obj_t* fill = nullptr;
@@ -107,7 +105,6 @@ struct PopupPreview {
 };
 
 Knob s_knobs[ENCODER_COUNT];
-lv_draw_buf_t* s_beadShineMasks[sizeof(RADIUS_PCT) / sizeof(RADIUS_PCT[0])] = {};
 PopupPreview s_preview;
 int s_previewKnob = -1, s_previewValue = PREVIEW_START;
 uint32_t s_previewAt = 0;
@@ -152,16 +149,6 @@ void popupCreate(Popup& p) {
   p.root = popupBox(lv_layer_top());
   lv_obj_add_flag(p.root, LV_OBJ_FLAG_FLOATING);
   popupGlass(p.root, LV_RADIUS_CIRCLE);
-
-  p.shine = popupBox(p.root);
-  lv_obj_set_style_radius(p.shine, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_bg_color(p.shine, lv_color_white(), 0);
-  lv_obj_set_style_bg_grad_color(p.shine, lv_color_white(), 0);
-  lv_obj_set_style_bg_grad_dir(p.shine, LV_GRAD_DIR_VER, 0);
-  lv_obj_set_style_bg_opa(p.shine, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_main_opa(p.shine, 70, 0);
-  lv_obj_set_style_bg_grad_opa(p.shine, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_opa(p.shine, LV_OPA_TRANSP, 0);
 
   p.arc = lv_arc_create(p.root);
   lv_obj_remove_style_all(p.arc);
@@ -232,10 +219,6 @@ void popupLayoutDisc(Popup& p, int r, int angle) {
   lv_obj_set_pos(p.arc, 7 - GLASS_BORDER_WIDTH, 7 - GLASS_BORDER_WIDTH);
   lv_arc_set_bg_angles(p.arc, 0, 180);
   lv_arc_set_rotation(p.arc, angle);
-  const int shineW = r / 2, shineH = 22 * r / 100;
-  lv_obj_set_size(p.shine, shineW, shineH);
-  lv_obj_set_pos(p.shine, r - shineW / 2 - p.outX * r * 38 / 100,
-                 r - shineH / 2 - (p.outX ? r * 57 / 100 : p.outY * r * 80 / 100));
 
   // Text box: as wide as the circle inside the arc allows at the block's farthest row.
   constexpr int VALUE_H = 34, NAME_H = 20, BLOCK_H = VALUE_H + LABEL_GAP + NAME_H, EDGE = 8;
@@ -256,36 +239,6 @@ void popupLayoutDisc(Popup& p, int r, int angle) {
   popupLabels(p, x, y, VALUE_H, NAME_H);
 }
 
-void popupLayoutBeadShine(Popup& p, int d) {
-  const int w = d * 42 / 100, h = d * 16 / 100;
-  // An A8 ellipse mask shared by both encoders; LVGL draws an allocated draw buf in place.
-  lv_draw_buf_t*& mask = s_beadShineMasks[p.size];
-  if (!mask) {
-    mask = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_A8, 0);
-    if (!mask) return;
-    for (int y = 0; y < h; ++y) {
-      uint8_t* row = mask->data + y * mask->header.stride;
-      const float dy = (2 * y + 1.f) / h - 1.f;
-      const float half = w * .5f, span = half * sqrtf(1.f - dy * dy);
-      const int alpha = 70 * (h - 1 - y) / (h - 1);
-      for (int x = 0; x < w; ++x)
-        row[x] = (uint8_t)(alpha * std::clamp(span + .5f - fabsf(x + .5f - half), 0.f, 1.f));
-    }
-  }
-  if (!p.beadShine) {
-    p.beadShine = lv_image_create(p.root);
-    lv_obj_remove_style_all(p.beadShine);
-    lv_obj_remove_flag(p.beadShine, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-    lv_obj_add_flag(p.beadShine, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_image_recolor(p.beadShine, lv_color_white(), 0);
-    lv_obj_set_style_opa(p.beadShine, LV_OPA_TRANSP, 0);
-    lv_obj_move_to_index(p.beadShine, 1);
-  }
-  lv_image_set_src(p.beadShine, mask);
-  lv_obj_set_size(p.beadShine, w, h);
-  lv_obj_set_pos(p.beadShine, (d - w) / 2 - GLASS_BORDER_WIDTH, d * 12 / 100 - GLASS_BORDER_WIDTH);
-}
-
 void popupLayoutBead(Popup& p, int d) {
   constexpr int ARC_INSET = 9;
   const int valueH = lv_font_get_line_height(&deck_font_28), nameH = lv_font_get_line_height(&deck_font_14);
@@ -296,7 +249,6 @@ void popupLayoutBead(Popup& p, int d) {
   p.textWidth = d * 64 / 100;
   popupLabels(p, (d - p.textWidth) / 2 - GLASS_BORDER_WIDTH,
               (d - valueH - LABEL_GAP - nameH) / 2 - GLASS_BORDER_WIDTH, valueH, nameH);
-  popupLayoutBeadShine(p, d);
 }
 
 void popupLayoutPill(Popup& p, int tagH) {
@@ -560,8 +512,6 @@ void popupValueVisibility(Popup& p, int opacity) {
 
 void popupContent(Popup& p, int opacity) {
   popupValueVisibility(p, opacity);
-  popupSetHidden(p.shine, opacity == 0 || p.settings.style != ENCODER_POPUP_DROPLET);
-  popupSetHidden(p.beadShine, opacity == 0 || p.settings.style != ENCODER_POPUP_BEAD);
   const bool fadeTag = popupIsPill(p) && p.motion == PopupMotion::Wobble;
   if (popupIsPill(p)) {
     popupSetHidden(p.tag, fadeTag && opacity == 0);
@@ -569,9 +519,6 @@ void popupContent(Popup& p, int opacity) {
     lv_obj_set_style_opa(p.fill, (lv_opa_t)opacity, 0);
   } else {
     lv_obj_set_style_opa(p.arc, (lv_opa_t)opacity, 0);
-    if (p.settings.style == ENCODER_POPUP_DROPLET) lv_obj_set_style_opa(p.shine, (lv_opa_t)opacity, 0);
-    if (p.settings.style == ENCODER_POPUP_BEAD && p.beadShine)
-      lv_obj_set_style_opa(p.beadShine, (lv_opa_t)opacity, 0);
   }
   popupSetHidden(p.value, opacity == 0);
   popupSetHidden(p.name, opacity == 0);
