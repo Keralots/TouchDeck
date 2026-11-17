@@ -276,6 +276,9 @@ static void handleApiConfig() {
   led["offlineOff"] = ledSettings.offlineOff != 0;
   led["entity"] = deckLedEntity();
   doc["advanced"]["printers"] = advSettings.printers;
+  doc["advanced"]["weather60"] = advSettings.weather60;
+  doc["advanced"]["charts60"] = advSettings.charts60;
+  doc["advanced"]["fps60"] = deckRefreshClock();
   printerSettingsJson(doc["printers"].to<JsonObject>());
   mqttConfigJson(doc["mqtt"].to<JsonObject>(), true);
   presenceJson(doc["presence"].to<JsonObject>());
@@ -410,6 +413,8 @@ static void handleConfigExport() {
   haptic["pulseMs"] = hapticSettings.pulseMs;
   audioSettingsJson(doc["audio"].to<JsonObject>());
   doc["advanced"]["printers"] = advSettings.printers;
+  doc["advanced"]["weather60"] = advSettings.weather60;
+  doc["advanced"]["charts60"] = advSettings.charts60;
   printerSettingsJson(doc["printers"].to<JsonObject>());
   mqttConfigJson(doc["mqtt"].to<JsonObject>(), false);
   presenceJson(doc["presence"].to<JsonObject>());
@@ -759,6 +764,9 @@ static void handleConfigImport() {
   bool nextPrinters = false;  // backups from before the Advanced page: the default
   JsonObjectConst advanced = root["advanced"].as<JsonObjectConst>();
   if (!advanced.isNull() && !advanced["printers"].isNull()) READ_BOOL(advanced, "printers", nextPrinters);
+  bool nextWeather60 = false, nextCharts60 = false;
+  if (!advanced.isNull() && !advanced["weather60"].isNull()) READ_BOOL(advanced, "weather60", nextWeather60);
+  if (!advanced.isNull() && !advanced["charts60"].isNull()) READ_BOOL(advanced, "charts60", nextCharts60);
   PrinterSettings nextPrn;  // older backups: the defaults
   JsonObjectConst prnIn = root["printers"].as<JsonObjectConst>();
   if (!prnIn.isNull()) {
@@ -890,6 +898,8 @@ static void handleConfigImport() {
   hapticSettings = nextHaptic;
   brightness = nextBrightness;
   advSettings.printers = nextPrinters;
+  advSettings.weather60 = nextWeather60;
+  advSettings.charts60 = nextCharts60;
   printerSettings = nextPrn;
   presenceSettings = nextPresence;
   audioSettings = nextAudio;
@@ -1054,6 +1064,8 @@ static void handleSaveAdvanced() {
     return;
   }
   deckSetPrinters(server.hasArg("printers"));
+  advSettings.weather60 = server.hasArg("weather60");
+  advSettings.charts60 = server.hasArg("charts60");
   saveSettings();
   sendJsonMessage(200, true, "Advanced settings applied.");
 }

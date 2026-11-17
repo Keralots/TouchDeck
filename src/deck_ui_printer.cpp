@@ -1476,7 +1476,7 @@ void printerEvents() {
 // The shown page's hero runs its nozzle along the fill's edge while
 // printing; otherwise the nozzle is hidden.
 void heroTick() {
-  if (!s_animDue) return;
+  if (!(advSettings.charts60 ? s_animFastDue : s_animDue)) return;
   const uint32_t now = s_animMs;
   const bool lit = !manualDisplayOff() && currentBacklightLevel() && !s_qp.open && !s_modalCard && !s_ed.root;
   bool moved = false;

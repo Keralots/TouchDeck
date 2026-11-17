@@ -1259,14 +1259,15 @@ bool deckBegin(uint8_t rotation) {
 
 namespace deckui {
 
-bool s_animDue = false, s_animPainted = false;
+bool s_animDue = false, s_animPainted = false, s_animFastDue = false;
 uint32_t s_animMs = 0;
-int64_t s_animAtUs = 0;
+int64_t s_animAtUs = 0, s_animFastAtUs = 0;
 
-// Every second refresh, timed for the refresh the frame reaches the glass on,
-// so steps match what the eye sees. Without a panel clock: 30 fps on millis().
+// animDue every second refresh, animFastDue every refresh, timed for the
+// refresh the frame reaches the glass on, so steps match what the eye sees.
+// Without a panel clock both are 30 fps on millis().
 void animClockTick() {
-  s_animDue = false;
+  s_animDue = s_animFastDue = false;
   int64_t period = 0;
   const int64_t at = panelAnimTargetUs(esp_timer_get_time(), &period);
   if (!at) {
@@ -1276,12 +1277,15 @@ void animClockTick() {
     if (ms - grid < SPARK_FRAME_MS) return;
     grid = ms - grid < 2 * SPARK_FRAME_MS ? grid + SPARK_FRAME_MS : ms;
     if ((int32_t)(ms - s_animMs) > 0) s_animMs = ms;  // never back from a refresh time
-    s_animDue = true;
+    s_animDue = s_animFastDue = true;
     return;
   }
+  if (at - s_animFastAtUs < period / 2) return;
+  s_animFastAtUs = at;
+  s_animMs = (uint32_t)(at / 1000);
+  s_animFastDue = true;
   if (at - s_animAtUs < 2 * period - period / 2) return;
   s_animAtUs = at;
-  s_animMs = (uint32_t)(at / 1000);
   s_animDue = true;
 }
 
@@ -1295,7 +1299,7 @@ bool sparkGliding() {
 }
 
 void sparkTick() {
-  if (!s_animDue) return;
+  if (!(advSettings.charts60 ? s_animFastDue : s_animDue)) return;
   const uint32_t now = s_animMs;
   const uint32_t dt = now - s_sparkMs;
   s_sparkMs = now;
@@ -1411,9 +1415,9 @@ void deckTick() {
   // Draw the animation frame now, not at LVGL's next refresh.
   if (s_animPainted) {
     s_animPainted = false;
-    panelLvShowAt(s_animAtUs);
+    panelLvShowAt(s_animFastAtUs);
     lv_refr_now(nullptr);
-    s_animDrewPass = true;
+    s_animDrewPass = s_animDue;
   }
   syncSwipeZones();
   lap(PP_ANIM);
@@ -1462,6 +1466,11 @@ void deckPerfJson(String& out, uint32_t minUs) {
   s_perfPanel = {};
   t0 = millis();
   viz0 = vizSerial();
+}
+
+bool deckRefreshClock() {
+  int64_t period = 0;
+  return panelAnimTargetUs(esp_timer_get_time(), &period) != 0;
 }
 
 void deckToast(const char* text) {

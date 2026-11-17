@@ -732,7 +732,7 @@ static bool wxShowing() {
 }
 
 void wxTick() {
-  if (!s_animDue) return;
+  if (!(advSettings.weather60 ? s_animFastDue : s_animDue)) return;
   const uint32_t now = s_animMs;
   const uint32_t serial = weatherSerial();
   const bool showing = wxShowing();

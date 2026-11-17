@@ -19,6 +19,8 @@ bool deckBegin(uint8_t rotation);
 void deckTick();
 // Short message pill above the page dots (loop task only).
 void deckToast(const char* text);
+// The panel has a refresh clock, so animations can run every refresh (Advanced 60 fps options).
+bool deckRefreshClock();
 // Wake the screen and restart the presence sleep timer (loop task only).
 void deckPresenceWake();
 // Printer settings changed: re-apply the printer tiles (loop task only).

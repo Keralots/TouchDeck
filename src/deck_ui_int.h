@@ -237,6 +237,7 @@ constexpr int SPARK_FRAME_MS = 33;
 // One clock for the animated tiles, so they share a frame: animDue says this
 // loop pass draws one, animMs is the time it shows (see animClockTick).
 extern bool s_animDue, s_animPainted;
+extern bool s_animFastDue;  // every refresh, for the Advanced 60 fps options
 extern uint32_t s_animMs;
 
 constexpr uint32_t SPARK_SNAP_MS = 5000;
