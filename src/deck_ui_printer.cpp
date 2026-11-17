@@ -783,12 +783,11 @@ struct PrnKey {
     add(t.type);
     add((int32_t)t.remain);
   }
-  void add(const PrinterAmsUnit& u) {
+  // A unit's trays, without the humidity and temperature only its AMS tile shows.
+  void addTrays(const PrinterAmsUnit& u) {
     add((int32_t)u.present);
     add((int32_t)u.id);
     add((int32_t)u.slots);
-    add((int32_t)u.humidity);
-    add(u.temp);
     for (const PrinterTray& t : u.tray) add(t);
   }
 };
@@ -835,17 +834,20 @@ uint32_t prnTileKey(const TileRt& r, const PrinterState* s, bool online) {
       k.add(printerSettings.currency);
       break;
     }
-    case PS_NOZZLE:
-    case PS_BED:
-    case PS_CHAMBER:
+    // Each temperature tile its own reading: a heating nozzle must not redraw the others.
+    case PS_NOZZLE: {
+      const uint8_t n = s->dualNozzle && d.nozzle < 2 ? d.nozzle : 0;
       k.add((int32_t)s->dualNozzle);
       k.add((int32_t)s->activeNozzle);
-      for (int i = 0; i < 2; i++) {
-        k.add(s->nozzle[i]);
-        k.add(s->nozzleTarget[i]);
-      }
+      k.add(s->nozzle[n]);
+      k.add(s->nozzleTarget[n]);
+      break;
+    }
+    case PS_BED:
       k.add(s->bed);
       k.add(s->bedTarget);
+      break;
+    case PS_CHAMBER:
       k.add(s->chamber);
       break;
     case PS_LAYER:
@@ -860,7 +862,18 @@ uint32_t prnTileKey(const TileRt& r, const PrinterState* s, bool online) {
     case PS_SLOTS:
     case PS_FILAMENT:
       k.add((int32_t)s->amsCount);
-      for (int u = 0; u < s->amsCount && u < PRN_AMS_UNITS; u++) k.add(s->ams[u]);
+      // An AMS tile repaints for its own unit only: one unit's humidity
+      // ticking must not redraw every AMS tile on the page.
+      if (d.show == PS_AMS) {
+        const int u = d.amsUnit - 1;
+        if (u >= 0 && u < s->amsCount && u < PRN_AMS_UNITS) {
+          k.addTrays(s->ams[u]);
+          k.add((int32_t)s->ams[u].humidity);
+          k.add(s->ams[u].temp);
+        }
+      } else {
+        for (int u = 0; u < s->amsCount && u < PRN_AMS_UNITS; u++) k.addTrays(s->ams[u]);
+      }
       k.add((int32_t)s->mapCount);
       k.add(s->map, s->mapCount * sizeof(s->map[0]));
       if (d.show == PS_AMS) k.add((int32_t)lv_obj_get_height(r.detail));
