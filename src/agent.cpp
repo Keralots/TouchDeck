@@ -3,11 +3,13 @@
 #include "board.h"
 #include "settings.h"
 #if defined(BOARD_MIC_ES7210)
+#include <HTTPClient.h>
 #include <WebSocketsClient.h>
 #include <WiFi.h>
 #include <atomic>
 #include <esp_random.h>
 #include <opus.h>
+#include "deck_ha.h"
 
 namespace {
 
@@ -19,6 +21,7 @@ constexpr uint32_t MIC_TEST_MS = 20000;
 constexpr uint32_t MAX_TURN_MS = 20000;
 constexpr uint32_t CONNECT_MS = 10000;    // socket + server hello
 constexpr uint32_t STT_WAIT_MS = 4000;    // no transcript = server dropped the turn as noise
+constexpr uint32_t STT_WAIT_HA_MS = 15000;  // HA always answers with stt-end or an error
 constexpr uint32_t REPLY_WAIT_MS = 60000;  // the LLM has taken 29 s to its first token
 constexpr uint32_t DRAIN_MS = 300;        // after the last speaker sample, before the mic reopens
 constexpr int OPUS_COMPLEXITY = 2;        // 9 ms per frame at 3 on the P4
@@ -44,6 +47,25 @@ int s_voiced = 0, s_quiet = 0;
 bool s_inSpeech = false;
 bool s_micOpen = false;  // capture starts once the chime or reply has finished playing
 uint32_t s_turnFrames = 0, s_upFrames = 0, s_downFrames = 0, s_turns = 0;
+
+// Home Assistant backend: Assist pipeline runs stt -> intent on the HA WebSocket,
+// the reply is fetched as 16 kHz WAV through /api/tts_get_url (the run's own TTS is MP3 only).
+bool s_ha = false;  // backend of the running session
+String s_haHost, s_haToken;
+uint16_t s_haPort = 0;
+uint32_t s_haMsgId = 0, s_pipeGetId = 0, s_runId = 0;
+int s_hid = -1;          // stt_binary_handler_id of the open run
+bool s_sttOpen = false;  // the run still takes audio
+String s_convId, s_ttsEngine, s_ttsLang, s_ttsVoice;
+String s_haFail, s_ttsText;  // set in the socket callback, acted on in tick()
+bool s_noSpeech = false;
+HTTPClient s_http;
+WiFiClient* s_ttsIn = nullptr;
+uint8_t s_wavHdr[256];
+size_t s_wavHdrN = 0;
+bool s_wavData = false;
+int s_carry = -1;  // odd byte left over between reads
+uint32_t s_ttsLastRx = 0;
 
 // Session event log for /api/agent: what happened when, relative to the tap.
 constexpr int EV_MAX = 48;
@@ -141,6 +163,274 @@ void chime(bool rising) {
   agentAudioPush(buf, 2 * half);
 }
 
+void startListening();
+void endTurn();
+
+// --- Home Assistant backend ---
+
+void haSend(JsonDocument& d) {
+  String out;
+  serializeJson(d, out);
+  s_ws.sendTXT(out);
+}
+
+void haRunStart() {
+  JsonDocument d;
+  d["id"] = s_runId = ++s_haMsgId;
+  d["type"] = "assist_pipeline/run";
+  d["start_stage"] = "stt";
+  d["end_stage"] = "intent";
+  d["input"]["sample_rate"] = AGENT_RATE;
+  if (agentSettings.pipeline[0]) d["pipeline"] = agentSettings.pipeline;
+  if (s_convId.length()) d["conversation_id"] = s_convId;
+  s_hid = -1;
+  s_sttOpen = true;
+  haSend(d);
+}
+
+// A lone handler byte ends the run's audio.
+void haEndAudio() {
+  if (s_sttOpen && s_hid >= 0) {
+    const uint8_t b = (uint8_t)s_hid;
+    s_ws.sendBIN(&b, 1);
+  }
+  s_sttOpen = false;
+}
+
+void ttsClose() {
+  if (s_ttsIn) s_http.end();
+  s_ttsIn = nullptr;
+}
+
+bool ttsOpen(const String& text, String& err) {
+  const String base = "http://" + s_haHost + ":" + String(s_haPort);
+  String path;
+  {
+    HTTPClient http;
+    http.setTimeout(8000);
+    if (!http.begin(base + "/api/tts_get_url")) {
+      err = "TTS: cannot connect";
+      return false;
+    }
+    http.addHeader("Authorization", "Bearer " + s_haToken);
+    http.addHeader("Content-Type", "application/json");
+    JsonDocument req;
+    req["engine_id"] = s_ttsEngine;
+    req["message"] = text;
+    if (s_ttsLang.length()) req["language"] = s_ttsLang;
+    JsonObject o = req["options"].to<JsonObject>();
+    if (s_ttsVoice.length()) o["voice"] = s_ttsVoice;
+    o["preferred_format"] = "wav";
+    o["preferred_sample_rate"] = AGENT_RATE;
+    o["preferred_sample_channels"] = 1;
+    o["preferred_sample_bytes"] = 2;
+    String body;
+    serializeJson(req, body);
+    const int code = http.POST(body);
+    if (code == 200) {
+      JsonDocument r;
+      // "path", not "url": the url may carry HA's external address.
+      if (!deserializeJson(r, http.getString())) path = (const char*)(r["path"] | "");
+    }
+    http.end();
+    if (!path.length()) {
+      err = "TTS URL failed, HTTP " + String(code);
+      return false;
+    }
+  }
+  s_http.useHTTP10(true);  // no chunked framing: the body is the WAV as is
+  s_http.setTimeout(10000);
+  if (!s_http.begin(base + path)) {
+    err = "TTS: cannot connect";
+    return false;
+  }
+  const int code = s_http.GET();
+  if (code != 200) {
+    s_http.end();
+    err = "TTS audio failed, HTTP " + String(code);
+    return false;
+  }
+  s_ttsIn = s_http.getStreamPtr();
+  s_ttsLastRx = millis();
+  s_wavHdrN = 0;
+  s_wavData = false;
+  s_carry = -1;
+  return true;
+}
+
+// PCM start in s_wavHdr; 0 = need more bytes, -1 = not 16 kHz mono 16-bit PCM.
+// Streamed WAV carries 0xFFFFFFFF sizes, so only the chunk walk is trusted.
+int wavDataOffset() {
+  if (s_wavHdrN < 12) return 0;
+  if (memcmp(s_wavHdr, "RIFF", 4) || memcmp(s_wavHdr + 8, "WAVE", 4)) return -1;
+  size_t i = 12;
+  bool fmtOk = false;
+  while (i + 8 <= s_wavHdrN) {
+    uint32_t sz;
+    memcpy(&sz, s_wavHdr + i + 4, 4);
+    if (!memcmp(s_wavHdr + i, "data", 4)) return fmtOk ? (int)(i + 8) : -1;
+    if (sz > sizeof(s_wavHdr) || i + 8 + sz > sizeof(s_wavHdr)) return -1;
+    if (i + 8 + sz > s_wavHdrN) return 0;
+    if (!memcmp(s_wavHdr + i, "fmt ", 4) && sz >= 16) {
+      uint16_t fmt, ch, bits;
+      uint32_t rate;
+      memcpy(&fmt, s_wavHdr + i + 8, 2);
+      memcpy(&ch, s_wavHdr + i + 10, 2);
+      memcpy(&rate, s_wavHdr + i + 12, 4);
+      memcpy(&bits, s_wavHdr + i + 22, 2);
+      fmtOk = fmt == 1 && ch == 1 && rate == AGENT_RATE && bits == 16;
+    }
+    i += 8 + sz + (sz & 1);
+  }
+  return s_wavHdrN >= sizeof(s_wavHdr) ? -1 : 0;
+}
+
+void pushPcm(const uint8_t* p, size_t n) {
+  static int16_t pcm[256];
+  size_t k = 0;
+  auto flush = [&] {
+    if (!k) return;
+    if (s_state == AGENT_THINKING) enter(AGENT_SPEAKING);
+    agentAudioPush(pcm, k);
+    k = 0;
+  };
+  if (s_carry >= 0 && n) {
+    pcm[k++] = (int16_t)(s_carry | (p[0] << 8));
+    s_carry = -1;
+    p++;
+    n--;
+  }
+  for (; n >= 2; p += 2, n -= 2) {
+    pcm[k++] = (int16_t)(p[0] | (p[1] << 8));
+    if (k == sizeof(pcm) / sizeof(pcm[0])) flush();
+  }
+  if (n) s_carry = p[0];
+  flush();
+}
+
+// Feeds the speaker ring from the TTS stream as far as it has room.
+void pumpTts() {
+  static uint8_t buf[1024];
+  for (int round = 0; s_ttsIn && round < 8; round++) {
+    const int avail = s_ttsIn->available();
+    if (avail <= 0) {
+      // A kept-alive socket never reports the end: 3 s of nothing counts as done.
+      if (!s_http.connected() || millis() - s_ttsLastRx > 3000) {
+        ttsClose();
+        s_ttsDone = true;
+        ev("tts end");
+      }
+      return;
+    }
+    s_ttsLastRx = millis();
+    size_t want = min<size_t>(avail, sizeof(buf));
+    if (s_wavData) want = min<size_t>(want, agentAudioRoom() * 2);
+    if (!want) return;
+    const int got = s_ttsIn->read(buf, want);
+    if (got <= 0) return;
+    s_downFrames++;
+    const uint8_t* p = buf;
+    size_t n = got;
+    if (!s_wavData) {
+      const size_t take = min(n, sizeof(s_wavHdr) - s_wavHdrN);
+      memcpy(s_wavHdr + s_wavHdrN, p, take);
+      s_wavHdrN += take;
+      p += take;
+      n -= take;
+      const int off = wavDataOffset();
+      if (off < 0) {
+        ttsClose();
+        ev("tts is not 16 kHz mono WAV");
+        s_ttsDone = true;
+        return;
+      }
+      if (!off) continue;
+      s_wavData = true;
+      pushPcm(s_wavHdr + off, s_wavHdrN - off);
+    }
+    pushPcm(p, n);
+  }
+}
+
+void haOnText(const char* payload, size_t len) {
+  JsonDocument d;
+  if (deserializeJson(d, payload, len)) return;
+  const char* type = d["type"] | "";
+  if (!strcmp(type, "auth_required")) {
+    JsonDocument a;
+    a["type"] = "auth";
+    a["access_token"] = s_haToken;
+    haSend(a);
+  } else if (!strcmp(type, "auth_invalid")) {
+    s_haFail = "Home Assistant refused the token";
+  } else if (!strcmp(type, "auth_ok")) {
+    JsonDocument g;
+    g["id"] = s_pipeGetId = ++s_haMsgId;
+    g["type"] = "assist_pipeline/pipeline/get";
+    if (agentSettings.pipeline[0]) g["pipeline_id"] = agentSettings.pipeline;
+    haSend(g);
+  } else if (!strcmp(type, "result")) {
+    const uint32_t id = d["id"] | 0u;
+    if (id != s_pipeGetId && id != s_runId) return;
+    if (!(d["success"] | false)) {
+      s_haFail = String("Home Assistant: ") + (const char*)(d["error"]["message"] | "request failed");
+      return;
+    }
+    if (id == s_pipeGetId) {
+      JsonObjectConst r = d["result"];
+      s_ttsEngine = (const char*)(r["tts_engine"] | "");
+      s_ttsLang = (const char*)(r["tts_language"] | "");
+      s_ttsVoice = (const char*)(r["tts_voice"] | "");
+      ev("pipeline %.34s", (const char*)(r["name"] | ""));
+      if (!s_ttsEngine.length()) ev("pipeline has no TTS");
+      if (s_state == AGENT_CONNECTING) {
+        if (agentSettings.chimes) chime(true);
+        startListening();
+      }
+    }
+  } else if (!strcmp(type, "event") && (d["id"] | 0u) == s_runId) {
+    JsonObjectConst e = d["event"];
+    const char* et = e["type"] | "";
+    JsonObjectConst data = e["data"];
+    if (!strcmp(et, "run-start")) {
+      s_hid = data["runner_data"]["stt_binary_handler_id"] | -1;
+      if (data["conversation_id"].is<const char*>()) s_convId = (const char*)data["conversation_id"];
+    } else if (!strcmp(et, "stt-vad-start")) {
+      // HA heard speech the deck's VAD missed: do not end the chat as idle.
+      if (s_state == AGENT_LISTENING && !s_inSpeech) {
+        s_inSpeech = true;
+        ev("ha heard speech");
+      }
+    } else if (!strcmp(et, "stt-vad-end")) {
+      if (s_state == AGENT_LISTENING) {
+        ev("ha vad end");
+        endTurn();
+      }
+    } else if (!strcmp(et, "stt-end")) {
+      String t = (const char*)(data["stt_output"]["text"] | "");
+      t.trim();
+      s_gotStt = true;
+      setText(s_user, t.c_str());
+      ev("stt %.36s", t.c_str());
+    } else if (!strcmp(et, "intent-end")) {
+      JsonObjectConst out = data["intent_output"];
+      if (out["conversation_id"].is<const char*>()) s_convId = (const char*)out["conversation_id"];
+      const char* speech = out["response"]["speech"]["plain"]["speech"] | "";
+      setText(s_reply, speech);
+      ev("reply %.34s", speech);
+      if (*speech && s_ttsEngine.length()) s_ttsText = speech;
+      else s_ttsDone = true;
+    } else if (!strcmp(et, "error")) {
+      const char* code = data["code"] | "";
+      ev("error %.36s", code);
+      if (!strcmp(code, "stt-no-text-recognized")) s_noSpeech = true;
+      else s_haFail = String("Home Assistant: ") + (const char*)(data["message"] | code);
+    }
+  }
+}
+
+// --- Session ---
+
 void startListening() {
   s_voiced = s_quiet = 0;
   s_inSpeech = false;
@@ -148,13 +438,29 @@ void startListening() {
   int16_t drop[AGENT_FRAME];
   float db;
   while (agentAudioPopFrame(drop, db)) {}  // stale frames from before the reply
-  sendListen("start");
+  if (s_ha) haRunStart();
+  else sendListen("start");
   s_micOpen = false;
   enter(AGENT_LISTENING);
 }
 
+void endTurn() {
+  ev("turn end, %u frames", (unsigned)s_turnFrames);
+  agentAudioCapture(false);
+  if (s_ha) haEndAudio();
+  else sendListen("stop");
+  s_turns++;
+  s_gotStt = false;
+  s_ttsDone = false;  // left true by the previous reply
+  enter(AGENT_THINKING);
+}
+
 void endSession(const char* why) {
   agentAudioCapture(false);
+  ttsClose();
+  s_ttsText = "";
+  s_haFail = "";
+  s_noSpeech = false;
   if (!why && agentSettings.chimes) chime(false);
   // A goodbye arrives just before the server closes: let it finish playing.
   for (uint32_t t0 = millis(); !why && agentAudioQueued() && millis() - t0 < 3000;) vTaskDelay(pdMS_TO_TICKS(20));
@@ -221,6 +527,7 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
   switch (type) {
     case WStype_CONNECTED: {
       s_connected = true;
+      if (s_ha) break;  // HA opens with auth_required
       JsonDocument d;
       d["type"] = "hello";
       d["version"] = 1;
@@ -243,9 +550,14 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
         if (s_state != AGENT_IDLE && s_state != AGENT_ERROR) endSession(early ? "server refused the connection" : nullptr);
       }
       break;
-    case WStype_TEXT: onText((const char*)payload, length); break;
+    case WStype_TEXT:
+      if (s_ha) haOnText((const char*)payload, length);
+      else onText((const char*)payload, length);
+      break;
     case WStype_ERROR: Serial.printf("Agent: socket error %.*s\n", (int)length, (const char*)payload); break;
-    case WStype_BIN: onBinary(payload, length); break;
+    case WStype_BIN:
+      if (!s_ha) onBinary(payload, length);
+      break;
     default: break;
   }
 }
@@ -256,10 +568,27 @@ bool beginSession() {
   s_error[0] = 0;
   s_sessionId = "";
   s_turns = s_upFrames = s_downFrames = 0;
+  s_ha = agentSettings.backend == AGENT_BACKEND_HA;
+  if (WiFi.status() != WL_CONNECTED) { setError("no WiFi"); return false; }
+  if (s_ha) {
+    String err;
+    if (!deck::haEndpoint(s_haHost, s_haPort, s_haToken, err)) { setError(err.c_str()); return false; }
+    s_convId = s_ttsEngine = s_ttsLang = s_ttsVoice = "";
+    s_pipeGetId = s_runId = 0;
+    s_hid = -1;
+    s_sttOpen = false;
+    if (!agentAudioStart(agentSettings.pga, agentSettings.boostDb, agentSettings.volume)) { setError("audio is busy"); return false; }
+    s_ws.setExtraHeaders("");
+    s_ws.onEvent(onWsEvent);
+    s_ws.setReconnectInterval(1000);
+    s_connected = false;
+    s_ws.begin(s_haHost.c_str(), s_haPort, "/api/websocket", "");
+    enter(AGENT_CONNECTING);
+    return true;
+  }
   String host, path;
   uint16_t port;
   if (!parseUrl(host, port, path)) { setError("server address must look like ws://host:port/path"); return false; }
-  if (WiFi.status() != WL_CONNECTED) { setError("no WiFi"); return false; }
   int err = 0;
   if (!s_enc) {
     s_enc = opus_encoder_create(AGENT_RATE, 1, OPUS_APPLICATION_VOIP, &err);
@@ -305,22 +634,45 @@ void pumpMic() {
       s_quiet++;
       if (!s_inSpeech) s_voiced = 0;
     }
-    const int n = opus_encode(s_enc, frame, AGENT_FRAME, pkt, sizeof(pkt));
-    if (n > 0 && s_ws.sendBIN(pkt, n)) s_upFrames++;
-    s_turnFrames++;
-    if (s_inSpeech && (s_quiet * 60 >= agentSettings.endPauseMs || s_turnFrames * 60 >= MAX_TURN_MS)) {
-      ev("turn end, %u frames", (unsigned)s_turnFrames);
-      agentAudioCapture(false);
-      sendListen("stop");
-      s_turns++;
-      s_gotStt = false;
-      s_ttsDone = false;  // left true by the previous reply
-      enter(AGENT_THINKING);
+    if (s_ha) {
+      // Raw 16-bit PCM behind the run's handler byte; frames before run-start are dropped.
+      static uint8_t raw[1 + AGENT_FRAME * 2];
+      if (s_sttOpen && s_hid >= 0) {
+        raw[0] = (uint8_t)s_hid;
+        memcpy(raw + 1, frame, AGENT_FRAME * 2);
+        if (s_ws.sendBIN(raw, sizeof(raw))) s_upFrames++;
+      }
+    } else {
+      const int n = opus_encode(s_enc, frame, AGENT_FRAME, pkt, sizeof(pkt));
+      if (n > 0 && s_ws.sendBIN(pkt, n)) s_upFrames++;
     }
+    s_turnFrames++;
+    if (s_inSpeech && (s_quiet * 60 >= agentSettings.endPauseMs || s_turnFrames * 60 >= MAX_TURN_MS)) endTurn();
   }
 }
 
 void tick() {
+  if (s_ha) {
+    if (s_haFail.length()) {
+      const String why = s_haFail;
+      endSession(why.c_str());
+      return;
+    }
+    if (s_noSpeech) {
+      s_noSpeech = false;
+      if (s_state == AGENT_THINKING || s_state == AGENT_LISTENING) startListening();
+    }
+    if (s_ttsText.length()) {
+      const String text = s_ttsText;
+      s_ttsText = "";
+      String err;
+      if (!ttsOpen(text, err)) {
+        ev("%.42s", err.c_str());
+        s_ttsDone = true;
+      }
+    }
+    pumpTts();
+  }
   const uint32_t now = millis();
   const AgentState st = s_state;
   if (st == AGENT_CONNECTING && now - s_since > CONNECT_MS) {
@@ -334,7 +686,7 @@ void tick() {
     }
   } else if (st == AGENT_LISTENING && !s_inSpeech && now - s_since > agentSettings.idleSec * 1000u) {
     endSession(nullptr);
-  } else if (st == AGENT_THINKING && !s_gotStt && now - s_since > STT_WAIT_MS) {
+  } else if (st == AGENT_THINKING && !s_gotStt && now - s_since > (s_ha ? STT_WAIT_HA_MS : STT_WAIT_MS)) {
     startListening();  // the server judged the turn noise and stays silent
   } else if (st == AGENT_THINKING && s_ttsDone) {
     startListening();  // a reply with no audio

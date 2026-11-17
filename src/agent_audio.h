@@ -30,6 +30,8 @@ bool agentAudioFloorReady();
 // Speaker: mono 16 kHz samples; returns how many fitted.
 size_t agentAudioPush(const int16_t* pcm, size_t n);
 uint32_t agentAudioQueued();
+// Free speaker ring space, samples.
+uint32_t agentAudioRoom();
 void agentAudioFlush();
 // millis() of the last speaker chunk that carried queued samples.
 uint32_t agentAudioLastPlayMs();

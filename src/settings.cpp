@@ -262,6 +262,8 @@ void loadSettings() {
   if (prefs.isKey("audferr")) prefs.getString("audferr", audioSettings.fileError, AUDIO_FILE_LEN);
   if (prefs.isKey("audfcool")) prefs.getString("audfcool", audioSettings.fileCooled, AUDIO_FILE_LEN);
   agentSettings.enabled = prefs.getBool("agon", false);
+  agentSettings.backend = min<uint8_t>(prefs.getUChar("agback", AGENT_BACKEND_XIAOZHI), AGENT_BACKEND_HA);
+  if (prefs.isKey("agpipe")) prefs.getString("agpipe", agentSettings.pipeline, AGENT_PIPELINE_LEN);
   if (prefs.isKey("agurl")) prefs.getString("agurl", agentSettings.url, AGENT_URL_LEN);
   if (prefs.isKey("agtok")) prefs.getString("agtok", agentSettings.token, AGENT_TOKEN_LEN);
   agentSettings.pga = min<uint8_t>(prefs.getUChar("agpga", 12), AGENT_PGA_MAX);
@@ -363,6 +365,8 @@ void saveSettings() {
   prefs.putBool("auderr", audioSettings.error);
   prefs.putBool("audcool", audioSettings.cooled);
   prefs.putBool("agon", agentSettings.enabled);
+  prefs.putUChar("agback", agentSettings.backend);
+  prefs.putString("agpipe", agentSettings.pipeline);
   prefs.putString("agurl", agentSettings.url);
   prefs.putString("agtok", agentSettings.token);
   prefs.putUChar("agpga", agentSettings.pga);

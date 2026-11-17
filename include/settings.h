@@ -130,10 +130,12 @@ struct AudioSettings {
   char fileCooled[AUDIO_FILE_LEN] = "";
 };
 
-// AI Agent (portal AI Agent page): a xiaozhi-protocol voice server; boards
-// with microphones only. NVS scalars.
+// AI Agent (portal AI Agent page): a xiaozhi-protocol voice server or a Home
+// Assistant Assist pipeline; boards with microphones only. NVS scalars.
 constexpr size_t AGENT_URL_LEN = 128;
 constexpr size_t AGENT_TOKEN_LEN = 128;
+constexpr size_t AGENT_PIPELINE_LEN = 40;
+constexpr uint8_t AGENT_BACKEND_XIAOZHI = 0, AGENT_BACKEND_HA = 1;
 constexpr uint8_t AGENT_PGA_MAX = 14;     // ES7210 gain steps: 0 = 0 dB .. 14 = 37.5 dB
 constexpr uint8_t AGENT_BOOST_MAX = 24;   // digital gain, dB
 constexpr uint16_t AGENT_PAUSE_MIN_MS = 500, AGENT_PAUSE_MAX_MS = 3000;
@@ -141,6 +143,8 @@ constexpr uint8_t AGENT_IDLE_MIN_S = 3, AGENT_IDLE_MAX_S = 60;
 
 struct AgentSettings {
   bool enabled = false;
+  uint8_t backend = AGENT_BACKEND_XIAOZHI;
+  char pipeline[AGENT_PIPELINE_LEN] = "";  // HA pipeline id, "" = preferred
   char url[AGENT_URL_LEN] = "";      // ws://host:port/path
   char token[AGENT_TOKEN_LEN] = "";  // sent as Authorization: Bearer
   uint8_t pga = 12;                   // 34.5 dB

@@ -241,6 +241,7 @@ size_t agentAudioPush(const int16_t* pcm, size_t n) {
 }
 
 uint32_t agentAudioQueued() { return s_playHead.load() - s_playTail.load(); }
+uint32_t agentAudioRoom() { return s_play ? PLAY_CAP - agentAudioQueued() : 0; }
 void agentAudioFlush() { s_flushReq = true; }
 uint32_t agentAudioLastPlayMs() { return s_lastPlayMs.load(); }
 
@@ -269,6 +270,7 @@ float agentAudioFloor() { return -96.0f; }
 bool agentAudioFloorReady() { return false; }
 size_t agentAudioPush(const int16_t*, size_t) { return 0; }
 uint32_t agentAudioQueued() { return 0; }
+uint32_t agentAudioRoom() { return 0; }
 void agentAudioFlush() {}
 uint32_t agentAudioLastPlayMs() { return 0; }
 uint32_t agentAudioRecFrames() { return 0; }

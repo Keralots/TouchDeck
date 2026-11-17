@@ -204,6 +204,8 @@ static bool validEntityId(const String& id) {
 static void agentSettingsJson(JsonObject o) {
   o["mic"] = agentHasMic();
   o["enabled"] = agentSettings.enabled;
+  o["backend"] = agentSettings.backend == AGENT_BACKEND_HA ? "ha" : "xiaozhi";
+  o["pipeline"] = agentSettings.pipeline;
   o["url"] = agentSettings.url;
   o["tokenSet"] = agentSettings.token[0] != 0;
   o["pga"] = agentSettings.pga;
@@ -842,6 +844,13 @@ static void handleConfigImport() {
       return;
     }
     strlcpy(nextAgent.url, u, sizeof(nextAgent.url));
+    nextAgent.backend = !strcmp(agent["backend"] | "xiaozhi", "ha") ? AGENT_BACKEND_HA : AGENT_BACKEND_XIAOZHI;
+    const char* pl = agent["pipeline"] | "";
+    if (strlen(pl) >= sizeof(nextAgent.pipeline)) {
+      sendJsonMessage(400, false, "agent.pipeline is too long");
+      return;
+    }
+    strlcpy(nextAgent.pipeline, pl, sizeof(nextAgent.pipeline));
     if (!agent["pga"].isNull()) READ_INT(agent, "pga", 0, AGENT_PGA_MAX, nextAgent.pga, uint8_t);
     if (!agent["boost"].isNull()) READ_INT(agent, "boost", 0, AGENT_BOOST_MAX, nextAgent.boostDb, uint8_t);
     if (!agent["volume"].isNull()) READ_INT(agent, "volume", 0, 100, nextAgent.volume, uint8_t);
@@ -1194,6 +1203,13 @@ static void handleAgentGet() {
 static void handleSaveAgent() {
   AgentSettings next = agentSettings;
   next.enabled = server.hasArg("agentEnabled");
+  if (server.hasArg("agentBackend"))
+    next.backend = server.arg("agentBackend") == "ha" ? AGENT_BACKEND_HA : AGENT_BACKEND_XIAOZHI;
+  if (server.hasArg("agentPipeline")) {
+    String p = server.arg("agentPipeline");
+    p.trim();
+    strlcpy(next.pipeline, p.c_str(), sizeof(next.pipeline));
+  }
   if (server.hasArg("agentUrl")) {
     String u = server.arg("agentUrl");
     u.trim();
@@ -1208,8 +1224,12 @@ static void handleSaveAgent() {
   next.endPauseMs = (uint16_t)clampedArg("agentPause", next.endPauseMs, AGENT_PAUSE_MIN_MS, AGENT_PAUSE_MAX_MS);
   next.idleSec = (uint8_t)clampedArg("agentIdle", next.idleSec, AGENT_IDLE_MIN_S, AGENT_IDLE_MAX_S);
   next.chimes = server.hasArg("agentChimes");
-  if (next.enabled && strncmp(next.url, "ws://", 5) != 0) {
+  if (next.enabled && next.backend == AGENT_BACKEND_XIAOZHI && strncmp(next.url, "ws://", 5) != 0) {
     sendJsonMessage(400, false, "The server address must start with ws://");
+    return;
+  }
+  if (next.enabled && next.backend == AGENT_BACKEND_HA && (!deck::haUrl().length() || !deck::haHasToken())) {
+    sendJsonMessage(400, false, "Connect Home Assistant on the Deck page first.");
     return;
   }
   if (!next.enabled) agentStop();

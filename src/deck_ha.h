@@ -112,6 +112,8 @@ bool haRegistryLookup(const String& tmpl, uint32_t tag, HaRegDone done);
 
 // "http://host:port" of the configured Home Assistant, "" when not set up.
 String haBaseUrl();
+// Host, port and token for a separate connection (the AI agent).
+bool haEndpoint(String& host, uint16_t& port, String& token, String& err);
 // Renders a template through /api/template. Blocking, loop task only.
 bool haRenderTemplate(const String& tmpl, String& out, String& err);
 // Copy of one entity. False when the id is not in the subscribed set.

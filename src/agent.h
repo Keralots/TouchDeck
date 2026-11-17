@@ -1,6 +1,7 @@
 // AI agent: a voice conversation with a xiaozhi-protocol server (WebSocket,
-// Opus 16 kHz up, Opus down). Tap to start; the deck closes each turn on its
-// own VAD and keeps listening after every reply until nobody speaks.
+// Opus 16 kHz up, Opus down) or a Home Assistant Assist pipeline. Tap to start;
+// the deck closes each turn on its own VAD and keeps listening after every
+// reply until nobody speaks.
 #ifndef AGENT_H
 #define AGENT_H
 

@@ -1385,24 +1385,46 @@
                     ><span class="check-text"
                       ><strong>Enable the AI agent</strong
                       ><span class="ct-hint"
-                        >Works with servers that speak the xiaozhi WebSocket protocol. Add an AI Agent tile on the
-                        Deck page and tap it to start a conversation.</span
+                        >Talks to Home Assistant's voice assistant or to a server that speaks the xiaozhi WebSocket
+                        protocol. Add an AI Agent tile on the Deck page and tap it to start a conversation.</span
                       ></span
                     ></label
                   >
                   <div class="subcard hidden" id="agentFields">
                     <div class="field">
-                      <label class="field-label" for="agentUrl">Server address</label>
-                      <input type="text" id="agentUrl" name="agentUrl" maxlength="127" placeholder="ws://192.168.1.10:8000/xiaozhi/v1/" spellcheck="false" />
+                      <label class="field-label" for="agentBackend">Backend</label>
+                      <div class="select-wrap">
+                        <select id="agentBackend" name="agentBackend">
+                          <option value="ha">Home Assistant (Assist)</option>
+                          <option value="xiaozhi">Custom server (xiaozhi)</option>
+                        </select>
+                      </div>
                     </div>
-                    <div class="field">
-                      <label class="field-label" for="agentToken">Access token</label>
-                      <input type="password" id="agentToken" name="agentToken" maxlength="127" autocomplete="off" />
-                      <p class="field-hint">Sent as "Authorization: Bearer". Leave empty to keep the stored one.</p>
-                      <label class="check-row"
-                        ><input type="checkbox" id="agentTokenClear" name="agentTokenClear" /><span class="check-box"></span
-                        ><span class="check-text"><strong>Remove the stored token</strong></span></label
-                      >
+                    <div id="agentHaFields">
+                      <div class="field">
+                        <label class="field-label" for="agentPipeline">Assist pipeline ID</label>
+                        <input type="text" id="agentPipeline" name="agentPipeline" maxlength="39" placeholder="empty = the preferred pipeline" spellcheck="false" />
+                        <p class="field-hint">
+                          Uses the Home Assistant connection from the Deck page. Set up speech-to-text and
+                          text-to-speech first in Home Assistant under Settings &gt; Voice assistants. Leave the ID
+                          empty to use the assistant marked as preferred there.
+                        </p>
+                      </div>
+                    </div>
+                    <div id="agentXzFields">
+                      <div class="field">
+                        <label class="field-label" for="agentUrl">Server address</label>
+                        <input type="text" id="agentUrl" name="agentUrl" maxlength="127" placeholder="ws://192.168.1.10:8000/xiaozhi/v1/" spellcheck="false" />
+                      </div>
+                      <div class="field">
+                        <label class="field-label" for="agentToken">Access token</label>
+                        <input type="password" id="agentToken" name="agentToken" maxlength="127" autocomplete="off" />
+                        <p class="field-hint">Sent as "Authorization: Bearer". Leave empty to keep the stored one.</p>
+                        <label class="check-row"
+                          ><input type="checkbox" id="agentTokenClear" name="agentTokenClear" /><span class="check-box"></span
+                          ><span class="check-text"><strong>Remove the stored token</strong></span></label
+                        >
+                      </div>
                     </div>
                     <div class="field">
                       <label class="field-label" for="agentVolume">Voice volume</label>

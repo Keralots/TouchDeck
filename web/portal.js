@@ -303,8 +303,12 @@
     agentGainTimer = null;
   function updateAgentFields() {
     $("agentFields").classList.toggle("hidden", !$("agentEnabled").checked);
+    const ha = $("agentBackend").value === "ha";
+    $("agentHaFields").classList.toggle("hidden", !ha);
+    $("agentXzFields").classList.toggle("hidden", ha);
   }
   $("agentEnabled").addEventListener("change", updateAgentFields);
+  $("agentBackend").addEventListener("change", updateAgentFields);
   function agentMeterPos(db) {
     return Math.max(0, Math.min(100, ((Number(db) + 80) * 100) / 80));
   }
@@ -608,6 +612,8 @@
     if ($("navAgent")) $("navAgent").classList.toggle("hidden", !ag.mic);
     window.snAgent = !!ag.mic;
     setCheck("agentEnabled", ag.enabled);
+    setVal("agentBackend", ag.backend === "ha" ? "ha" : "xiaozhi");
+    setVal("agentPipeline", ag.pipeline || "");
     setVal("agentUrl", ag.url || "");
     setVal("agentToken", "");
     $("agentToken").placeholder = ag.tokenSet ? "unchanged" : "none";
