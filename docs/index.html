@@ -87,7 +87,7 @@
             <li><strong>One button for both.</strong> The installer reads the chip and flashes the matching image.</li>
             <li><strong>Stuck in a connect / disconnect loop?</strong> Hold <code>BOOT</code>, plug in USB while holding, then release. Or hold <code>BOOT</code>, tap <code>RESET</code>, then release both.</li>
             <li><strong>Close anything that holds the serial port.</strong> The TouchDeck Companion talks to the deck over the USB cable when plugged in. Close it, Arduino IDE, PlatformIO Monitor and the serial monitor below before flashing.</li>
-            <li><strong>Updating a deck that already runs TouchDeck?</strong> Use the OTA file instead to keep your pages: download <code>TouchDeck-<span data-version>&lt;version&gt;</span>-ota.bin</code> (Waveshare 7B: <code>TouchDeck-<span data-version>&lt;version&gt;</span>-p4-7b-ota.bin</code>) from <a href="https://github.com/Keralots/TouchDeck/releases" target="_blank" rel="noopener">Releases</a> and upload it in the deck's portal under <strong>Maintenance &gt; Firmware update</strong>. Back up the configuration first under <strong>Maintenance &gt; Backup</strong>.</li>
+            <li><strong>Updating a deck that already runs TouchDeck?</strong> Install here without <strong>Erase device</strong> and your settings and pages stay. Without a cable, upload <code>TouchDeck-<span data-version>&lt;version&gt;</span>-ota.bin</code> (Waveshare 7B: <code>TouchDeck-<span data-version>&lt;version&gt;</span>-p4-7b-ota.bin</code>) from <a href="https://github.com/Keralots/TouchDeck/releases" target="_blank" rel="noopener">Releases</a> in the deck's portal under <strong>Maintenance &gt; Firmware update</strong>. Either way, back up the configuration first under <strong>Maintenance &gt; Backup</strong>.</li>
           </ul>
         </section>
 
@@ -99,12 +99,12 @@
             <div class="spec-row"><dt>board</dt><dd>Guition JC3248W535 / Waveshare P4 7B (beta)</dd></div>
             <div class="spec-row"><dt>display</dt><dd>AXS15231B 320x480 / EK79007 1024x600</dd></div>
             <div class="spec-row"><dt>firmware</dt><dd id="spec-version">...</dd></div>
-            <div class="spec-row"><dt>flash</dt><dd>0x0 - full image (bootloader + partitions + app)</dd></div>
+            <div class="spec-row"><dt>flash</dt><dd>bootloader + partitions, app at 0xe000 (settings kept)</dd></div>
           </dl>
           <p class="status-line" id="status-line" role="status">Loading firmware version...</p>
           <div class="install-row">
             <div class="install-actions"><div id="install-slot"></div><a href="firmware/latest/SHA256SUMS.txt" target="_blank" rel="noopener">SHA-256 checksums</a></div>
-            <p class="hint">A dialog will ask which serial port to use. Pick the one that appears when you plug in the deck. Choosing <strong>Erase device</strong> on a fresh install wipes everything stored on the deck. The full image is flashed at <code>0x0</code> and takes about a minute (around 3.4 MB, 3.6 MB on the 7B).</p>
+            <p class="hint">A dialog will ask which serial port to use. Pick the one that appears when you plug in the deck. <strong>Erase device</strong> wipes everything stored on the deck, including WiFi and settings; leave it unticked to update and keep them. Flashing takes about a minute (around 3.4 MB, 3.6 MB on the 7B).</p>
           </div>
         </section>
 

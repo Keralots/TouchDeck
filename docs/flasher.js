@@ -15,7 +15,12 @@ async function loadVersion() {
 }
 
 function buildManifest(version) {
-  const binUrl = board => new URL(`firmware/latest/TouchDeck-${version}${board}-full.bin`, document.baseURI).href;
+  const binUrl = (board, part) => new URL(`firmware/latest/TouchDeck-${version}${board}-${part}.bin`, document.baseURI).href;
+  // NVS (0x9000..0xe000) is not written, so settings survive unless Erase device is picked.
+  const parts = (board, bootloader) => [
+    { path: binUrl(board, 'boot'), offset: bootloader },
+    { path: binUrl(board, 'app'), offset: 0xe000 },
+  ];
   return {
     name: 'TouchDeck',
     version,
@@ -24,8 +29,8 @@ function buildManifest(version) {
     new_install_improv_wait_time: 15,
     // The installer picks the build by the chip it finds; the P4 build is the 7B (rev v3.x only).
     builds: [
-      { chipFamily: 'ESP32-S3', parts: [{ path: binUrl(''), offset: 0 }] },
-      { chipFamily: 'ESP32-P4', parts: [{ path: binUrl('-p4-7b'), offset: 0 }] },
+      { chipFamily: 'ESP32-S3', parts: parts('', 0) },
+      { chipFamily: 'ESP32-P4', parts: parts('-p4-7b', 0x2000) },
     ],
   };
 }
