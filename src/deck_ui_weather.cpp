@@ -25,6 +25,8 @@ struct WxRt {
   bool flips;         // a forecast is on the tile, so a tap has something to flip
   bool animate;
   bool shown;         // d is fresh enough to show
+  uint32_t lastMs;    // animation clock of the last animated frame, 0 = none yet
+  uint32_t lag;       // time the tile spent hidden: its icons pause there, not jump
   uint8_t nSpots;
   uint8_t at;         // the next spot while painting
   Spot spots[WX_SPOTS];
@@ -663,7 +665,7 @@ static void wxMeasure(TileRt& r, int wd, int h) {
   const Ink k = {nullptr, lv_color_white(), 0, 0};
   w.nSpots = 0;
   paint(k, w, *r.def, wd, h);
-  const uint32_t now = millis();
+  const uint32_t now = w.lastMs ? w.lastMs - w.lag : millis();
   for (int i = 0; i < WX_SPOTS; i++) {
     const int s = i < w.nSpots ? w.spots[i].s : 0;
     const int layers = s ? wxLayers((WeatherKind)w.spots[i].kind) : 0;
@@ -752,7 +754,9 @@ void wxTick() {
     if (!showing || r.page != sh.active || !w->animate || !w->shown) continue;
     lv_area_t a;
     lv_obj_get_coords(r.viz, &a);
-    for (int i = 0; i < w->nSpots; i++) spotRender(*w, i, now);
+    if (w->lastMs && now - w->lastMs > 200) w->lag += now - w->lastMs - SPARK_FRAME_MS;
+    w->lastMs = now;
+    for (int i = 0; i < w->nSpots; i++) spotRender(*w, i, now - w->lag);
     // Two areas a tile at most: every area LVGL redraws has a cost of its own.
     for (int part = 0; part < 2; part++) {
       const lv_area_t s = part ? spotArea(*w, 1, w->nSpots) : spotArea(*w, 0, 1);
