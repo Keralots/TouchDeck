@@ -73,6 +73,7 @@ struct Frame {
   bool frameLast;
   bool comp;
   bool releaseLv;
+  bool resend;  // reads s.lvLatest again, a buffer LVGL may already draw into (panelLvReading)
   uint8_t rot;
   int w, h;
   const uint16_t* lv;
@@ -106,7 +107,7 @@ bool frameBuildDirty(const Frame& f, uint16_t* dst, const DirtyMask& m);
 // Nothing to show: sleep until LVGL posts a frame or an animation needs one.
 void frameIdleWait();
 // f no longer reads its LVGL framebuffer: LVGL may render into it again.
-void frameReleaseLv();
+void frameDoneWithLv(const Frame& f);
 // Statistics: f goes out now; then it is on the glass (or queued) with these costs.
 void frameStarted(const Frame& f, int64_t startUs, bool backToBack);
 void frameFinished(const Frame& f, int64_t startUs, uint32_t buildUs, uint32_t flushUs, uint32_t costUs);

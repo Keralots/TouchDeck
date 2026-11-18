@@ -78,6 +78,9 @@ void panelPostLv(int idx, uint32_t gen);
 // An area (inclusive, logical pixels) LVGL redrew in the frame it posts next.
 void panelLvDirty(int x0, int y0, int x1, int y1);
 bool panelWaitLvReady(uint32_t timeoutMs);
+// The panel is copying the latest posted frame again (pager dots fading over
+// a still screen): LVGL must not draw into a buffer until this is false.
+bool panelLvReading();
 
 // --- Page-slide compositor ---------------------------------------------------
 // The visible strip is A | B (or A over B), offset `off` pixels into it
