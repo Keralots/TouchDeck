@@ -264,7 +264,7 @@ void presentFrame(const Frame& f, bool backToBack) {
   else s_stale[x].full = true;
   const int64_t built = esp_timer_get_time();
   if (!plain) s_buildUs = (s_buildUs * 3 + (uint32_t)(built - f0)) / 4;
-  if (f.releaseLv) frameReleaseLv();
+  frameDoneWithLv(f);
   settle();
   int64_t now = esp_timer_get_time();
   // An animation frame built early waits for the refresh it was drawn for.

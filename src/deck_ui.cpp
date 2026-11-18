@@ -132,6 +132,7 @@ void flushWaitCb(lv_display_t*) {
     }
     s_lvOut--;
   }
+  for (int i = 0; i < 50 && panelLvReading(); i++) vTaskDelay(1);
 }
 
 void indevRead(lv_indev_t* indev, lv_indev_data_t* data) {

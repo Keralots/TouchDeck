@@ -46,6 +46,7 @@ struct State {
   int lvIdx = 0;
   uint32_t lvGen = 0;
   int lvLatest = -1;
+  int64_t lvPostUs = 0;  // last panelPostLv
   CompMode mode = COMP_NONE;
   Kind kind = KIND_HSTRIP;
   Src a = {nullptr, 0, true};
@@ -84,6 +85,7 @@ State s;
 // them, and the framebuffer built from it would keep their old pixels.
 DirtyMask s_lvNext = {{}, false};
 volatile PageFx s_pageFx = PAGE_SLIDE;
+volatile bool s_lvReading = false;  // a resend frame is reading s.lvLatest
 
 
 // --- Stats (approximate, single writer) ----------------------------------------
@@ -1042,6 +1044,7 @@ bool decide(Frame& f) {
   f.w = w;
   f.h = h;
   f.releaseLv = false;
+  f.resend = false;
   f.build0Us = 0;
   f.frameLast = false;
   f.showAtUs = 0;
@@ -1195,11 +1198,15 @@ bool decide(Frame& f) {
   uint8_t dots = panelOwns ? 0 : dotsAlphaAt(now);
   if (have && f.comp && f.kind == KIND_FRAME && !f.scene.waking)
     dots = f.elapsedMs >= 300 || f.frameLast ? 0 : s.frameDots * (300 - f.elapsedMs) / 300;
-  if (!have && s.mode == COMP_NONE && s.lvLatest >= 0 && dots != s.lastSentDots) {
-    // Dots fading over a static LVGL screen: resend the latest complete frame.
-    // Safe: LVGL only ever renders into the other buffer.
+  // Dots fading over a static LVGL screen: resend the latest complete frame.
+  // LVGL may start drawing into that buffer meanwhile, so it waits (panelLvReading);
+  // while it posts frames the dots ride on those and it never has to.
+  if (!have && s.mode == COMP_NONE && s.lvLatest >= 0 && dots != s.lastSentDots &&
+      now - s.lvPostUs > 3 * PANEL_SYNC_PERIOD_US) {
     f.comp = false;
     f.lv = s_fb[s.lvLatest];
+    f.resend = true;
+    s_lvReading = true;
     have = true;
   }
   if (have) {
@@ -1333,6 +1340,7 @@ void panelPostLv(int idx, uint32_t gen) {
   s.lvPending = true;
   s.lvIdx = idx & 1;
   s.lvGen = gen;
+  s.lvPostUs = esp_timer_get_time();
   portEXIT_CRITICAL(&s_mux);
   if (superseded) xSemaphoreGive(s_lvReady);
   if (s_task) xTaskNotifyGive(s_task);
@@ -1595,7 +1603,12 @@ void frameIdleWait() {
   ulTaskNotifyTake(pdTRUE, animating ? 1 : pdMS_TO_TICKS(50));
 }
 
-void frameReleaseLv() { xSemaphoreGive(s_lvReady); }
+void frameDoneWithLv(const Frame& f) {
+  if (f.releaseLv) xSemaphoreGive(s_lvReady);
+  if (f.resend) s_lvReading = false;
+}
+
+bool panelLvReading() { return s_lvReading; }
 
 void frameStarted(const Frame& f, int64_t startUs, bool backToBack) {
   if (backToBack && f.comp && s_lastWasComp) {

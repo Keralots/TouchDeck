@@ -208,7 +208,7 @@ bool sendFrame(const Frame& f, Frame& next, bool backToBack) {
   // Every pixel of an LVGL frame is now in staging buffers: LVGL may reuse
   // its framebuffer while the DMA tail runs. (Valid only because DMA never
   // reads the framebuffer itself.)
-  if (f.releaseLv) frameReleaseLv();
+  frameDoneWithLv(f);
   // The second-to-last chunk (even index, s_bounce[0]) finishes first; build
   // the next frame's chunk 0 there while the last chunk is still on the wire.
   spi_device_get_trans_result(s_dev, &r, portMAX_DELAY);
@@ -305,7 +305,7 @@ void transportTask(void*) {
   bool ready = false;
   for (;;) {
     if (quiesceRequested()) {
-      if (ready && cur.releaseLv) frameReleaseLv();
+      if (ready) frameDoneWithLv(cur);
       ready = false;
       quiesceAck();
     }
