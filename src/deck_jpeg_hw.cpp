@@ -179,7 +179,12 @@ bool jpegEncode(const uint8_t* rgb, int w, int h, int quality, JpegWriteFn write
   uint8_t* out = in ? (uint8_t*)jpeg_alloc_encoder_mem(rawSize / 2, &outCfg, &outSize) : nullptr;
   bool ok = false;
   if (out) {
-    memcpy(in, rgb, rawSize);
+    // The encoder reads RGB888 input as B, G, R (IDF JPEG docs).
+    for (size_t i = 0; i < rawSize; i += 3) {
+      in[i] = rgb[i + 2];
+      in[i + 1] = rgb[i + 1];
+      in[i + 2] = rgb[i];
+    }
     jpeg_encoder_handle_t enc = nullptr;
     jpeg_encode_engine_cfg_t eng = {};
     eng.timeout_ms = TIMEOUT_MS;
