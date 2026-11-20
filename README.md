@@ -55,7 +55,7 @@ Recorded frame by frame from the display. Pick a set under **Display > Animation
 
 ## What it does
 
-- **Pages of tiles** up to 6x4, sized in half-cell steps, stacked into columns: swipe sideways between columns, up and down within one. [More](GUIDE.md#pages-and-tiles)
+- **Pages of tiles** up to 6x4 (8x6 on the 7B), sized in half-cell steps, stacked into columns: swipe sideways between columns, up and down within one. [More](GUIDE.md#pages-and-tiles)
 - **Home Assistant:** switches, sliders, scenes and scripts, sensors with history charts and warning thresholds, a detail card on long press. Material Design Icons, plus optional [brand icons](GUIDE.md#brand-icons).
 - **PC stats and control** from the [TouchDeck Companion](GUIDE.md#pc-stats-and-control-touchdeck-companion) (Windows, Linux): metric tiles, media keys, volume, now playing, hotkeys, sleep and shut down.
 - **Bambu Lab printers:** up to two, over the LAN or through Home Assistant, with printer and AMS pages. [More](GUIDE.md#bambu-lab-printers)
@@ -66,6 +66,7 @@ Recorded frame by frame from the display. Pick a set under **Display > Animation
 - **Screen sleep** on Home Assistant presence, night schedules for the backlight and the status LED. [More](GUIDE.md#screen-sleep)
 - **MQTT discovery:** the deck shows up in Home Assistant with its screen, page, night mode and a message toast. [More](GUIDE.md#mqtt-home-assistant-discovery)
 - **AI agent (Waveshare 7B):** tap a tile and talk to Home Assistant Assist or your own xiaozhi voice server through the deck's microphones. [More](GUIDE.md#ai-agent-waveshare-7b)
+- **Rotary encoders (Waveshare 7B):** up to two knobs for lights, media, PC volume and thermostats. [More](GUIDE.md#rotary-encoders-waveshare-7b)
 - **Edit on the device:** long press an empty spot to move, resize, add or remove tiles. A quick panel from the top edge has brightness, volume, night mode and link status.
 
 ## Getting started

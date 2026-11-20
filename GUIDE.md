@@ -16,12 +16,13 @@ Full reference for the deck's features. For installing and first-time setup, see
 - [PC stats and control: TouchDeck Companion](#pc-stats-and-control-touchdeck-companion)
 - [AI agent (Waveshare 7B)](#ai-agent-waveshare-7b)
 - [Status LED](#status-led)
+- [Rotary encoders (Waveshare 7B)](#rotary-encoders-waveshare-7b)
 - [Flashing without the web flasher](#flashing-without-the-web-flasher)
 - [Building from source](#building-from-source)
 
 ## Pages and tiles
 
-- **Grid:** up to 6x4 cells per page. Tiles are placed and sized in half-cell steps (1x1.5, 1.5x1, 0.5x0.5...); text and icons scale with the tile, so small tiles shrink instead of overlapping.
+- **Grid:** up to 6x4 cells per page (8x6 on the Waveshare 7B). Tiles are placed and sized in half-cell steps (1x1.5, 1.5x1, 0.5x0.5...); text and icons scale with the tile, so small tiles shrink instead of overlapping.
 - **Columns:** pages stacked into a column. Swipe left and right between columns, up and down between the pages of a column.
 - **Home Assistant tiles:** live state over the WebSocket API, optimistic toggles, scenes / scripts / buttons, a detail card on long press with a level slider (light brightness, cover position, fan speed, volume, numbers). Icons come from Material Design Icons, the set Home Assistant uses (the font is installed from the portal).
 - **Sensor history:** `style: "chart"` and `hours` (1..168, default 24) show Home Assistant history; the detail card includes min / max / now. Optional `warn` and `crit` thresholds colour the value and line amber or red; `crit` below `warn` makes lower values worse, such as battery levels. `"format": "duration"` shows a reading in s, min, h or d as `1h 49m` or `3d 2h` (uptime, time left on a print, a battery runtime). `decimals` (0..3, Decimals in the portal) fixes the decimal places; by default a value shows one decimal, two below 1 (`0.13`).
@@ -51,11 +52,13 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 - **Wallpapers:** pictures for the Glass theme and the photo frame: your own uploads, daily pictures the deck downloads from Windows Spotlight once a day, or both mixed. See [Wallpapers and microSD](#wallpapers-and-microsd).
 - **Printers:** Bambu Lab printers, their errors and alerts, the energy of a print. Shown once printers are turned on under Advanced. See [Bambu Lab printers](#bambu-lab-printers).
 - **Screen:** day brightness and the night schedule, screen sleep and presence.
-- **Hardware:** the speaker, the status LED and its Home Assistant entity, the vibration motor.
+- **Hardware:** the speaker, the status LED and its Home Assistant entity, the vibration motor, rotary encoders (Waveshare 7B, see [Rotary encoders](#rotary-encoders-waveshare-7b)).
 - **AI Agent:** the voice assistant, on a board with microphones (the Waveshare 7B). See [AI agent](#ai-agent-waveshare-7b).
 - **Time:** 12/24 h clock, timezone, and where the time comes from: network time (pool.ntp.org, the default) or Home Assistant, for a deck on a network that reaches only Home Assistant. With Home Assistant the deck reads its clock over the WebSocket on every connection and then hourly; the timezone is still the deck's own.
 - **Network:** WiFi, hostname / mDNS, static IP.
-- **Advanced:** optional features, off by default: Bambu Lab printers and MQTT.
+- **Advanced:** optional features, off by default: Bambu Lab printers and MQTT. On the Waveshare 7B also **Animation**:
+  - **Weather icons at 60 fps** and **Charts and printer effects at 60 fps:** animate on every screen refresh instead of every second one. Smoother, uses more CPU time.
+  - **Smooth display (60 fps):** page slides, cards and popups at up to 60 fps instead of 30, but saving settings or files (firmware update, icons, daily pictures) can flash the screen green for a moment. Off by default; applies after a restart.
 - **Maintenance:** microSD card, configuration backup (pages and settings; WiFi and the Home Assistant token are never included), firmware update, factory reset.
 
 ## Home Assistant
@@ -311,6 +314,30 @@ An optional vibration motor gives a short pulse each time a tile is tapped or he
 Connect IN to a free GPIO, VCC to 5V and GND to GND. The 4-pin 1.25 mm extended IO header (P3 or P4 on the board schematic) has pin 1 = GND, pin 2 = 3.3V, pin 3 = GPIO 17, pin 4 = GPIO 18; 5V comes from pin 1 (VIN) of the UART connector P1, see [Wiring the LED](#wiring-the-led).
 
 Turn it on under **Hardware > Vibration motor**, pick the GPIO, set the strength (20 to 100 %) and the pulse length (10 to 200 ms), and press **Test**. The motor and the status LED cannot share a pin.
+
+## Rotary encoders (Waveshare 7B)
+
+Up to two EC11 encoder modules (pins S1, S2, KEY, 5V, GND) on free header GPIOs. Power the module from **3V3, not 5V**: the ESP32 pins are not 5 V tolerant.
+
+Under **Hardware > Rotary encoders**, enable an encoder, pick its A (S1), B (S2) and optional Key pins, then Save; the card shows the live count and key state. Counts per detent is 4 for most modules; try 2 if the level moves only every second click. Reverse direction flips the turn.
+
+**Mode:**
+- **Follow last touched tile:** controls the light, media, PC volume or thermostat tile you touched last.
+- **Fixed entity:** always one `light`, `media_player` or `climate` entity.
+- **PC volume:** the master volume of the first PC, no tile needed.
+
+**Controls:**
+
+| Target | Turn | Click | Press and turn |
+|---|---|---|---|
+| Light | brightness | on / off | white colour temperature |
+| Media player (HA or PC) | volume | play / pause | next / previous track |
+| PC volume | volume | mute | - |
+| Thermostat | setpoint | shows its state | HVAC mode |
+
+Step per detent sets how far one click of the knob moves the level. Turning the knob while the screen sleeps only wakes it.
+
+**Popup:** a value popup at the screen edge. Style (Droplet, Bead, Side pill, Edge), size, background opacity, hold time, animation and its speed, and the accent colour (from the entity or fixed) apply to both encoders; the edge (right or left) and the position along it are set per encoder, to line up with the knobs in a case. **Preview** shows unsaved popup settings on the deck.
 
 ## Flashing without the web flasher
 
