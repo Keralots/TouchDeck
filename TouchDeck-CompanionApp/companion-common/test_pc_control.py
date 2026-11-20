@@ -62,6 +62,22 @@ class MediaCommandTest(unittest.TestCase):
 
 
 class PcControlTest(unittest.TestCase):
+    def setUp(self):
+        pc_control.host_cache.clear()
+
+    def test_moved_sender_is_resolved_again(self):
+        config = dict(CFG, esp32_ip="deck.local")
+        clock = [100.0]
+        with mock.patch.object(pc_control.socket, "gethostbyname",
+                               side_effect=["192.168.1.10", "192.168.1.20"]) as resolve, \
+                mock.patch.object(pc_control.host_cache.time, "monotonic", side_effect=lambda: clock[0]):
+            self.assertTrue(pc_control.verify(config, packet(pc_control.NONCES.issue()), ("192.168.1.10", 1))[0])
+            self.assertTrue(pc_control.verify(config, packet(pc_control.NONCES.issue()), ("192.168.1.10", 1))[0])
+            self.assertEqual(1, resolve.call_count)
+            clock[0] += pc_control.host_cache.MIN_REFRESH
+            self.assertTrue(pc_control.verify(config, packet(pc_control.NONCES.issue()), ("192.168.1.20", 1))[0])
+            self.assertEqual(2, resolve.call_count)
+
     def test_missing_sender_is_only_allowed_for_usb(self):
         nonce = pc_control.NONCES.issue()
         self.assertEqual((False, "unknown device"), pc_control.verify(CFG, packet(nonce), None))

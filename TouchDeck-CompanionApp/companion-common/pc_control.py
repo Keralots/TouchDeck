@@ -24,6 +24,7 @@ import sys
 import threading
 import time
 
+import host_cache
 import pc_state
 from config_model import device_host
 
@@ -119,21 +120,16 @@ def verify(config, packet, addr=None, *, via_usb=False):
         devices = [(config.get("esp32_ip", ""), key)]
         devices.extend((panel["address"], panel.get("key", ""))
                        for panel in config.get("panels", []))
-        resolved = {}
+        hosts = []
         for address, device_key in devices:
             try:
-                host = device_host(address)
-                if host not in resolved:
-                    try:
-                        resolved[host] = socket.gethostbyname(host)
-                    except OSError:
-                        resolved[host] = None
-                if resolved[host] == addr[0]:
-                    key = device_key
-                    break
+                hosts.append((device_host(address), device_key))
             except ValueError:
                 continue
-        else:
+        # Cached addresses first; an unknown sender may be a deck whose DHCP lease moved.
+        key = next((device_key for fresh in (False, True) for host, device_key in hosts
+                    if host_cache.resolve(host, fresh) == addr[0]), None)
+        if key is None:
             return False, "unknown device"
     if not key:
         return False, "this PC is not paired"

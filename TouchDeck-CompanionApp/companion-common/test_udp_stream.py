@@ -6,6 +6,7 @@ from unittest import mock
 
 from app_state import AppState
 import app_window
+import host_cache
 import udp_stream
 
 
@@ -15,6 +16,16 @@ class UdpStreamTest(unittest.TestCase):
                        "pc_id": "0123456789ab", "pc_key": "",
                        "panels": [{"address": "tablet.local:9000", "key": "22" * 32},
                                   {"address": "second", "key": ""}]}
+        host_cache.clear()
+        addresses = {"deck.local": "10.0.0.1", "tablet.local": "10.0.0.2", "second": "10.0.0.3"}
+        patcher = mock.patch.object(host_cache.socket, "gethostbyname", side_effect=addresses.__getitem__)
+        self.resolve = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_hostnames_are_resolved_once(self):
+        for _ in range(3):
+            udp_stream.send_packet(mock.Mock(), self.config, b"{}")
+        self.assertEqual(3, self.resolve.call_count)
 
     def test_identical_payload_and_nonces_survive_a_send_failure(self):
         payload = udp_stream.packet_identity(self.config)
@@ -29,8 +40,8 @@ class UdpStreamTest(unittest.TestCase):
             sock.sendto.side_effect = effects
             with self.assertRaises(OSError):
                 udp_stream.send_packet(sock, self.config, data)
-            self.assertEqual([mock.call(data, (host, 4321)) for host in
-                              ("deck.local", "tablet.local", "second")], sock.sendto.call_args_list)
+            self.assertEqual([mock.call(data, (ip, 4321)) for ip in
+                              ("10.0.0.1", "10.0.0.2", "10.0.0.3")], sock.sendto.call_args_list)
 
     def test_panels_receive_metrics_and_state_when_deck_uses_usb(self):
         for payload in ({"metrics": [{"id": 1, "value": 42}]}, {"pcstate": {"vol": 10}}):
@@ -44,7 +55,7 @@ class UdpStreamTest(unittest.TestCase):
             self.assertEqual(2, sock.sendto.call_count)
             for call in sock.sendto.call_args_list:
                 self.assertEqual(payload, json.loads(call.args[0]))
-            self.assertEqual([("tablet.local", 4321), ("second", 4321)],
+            self.assertEqual([("10.0.0.2", 4321), ("10.0.0.3", 4321)],
                              [call.args[1] for call in sock.sendto.call_args_list])
 
     def test_usb_failure_does_not_stop_panels(self):

@@ -1,6 +1,7 @@
 """Send one encoded packet to the deck and extra panels independently."""
 
 from config_model import device_host
+import host_cache
 import pc_control
 from art_server import ART
 
@@ -23,7 +24,11 @@ def send_packet(sock, config, data, include_deck=True):
         if not address:
             continue
         try:
-            sock.sendto(data, (device_host(address), config.get("udp_port", 4210)))
+            host = device_host(address)
+            ip = host_cache.resolve(host)
+            if ip is None:
+                raise OSError("cannot resolve %s" % host)
+            sock.sendto(data, (ip, config.get("udp_port", 4210)))
         except (OSError, ValueError) as exc:
             if first_error is None:
                 first_error = exc

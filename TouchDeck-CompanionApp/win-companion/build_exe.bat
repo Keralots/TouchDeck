@@ -75,6 +75,7 @@ if exist dist  rmdir /s /q dist
   --hidden-import serial.tools.list_ports ^
   --hidden-import serial_link ^
   --hidden-import udp_stream ^
+  --hidden-import host_cache ^
   --collect-all webview ^
   --collect-all pythonnet ^
   --collect-all pystray ^
