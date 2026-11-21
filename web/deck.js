@@ -30,6 +30,9 @@
 .dk-gt i{font:20px dkmdi, dkcbi;font-style:normal;line-height:1}.dk-chip{display:grid;place-items:center;flex:none;width:26px;height:26px;border-radius:50%}.dk-chip i{font-size:17px}.dk-chip.pl i{font-size:23px}.dk-gt.row .dk-chip{width:20px;height:20px}.dk-gt.row .dk-chip i{font-size:14px}.dk-gt i.tx{font:600 11px var(--mono)}
 .dk-gt b{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dk-rs{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 55%,var(--mute) 55%);opacity:.7}
+.dk-gt.msel{outline:2px dashed var(--accent);outline-offset:1px;background:var(--accent-soft)}
+.dk-band{z-index:4;border:1px dashed var(--accent);border-radius:8px;background:var(--accent-soft);pointer-events:none}
+.dk-gbar{grid-template-columns:minmax(0,1fr) auto;margin-bottom:8px}
 .dk-ghost{z-index:4;border:2px solid var(--ok);border-radius:8px;background:rgba(92,201,167,.15);pointer-events:none}.dk-ghost.bad{border-color:var(--err);background:rgba(229,83,75,.15)}
 .dk-tray{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}.dk-tray .dk-gt{width:120px;height:60px}
 .dk-save{position:sticky;bottom:0;display:flex;align-items:center;gap:12px;margin:18px -24px -22px;padding:12px 24px;background:var(--card);border-top:1px solid var(--line);border-radius:0 0 var(--r-lg) var(--r-lg)}
@@ -159,6 +162,8 @@
     ori = null,
     sel = -1,
     more = -1;
+  /* Tiles selected together on the current page (the group bar), kept as objects so a reorder keeps them. */
+  const msel = new Set();
   const PAL = ["#3987E5", "#00A35C", "#D55181", "#C98500", "#199E70", "#D95926", "#9085E9", "#E66767"];
   /* The device's landscape screen and grid limits (older firmware: the 3.5" deck). */
   let scr = { w: 480, h: 320, gridMax: 6, grid: { landscape: [4, 3], portrait: [3, 4] } };
@@ -2313,6 +2318,7 @@
     return (
       '<div class="dk-gt' +
       (k === sel ? " sel" : "") +
+      (msel.has(t) ? " msel" : "") +
       (a && a.h < 2 ? " row" : "") +
       (a && a.h < 2 && a.w < 2 ? " ic" : "") +
       '" data-g="' +
@@ -2346,10 +2352,146 @@
   }
   /* Drag a tile to a free place or onto another tile, which moves to the dragged
    tile's old place (swapPlan, shown live); the corner handle resizes. A press without movement selects the tile. */
+  /* A tap on a tile: Ctrl/Shift, a long press, or any tap on touch while some are
+   selected toggles it in the multi-selection; a plain tap selects it alone. */
+  function tapTile(p, k, ev, long) {
+    const t = p.tiles[k];
+    if (long || ev.ctrlKey || ev.metaKey || ev.shiftKey || (msel.size && ev.pointerType !== "mouse")) {
+      if (!msel.size && sel >= 0 && sel !== k && p.tiles[sel]) msel.add(p.tiles[sel]);
+      if (msel.has(t)) msel.delete(t);
+      else msel.add(t);
+      sel = -1;
+      more = -1;
+      renderPage();
+      return;
+    }
+    msel.clear();
+    sel = k;
+    renderPage();
+    const row = document.querySelector(".dk-tile.sel");
+    if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+  /* Touch and pen: holding a tile still this long selects it. */
+  const LONG_MS = 450;
+  const longPress = (e, n, f) =>
+    e.pointerType === "mouse"
+      ? 0
+      : setTimeout(() => {
+          n.onpointermove = n.onpointerup = n.onpointercancel = null;
+          f();
+        }, LONG_MS);
+  /* Grid geometry: half-cell pitch in px from the grid's box, padding and gap. */
+  function gmetrics(p) {
+    const g = $("dkGrid"),
+      [gc, gr] = grid(p),
+      c = gc * 2,
+      r = gr * 2,
+      b = g.getBoundingClientRect(),
+      cs = getComputedStyle(g),
+      pad = parseFloat(cs.paddingLeft) || 0,
+      gap = parseFloat(cs.columnGap) || 0;
+    return { g: g, c: c, r: r, b: b, pad: pad, sx: (b.width - 2 * pad + gap) / c, sy: (b.height - 2 * pad + gap) / r };
+  }
+  /* Selected tiles dragged together, by whole half cells, onto free cells only (no swaps). */
+  function gdragGroup(e, p, at, k) {
+    const n = e.currentTarget,
+      m = gmetrics(p),
+      ks = p.tiles.map((t, i) => i).filter((i) => at[i] && msel.has(p.tiles[i])),
+      rest = at.map((a, i) => (ks.includes(i) ? null : a)),
+      nodes = ks.map((i) => m.g.querySelector('[data-g="' + i + '"]')),
+      ghosts = ks.map(() => {
+        const d = document.createElement("div");
+        d.className = "dk-ghost";
+        d.hidden = true;
+        m.g.appendChild(d);
+        return d;
+      });
+    let moved = false,
+      dx = 0,
+      dy = 0,
+      ok = false;
+    const lp = longPress(e, n, () => tapTile(p, k, e, true));
+    n.setPointerCapture(e.pointerId);
+    n.onpointermove = (ev) => {
+      const mx = ev.clientX - e.clientX,
+        my = ev.clientY - e.clientY;
+      if (!moved && Math.abs(mx) + Math.abs(my) < 6) return;
+      moved = true;
+      clearTimeout(lp);
+      nodes.forEach((x) => {
+        x.classList.add("drag");
+        x.style.transform = "translate(" + mx + "px," + my + "px)";
+      });
+      dx = Math.round(mx / m.sx);
+      dy = Math.round(my / m.sy);
+      const to = ks.map((i) => ({ x: at[i].x + dx, y: at[i].y + dy, w: at[i].w, h: at[i].h }));
+      ok = to.every((q) => free(rest, -1, q, m.c, m.r));
+      to.forEach((q, j) => {
+        const d = ghosts[j];
+        d.hidden = q.x < 0 || q.y < 0 || q.x + q.w > m.c || q.y + q.h > m.r;
+        d.className = "dk-ghost" + (ok ? "" : " bad");
+        if (!d.hidden) d.style.gridArea = garea(q);
+      });
+    };
+    n.onpointerup = n.onpointercancel = (ev) => {
+      n.onpointermove = n.onpointerup = n.onpointercancel = null;
+      clearTimeout(lp);
+      if (!moved) return tapTile(p, k, ev, false);
+      if (ev.type === "pointerup" && ok && (dx || dy)) {
+        pinAll(p, at);
+        ks.forEach((i) => setPos(p.tiles[i], cell(at[i].x + dx, at[i].y + dy, at[i].w, at[i].h)));
+        setDirty(true);
+      }
+      renderPage();
+    };
+  }
+  /* A drag across the grid from an empty cell selects every tile the box touches
+   (Ctrl/Shift adds to the selection); a plain click there clears it. */
+  function gband(e, p, at) {
+    if (e.button > 0) return;
+    const m = gmetrics(p),
+      bd = $("dkBand"),
+      add = e.ctrlKey || e.metaKey || e.shiftKey,
+      hx = (v) => Math.min(m.c - 1, Math.max(0, Math.floor((v - m.b.left - m.pad) / m.sx))),
+      hy = (v) => Math.min(m.r - 1, Math.max(0, Math.floor((v - m.b.top - m.pad) / m.sy))),
+      x0 = hx(e.clientX),
+      y0 = hy(e.clientY);
+    let box = null;
+    m.g.setPointerCapture(e.pointerId);
+    m.g.onpointermove = (ev) => {
+      if (!box && Math.abs(ev.clientX - e.clientX) + Math.abs(ev.clientY - e.clientY) < 6) return;
+      const x1 = hx(ev.clientX),
+        y1 = hy(ev.clientY);
+      box = { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0) + 1, h: Math.abs(y1 - y0) + 1 };
+      bd.hidden = false;
+      bd.style.gridArea = garea(box);
+    };
+    m.g.onpointerup = m.g.onpointercancel = (ev) => {
+      m.g.onpointermove = m.g.onpointerup = m.g.onpointercancel = null;
+      bd.hidden = true;
+      if (ev.type !== "pointerup") return;
+      if (!box) {
+        if (!add && (msel.size || sel >= 0)) {
+          msel.clear();
+          sel = -1;
+          renderPage();
+        }
+        return;
+      }
+      if (!add) msel.clear();
+      at.forEach((a, i) => {
+        if (a && ovl(a, box)) msel.add(p.tiles[i]);
+      });
+      sel = -1;
+      more = -1;
+      renderPage();
+    };
+  }
   function gdrag(e, p, at, k, size) {
     if (e.button > 0) return;
     e.preventDefault();
     e.stopPropagation();
+    if (!size && at[k] && msel.size > 1 && msel.has(p.tiles[k])) return gdragGroup(e, p, at, k);
     const n = e.currentTarget,
       tile = size ? n.parentElement : n,
       g = $("dkGrid"),
@@ -2371,12 +2513,14 @@
     let moved = false,
       tgt = null,
       shown = -1;
+    const lp = size ? 0 : longPress(e, n, () => tapTile(p, k, e, true));
     n.setPointerCapture(e.pointerId);
     n.onpointermove = (ev) => {
       const dx = ev.clientX - e.clientX,
         dy = ev.clientY - e.clientY;
       if (!moved && Math.abs(dx) + Math.abs(dy) < 6) return;
       moved = true;
+      clearTimeout(lp);
       tile.classList.add("drag");
       if (size)
         tgt = {
@@ -2424,13 +2568,8 @@
     };
     n.onpointerup = n.onpointercancel = (ev) => {
       n.onpointermove = n.onpointerup = n.onpointercancel = null;
-      if (!moved) {
-        sel = k;
-        renderPage();
-        const row = document.querySelector(".dk-tile.sel");
-        if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
-        return;
-      }
+      clearTimeout(lp);
+      if (!moved) return tapTile(p, k, ev, false);
       if (ev.type === "pointerup" && tgt && tgt.ok) {
         pinAll(p, at);
         if (tgt.j >= 0) setPos(p.tiles[tgt.j], cell(tgt.to.x, tgt.to.y, tgt.to.w, tgt.to.h));
@@ -2538,6 +2677,142 @@
     for (let n = Math.min(2, v); n <= Math.max(max, v); n++) if ((n >= 2 && n <= max) || n === v) ns.push(n);
     return ns.map((n) => "<option" + (n === v ? " selected" : "") + ">" + n + "</option>").join("");
   }
+  /* The group bar: fields that set every selected tile at once. A value the tiles
+   do not share shows as Auto with "Mixed" beside it. */
+  const SIMPLE_WHEN = [
+    ["", "Always"],
+    ["pc-on", "Only while the PC is on"],
+    ["pc-off", "Only while the PC is off"],
+    ["sound-on", "Only while the PC plays sound"],
+    ["sound-off", "Only while the PC is silent"],
+  ];
+  function groupBar(ps) {
+    const ts = [...msel],
+      mixed = (k) => !ts.every((t) => t[k] === ts[0][k]),
+      f = {};
+    ["bgColor", "opacity", "color", "textColor"].forEach((k) => {
+      if (!mixed(k) && ts[0][k] !== undefined) f[k] = ts[0][k];
+    });
+    const mx = (k) => (mixed(k) ? "Mixed" : ""),
+      wk = (t) => (typeof t.when === "string" ? t.when : t.when ? "?" : ""),
+      w0 = wk(ts[0]),
+      wsame = w0 !== "?" && ts.every((t) => wk(t) === w0);
+    let h =
+      '<div class="dk-tile sel dk-gbar"><div class="dk-tmain"><b>' +
+      ts.length +
+      (ts.length === 1 ? " tile" : " tiles") +
+      ' selected</b><div class="dk-tsub">' +
+      (gnote ? '<span class="dk-warn" style="margin:0">' + esc(gnote) + "</span>" : "Changes here apply to all of them.") +
+      '</div></div><div class="dk-tact"><button type="button" class="btn" id="dkGClr">Clear</button></div><div class="dk-more">';
+    h += grp(
+      "Colours",
+      colRow(f, "m", "bgColor", "Background", themeBg(), "The tile background; in Glass the tint of its glass. Auto uses the theme.", {
+        sw: ["#1A1D23", "#0B0E13", "#FFFFFF"].concat(SW),
+        warn: mx("bgColor"),
+      }) +
+        opRow(
+          f,
+          "m",
+          "opacity",
+          "Opacity",
+          "glassTint",
+          10,
+          "Glass only: how much of the background colour covers the picture. Auto = Glass look.",
+        ) +
+        colRow(f, "m", "color", "Accent colour", "#7DB5FF", "Each tile's accent (icon, metric name). Auto picks it per tile.", {
+          warn: mx("color"),
+        }) +
+        colRow(f, "m", "textColor", "Text colour", "#E6E8EC", "Auto uses the theme text colour.", {
+          sw: TXT.concat(SW),
+          warn: mx("textColor") || readHint(f.textColor),
+        }),
+      true,
+    );
+    h += grp(
+      "Visibility",
+      '<div class="field">' +
+        lbl(
+          "Show",
+          "Sets the same condition on every selected tile (printer tiles skip the PC and sound ones). A condition on an entity or a printer is set per tile.",
+        ) +
+        '<select id="dkGWhen">' +
+        (wsame ? "" : '<option value="?" selected disabled>Mixed</option>') +
+        SIMPLE_WHEN.map((o) => opt(o[0], o[1], wsame && o[0] === w0)).join("") +
+        "</select></div>",
+    );
+    if (ps.length > 1)
+      h += grp(
+        "Page",
+        '<div class="field wide">' +
+          lbl(
+            "Move or copy to",
+            "The tiles keep their arrangement, at the same place when it is free there, otherwise at the first place where they all fit. If there is no such place they go wherever there is room.",
+          ) +
+          '<div class="dk-row"><select id="dkGPg" style="width:auto">' +
+          ps.map((q, i) => (i === cur ? "" : opt(String(i), q.name || q.id, false))).join("") +
+          '</select><button type="button" class="btn" id="dkGMv">Move</button><button type="button" class="btn" id="dkGCp">Copy</button></div></div>',
+        true,
+      );
+    h +=
+      '<div class="field wide"><div class="dk-row"><button type="button" class="btn btn-danger" id="dkGDel">Remove ' +
+      (ts.length === 1 ? "tile" : ts.length + " tiles") +
+      "</button></div></div></div></div>";
+    return h;
+  }
+  /* Move or copy the selected tiles to page q, keeping their arrangement in each
+   orientation where it fits there; where it does not they lose their cells and flow. */
+  function groupTo(p, q, copy) {
+    const ts = p.tiles.filter((t) => msel.has(t)),
+      keep = ori,
+      plan = {};
+    for (const o of ["landscape", "portrait"]) {
+      ori = o;
+      plan[o] = null;
+      const as = layout(p),
+        aq = layout(q),
+        [gc, gr] = grid(q),
+        c = gc * 2,
+        r = gr * 2,
+        rs = ts.map((t) => as[p.tiles.indexOf(t)]);
+      if (rs.some((a) => !a)) continue;
+      const x0 = Math.min(...rs.map((a) => a.x)),
+        y0 = Math.min(...rs.map((a) => a.y)),
+        fitAt = (x, y) => rs.every((a) => free(aq, -1, { x: a.x - x0 + x, y: a.y - y0 + y, w: a.w, h: a.h }, c, r));
+      let spot = fitAt(x0, y0) ? [x0, y0] : null;
+      for (let y = 0; y < r && !spot; y++) for (let x = 0; x < c && !spot; x++) if (fitAt(x, y)) spot = [x, y];
+      if (!spot) continue;
+      pinAll(q, aq);
+      plan[o] = rs.map((a) => cell(a.x - x0 + spot[0], a.y - y0 + spot[1], a.w, a.h));
+    }
+    ori = keep;
+    const out = ts.map((t0, j) => {
+      const t = copy ? JSON.parse(JSON.stringify(t0)) : t0;
+      t.pos = t.pos || {};
+      for (const o of ["landscape", "portrait"]) {
+        if (plan[o]) t.pos[o] = plan[o][j];
+        else if (t.pos[o]) {
+          delete t.pos[o].x;
+          delete t.pos[o].y;
+          if (!Object.keys(t.pos[o]).length) delete t.pos[o];
+        }
+      }
+      if (!Object.keys(t.pos).length) delete t.pos;
+      if (t.id) {
+        let id = t.id,
+          n = 2;
+        while (q.tiles.some((x) => x.id === id)) id = t.id + "_" + n++;
+        t.id = id;
+      }
+      q.tiles.push(t);
+      return t;
+    });
+    if (!copy) p.tiles = p.tiles.filter((t) => !msel.has(t));
+    msel.clear();
+    out.forEach((t) => msel.add(t));
+    return !!plan[ori];
+  }
+  /* Shown once in the group bar after a move or copy that could not keep the arrangement. */
+  let gnote = "";
   function renderPage() {
     const ps = pages();
     const el = $("dkPage");
@@ -2546,6 +2821,7 @@
       return;
     }
     const p = ps[cur];
+    for (const t of msel) if (!p.tiles.includes(t) || hidT(t)) msel.delete(t);
     const [c, r] = grid(p),
       land = ori === "landscape",
       pick = (scr.pick || { landscape: [6, 4], portrait: [4, 6] })[ori],
@@ -2625,21 +2901,23 @@
       '">' +
       g +
       p.tiles.map((t, k) => (at[k] ? gtile(t, k, at[k]) : "")).join("") +
-      '<div class="dk-ghost" id="dkGhost" hidden></div></div>';
+      '<div class="dk-ghost" id="dkGhost" hidden></div><div class="dk-band" id="dkBand" hidden></div></div>';
     if (lost.length)
       h +=
         '<p class="dk-cap over">No room on the page for these: drag one to a free place, make it smaller or remove it.</p><div class="dk-tray">' +
         lost.map((k) => gtile(p.tiles[k], k, null)).join("") +
         "</div>";
     h +=
-      '<p class="field-hint">Drag a tile to move it, or onto another tile, which then moves to where the dragged one was; the corner handle resizes. Both go in half-cell steps. Tap a tile to find it in the list.</p>';
+      '<p class="field-hint">Drag a tile to move it, or onto another tile, which then moves to where the dragged one was; the corner handle resizes. Both go in half-cell steps. Tap a tile to find it in the list. To select several, Ctrl+click or long-press them, or drag across them from an empty cell: they then move together and share one set of settings.</p>';
     if (sel >= 0 && p.tiles[sel] && ps.length > 1)
       h +=
         '<div class="dk-row"><span class="dk-tsub" style="margin:0">Move the selected tile to</span><select id="dkMvPg" style="width:auto">' +
         ps.map((q, i) => (i === cur ? "" : opt(String(i), q.name || q.id, false))).join("") +
         '</select><button type="button" class="btn" id="dkMv">Move</button></div>';
     h +=
-      '</div><div class="dk-right"><div class="dk-tiles" id="dkTiles">' +
+      '</div><div class="dk-right">' +
+      (msel.size ? groupBar(ps) : "") +
+      '<div class="dk-tiles" id="dkTiles">' +
       p.tiles
         .map((t, i) => {
           if (t.type === "metric") return metricRow(t, i);
@@ -2747,6 +3025,7 @@
         row.onclick = (e) => {
           const k = +x.dataset.x;
           if (k === sel || e.target.closest("input,select,button,textarea,a,label,.dk-more")) return;
+          msel.clear();
           sel = k;
           renderPage();
         };
@@ -2860,6 +3139,54 @@
     el.querySelectorAll("[data-rs]").forEach(
       (n) => (n.onpointerdown = (e) => gdrag(e, p, at, +n.dataset.rs, true)),
     );
+    $("dkGrid").onpointerdown = (e) => {
+      if (!e.target.closest(".dk-gt")) gband(e, p, at);
+    };
+    if (msel.size) {
+      $("dkGClr").onclick = () => {
+        msel.clear();
+        renderPage();
+      };
+      /* A newly hidden tile would drop out of the selection: the preview switches to show it. */
+      $("dkGWhen").onchange = (e) => {
+        const v = e.target.value;
+        msel.forEach((t) => {
+          if (t.type === "printer" && /^(pc|sound)-/.test(v)) return;
+          if (v) t.when = v;
+          else delete t.when;
+          const w = whenOf(t);
+          if (w) pv[w.k] = !w.neg;
+        });
+        setDirty(true);
+        renderPage();
+      };
+      const toPage = (copy) => {
+        const q = ps[+$("dkGPg").value];
+        if (!q) return;
+        gnote = groupTo(p, q, copy)
+          ? ""
+          : "They did not fit together on " + (q.name || q.id) + "; move them into place.";
+        cur = ps.indexOf(q);
+        sel = -1;
+        more = -1;
+        setDirty(true);
+        render();
+        gnote = "";
+      };
+      if ($("dkGMv")) {
+        $("dkGMv").onclick = () => toPage(false);
+        $("dkGCp").onclick = () => toPage(true);
+      }
+      $("dkGDel").onclick = () => {
+        if (!confirm("Remove " + msel.size + (msel.size === 1 ? " tile?" : " tiles?"))) return;
+        p.tiles = p.tiles.filter((t) => !msel.has(t));
+        msel.clear();
+        sel = -1;
+        more = -1;
+        setDirty(true);
+        renderPage();
+      };
+    }
     /* The page and the pages stacked under it move together. */
     $("dkPStack").onchange = (e) => {
       const prev = ps[cur - 1];
@@ -3205,9 +3532,11 @@
           setDirty(true);
         }),
     );
+    /* "m" = the group bar: every selected tile. */
+    const tg = (key) => (key === "m" ? [...msel] : [p.tiles[+key]]);
     el.querySelectorAll("[data-co]").forEach((x) => {
       x.oninput = (e) => {
-        p.tiles[+x.dataset.co][x.dataset.ck] = e.target.value.toUpperCase();
+        tg(x.dataset.co).forEach((t) => (t[x.dataset.ck] = e.target.value.toUpperCase()));
         setDirty(true);
       };
       x.onchange = () => renderPage();
@@ -3215,7 +3544,7 @@
     el.querySelectorAll("[data-cs]").forEach(
       (x) =>
         (x.onclick = () => {
-          p.tiles[+x.dataset.cs][x.dataset.ck] = x.dataset.v;
+          tg(x.dataset.cs).forEach((t) => (t[x.dataset.ck] = x.dataset.v));
           setDirty(true);
           renderPage();
         }),
@@ -3223,14 +3552,14 @@
     el.querySelectorAll("[data-ca]").forEach(
       (x) =>
         (x.onclick = () => {
-          delete p.tiles[+x.dataset.ca][x.dataset.ck];
+          tg(x.dataset.ca).forEach((t) => delete t[x.dataset.ck]);
           setDirty(true);
           renderPage();
         }),
     );
     el.querySelectorAll("[data-op]").forEach((x) => {
       x.oninput = (e) => {
-        p.tiles[+x.dataset.op][x.dataset.ok] = +e.target.value;
+        tg(x.dataset.op).forEach((t) => (t[x.dataset.ok] = +e.target.value));
         x.nextElementSibling.textContent = e.target.value + "%";
         setDirty(true);
       };
@@ -3239,7 +3568,7 @@
     el.querySelectorAll("[data-oa]").forEach(
       (x) =>
         (x.onclick = () => {
-          delete p.tiles[+x.dataset.oa][x.dataset.ok];
+          tg(x.dataset.oa).forEach((t) => delete t[x.dataset.ok]);
           setDirty(true);
           renderPage();
         }),
