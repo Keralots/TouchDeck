@@ -148,6 +148,13 @@ struct TileRt {
   // Glass auto text: the colour picked from the picture under the tile.
   uint32_t autoText;
   bool hasAuto;
+  lv_obj_t* frameObj;  // the shown frame this tile sits in (drawn without a background), else null
+};
+
+// A page frame: one card behind its tiles (FrameDef), first in its page grid.
+struct FrameRt {
+  const FrameDef* def;
+  lv_obj_t* obj;
 };
 
 struct Shared {
@@ -550,6 +557,14 @@ uint32_t onTextColor(const TileDef& def, bool glass);
 void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, int w, int h);
 TileRt* tileOf(lv_obj_t* o);
 uint32_t tileOnFill(const TileDef& d);
+// Tile frames: built hidden before the page's tiles, then shown around them by
+// placeFrames, which returns the page area (screen coords) whose look changed.
+extern std::vector<FrameRt> s_frames;
+void makeFrames(Page& p);
+bool placeFrames(Page& p, const std::vector<Cell>& cells, lv_area_t& changed);
+const FrameRt* frameOf(lv_obj_t* o);
+uint32_t frameBg(const FrameDef& f);
+int frameTint(const FrameDef& f);
 // Tile animations (deck_ui_fx.cpp).
 PageFx fxPage();
 int tileOnOpa(const TileDef& d);

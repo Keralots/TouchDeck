@@ -74,6 +74,10 @@
 // the glass tint in Glass), "onColor" (fill while on, default "color"),
 // "onTextColor", and in Glass "opacity" / "onOpacity" (0..100 %, else the
 // display's Tile opacity / On opacity; auto text may still darken the glass).
+// Frames: a page's "frames": [{ "id": "f1", "bgColor", "opacity" }] and
+// "frame": "f1" on tiles draw one card behind those tiles, which then lose
+// their own background. Only while at least two of them are shown, touch each
+// other and no other shown tile sits in their box; otherwise they stand alone.
 // Action, toggle, slider and sensor tiles take "iconStyle": "plain" (no
 // circle, the icon fills its place), "iconColor" / "onIconColor" (else
 // "color"; a plain icon while on: the text colour), "onIcon" (toggle) and
@@ -251,7 +255,16 @@ struct TileDef {
   bool wxStill = false;    // TILE_WEATHER: "animate": false (icons at rest)
   std::vector<LightPreset> presets;  // toggle / slider light tiles
   WhenDef when;
+  String frame;  // "frame": the id of a frame on its page
   bool shown = true;  // runtime: "when" as the pages were last built
+};
+
+constexpr int MAX_PAGE_FRAMES = 8;
+struct FrameDef {
+  String id;
+  bool hasBgColor = false;
+  uint32_t bgColor = 0;
+  int8_t opacity = -1;  // Glass, %, -1 = the display setting
 };
 
 struct PrinterDef {
@@ -273,6 +286,7 @@ struct PageDef {
   uint8_t cols[2] = {BOARD_GRID_LANDSCAPE_COLS, BOARD_GRID_PORTRAIT_COLS};
   uint8_t rows[2] = {BOARD_GRID_LANDSCAPE_ROWS, BOARD_GRID_PORTRAIT_ROWS};
   std::vector<TileDef> tiles;
+  std::vector<FrameDef> frames;
 };
 
 struct DeckConfig {

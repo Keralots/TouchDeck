@@ -196,6 +196,111 @@ void glassStyle(lv_obj_t* t, const TileDef& def) {
   }
 }
 
+// --- Tile frames ----------------------------------------------------------------------
+std::vector<FrameRt> s_frames;
+
+uint32_t frameBg(const FrameDef& f) { return f.hasBgColor ? f.bgColor : C_TILE; }
+int frameTint(const FrameDef& f) { return f.opacity >= 0 ? f.opacity : dispSettings.glassTint; }
+
+const FrameRt* frameOf(lv_obj_t* o) {
+  for (const FrameRt& f : s_frames)
+    if (f.obj == o) return &f;
+  return nullptr;
+}
+
+// Not clickable: a touch on the gaps between its tiles reaches the grid (edit mode hold).
+void makeFrames(Page& p) {
+  const bool glass = s_theme == THEME_GLASS && wallBlur();
+  for (const FrameDef& f : p.def->frames) {
+    lv_obj_t* o = lv_obj_create(p.grid);
+    lv_obj_set_size(o, 0, 0);
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_grid_cell(o, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 0, 1);
+    lv_obj_set_style_radius(o, 16, 0);
+    lv_obj_set_style_border_width(o, s_theme == THEME_DAYLIGHT ? 1 : 0, 0);
+    lv_obj_set_style_border_color(o, lv_color_hex(C_TILE_LINE), 0);
+    lv_obj_set_style_bg_color(o, lv_color_hex(frameBg(f)), 0);
+    lv_obj_set_style_bg_opa(o, glass ? LV_OPA_TRANSP : LV_OPA_COVER, 0);  // Glass: baked like a tile
+    s_frames.push_back({&f, o});
+  }
+}
+
+// A tile in a shown frame has no background of its own; pressed and on still fill it.
+void setFramed(TileRt& r, lv_obj_t* frame) {
+  if (r.frameObj == frame) return;
+  r.frameObj = frame;
+  if (!(s_theme == THEME_GLASS && wallBlur())) {
+    lv_obj_set_style_bg_opa(r.obj, frame ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(r.obj, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(r.obj, LV_OPA_COVER, LV_STATE_CHECKED);
+  }
+  if (s_theme == THEME_DAYLIGHT) lv_obj_set_style_border_width(r.obj, frame ? 0 : 1, 0);
+}
+
+static bool cellsTouch(const Cell& a, const Cell& b) {
+  const bool rows = a.y < b.y + b.h && b.y < a.y + a.h, cols = a.x < b.x + b.w && b.x < a.x + a.w;
+  return (rows && (a.x + a.w == b.x || b.x + b.w == a.x)) || (cols && (a.y + a.h == b.y || b.y + b.h == a.y));
+}
+
+// A frame shows around its placed tiles while there are two or more, they all
+// connect edge to edge and no other placed tile is in their box. changed grows
+// by the page area (page coords) where a frame came, went or moved.
+bool placeFrames(Page& p, const std::vector<Cell>& cells, lv_area_t& changed) {
+  const PageDef& def = *p.def;
+  bool any = false;
+  lv_area_t rc;
+  lv_obj_get_coords(p.root, &rc);
+  for (FrameRt& f : s_frames) {
+    if (lv_obj_get_parent(f.obj) != p.grid) continue;
+    const String& id = f.def->id;
+    std::vector<int> m;
+    int x1 = INT_MAX, y1 = INT_MAX, x2 = 0, y2 = 0;
+    for (size_t i = 0; i < def.tiles.size(); i++) {
+      const Cell& c = cells[i];
+      if (!c.placed || def.tiles[i].frame != id) continue;
+      m.push_back(i);
+      x1 = min(x1, c.x), y1 = min(y1, c.y), x2 = max(x2, c.x + c.w), y2 = max(y2, c.y + c.h);
+    }
+    bool ok = m.size() >= 2;
+    for (size_t i = 0; ok && i < def.tiles.size(); i++) {
+      const Cell& c = cells[i];
+      if (c.placed && def.tiles[i].frame != id && c.x < x2 && c.x + c.w > x1 && c.y < y2 && c.y + c.h > y1) ok = false;
+    }
+    if (ok) {  // connected: grow from the first tile through shared edges
+      std::vector<bool> in(m.size(), false);
+      in[0] = true;
+      size_t n = 1;
+      for (bool grew = true; grew;) {
+        grew = false;
+        for (size_t a = 0; a < m.size(); a++)
+          for (size_t b = 0; !in[a] && b < m.size(); b++)
+            if (in[b] && cellsTouch(cells[m[a]], cells[m[b]])) in[a] = true, n++, grew = true;
+      }
+      ok = n == m.size();
+    }
+    const bool was = !lv_obj_has_flag(f.obj, LV_OBJ_FLAG_HIDDEN);
+    lv_area_t a0;
+    lv_obj_get_coords(f.obj, &a0);
+    if (ok) lv_obj_set_grid_cell(f.obj, LV_GRID_ALIGN_STRETCH, x1, x2 - x1, LV_GRID_ALIGN_STRETCH, y1, y2 - y1);
+    showObj(f.obj, ok);
+    for (TileRt& r : s_tiles)
+      if (r.obj && lv_obj_get_parent(r.obj) == p.grid && r.def->frame == id) setFramed(r, ok ? f.obj : nullptr);
+    lv_obj_update_layout(p.root);
+    lv_area_t a1;
+    lv_obj_get_coords(f.obj, &a1);
+    if (was == ok && (!ok || (a0.x1 == a1.x1 && a0.y1 == a1.y1 && a0.x2 == a1.x2 && a0.y2 == a1.y2))) continue;
+    any = true;
+    for (const lv_area_t* a : {was ? &a0 : nullptr, ok ? &a1 : nullptr}) {
+      if (!a) continue;
+      changed = {LV_MIN(changed.x1, a->x1 - rc.x1), LV_MIN(changed.y1, a->y1 - rc.y1),
+                 LV_MAX(changed.x2, a->x2 - rc.x1), LV_MAX(changed.y2, a->y2 - rc.y1)};
+    }
+  }
+  return any;
+}
+
 // Text on an "on" tile: its own colour, else dark while the fill is bright
 // enough, else the normal light text (Glass with a faint fill over a dark picture).
 uint32_t onTextColor(const TileDef& def, bool glass) {

@@ -31,6 +31,7 @@
 .dk-gt b{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dk-rs{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 55%,var(--mute) 55%);opacity:.7}
 .dk-gt.msel{outline:2px dashed var(--accent);outline-offset:1px;background:var(--accent-soft)}
+.dk-frame{border-radius:10px;outline:2px solid var(--accent);outline-offset:3px;pointer-events:none}
 .dk-band{z-index:4;border:1px dashed var(--accent);border-radius:8px;background:var(--accent-soft);pointer-events:none}
 .dk-gbar{grid-template-columns:minmax(0,1fr) auto;margin-bottom:8px}
 .dk-ghost{z-index:4;border:2px solid var(--ok);border-radius:8px;background:rgba(92,201,167,.15);pointer-events:none}.dk-ghost.bad{border-color:var(--err);background:rgba(229,83,75,.15)}
@@ -2352,6 +2353,43 @@
   }
   /* Drag a tile to a free place or onto another tile, which moves to the dragged
    tile's old place (swapPlan, shown live); the corner handle resizes. A press without movement selects the tile. */
+  /* Frames: one card behind tiles that touch. Mirrors placeFrames() in deck_ui_tile.cpp. */
+  const touch = (a, b) => {
+    const rows = a.y < b.y + b.h && b.y < a.y + a.h,
+      cols = a.x < b.x + b.w && b.x < a.x + a.w;
+    return (rows && (a.x + a.w === b.x || b.x + b.w === a.x)) || (cols && (a.y + a.h === b.y || b.y + b.h === a.y));
+  };
+  /* The box of tiles ks when they can share a frame (two or more placed, connected
+   edge to edge, no other placed tile inside), else null. */
+  function frameBox(at, ks) {
+    const rs = ks.map((k) => at[k]);
+    if (rs.length < 2 || rs.some((a) => !a)) return null;
+    const x = Math.min(...rs.map((a) => a.x)),
+      y = Math.min(...rs.map((a) => a.y)),
+      box = { x: x, y: y, w: Math.max(...rs.map((a) => a.x + a.w)) - x, h: Math.max(...rs.map((a) => a.y + a.h)) - y };
+    if (at.some((a, i) => a && !ks.includes(i) && ovl(a, box))) return null;
+    const got = [0];
+    for (let grew = true; grew; ) {
+      grew = false;
+      rs.forEach((a, i) => {
+        if (got.includes(i) || !got.some((j) => touch(a, rs[j]))) return;
+        got.push(i);
+        grew = true;
+      });
+    }
+    return got.length === rs.length ? box : null;
+  }
+  const frameMates = (p, t) => (t.frame ? p.tiles.filter((x) => x.frame === t.frame && !hidT(x)) : []);
+  const isSel = (ts) => ts.length === msel.size && ts.every((x) => msel.has(x));
+  /* Frames with fewer than two tiles go, and so do links to frames that are gone. */
+  function pruneFrames(p) {
+    const fs = (p.frames || []).filter((f) => p.tiles.filter((t) => t.frame === f.id).length >= 2);
+    p.tiles.forEach((t) => {
+      if (t.frame && !fs.some((f) => f.id === t.frame)) delete t.frame;
+    });
+    if (fs.length) p.frames = fs;
+    else delete p.frames;
+  }
   /* A tap on a tile: Ctrl/Shift, a long press, or any tap on touch while some are
    selected toggles it in the multi-selection; a plain tap selects it alone. */
   function tapTile(p, k, ev, long) {
@@ -2365,7 +2403,17 @@
       renderPage();
       return;
     }
+    /* A framed tile selects its frame first, a second tap the tile alone. */
+    const fm = frameMates(p, t),
+      grab = fm.length > 1 && !isSel(fm);
     msel.clear();
+    if (grab) {
+      fm.forEach((x) => msel.add(x));
+      sel = -1;
+      more = -1;
+      renderPage();
+      return;
+    }
     sel = k;
     renderPage();
     const row = document.querySelector(".dk-tile.sel");
@@ -2393,7 +2441,7 @@
     return { g: g, c: c, r: r, b: b, pad: pad, sx: (b.width - 2 * pad + gap) / c, sy: (b.height - 2 * pad + gap) / r };
   }
   /* Selected tiles dragged together, by whole half cells, onto free cells only (no swaps). */
-  function gdragGroup(e, p, at, k) {
+  function gdragGroup(e, p, at, k, fresh) {
     const n = e.currentTarget,
       m = gmetrics(p),
       ks = p.tiles.map((t, i) => i).filter((i) => at[i] && msel.has(p.tiles[i])),
@@ -2436,7 +2484,7 @@
     n.onpointerup = n.onpointercancel = (ev) => {
       n.onpointermove = n.onpointerup = n.onpointercancel = null;
       clearTimeout(lp);
-      if (!moved) return tapTile(p, k, ev, false);
+      if (!moved) return fresh ? renderPage() : tapTile(p, k, ev, false);
       if (ev.type === "pointerup" && ok && (dx || dy)) {
         pinAll(p, at);
         ks.forEach((i) => setPos(p.tiles[i], cell(at[i].x + dx, at[i].y + dy, at[i].w, at[i].h)));
@@ -2491,7 +2539,18 @@
     if (e.button > 0) return;
     e.preventDefault();
     e.stopPropagation();
-    if (!size && at[k] && msel.size > 1 && msel.has(p.tiles[k])) return gdragGroup(e, p, at, k);
+    /* A press on a framed tile that is not picked yet takes its whole frame along. */
+    let fresh = false;
+    if (!size && at[k] && sel !== k && !msel.has(p.tiles[k]) && !(e.ctrlKey || e.metaKey || e.shiftKey)) {
+      const fm = frameMates(p, p.tiles[k]);
+      if (fm.length > 1) {
+        msel.clear();
+        fm.forEach((x) => msel.add(x));
+        sel = -1;
+        fresh = true;
+      }
+    }
+    if (!size && at[k] && msel.size > 1 && msel.has(p.tiles[k])) return gdragGroup(e, p, at, k, fresh);
     const n = e.currentTarget,
       tile = size ? n.parentElement : n,
       g = $("dkGrid"),
@@ -2686,10 +2745,16 @@
     ["sound-on", "Only while the PC plays sound"],
     ["sound-off", "Only while the PC is silent"],
   ];
-  function groupBar(ps) {
+  /* The frame the selected tiles make up exactly (the group bar edits its look), else null. */
+  let gframe = null;
+  function groupBar(p, ps, at) {
     const ts = [...msel],
       mixed = (k) => !ts.every((t) => t[k] === ts[0][k]),
-      f = {};
+      f = {},
+      fid = ts[0].frame;
+    gframe = (fid && isSel(frameMates(p, ts[0])) && (p.frames || []).find((x) => x.id === fid)) || null;
+    const can = !!gframe || !!frameBox(at, ts.map((t) => p.tiles.indexOf(t))),
+      full = !gframe && (p.frames || []).length >= 8;
     ["bgColor", "opacity", "color", "textColor"].forEach((k) => {
       if (!mixed(k) && ts[0][k] !== undefined) f[k] = ts[0][k];
     });
@@ -2704,17 +2769,39 @@
       ' selected</b><div class="dk-tsub">' +
       (gnote ? '<span class="dk-warn" style="margin:0">' + esc(gnote) + "</span>" : "Changes here apply to all of them.") +
       '</div></div><div class="dk-tact"><button type="button" class="btn" id="dkGClr">Clear</button></div><div class="dk-more">';
+    if (ts.length > 1)
+      h +=
+        '<div class="field wide"><label class="check-row standalone"><input type="checkbox" id="dkGFrame"' +
+        (gframe ? " checked" : "") +
+        (can && !full ? "" : " disabled") +
+        '><span class="check-box"></span><span class="check-text"><strong>Frame</strong><span class="ct-hint">' +
+        (full
+          ? "A page holds at most 8 frames."
+          : can
+            ? "One card behind these tiles, which then lose their own background. A tap on one of them in the grid selects the frame, a second tap the tile."
+            : "Only for tiles that touch each other with no other tile between them.") +
+        "</span></span></label></div>";
+    /* With a frame, Background and Opacity are the frame's: its tiles have none of their own. */
+    const [bo, bk] = gframe ? [gframe, "f"] : [f, "m"];
     h += grp(
       "Colours",
-      colRow(f, "m", "bgColor", "Background", themeBg(), "The tile background; in Glass the tint of its glass. Auto uses the theme.", {
-        sw: ["#1A1D23", "#0B0E13", "#FFFFFF"].concat(SW),
-        warn: mx("bgColor"),
-      }) +
+      colRow(
+        bo,
+        bk,
+        "bgColor",
+        gframe ? "Frame background" : "Background",
+        themeBg(),
+        "The " + (gframe ? "frame" : "tile") + " background; in Glass the tint of its glass. Auto uses the theme.",
+        {
+          sw: ["#1A1D23", "#0B0E13", "#FFFFFF"].concat(SW),
+          warn: gframe ? "" : mx("bgColor"),
+        },
+      ) +
         opRow(
-          f,
-          "m",
+          bo,
+          bk,
           "opacity",
-          "Opacity",
+          gframe ? "Frame opacity" : "Opacity",
           "glassTint",
           10,
           "Glass only: how much of the background colour covers the picture. Auto = Glass look.",
@@ -2785,8 +2872,19 @@
       plan[o] = rs.map((a) => cell(a.x - x0 + spot[0], a.y - y0 + spot[1], a.w, a.h));
     }
     ori = keep;
+    /* Their frames go along under ids free on q. */
+    const fmap = {};
+    ts.forEach((t) => {
+      const f = t.frame && !fmap[t.frame] && (p.frames || []).find((x) => x.id === t.frame);
+      if (!f) return;
+      let n = 1;
+      while ((q.frames || []).some((x) => x.id === "f" + n)) n++;
+      fmap[t.frame] = "f" + n;
+      q.frames = (q.frames || []).concat([Object.assign({}, f, { id: "f" + n })]);
+    });
     const out = ts.map((t0, j) => {
       const t = copy ? JSON.parse(JSON.stringify(t0)) : t0;
+      if (t.frame) t.frame = fmap[t.frame];
       t.pos = t.pos || {};
       for (const o of ["landscape", "portrait"]) {
         if (plan[o]) t.pos[o] = plan[o][j];
@@ -2807,6 +2905,8 @@
       return t;
     });
     if (!copy) p.tiles = p.tiles.filter((t) => !msel.has(t));
+    pruneFrames(p);
+    pruneFrames(q);
     msel.clear();
     out.forEach((t) => msel.add(t));
     return !!plan[ori];
@@ -2900,6 +3000,20 @@
       ((land ? scr.h : scr.w) - hd) +
       '">' +
       g +
+      (p.frames || [])
+        .map((f) => {
+          const b = frameBox(
+            at,
+            p.tiles.map((t, k) => k).filter((k) => p.tiles[k].frame === f.id && at[k]),
+          );
+          return b
+            ? '<div class="dk-frame" style="grid-area:' +
+                garea(b) +
+                (f.bgColor ? ";background:" + rgba(f.bgColor, 0.35) : "") +
+                '"></div>'
+            : "";
+        })
+        .join("") +
       p.tiles.map((t, k) => (at[k] ? gtile(t, k, at[k]) : "")).join("") +
       '<div class="dk-ghost" id="dkGhost" hidden></div><div class="dk-band" id="dkBand" hidden></div></div>';
     if (lost.length)
@@ -2916,7 +3030,7 @@
         '</select><button type="button" class="btn" id="dkMv">Move</button></div>';
     h +=
       '</div><div class="dk-right">' +
-      (msel.size ? groupBar(ps) : "") +
+      (msel.size ? groupBar(p, ps, at) : "") +
       '<div class="dk-tiles" id="dkTiles">' +
       p.tiles
         .map((t, i) => {
@@ -3147,6 +3261,18 @@
         msel.clear();
         renderPage();
       };
+      if ($("dkGFrame"))
+        $("dkGFrame").onchange = (e) => {
+          if (e.target.checked) {
+            let n = 1;
+            while ((p.frames || []).some((f) => f.id === "f" + n)) n++;
+            p.frames = (p.frames || []).concat([{ id: "f" + n }]);
+            msel.forEach((t) => (t.frame = "f" + n));
+          } else msel.forEach((t) => delete t.frame);
+          pruneFrames(p);
+          setDirty(true);
+          renderPage();
+        };
       /* A newly hidden tile would drop out of the selection: the preview switches to show it. */
       $("dkGWhen").onchange = (e) => {
         const v = e.target.value;
@@ -3180,6 +3306,7 @@
       $("dkGDel").onclick = () => {
         if (!confirm("Remove " + msel.size + (msel.size === 1 ? " tile?" : " tiles?"))) return;
         p.tiles = p.tiles.filter((t) => !msel.has(t));
+        pruneFrames(p);
         msel.clear();
         sel = -1;
         more = -1;
@@ -3287,6 +3414,7 @@
       (x) =>
         (x.onclick = () => {
           p.tiles.splice(+x.dataset.x, 1);
+          pruneFrames(p);
           sel = -1;
           more = -1;
           setDirty(true);
@@ -3533,7 +3661,7 @@
         }),
     );
     /* "m" = the group bar: every selected tile. */
-    const tg = (key) => (key === "m" ? [...msel] : [p.tiles[+key]]);
+    const tg = (key) => (key === "m" ? [...msel] : key === "f" ? [gframe] : [p.tiles[+key]]);
     el.querySelectorAll("[data-co]").forEach((x) => {
       x.oninput = (e) => {
         tg(x.dataset.co).forEach((t) => (t[x.dataset.ck] = e.target.value.toUpperCase()));

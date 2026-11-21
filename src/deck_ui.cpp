@@ -304,6 +304,7 @@ void addTilesPage(const PageDef& def, int page, bool parked) {
 
   // Tiles without a cell ("when" not met, no room) are built hidden, so a
   // "when" flip only re-places the page (placePage).
+  makeFrames(p);
   std::vector<Cell> cells;
   placeTiles(def, orient, cells);
   for (size_t i = 0; i < cells.size(); i++) {
@@ -316,6 +317,8 @@ void addTilesPage(const PageDef& def, int page, bool parked) {
     s_tiles.back().off = true;
     lv_obj_add_flag(s_tiles.back().obj, LV_OBJ_FLAG_HIDDEN);
   }
+  lv_area_t unused = {};
+  placeFrames(p, cells, unused);
 
   p.snap = parked ? nullptr : lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
   p.stale = true;
@@ -364,6 +367,7 @@ void placePage(int page) {
     if (!k.off) add(k.a);
     if (!k.r->off) add(now);
   }
+  placeFrames(p, cells, changed);
   if (changed.x1 > changed.x2) return;
   // A failed bake is tried again as a wallpaper bake (tickWallpaper).
   if (s_theme == THEME_GLASS && !p.wallBake && wallBlur() && !bakeGlass(p, &changed)) p.wallBake = true;
@@ -401,6 +405,7 @@ void buildPages() {
   else wallFree();
   s_count = 0;
   s_tiles.clear();
+  s_frames.clear();
   s_zonesDirty = true;
   s_tiles.reserve(64);
   whenApply();
@@ -510,6 +515,7 @@ void destroyPages(bool keepGlass = false) {
     prnFxFree(r.pfx);
   }
   s_tiles.clear();
+  s_frames.clear();
   portENTER_CRITICAL(&s_mux);
   sh.count = 0;
   for (int i = 0; i < MAX_PAGES; i++) sh.valid[i] = false;
@@ -994,15 +1000,23 @@ void syncCascade() {
     top[i] = pg.grid ? (int16_t)(lv_obj_get_y(pg.grid) + 4) : 0;
     cuts[i] = cols[i] > 1 ? (uint16_t)(((1u << cols[i]) - 1) & ~1u) : 0;  // edges 1 .. cols-1
   }
-  // Same edge formula as the compositor; a tile across one drops that cut.
-  for (const TileRt& r : s_tiles) {
-    if (r.page < 0 || r.page >= MAX_PAGES || cols[r.page] < 2 || r.off) continue;
-    const int n = cols[r.page], x1 = lv_obj_get_x(r.obj), x2 = x1 + lv_obj_get_width(r.obj);
+  // Same edge formula as the compositor; a tile or frame across one drops that cut.
+  auto across = [&](int page, lv_obj_t* o) {
+    const int n = cols[page], x1 = lv_obj_get_x(o), x2 = x1 + lv_obj_get_width(o);
     const float cw = (float)(w - 16 - 7 * (n - 1)) / n;
     for (int k = 1; k < n; k++) {
       const int e = 8 + (int)lroundf(k * (cw + 7)) - 4;
-      if (x1 < e && e < x2) cuts[r.page] &= (uint16_t)~(1u << k);
+      if (x1 < e && e < x2) cuts[page] &= (uint16_t)~(1u << k);
     }
+  };
+  for (const TileRt& r : s_tiles) {
+    if (r.page < 0 || r.page >= MAX_PAGES || cols[r.page] < 2 || r.off) continue;
+    across(r.page, r.obj);
+  }
+  for (const FrameRt& f : s_frames) {
+    if (lv_obj_has_flag(f.obj, LV_OBJ_FLAG_HIDDEN)) continue;
+    for (int i = 0; i < s_count && i < MAX_PAGES; i++)
+      if (s_pages[i].grid == lv_obj_get_parent(f.obj) && cols[i] > 1) across(i, f.obj);
   }
   // No usable cut at all would mean "all" to the compositor: one band then.
   for (int i = 0; i < MAX_PAGES; i++)
