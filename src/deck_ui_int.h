@@ -513,6 +513,14 @@ bool blocksFit(BlocksRt* b, int w, int h, int pad);
 bool blocksTick(BlocksRt* b, lv_obj_t* o, uint32_t now, bool live, bool lit, const char* cur, const char* next, int sec,
                 int32_t minute);
 void blocksDraw(const BlocksRt* b, lv_layer_t* L, int ox, int oy, lv_color_t col);
+// The Breakout and Rocks styles (deck_ui_arcade.cpp).
+struct ArcadeRt;
+ArcadeRt* arcadeNew(uint8_t style);
+void arcadeFree(ArcadeRt* a);
+bool arcadeFit(ArcadeRt* a, int w, int h, int pad);
+bool arcadeTick(ArcadeRt* a, lv_obj_t* o, uint32_t now, bool live, bool lit, const char* cur, const char* next, int sec,
+                int32_t minute);
+void arcadeDraw(const ArcadeRt* a, lv_layer_t* L, int ox, int oy, lv_color_t col, uint32_t now);
 void dateInk(const lv_font_t* f, int& top, int& h);
 void wxFree(WxRt* w);
 void makeWeatherContent(TileRt& r, lv_obj_t* t);

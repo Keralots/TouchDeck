@@ -505,6 +505,8 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
           t.clockStyle = !strcmp(cs, "roll")     ? CLOCK_ROLL
                          : !strcmp(cs, "orbit")  ? CLOCK_ORBIT
                          : !strcmp(cs, "blocks") ? CLOCK_BLOCKS
+                         : !strcmp(cs, "breakout") ? CLOCK_BREAKOUT
+                         : !strcmp(cs, "rocks")  ? CLOCK_ROCKS
                                                  : CLOCK_CLASSIC;
           t.clockTick = !strcmp(tv["ring"] | "", "tick");
         }

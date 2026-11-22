@@ -31,6 +31,7 @@ struct ClockFx {
   lv_obj_t* obj;
   uint8_t style, want;  // style shown, style asked for (Blocks falls back to Roll on small tiles)
   BlocksRt* blk;
+  ArcadeRt* arc;
   bool tick;
   bool hasColor;
   uint32_t color, accent;
@@ -59,6 +60,7 @@ struct ClockFx {
 void clockFxFree(ClockFx* c) {
   if (!c) return;
   blocksFree(c->blk);
+  arcadeFree(c->arc);
   lv_free(c);
 }
 
@@ -356,6 +358,10 @@ static void clockDraw(lv_event_t* e) {
     blocksDraw(c->blk, L, a.x1, a.y1, c->hasColor ? lv_color_hex(c->color) : text);
     return;
   }
+  if (c->style == CLOCK_BREAKOUT || c->style == CLOCK_ROCKS) {
+    arcadeDraw(c->arc, L, a.x1, a.y1, c->hasColor ? lv_color_hex(c->color) : text, s_animMs);
+    return;
+  }
   if (c->style == CLOCK_ORBIT && c->len > 0) drawRing(L, *c, a.x1, a.y1, text);
   drawTime(L, *c, a.x1, a.y1, c->hasColor ? lv_color_hex(c->color) : text);
   if (c->dateY >= 0) {
@@ -385,6 +391,8 @@ void makeClockFx(TileRt& r, lv_obj_t* t) {
   lv_obj_remove_flag(t, LV_OBJ_FLAG_SCROLLABLE);
   c->style = c->want = r.def->clockStyle;
   if (c->want == CLOCK_BLOCKS && !(c->blk = blocksNew())) c->style = c->want = CLOCK_ROLL;
+  if ((c->want == CLOCK_BREAKOUT || c->want == CLOCK_ROCKS) && !(c->arc = arcadeNew(c->want)))
+    c->style = c->want = CLOCK_ROLL;
   c->tick = r.def->clockTick;
   c->hasColor = r.def->hasColor;
   c->color = r.def->color;
@@ -441,6 +449,8 @@ void fitClockFx(TileRt& r, int cw, int ch) {
   lv_obj_set_size(c->obj, c->w, c->h);
   c->style = c->want;
   if (c->style == CLOCK_BLOCKS && !blocksFit(c->blk, c->w, c->h, pad)) c->style = CLOCK_ROLL;
+  if ((c->style == CLOCK_BREAKOUT || c->style == CLOCK_ROCKS) && !arcadeFit(c->arc, c->w, c->h, pad))
+    c->style = CLOCK_ROLL;
   int aw = cw, ah = ch;
   c->len = 0;
   if (c->style == CLOCK_ORBIT) {
@@ -509,7 +519,7 @@ void applyClockFx(TileRt& r, const char* h, const char* m, const char* ap, const
   char t[6];
   snprintf(t, sizeof(t), "%2s:%s", h, m);
   if (!strcmp(t, c->shown) && !strcmp(ap, c->ap) && !strcmp(date, c->date)) return;
-  if (c->style == CLOCK_BLOCKS) {  // kept for a fall back to Roll; the blocks run on their own
+  if (c->style == CLOCK_BLOCKS || c->style == CLOCK_BREAKOUT || c->style == CLOCK_ROCKS) {  // kept for a fall back to Roll; these run on their own
     memcpy(c->shown, t, sizeof(c->shown));
     snprintf(c->ap, sizeof(c->ap), "%s", ap);
     snprintf(c->date, sizeof(c->date), "%s", date);
@@ -563,6 +573,19 @@ void clockFxTick() {
       struct tm lt;
       localtime_r(&tv.tv_sec, &lt);
       if (blocksTick(c->blk, c->obj, now, live, lit || !live, cur, next, synced ? lt.tm_sec : 0,
+                     (int32_t)(tv.tv_sec / 60))) {
+        if (live) painted = true;
+        else markPageStale(r.page);
+      }
+      continue;
+    }
+    if (c->style == CLOCK_BREAKOUT || c->style == CLOCK_ROCKS) {
+      char cur[6], next[6];
+      blocksTime(synced ? tv.tv_sec : 0, cur);
+      blocksTime(synced ? tv.tv_sec + 60 : 0, next);
+      struct tm lt;
+      localtime_r(&tv.tv_sec, &lt);
+      if (arcadeTick(c->arc, c->obj, now, live, lit || !live, cur, next, synced ? lt.tm_sec : 0,
                      (int32_t)(tv.tv_sec / 60))) {
         if (live) painted = true;
         else markPageStale(r.page);
