@@ -355,6 +355,11 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         if (err) *err = "page '" + p.id + "': a frame needs an id";
         return false;
       }
+      for (const FrameDef& o : p.frames)
+        if (o.id == f.id) {
+          if (err) *err = "page '" + p.id + "': frame id '" + f.id + "' used twice";
+          return false;
+        }
       f.hasBgColor = parseColor(fv["bgColor"] | (const char*)nullptr, f.bgColor);
       if (fv["opacity"].is<int>()) f.opacity = (int8_t)constrain(fv["opacity"].as<int>(), 0, 100);
       p.frames.push_back(f);

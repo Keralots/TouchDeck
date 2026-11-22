@@ -2747,6 +2747,19 @@
   ];
   /* The frame the selected tiles make up exactly (the group bar edits its look), else null. */
   let gframe = null;
+  /* Orientations where tiles ts (those shown) cannot share a frame: the deck hides it there. */
+  function frameMiss(p, ts) {
+    const ks = ts.filter((t) => !hidT(t)).map((t) => p.tiles.indexOf(t)),
+      keep = ori,
+      miss = [];
+    if (ks.length < 2) return miss;
+    for (const o of ["landscape", "portrait"]) {
+      ori = o;
+      if (!frameBox(layout(p), ks)) miss.push(o);
+    }
+    ori = keep;
+    return miss;
+  }
   function groupBar(p, ps, at) {
     const ts = [...msel],
       mixed = (k) => !ts.every((t) => t[k] === ts[0][k]),
@@ -2754,7 +2767,13 @@
       fid = ts[0].frame;
     gframe = (fid && isSel(frameMates(p, ts[0])) && (p.frames || []).find((x) => x.id === fid)) || null;
     const can = !!gframe || !!frameBox(at, ts.map((t) => p.tiles.indexOf(t))),
-      full = !gframe && (p.frames || []).length >= 8;
+      full = !gframe && (p.frames || []).length >= 8,
+      miss = ts.length > 1 && can && !full ? frameMiss(p, gframe ? p.tiles.filter((t) => t.frame === fid) : ts) : [],
+      missNote = miss.length
+        ? '<br><span class="dk-warn" style="margin:0">Not shown in ' +
+          miss.join(" or ") +
+          ": there these tiles do not touch or another tile sits between them.</span>"
+        : "";
     ["bgColor", "opacity", "color", "textColor"].forEach((k) => {
       if (!mixed(k) && ts[0][k] !== undefined) f[k] = ts[0][k];
     });
@@ -2780,6 +2799,7 @@
           : can
             ? "One card behind these tiles, which then lose their own background. A tap on one of them in the grid selects the frame, a second tap the tile."
             : "Only for tiles that touch each other with no other tile between them.") +
+        missNote +
         "</span></span></label></div>";
     /* With a frame, Background and Opacity are the frame's: its tiles have none of their own. */
     const [bo, bk] = gframe ? [gframe, "f"] : [f, "m"];

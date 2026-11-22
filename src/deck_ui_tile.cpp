@@ -227,10 +227,17 @@ void makeFrames(Page& p) {
   }
 }
 
-// A tile in a shown frame has no background of its own; pressed and on still fill it.
+static lv_color_t pressedBg(bool has, uint32_t bg) {
+  return has ? lv_color_mix(lv_color_hex(bg), lv_color_black(), 200) : lv_color_hex(C_TILE_PRESSED);
+}
+
+// A tile in a shown frame has no background of its own; pressed (darker frame colour) and on still fill it.
 void setFramed(TileRt& r, lv_obj_t* frame) {
   if (r.frameObj == frame) return;
   r.frameObj = frame;
+  const FrameRt* f = frame ? frameOf(frame) : nullptr;
+  lv_obj_set_style_bg_color(r.obj, f ? pressedBg(f->def->hasBgColor, f->def->bgColor)
+                                     : pressedBg(r.def->hasBgColor, r.def->bgColor), LV_STATE_PRESSED);
   if (!(s_theme == THEME_GLASS && wallBlur())) {
     lv_obj_set_style_bg_opa(r.obj, frame ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
     lv_obj_set_style_bg_opa(r.obj, LV_OPA_COVER, LV_STATE_PRESSED);
@@ -331,8 +338,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_text_color(t, lv_color_hex(tileText(def)), 0);
   lv_obj_set_style_text_color(t, lv_color_hex(onTextColor(def, glass)), LV_STATE_CHECKED);
   // Press feedback: the card darkens and shrinks a little, eased in 90 ms.
-  lv_obj_set_style_bg_color(t, def.hasBgColor ? lv_color_mix(lv_color_hex(def.bgColor), lv_color_black(), 200)
-                                              : lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(t, pressedBg(def.hasBgColor, def.bgColor), LV_STATE_PRESSED);
   lv_obj_set_style_bg_color(t, lv_color_mix(lv_color_hex(onFill), lv_color_black(), 200),
                             LV_STATE_PRESSED | LV_STATE_CHECKED);
   lv_obj_set_style_transform_width(t, -3, LV_STATE_PRESSED);
