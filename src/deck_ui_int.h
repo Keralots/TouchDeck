@@ -145,7 +145,7 @@ struct TileRt {
   lv_obj_t* coverBtns[3];  // cover tiles: up, stop, down
   lv_obj_t* presetBtns[MAX_LIGHT_PRESETS];  // light presets, as many as the tile has
   struct WxRt* wx;         // weather tiles: data and layout
-  struct ClockFx* cfx;     // clock tiles with a Roll or Orbit style
+  struct ClockFx* cfx;     // clock tiles with a drawn style
   // Glass auto text: the colour picked from the picture under the tile.
   uint32_t autoText;
   bool hasAuto;
@@ -251,6 +251,7 @@ constexpr int SPARK_FRAME_MS = 33;
 extern bool s_animDue, s_animPainted;
 extern bool s_animFastDue;  // every refresh, for the Advanced 60 fps options
 extern uint32_t s_animMs;
+bool tilesShowing();
 
 constexpr uint32_t SPARK_SNAP_MS = 5000;
 
@@ -498,29 +499,13 @@ void vizDrawEvent(lv_event_t* e);
 void vizTick();
 
 // deck_ui_weather.cpp
-// Clock tiles drawn by the deck (Roll, Orbit): deck_ui_clock.cpp.
+// Clock tiles with a drawn style: deck_ui_clock.cpp.
 void makeClockFx(TileRt& r, lv_obj_t* t);
 void fitClockFx(TileRt& r, int cw, int ch);
 void applyClockFx(TileRt& r, const char* h, const char* m, const char* ap, const char* date);
 void clockFxTick();
 void clockFxFree(ClockFx* c);
 void digitInk(const lv_font_t* f, int& top, int& h);
-// The Falling Blocks style (deck_ui_blocks.cpp), driven by the clock tile.
-struct BlocksRt;
-BlocksRt* blocksNew();
-void blocksFree(BlocksRt* b);
-bool blocksFit(BlocksRt* b, int w, int h, int pad);
-bool blocksTick(BlocksRt* b, lv_obj_t* o, uint32_t now, bool live, bool lit, const char* cur, const char* next, int sec,
-                int32_t minute);
-void blocksDraw(const BlocksRt* b, lv_layer_t* L, int ox, int oy, lv_color_t col);
-// The Breakout and Rocks styles (deck_ui_arcade.cpp).
-struct ArcadeRt;
-ArcadeRt* arcadeNew(uint8_t style);
-void arcadeFree(ArcadeRt* a);
-bool arcadeFit(ArcadeRt* a, int w, int h, int pad);
-bool arcadeTick(ArcadeRt* a, lv_obj_t* o, uint32_t now, bool live, bool lit, const char* cur, const char* next, int sec,
-                int32_t minute);
-void arcadeDraw(const ArcadeRt* a, lv_layer_t* L, int ox, int oy, lv_color_t col, uint32_t now);
 void dateInk(const lv_font_t* f, int& top, int& h);
 void wxFree(WxRt* w);
 void makeWeatherContent(TileRt& r, lv_obj_t* t);

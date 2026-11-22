@@ -291,10 +291,6 @@ void vizDrawEvent(lv_event_t* e) {
   }
 }
 
-static bool vizShowing() {
-  return !manualDisplayOff() && currentBacklightLevel() && !s_qp.open && !s_modalCard && !s_ed.root;
-}
-
 // Bars animate on a fixed tick; a scope paints each new waveform as it lands,
 // since a tick at the packet rate beats against the packets and drops frames.
 void vizTick() {
@@ -309,7 +305,7 @@ void vizTick() {
     // Fixed steps, so loop jitter does not stretch the frame period.
     s_vizLastTick = now - s_vizLastTick < 2 * VIZ_FRAME_MS ? s_vizLastTick + VIZ_FRAME_MS : now;
   }
-  if (!vizShowing()) return;
+  if (!tilesShowing()) return;
   s_vizSerial = serial;
   if (scopeDue) s_scopeMs = now;
   bool painted = false;

@@ -1491,7 +1491,7 @@ void printerEvents() {
 void heroTick() {
   if (!(advSettings.charts60 ? s_animFastDue : s_animDue)) return;
   const uint32_t now = s_animMs;
-  const bool lit = !manualDisplayOff() && currentBacklightLevel() && !s_qp.open && !s_modalCard && !s_ed.root;
+  const bool lit = tilesShowing();
   bool moved = false;
   for (TileRt& r : s_tiles) {
     if (r.def->type != TILE_PRINTER || r.def->show != PS_HERO || !r.detail) continue;

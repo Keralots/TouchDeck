@@ -1,12 +1,14 @@
-// Deck UI: clock tiles in the Roll and Orbit styles. One object over the whole
-// tile draws the time; a frame invalidates only what moves in it.
+// Deck UI: clock tiles with a drawn style. One object over the whole tile draws
+// the time; a frame invalidates only what moves in it. Roll and Orbit live here,
+// the other styles are scenes (deck_ui_clock_*.cpp).
 #include <math.h>
+#include <string.h>
 #include <sys/time.h>
 
 #include <utility>
 
 #include "board.h"
-#include "deck_ui_int.h"
+#include "deck_ui_clock.h"
 
 namespace deckui {
 
@@ -29,9 +31,9 @@ struct RingSeg {
 
 struct ClockFx {
   lv_obj_t* obj;
-  uint8_t style, want;  // style shown, style asked for (Blocks falls back to Roll on small tiles)
-  BlocksRt* blk;
-  ArcadeRt* arc;
+  bool orbit;
+  ClockScene* scene;  // the style when it is one
+  bool sceneFits;     // else Roll
   bool tick;
   bool hasColor;
   uint32_t color, accent;
@@ -51,6 +53,7 @@ struct ClockFx {
   // Orbit.
   RingSeg seg[9];
   float len;
+  float mark[12][2];  // a mark every 5 s
   int16_t lw, ro, rr;  // band width, outer edge inset, arc outer radius
   float rc;            // centre line radius
   int32_t head;    // px along the ring as last drawn, -1 = none yet
@@ -59,13 +62,124 @@ struct ClockFx {
 
 void clockFxFree(ClockFx* c) {
   if (!c) return;
-  blocksFree(c->blk);
-  arcadeFree(c->arc);
+  if (c->scene) {
+    c->scene->~ClockScene();
+    lv_free(c->scene);
+  }
   lv_free(c);
 }
 
-static bool fxShowing() {
-  return !manualDisplayOff() && currentBacklightLevel() && !s_qp.open && !s_modalCard && !s_ed.root;
+// --- Shared by the styles ----------------------------------------------------------
+
+const uint8_t CLOCK_DOTS[10][7] = {{14, 17, 17, 17, 17, 17, 14}, {4, 12, 4, 4, 4, 4, 14},  {14, 17, 1, 2, 4, 8, 31},
+                                   {14, 17, 1, 6, 1, 17, 14},    {2, 6, 10, 18, 31, 2, 2}, {31, 16, 30, 1, 1, 17, 14},
+                                   {6, 8, 16, 22, 17, 17, 14},   {31, 1, 2, 4, 8, 8, 8},   {14, 17, 17, 14, 17, 17, 14},
+                                   {14, 17, 17, 15, 1, 2, 12}};
+
+const lv_font_t* const CLOCK_FONT[CLOCK_FONTS] = {&deck_font_clock_72, &deck_font_clock_56, &lv_font_montserrat_40,
+                                                  &deck_font_28, &deck_font_20, &deck_font_14};
+
+int clockCellW(const lv_font_t* f) {
+  int w = 0;
+  for (char d = '0'; d <= '9'; d++) w = LV_MAX(w, (int)lv_font_get_glyph_width(f, d, 0));
+  return w;
+}
+
+int clockColonDy(const lv_font_t* f) {
+  lv_font_glyph_dsc_t d = {}, c = {};
+  if (!lv_font_get_glyph_dsc(f, &d, '0', 0) || !lv_font_get_glyph_dsc(f, &c, ':', 0)) return 0;
+  return (c.ofs_y * 2 + c.box_h - d.ofs_y * 2 - d.box_h) / 2;
+}
+
+bool Dirty::flush(lv_obj_t* o) const {
+  lv_area_t c;
+  lv_obj_get_coords(o, &c);
+  for (int k = 0; k < n; k++) {
+    lv_area_t r = a[k];
+    lv_area_move(&r, c.x1, c.y1);
+    lv_obj_invalidate_area(o, &r);
+  }
+  return n > 0;
+}
+
+void fillRect(lv_layer_t* L, const lv_area_t& a, lv_color_t col, int radius, lv_opa_t opa) {
+  if (!areaHits(a, L->_clip_area)) return;
+  lv_draw_rect_dsc_t d;
+  lv_draw_rect_dsc_init(&d);
+  d.bg_color = col;
+  d.bg_opa = opa;
+  d.radius = radius;
+  lv_draw_rect(L, &d, &a);
+}
+
+void drawGlyph(lv_layer_t* L, const lv_font_t* f, char ch, int x, int y, int w, lv_color_t col, lv_opa_t opa) {
+  if (ch == ' ' || opa < 2) return;
+  const lv_area_t a = {x, y, x + w - 1, y + lineH(f) - 1};
+  if (!areaHits(a, L->_clip_area)) return;
+  const char s[2] = {ch, 0};
+  lv_draw_label_dsc_t d;
+  lv_draw_label_dsc_init(&d);
+  d.text = s;
+  d.text_local = 1;
+  d.font = f;
+  d.color = col;
+  d.opa = opa;
+  d.align = LV_TEXT_ALIGN_CENTER;
+  lv_draw_label(L, &d, &a);
+}
+
+// The largest font that leaves room for the motion around the time.
+bool DigitRow::fit(int w, int h) {
+  f = nullptr;
+  for (const lv_font_t* k : CLOCK_FONT) {
+    int t, ink;
+    digitInk(k, t, ink);
+    const int cw = clockCellW(k), colon = lv_font_get_glyph_width(k, ':', 0);
+    if (ink > h * 30 / 100 || 4 * cw + colon > w * 86 / 100) continue;
+    f = k;
+    cell = (int16_t)cw;
+    colonW = (int16_t)colon;
+    inkTop = (int16_t)t;
+    inkH = (int16_t)ink;
+    colonDy = (int16_t)clockColonDy(k);
+    return true;
+  }
+  return false;
+}
+
+void DigitRow::place(int w, int y) {
+  top = (int16_t)y;
+  int x = (w - 4 * cell - colonW) / 2;
+  for (int i = 0; i < 5; i++) {
+    xs[i] = (int16_t)x;
+    x += i == 2 ? colonW : cell;
+  }
+}
+
+void DigitRow::box(int i, float& x1, float& y1, float& x2, float& y2) const {
+  x1 = xs[i] + cell * 0.08f;
+  x2 = xs[i] + cell * 0.92f;
+  y1 = top;
+  y2 = top + inkH;
+}
+
+int DigitRow::points(int i, char v, float* px, float* py) const {
+  if (v < '0' || v > '9') return 0;
+  float x1, y1, x2, y2;
+  box(i, x1, y1, x2, y2);
+  const float gx = (x2 - x1) / 5, gy = (y2 - y1) / 7;
+  int n = 0;
+  for (int r = 0; r < 7; r++)
+    for (int c = 0; c < 5; c++)
+      if (clockDot(v, r, c)) px[n] = x1 + (c + 0.5f) * gx, py[n] = y1 + (r + 0.5f) * gy, n++;
+  return n;
+}
+
+lv_area_t DigitRow::colonArea() const { return {xs[2], top - 4, xs[2] + colonW, top + inkH + 4}; }
+
+void DigitRow::draw(lv_layer_t* L, int ox, int oy, int i, char ch, lv_color_t col) const {
+  drawGlyph(L, f, ch, ox + xs[i] + (int)lroundf(offX[i]), oy + top - inkTop + (int)lroundf(offY[i]) + (i == 2 ? colonDy : 0),
+            i == 2 ? colonW : cell, col);
 }
 
 static float clampf(float v, float a, float b) { return v < a ? a : v > b ? b : v; }
@@ -98,17 +212,14 @@ static void ringPoint(const ClockFx& c, float d, float& x, float& y) {
   }
 }
 
-// Box of the ring between d0 and d1 within one piece, object coordinates, grown by g.
-static lv_area_t segBox(const ClockFx& c, const RingSeg& s, float d0, float d1, int g) {
+// Box of the ring's centre line between d0 and d1 within one piece (a quarter
+// circle never turns back), object coordinates, grown by g.
+static lv_area_t segBox(const ClockFx& c, float d0, float d1, int g) {
   float xa, ya, xb, yb;
-  if (s.arc) {
-    xa = s.x0 - c.rr, xb = s.x0 + c.rr, ya = s.y0 - c.rr, yb = s.y0 + c.rr;
-  } else {
-    ringPoint(c, d0, xa, ya);
-    ringPoint(c, d1, xb, yb);
-    if (xa > xb) std::swap(xa, xb);
-    if (ya > yb) std::swap(ya, yb);
-  }
+  ringPoint(c, d0, xa, ya);
+  ringPoint(c, d1, xb, yb);
+  if (xa > xb) std::swap(xa, xb);
+  if (ya > yb) std::swap(ya, yb);
   return {(int32_t)floorf(xa) - g, (int32_t)floorf(ya) - g, (int32_t)ceilf(xb) + g, (int32_t)ceilf(yb) + g};
 }
 
@@ -125,7 +236,7 @@ static void ringInvalidate(const ClockFx& c, float d0, float d1) {
   for (const RingSeg& s : c.seg) {
     const float a = LV_MAX(d0, s.at), b = LV_MIN(d1, s.at + s.len);
     if (b < a || s.len <= 0) continue;
-    lv_area_t r = segBox(c, s, a, b, g);
+    lv_area_t r = segBox(c, a, b, g);
     lv_area_move(&r, o.x1, o.y1);
     lv_obj_invalidate_area(c.obj, &r);
   }
@@ -134,11 +245,6 @@ static void ringInvalidate(const ClockFx& c, float d0, float d1) {
 static bool intersect(lv_area_t* out, const lv_area_t* a, const lv_area_t* b) {
   *out = {LV_MAX(a->x1, b->x1), LV_MAX(a->y1, b->y1), LV_MIN(a->x2, b->x2), LV_MIN(a->y2, b->y2)};
   return out->x1 <= out->x2 && out->y1 <= out->y2;
-}
-
-static bool hits(const lv_area_t& a, const lv_area_t& clip) {
-  lv_area_t x;
-  return intersect(&x, &a, &clip);
 }
 
 // Pixels of a straight side's band between a and b (screen), false when empty.
@@ -174,16 +280,11 @@ static void ringStroke(lv_layer_t* L, const ClockFx& c, int ox, int oy, float d0
     if (b <= a) continue;
     if (!s.arc) {
       lv_area_t r;
-      if (!sideRect(c, s, a, b, w, os, ox, oy, r) || !hits(r, clip)) continue;
-      lv_draw_rect_dsc_t d;
-      lv_draw_rect_dsc_init(&d);
-      d.bg_color = col;
-      d.bg_opa = opa;
-      lv_draw_rect(L, &d, &r);
+      if (sideRect(c, s, a, b, w, os, ox, oy, r)) fillRect(L, r, col, 0, opa);
     } else {
-      lv_area_t box = segBox(c, s, a, b, w);
+      lv_area_t box = segBox(c, a, b, w + 1);
       lv_area_move(&box, ox, oy);
-      if (!hits(box, clip)) continue;
+      if (!areaHits(box, clip)) continue;
       const int s0 = (int)lroundf(s.a0 + 90 * (a - s.at) / s.len), s1 = (int)lroundf(s.a0 + 90 * (b - s.at) / s.len);
       if (s1 <= s0) continue;
       lv_draw_arc_dsc_t d;
@@ -202,16 +303,8 @@ static void ringStroke(lv_layer_t* L, const ClockFx& c, int ox, int oy, float d0
 }
 
 static void dot(lv_layer_t* L, float x, float y, float r, lv_color_t col, lv_opa_t opa) {
-  const int ri = LV_MAX(1, (int)lroundf(r));
-  const lv_area_t a = {(int32_t)lroundf(x) - ri, (int32_t)lroundf(y) - ri, (int32_t)lroundf(x) + ri,
-                       (int32_t)lroundf(y) + ri};
-  if (!hits(a, L->_clip_area)) return;
-  lv_draw_rect_dsc_t d;
-  lv_draw_rect_dsc_init(&d);
-  d.bg_color = col;
-  d.bg_opa = opa;
-  d.radius = LV_RADIUS_CIRCLE;
-  lv_draw_rect(L, &d, &a);
+  const int ri = LV_MAX(1, (int)lroundf(r)), cx = (int)lroundf(x), cy = (int)lroundf(y);
+  fillRect(L, {cx - ri, cy - ri, cx + ri, cy + ri}, col, LV_RADIUS_CIRCLE, opa);
 }
 
 // Comet tail from d0 (faint) to d1 (full): a gradient on the sides, steps on the arcs.
@@ -236,7 +329,7 @@ static void ringTail(lv_layer_t* L, const ClockFx& c, int ox, int oy, float d0, 
       continue;
     }
     lv_area_t r;
-    if (!sideRect(c, s, a, b, c.lw, c.ro, ox, oy, r) || !hits(r, L->_clip_area)) continue;
+    if (!sideRect(c, s, a, b, c.lw, c.ro, ox, oy, r) || !areaHits(r, L->_clip_area)) continue;
     // The ring runs right on top and down on the right: there the far end is the bright one.
     const bool fwd = s.side == 0 || s.side == 1;
     lv_draw_rect_dsc_t d;
@@ -257,13 +350,10 @@ static void drawRing(lv_layer_t* L, const ClockFx& c, int ox, int oy, lv_color_t
   const float tail = LV_MIN(head, c.len * TAIL_PART);
   ringStroke(L, c, ox, oy, 0, head - tail, c.lw, acc, LV_OPA_40);
   ringTail(L, c, ox, oy, head - tail, head, acc);
-  // A mark every 5 s, lit once passed.
+  // The marks light up once passed.
   for (int k = 0; k < 12; k++) {
-    const float d = c.len * k / 12;
-    float x, y;
-    ringPoint(c, d, x, y);
-    const bool lit = d <= head;
-    dot(L, ox + x, oy + y, c.lw * (k % 3 ? 0.6f : 0.95f), lit ? acc : text, lit ? LV_OPA_COVER : LV_OPA_50);
+    const bool lit = c.len * k / 12 <= head;
+    dot(L, ox + c.mark[k][0], oy + c.mark[k][1], c.lw * (k % 3 ? 0.6f : 0.95f), lit ? acc : text, lit ? LV_OPA_COVER : LV_OPA_50);
   }
   if (c.el < FLASH_MS) {
     const float e = 1 - (float)c.el / FLASH_MS;
@@ -280,24 +370,11 @@ static void drawRing(lv_layer_t* L, const ClockFx& c, int ox, int oy, lv_color_t
 // One character in a cell, clipped to the cell's slot.
 static void glyph(lv_layer_t* L, const lv_font_t* f, char ch, int x, int y, int w, const lv_area_t& slot,
                   lv_color_t col, lv_opa_t opa) {
-  if (ch == ' ' || opa < 2) return;
   lv_area_t clip;
   if (!intersect(&clip, &slot, &L->_clip_area)) return;
-  const lv_area_t a = {x, y, x + w - 1, y + lineH(f) - 1};
-  lv_area_t vis;
-  if (!intersect(&vis, &a, &clip)) return;
-  const char s[2] = {ch, 0};
-  lv_draw_label_dsc_t d;
-  lv_draw_label_dsc_init(&d);
-  d.text = s;
-  d.text_local = 1;
-  d.font = f;
-  d.color = col;
-  d.opa = opa;
-  d.align = LV_TEXT_ALIGN_CENTER;
   const lv_area_t keep = L->_clip_area;
   L->_clip_area = clip;
-  lv_draw_label(L, &d, &a);
+  drawGlyph(L, f, ch, x, y, w, col, opa);
   L->_clip_area = keep;
 }
 
@@ -309,7 +386,6 @@ static void drawTime(lv_layer_t* L, const ClockFx& c, int ox, int oy, lv_color_t
   const bool changing = c.el < AT_REST && c.from[0];
   for (int i = 4; i >= 0; i--)
     if (i != 2 && changing && c.shown[i] != c.from[i]) rank[i] = n++;
-  const bool roll = c.style == CLOCK_ROLL;
   const int m = c.inkH / 6 + 2;
   const int sy1 = oy + c.ty + c.inkTop - m, sy2 = oy + c.ty + c.inkTop + c.inkH + m;
   int x = ox + c.tx;
@@ -321,7 +397,7 @@ static void drawTime(lv_layer_t* L, const ClockFx& c, int ox, int oy, lv_color_t
       glyph(L, c.f, ':', x, y + c.colonDy, cw, slot, col, c.colonLit ? LV_OPA_COVER : LV_OPA_TRANSP);
     } else if (rank[i] < 0) {
       glyph(L, c.f, c.shown[i], x, y, cw, slot, col, LV_OPA_COVER);
-    } else if (roll) {
+    } else if (!c.orbit) {
       const float p = clampf(((float)c.el - rank[i] * (float)ROLL_STAGGER_MS) / ROLL_MS, 0, 1);
       const float travel = c.inkH * 1.25f, off = easeOutBack(p) * travel;
       glyph(L, c.f, c.from[i], x, y - (int)lroundf(off), cw, slot, col, fade(off, travel * 0.75f));
@@ -342,7 +418,7 @@ static void drawTime(lv_layer_t* L, const ClockFx& c, int ox, int oy, lv_color_t
     d.color = col;
     d.opa = LV_OPA_70;
     const lv_area_t a = {ox + c.apX, oy + c.apY, ox + c.apX + textW(c.ap, c.uf), oy + c.apY + lineH(c.uf) - 1};
-    if (hits(a, L->_clip_area)) lv_draw_label(L, &d, &a);
+    if (areaHits(a, L->_clip_area)) lv_draw_label(L, &d, &a);
   }
 }
 
@@ -354,19 +430,16 @@ static void clockDraw(lv_event_t* e) {
   lv_area_t a;
   lv_obj_get_coords(o, &a);
   const lv_color_t text = lv_obj_get_style_text_color(o, LV_PART_MAIN);
-  if (c->style == CLOCK_BLOCKS) {
-    blocksDraw(c->blk, L, a.x1, a.y1, c->hasColor ? lv_color_hex(c->color) : text);
+  const lv_color_t ink = c->hasColor ? lv_color_hex(c->color) : text;
+  if (c->sceneFits) {
+    c->scene->draw(L, a.x1, a.y1, ink);
     return;
   }
-  if (c->style == CLOCK_BREAKOUT || c->style == CLOCK_ROCKS) {
-    arcadeDraw(c->arc, L, a.x1, a.y1, c->hasColor ? lv_color_hex(c->color) : text, s_animMs);
-    return;
-  }
-  if (c->style == CLOCK_ORBIT && c->len > 0) drawRing(L, *c, a.x1, a.y1, text);
-  drawTime(L, *c, a.x1, a.y1, c->hasColor ? lv_color_hex(c->color) : text);
+  if (c->len > 0) drawRing(L, *c, a.x1, a.y1, text);
+  drawTime(L, *c, a.x1, a.y1, ink);
   if (c->dateY >= 0) {
     const lv_area_t d = {a.x1, a.y1 + c->dateY, a.x2, a.y1 + c->dateY + lineH(c->df) - 1};
-    if (!hits(d, L->_clip_area)) return;
+    if (!areaHits(d, L->_clip_area)) return;
     lv_draw_label_dsc_t ld;
     lv_draw_label_dsc_init(&ld);
     ld.text = c->date;
@@ -389,10 +462,13 @@ void makeClockFx(TileRt& r, lv_obj_t* t) {
   lv_obj_remove_style_all(c->obj);
   lv_obj_remove_flag(c->obj, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
   lv_obj_remove_flag(t, LV_OBJ_FLAG_SCROLLABLE);
-  c->style = c->want = r.def->clockStyle;
-  if (c->want == CLOCK_BLOCKS && !(c->blk = blocksNew())) c->style = c->want = CLOCK_ROLL;
-  if ((c->want == CLOCK_BREAKOUT || c->want == CLOCK_ROCKS) && !(c->arc = arcadeNew(c->want)))
-    c->style = c->want = CLOCK_ROLL;
+  c->orbit = r.def->clockStyle == CLOCK_ORBIT;
+  switch (r.def->clockStyle) {  // Roll when there is no memory for it
+    case CLOCK_BLOCKS: c->scene = blocksScene(); break;
+    case CLOCK_BREAKOUT: c->scene = breakoutScene(); break;
+    case CLOCK_ROCKS: c->scene = rocksScene(); break;
+    default: break;
+  }
   c->tick = r.def->clockTick;
   c->hasColor = r.def->hasColor;
   c->color = r.def->color;
@@ -434,26 +510,21 @@ static void buildRing(ClockFx& c, int rad) {
   }
   c.len = at;
   c.head = -1;
+  for (int k = 0; k < 12; k++) ringPoint(c, c.len * k / 12, c.mark[k][0], c.mark[k][1]);
 }
 
 void fitClockFx(TileRt& r, int cw, int ch) {
   ClockFx* c = r.cfx;
   if (!c) return;
-  static const lv_font_t* const kTime[] = {&deck_font_clock_72, &deck_font_clock_56, &lv_font_montserrat_40,
-                                           &deck_font_28, &deck_font_20, &deck_font_14};
-  constexpr int N = sizeof(kTime) / sizeof(kTime[0]);
   const int pad = lv_obj_get_style_pad_left(r.obj, LV_PART_MAIN);
   c->w = (int16_t)(cw + 2 * pad);
   c->h = (int16_t)(ch + 2 * pad);
   lv_obj_set_pos(c->obj, -pad, -pad);
   lv_obj_set_size(c->obj, c->w, c->h);
-  c->style = c->want;
-  if (c->style == CLOCK_BLOCKS && !blocksFit(c->blk, c->w, c->h, pad)) c->style = CLOCK_ROLL;
-  if ((c->style == CLOCK_BREAKOUT || c->style == CLOCK_ROCKS) && !arcadeFit(c->arc, c->w, c->h, pad))
-    c->style = CLOCK_ROLL;
+  c->sceneFits = c->scene && c->scene->fit(c->w, c->h, pad);
   int aw = cw, ah = ch;
   c->len = 0;
-  if (c->style == CLOCK_ORBIT) {
+  if (c->orbit) {
     buildRing(*c, lv_obj_get_style_radius(r.obj, LV_PART_MAIN));
     const int keep = c->lw * 4 + 5;  // text stays clear of the ring and its head
     aw = LV_MIN(aw, c->w - 2 * keep);
@@ -464,32 +535,27 @@ void fitClockFx(TileRt& r, int cw, int ch) {
   int dTop, dH;
   dateInk(df, dTop, dH);
   auto unitFont = [](const lv_font_t* f) { return lineH(f) >= 48 ? &deck_font_20 : &deck_font_14; };
-  auto cellW = [](const lv_font_t* f) {
-    int w = 0;
-    for (char d = '0'; d <= '9'; d++) w = LV_MAX(w, (int)lv_font_get_glyph_width(f, d, 0));
-    return w;
-  };
   auto width = [&](const lv_font_t* f) {
-    return 4 * cellW(f) + (int)lv_font_get_glyph_width(f, ':', 0) + (ampm ? 4 + textW("PM", unitFont(f)) : 0);
+    return 4 * clockCellW(f) + (int)lv_font_get_glyph_width(f, ':', 0) + (ampm ? 4 + textW("PM", unitFont(f)) : 0);
   };
   int best = -1, dated = -1;
-  for (int i = 0; i < N; i++) {
+  for (int i = 0; i < CLOCK_FONTS; i++) {
     int top, h;
-    digitInk(kTime[i], top, h);
-    if (width(kTime[i]) > aw || h > ah) continue;
+    digitInk(CLOCK_FONT[i], top, h);
+    if (width(CLOCK_FONT[i]) > aw || h > ah) continue;
     if (best < 0) best = i;
     if (h + LV_MAX(4, h / 5) + dH <= ah) {
       dated = i;
       break;
     }
   }
-  if (best < 0) best = N - 1;
+  if (best < 0) best = CLOCK_FONTS - 1;
   const bool date = dated >= 0 && (dated <= best + 1 || r.def->clockDate);
-  const lv_font_t* f = kTime[date ? dated : best];
+  const lv_font_t* f = CLOCK_FONT[date ? dated : best];
   c->f = f;
   c->df = df;
   c->uf = unitFont(f);
-  c->cell = (int16_t)cellW(f);
+  c->cell = (int16_t)clockCellW(f);
   c->colonW = (int16_t)lv_font_get_glyph_width(f, ':', 0);
   c->tw = (int16_t)width(f);
   int top, h;
@@ -502,11 +568,7 @@ void fitClockFx(TileRt& r, int cw, int ch) {
   c->ty = (int16_t)(bt - top);
   c->tx = (int16_t)((c->w - c->tw) / 2);
   c->dateY = date ? (int16_t)(bt + h + gap - dTop) : -1;
-  // Fonts put the colon at x-height middle: centre it on the digits instead.
-  lv_font_glyph_dsc_t dg = {}, dc = {};
-  c->colonDy = 0;
-  if (lv_font_get_glyph_dsc(f, &dg, '0', 0) && lv_font_get_glyph_dsc(f, &dc, ':', 0))
-    c->colonDy = (int16_t)((dc.ofs_y * 2 + dc.box_h - dg.ofs_y * 2 - dg.box_h) / 2);
+  c->colonDy = (int16_t)clockColonDy(f);
   c->apX = (int16_t)(c->tx + 4 * c->cell + c->colonW + 4);
   c->apY = (int16_t)(c->ty + lineH(f) - lineH(c->uf) - (lineH(f) - lineH(c->uf)) / 5);
   const int m = h / 6 + 2;
@@ -519,13 +581,13 @@ void applyClockFx(TileRt& r, const char* h, const char* m, const char* ap, const
   char t[6];
   snprintf(t, sizeof(t), "%2s:%s", h, m);
   if (!strcmp(t, c->shown) && !strcmp(ap, c->ap) && !strcmp(date, c->date)) return;
-  if (c->style == CLOCK_BLOCKS || c->style == CLOCK_BREAKOUT || c->style == CLOCK_ROCKS) {  // kept for a fall back to Roll; these run on their own
+  if (c->sceneFits) {  // runs on its own; kept for a fall back to Roll
     memcpy(c->shown, t, sizeof(c->shown));
     snprintf(c->ap, sizeof(c->ap), "%s", ap);
     snprintf(c->date, sizeof(c->date), "%s", date);
     return;
   }
-  const bool live = c->shown[0] && strcmp(t, c->shown) && c->f && r.page == sh.active && fxShowing();
+  const bool live = c->shown[0] && strcmp(t, c->shown) && c->f && r.page == sh.active && tilesShowing();
   memcpy(c->from, c->shown, sizeof(c->from));
   memcpy(c->shown, t, sizeof(c->shown));
   snprintf(c->ap, sizeof(c->ap), "%s", ap);
@@ -538,7 +600,7 @@ void applyClockFx(TileRt& r, const char* h, const char* m, const char* ap, const
 }
 
 // "HH:MM" at epoch t (12 h: " H:MM"), blank before the time is synced.
-static void blocksTime(time_t t, char* out) {
+static void clockText(time_t t, char* out) {
   if (!t) {
     memcpy(out, "  :  ", 6);
     return;
@@ -549,14 +611,28 @@ static void blocksTime(time_t t, char* out) {
   snprintf(out, 6, netSettings.use24h ? "%02d:%02d" : "%2d:%02d", h, lt.tm_min);
 }
 
+// The texts once a second: the time zone rules are slow.
+static const ClockNow& clockNow(const timeval& tv, bool synced) {
+  static ClockNow n = {};
+  static time_t at = -1;
+  if (at != tv.tv_sec) {
+    at = tv.tv_sec;
+    clockText(synced ? at : 0, n.cur);
+    clockText(synced ? at + 60 : 0, n.next);
+    n.sec = synced ? (int)(at % 60) : 0;
+    n.minute = (int32_t)(at / 60);
+  }
+  return n;
+}
+
 static uint32_t changeMs(const ClockFx& c) {
-  return c.style == CLOCK_ROLL ? ROLL_MS + 3 * ROLL_STAGGER_MS : LV_MAX(SLIDE_MS, FLASH_MS);
+  return c.orbit ? LV_MAX(SLIDE_MS, FLASH_MS) : ROLL_MS + 3 * ROLL_STAGGER_MS;
 }
 
 void clockFxTick() {
   if (!(advSettings.clock60 ? s_animFastDue : s_animDue)) return;
   const uint32_t now = s_animMs;
-  const bool showing = fxShowing();
+  const bool showing = tilesShowing();
   struct timeval tv;
   gettimeofday(&tv, nullptr);
   const bool synced = tv.tv_sec >= 1609459200;
@@ -566,27 +642,12 @@ void clockFxTick() {
     ClockFx* c = r.cfx;
     if (!c || r.off || !c->f) continue;
     const bool live = showing && r.page == sh.active;
-    if (c->style == CLOCK_BLOCKS) {
-      char cur[6], next[6];
-      blocksTime(synced ? tv.tv_sec : 0, cur);
-      blocksTime(synced ? tv.tv_sec + 60 : 0, next);
-      struct tm lt;
-      localtime_r(&tv.tv_sec, &lt);
-      if (blocksTick(c->blk, c->obj, now, live, lit || !live, cur, next, synced ? lt.tm_sec : 0,
-                     (int32_t)(tv.tv_sec / 60))) {
-        if (live) painted = true;
-        else markPageStale(r.page);
-      }
-      continue;
-    }
-    if (c->style == CLOCK_BREAKOUT || c->style == CLOCK_ROCKS) {
-      char cur[6], next[6];
-      blocksTime(synced ? tv.tv_sec : 0, cur);
-      blocksTime(synced ? tv.tv_sec + 60 : 0, next);
-      struct tm lt;
-      localtime_r(&tv.tv_sec, &lt);
-      if (arcadeTick(c->arc, c->obj, now, live, lit || !live, cur, next, synced ? lt.tm_sec : 0,
-                     (int32_t)(tv.tv_sec / 60))) {
+    if (c->sceneFits) {
+      ClockNow n = clockNow(tv, synced);
+      n.ms = now;
+      n.live = live;
+      n.colon = lit || !live;
+      if (c->scene->tick(c->obj, n)) {
         if (live) painted = true;
         else markPageStale(r.page);
       }
@@ -626,10 +687,10 @@ void clockFxTick() {
       lv_area_t a = c->timeArea;
       lv_area_move(&a, o.x1, o.y1);
       lv_obj_invalidate_area(c->obj, &a);
-      if (c->style == CLOCK_ORBIT) ringInvalidate(*c, 0, c->len);
+      if (c->orbit) ringInvalidate(*c, 0, c->len);
       painted = true;
     }
-    if (c->style == CLOCK_ORBIT && synced && c->len > 0) {
+    if (synced && c->len > 0) {
       float sec = (float)(tv.tv_sec % 60) + tv.tv_usec / 1e6f;
       if (c->tick) sec = floorf(sec) + easeOutCubic(clampf((sec - floorf(sec)) / 0.3f, 0, 1));
       const int32_t head = (int32_t)(sec / 60 * c->len);

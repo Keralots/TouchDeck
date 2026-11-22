@@ -1,5 +1,6 @@
 // Deck UI: the weather tile. One custom-drawn object lays itself out for the
 // room it gets; its icons are small images the deck rasterizes itself.
+#include "deck_ui_a8.h"
 #include "deck_ui_int.h"
 #include "deck_weather.h"
 
@@ -44,54 +45,7 @@ void wxFree(WxRt* w) {
 }
 
 // --- Icons ---------------------------------------------------------------------
-// LVGL places its shapes on whole pixels, so a slow drift steps visibly. These
-// are drawn here with the edge coverage worked out per pixel instead, into one
-// A8 image per colour: a byte a pixel keeps the PSRAM traffic of a frame small.
-
-// The S3's FPU multiplies but has no square root, and newlib's sqrtf, floorf
-// and ceilf are slow software: these stand in for them in the pixel loops.
-static inline float fsqrt(float x) {
-  if (x <= 0) return 0;
-  union {
-    float f;
-    uint32_t i;
-  } u = {x};
-  u.i = 0x5f3759df - (u.i >> 1);
-  float y = u.f;
-  y = y * (1.5f - 0.5f * x * y * y);
-  y = y * (1.5f - 0.5f * x * y * y);
-  return x * y;
-}
-static inline int ifloor(float v) { return (int)(v + 4096.0f) - 4096; }
-static inline int iceil(float v) { return 4096 - (int)(4096.0f - v); }
-
-struct Cv {
-  uint8_t* px;
-  int w, h, stride;
-  int x1, y1, x2, y2;  // what was drawn on, for the next clear
-};
-
-static inline void put(Cv& c, int x, int y, float cover, int opa) {
-  const int a = (int)(cover * (float)opa);
-  uint8_t& p = c.px[y * c.stride + x];
-  if (a > p) p = (uint8_t)a;
-}
-
-static void touch(Cv& c, int x1, int y1, int x2, int y2) {
-  c.x1 = std::min(c.x1, x1);
-  c.y1 = std::min(c.y1, y1);
-  c.x2 = std::max(c.x2, x2);
-  c.y2 = std::max(c.y2, y2);
-}
-
-// Coverage from the squared distance to a shape r thick: the root is taken on
-// the edge only (the S3 has no hardware square root).
-static inline float edge(float d2, float r) {
-  const float in = r - 0.5f, out = r + 0.5f;
-  if (d2 >= out * out) return 0;
-  if (in > 0 && d2 <= in * in) return 1;
-  return r - fsqrt(d2) + 0.5f;
-}
+// Drawn into one A8 image per colour: a byte a pixel keeps the PSRAM traffic of a frame small.
 
 // A horizontal bar with round ends from ax to bx (a disc when they are equal),
 // r thick on each side. Row by row: the inside of a row is one run of whole
@@ -130,23 +84,6 @@ static void stadium(Cv& c, float ax, float bx, float cy, float r, int opa = 255)
 }
 
 static void disc(Cv& c, float cx, float cy, float r, int opa = 255) { stadium(c, cx, cx, cy, r, opa); }
-
-// A line with round ends at any angle, r thick on each side. Small shapes only.
-static void capsule(Cv& c, float ax, float ay, float bx, float by, float r, int opa = 255) {
-  const int x1 = std::max(0, ifloor(std::min(ax, bx) - r - 1)), x2 = std::min(c.w - 1, iceil(std::max(ax, bx) + r + 1));
-  const int y1 = std::max(0, ifloor(std::min(ay, by) - r - 1)), y2 = std::min(c.h - 1, iceil(std::max(ay, by) + r + 1));
-  if (x2 < x1 || y2 < y1) return;
-  touch(c, x1, y1, x2, y2);
-  const float vx = bx - ax, vy = by - ay, len2 = vx * vx + vy * vy, inv = len2 > 0 ? 1.0f / len2 : 0;
-  for (int y = y1; y <= y2; y++)
-    for (int x = x1; x <= x2; x++) {
-      const float px = (float)x + 0.5f - ax, py = (float)y + 0.5f - ay;
-      const float u = constrain((px * vx + py * vy) * inv, 0.0f, 1.0f);
-      const float dx = px - u * vx, dy = py - u * vy;
-      const float cover = edge(dx * dx + dy * dy, r);
-      if (cover > 0) put(c, x, y, std::min(cover, 1.0f), opa);
-    }
-}
 
 static float wave(uint32_t t, uint32_t period, float phase = 0) {
   return sinf(((float)(t % period) / (float)period + phase) * 2.0f * (float)M_PI);
@@ -729,15 +666,11 @@ void wxTap(lv_event_t* e) {
   markPageStale(r.page);
 }
 
-static bool wxShowing() {
-  return !manualDisplayOff() && currentBacklightLevel() && !s_qp.open && !s_modalCard && !s_ed.root;
-}
-
 void wxTick() {
   if (!(advSettings.weather60 ? s_animFastDue : s_animDue)) return;
   const uint32_t now = s_animMs;
   const uint32_t serial = weatherSerial();
-  const bool showing = wxShowing();
+  const bool showing = tilesShowing();
   bool painted = false;
   for (TileRt& r : s_tiles) {
     WxRt* w = r.wx;
