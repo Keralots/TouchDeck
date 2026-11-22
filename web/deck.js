@@ -32,7 +32,7 @@
 .dk-rs{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 55%,var(--mute) 55%);opacity:.7}
 .dk-gt.msel{outline:2px dashed var(--accent);outline-offset:1px;background:var(--accent-soft)}
 .dk-frame{border-radius:10px;outline:2px solid var(--accent);outline-offset:3px;pointer-events:none}
-.dk-div{z-index:3;pointer-events:none;opacity:.6}
+.dk-div{z-index:3;pointer-events:none}
 .dk-band{z-index:4;border:1px dashed var(--accent);border-radius:8px;background:var(--accent-soft);pointer-events:none}
 .dk-gbar{grid-template-columns:minmax(0,1fr) auto;margin-bottom:8px}
 .dk-ghost{z-index:4;border:2px solid var(--ok);border-radius:8px;background:rgba(92,201,167,.15);pointer-events:none}.dk-ghost.bad{border-color:var(--err);background:rgba(229,83,75,.15)}
@@ -2385,7 +2385,9 @@
   function divLines(f, b, rs) {
     if (!f.dividers) return "";
     const full = f.dividers === "full",
-      bg = f.dividerColor || "var(--mute)";
+      bg = f.dividerColor || "var(--mute)",
+      w = f.dividerWidth || 1,
+      mg = "-" + (3 + w / 2) + "px";
     let h = "";
     rs.forEach((a) =>
       rs.forEach((c) => {
@@ -2401,8 +2403,8 @@
           e2 = full && s2 < hi ? "-3px" : "0",
           area = side ? s1 + 1 + "/" + (c.x + 1) + "/" + (s2 + 1) + "/" + (c.x + 2) : c.y + 1 + "/" + (s1 + 1) + "/" + (c.y + 2) + "/" + (s2 + 1),
           st = side
-            ? "justify-self:start;width:1px;margin-left:-3.5px;" + (full ? "margin-top:" + e1 + ";margin-bottom:" + e2 : "align-self:center;height:60%")
-            : "align-self:start;height:1px;margin-top:-3.5px;" + (full ? "margin-left:" + e1 + ";margin-right:" + e2 : "justify-self:center;width:60%");
+            ? "justify-self:start;width:" + w + "px;margin-left:" + mg + ";" + (full ? "margin-top:" + e1 + ";margin-bottom:" + e2 : "align-self:center;height:60%")
+            : "align-self:start;height:" + w + "px;margin-top:" + mg + ";" + (full ? "margin-left:" + e1 + ";margin-right:" + e2 : "justify-self:center;width:60%");
         h += '<div class="dk-div" style="grid-area:' + area + ";background:" + bg + ";" + st + '"></div>';
       }),
     );
@@ -2879,6 +2881,13 @@
             .join("") +
           "</select></div>" +
           (gframe.dividers
+            ? '<div class="field">' +
+              lbl("Thickness") +
+              '<select id="dkGDivW">' +
+              [1, 2, 3].map((n) => opt(String(n), n + " px", (gframe.dividerWidth || 1) === n)).join("") +
+              "</select></div>"
+            : "") +
+          (gframe.dividers
             ? colRow(gframe, "f", "dividerColor", "Divider colour", themeText(), "Auto: the theme text colour, faint.", {
                 sw: [],
               })
@@ -3343,12 +3352,20 @@
           setDirty(true);
           renderPage();
         };
+      if ($("dkGDivW"))
+        $("dkGDivW").onchange = (e) => {
+          if (+e.target.value > 1) gframe.dividerWidth = +e.target.value;
+          else delete gframe.dividerWidth;
+          setDirty(true);
+          renderPage();
+        };
       if ($("dkGDiv"))
         $("dkGDiv").onchange = (e) => {
           if (e.target.value) gframe.dividers = e.target.value;
           else {
             delete gframe.dividers;
             delete gframe.dividerColor;
+            delete gframe.dividerWidth;
           }
           setDirty(true);
           renderPage();

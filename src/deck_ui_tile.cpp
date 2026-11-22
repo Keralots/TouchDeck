@@ -254,41 +254,61 @@ static bool cellsTouch(const Cell& a, const Cell& b) {
 
 // Divider rects (x, y, w, h in the frame's content coords) in the gaps where two
 // of its tiles touch: "short" keeps a fifth of the edge clear at each end, "full"
-// reaches the frame's edges and crosses the inner gaps so the lines meet.
+// reaches the frame's edges and meets the crossing lines. No two rects overlap:
+// a faint line would come out brighter where it is drawn twice.
 static std::vector<int32_t> dividerRects(const FrameRt& f, const std::vector<lv_obj_t*>& objs,
                                          const std::vector<const Cell*>& cs, int32_t gapRow, int32_t gapCol) {
+  struct Seg { bool v; int32_t at, s1, s2; };  // v: vertical; at: first px across; s1..s2 along
   std::vector<int32_t> out;
   if (f.def->dividers == FRAME_DIV_OFF) return out;
   const bool full = f.def->dividers == FRAME_DIV_FULL;
+  const int32_t t = f.def->divWidth;
+  auto line = [t](int32_t end, int32_t start) { return (end + start) / 2 - (t - 1) / 2; };  // in the gap end..start
   lv_area_t fa, fc;
   lv_obj_get_coords(f.obj, &fa);
   lv_obj_get_content_coords(f.obj, &fc);
+  std::vector<Seg> segs;
   for (size_t i = 0; i < cs.size(); i++)
     for (size_t j = 0; j < cs.size(); j++) {
       const Cell &a = *cs[i], &b = *cs[j];
-      const bool side = a.x + a.w == b.x && a.y < b.y + b.h && b.y < a.y + a.h;
-      const bool below = a.y + a.h == b.y && a.x < b.x + b.w && b.x < a.x + a.w;
-      if (!side && !below) continue;
+      const bool v = a.x + a.w == b.x && a.y < b.y + b.h && b.y < a.y + a.h;
+      if (!v && !(a.y + a.h == b.y && a.x < b.x + b.w && b.x < a.x + a.w)) continue;
       lv_area_t ca, cb;
       lv_obj_get_coords(objs[i], &ca);
       lv_obj_get_coords(objs[j], &cb);
-      int32_t s1, s2, at, lo, hi, ext;  // the shared span, the gap's middle, the frame's ends
-      if (side) {
-        s1 = max(ca.y1, cb.y1), s2 = min(ca.y2, cb.y2), at = (ca.x2 + cb.x1) / 2, lo = fa.y1, hi = fa.y2, ext = (gapRow + 1) / 2;
-      } else {
-        s1 = max(ca.x1, cb.x1), s2 = min(ca.x2, cb.x2), at = (ca.y2 + cb.y1) / 2, lo = fa.x1, hi = fa.x2, ext = (gapCol + 1) / 2;
-      }
+      Seg s = v ? Seg{true, line(ca.x2, cb.x1), max(ca.y1, cb.y1), min(ca.y2, cb.y2)}
+                : Seg{false, line(ca.y2, cb.y1), max(ca.x1, cb.x1), min(ca.x2, cb.x2)};
+      const int32_t lo = v ? fa.y1 : fa.x1, hi = v ? fa.y2 : fa.x2, gap = v ? gapRow : gapCol;
       if (full) {
-        if (s1 > lo) s1 -= ext;
-        if (s2 < hi) s2 += ext;
+        if (s.s1 > lo) s.s1 = line(s.s1 - gap - 1, s.s1);
+        if (s.s2 < hi) s.s2 = line(s.s2, s.s2 + gap + 1) + t - 1;
       } else {
-        const int32_t in = (s2 - s1 + 1) / 5;
-        s1 += in, s2 -= in;
+        const int32_t in = (s.s2 - s.s1 + 1) / 5;
+        s.s1 += in, s.s2 -= in;
       }
-      if (s2 < s1) continue;
-      if (side) out.insert(out.end(), {at - fc.x1, s1 - fc.y1, 1, s2 - s1 + 1});
-      else out.insert(out.end(), {s1 - fc.x1, at - fc.y1, s2 - s1 + 1, 1});
+      if (s.s2 >= s.s1) segs.push_back(s);
     }
+  // Join lines that run on in one row, then cut the horizontal ones where a vertical one crosses.
+  std::sort(segs.begin(), segs.end(), [](const Seg& a, const Seg& b) {
+    return a.v != b.v ? a.v : a.at != b.at ? a.at < b.at : a.s1 < b.s1;
+  });
+  std::vector<Seg> m;
+  for (const Seg& s : segs)
+    if (!m.empty() && m.back().v == s.v && m.back().at == s.at && s.s1 <= m.back().s2 + 1) m.back().s2 = max(m.back().s2, s.s2);
+    else m.push_back(s);
+  for (const Seg& s : m) {
+    if (s.v) {
+      out.insert(out.end(), {s.at - fc.x1, s.s1 - fc.y1, t, s.s2 - s.s1 + 1});
+      continue;
+    }
+    int32_t x = s.s1;
+    for (const Seg& c : m) {  // verticals first in m, sorted by x
+      if (!c.v || c.at + t - 1 < x || c.at > s.s2 || c.s2 < s.at || c.s1 > s.at + t - 1) continue;
+      if (c.at > x) out.insert(out.end(), {x - fc.x1, s.at - fc.y1, c.at - x, t});
+      x = c.at + t;
+    }
+    if (x <= s.s2) out.insert(out.end(), {x - fc.x1, s.at - fc.y1, s.s2 - x + 1, t});
+  }
   return out;
 }
 

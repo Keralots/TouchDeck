@@ -364,6 +364,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       if (fv["opacity"].is<int>()) f.opacity = (int8_t)constrain(fv["opacity"].as<int>(), 0, 100);
       const String div = fv["dividers"] | "";
       f.dividers = div == "short" ? FRAME_DIV_SHORT : div == "full" ? FRAME_DIV_FULL : FRAME_DIV_OFF;
+      f.divWidth = (uint8_t)constrain(fv["dividerWidth"] | 1, 1, 3);
       f.hasDivColor = parseColor(fv["dividerColor"] | (const char*)nullptr, f.divColor);
       p.frames.push_back(f);
     }
