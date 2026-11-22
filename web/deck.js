@@ -32,6 +32,7 @@
 .dk-rs{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 55%,var(--mute) 55%);opacity:.7}
 .dk-gt.msel{outline:2px dashed var(--accent);outline-offset:1px;background:var(--accent-soft)}
 .dk-frame{border-radius:10px;outline:2px solid var(--accent);outline-offset:3px;pointer-events:none}
+.dk-div{z-index:3;pointer-events:none;opacity:.6}
 .dk-band{z-index:4;border:1px dashed var(--accent);border-radius:8px;background:var(--accent-soft);pointer-events:none}
 .dk-gbar{grid-template-columns:minmax(0,1fr) auto;margin-bottom:8px}
 .dk-ghost{z-index:4;border:2px solid var(--ok);border-radius:8px;background:rgba(92,201,167,.15);pointer-events:none}.dk-ghost.bad{border-color:var(--err);background:rgba(229,83,75,.15)}
@@ -642,6 +643,7 @@
     const th = (document.getElementById("theme") || {}).value;
     return th === "1" ? "#FFFFFF" : th === "2" ? "#0B0E13" : "#1A1D23";
   };
+  const themeText = () => ((document.getElementById("theme") || {}).value === "1" ? "#1D2129" : "#E6E8EC");
   function lookOff(t, i) {
     return (
       colRow(
@@ -2379,6 +2381,33 @@
     }
     return got.length === rs.length ? box : null;
   }
+  /* Preview of a frame's dividers in box b: a hairline in the gap where two of rs touch. Mirrors dividerRects() in deck_ui_tile.cpp. */
+  function divLines(f, b, rs) {
+    if (!f.dividers) return "";
+    const full = f.dividers === "full",
+      bg = f.dividerColor || "var(--mute)";
+    let h = "";
+    rs.forEach((a) =>
+      rs.forEach((c) => {
+        const side = a.x + a.w === c.x && a.y < c.y + c.h && c.y < a.y + a.h,
+          below = a.y + a.h === c.y && a.x < c.x + c.w && c.x < a.x + a.w;
+        if (!side && !below) return;
+        const s1 = side ? Math.max(a.y, c.y) : Math.max(a.x, c.x),
+          s2 = side ? Math.min(a.y + a.h, c.y + c.h) : Math.min(a.x + a.w, c.x + c.w),
+          lo = side ? b.y : b.x,
+          hi = side ? b.y + b.h : b.x + b.w,
+          /* -3px: half the preview grid's 6px gap */
+          e1 = full && s1 > lo ? "-3px" : "0",
+          e2 = full && s2 < hi ? "-3px" : "0",
+          area = side ? s1 + 1 + "/" + (c.x + 1) + "/" + (s2 + 1) + "/" + (c.x + 2) : c.y + 1 + "/" + (s1 + 1) + "/" + (c.y + 2) + "/" + (s2 + 1),
+          st = side
+            ? "justify-self:start;width:1px;margin-left:-3.5px;" + (full ? "margin-top:" + e1 + ";margin-bottom:" + e2 : "align-self:center;height:60%")
+            : "align-self:start;height:1px;margin-top:-3.5px;" + (full ? "margin-left:" + e1 + ";margin-right:" + e2 : "justify-self:center;width:60%");
+        h += '<div class="dk-div" style="grid-area:' + area + ";background:" + bg + ";" + st + '"></div>';
+      }),
+    );
+    return h;
+  }
   const frameMates = (p, t) => (t.frame ? p.tiles.filter((x) => x.frame === t.frame && !hidT(x)) : []);
   const isSel = (ts) => ts.length === msel.size && ts.every((x) => msel.has(x));
   /* Frames with fewer than two tiles go, and so do links to frames that are gone. */
@@ -2835,6 +2864,26 @@
         }),
       true,
     );
+    if (gframe)
+      h += grp(
+        "Dividers",
+        '<div class="field">' +
+          lbl("Dividers", "A thin line between the tiles in the frame where they touch.") +
+          '<select id="dkGDiv">' +
+          [
+            ["", "Off"],
+            ["short", "Short"],
+            ["full", "Full"],
+          ]
+            .map((o) => opt(o[0], o[1], (gframe.dividers || "") === o[0]))
+            .join("") +
+          "</select></div>" +
+          (gframe.dividers
+            ? colRow(gframe, "f", "dividerColor", "Divider colour", themeText(), "Auto: the theme text colour, faint.", {
+                sw: [],
+              })
+            : ""),
+      );
     h += grp(
       "Visibility",
       '<div class="field">' +
@@ -3030,7 +3079,8 @@
             ? '<div class="dk-frame" style="grid-area:' +
                 garea(b) +
                 (f.bgColor ? ";background:" + rgba(f.bgColor, 0.35) : "") +
-                '"></div>'
+                '"></div>' +
+                divLines(f, b, p.tiles.map((t, k) => k).filter((k) => p.tiles[k].frame === f.id && at[k]).map((k) => at[k]))
             : "";
         })
         .join("") +
@@ -3290,6 +3340,16 @@
             msel.forEach((t) => (t.frame = "f" + n));
           } else msel.forEach((t) => delete t.frame);
           pruneFrames(p);
+          setDirty(true);
+          renderPage();
+        };
+      if ($("dkGDiv"))
+        $("dkGDiv").onchange = (e) => {
+          if (e.target.value) gframe.dividers = e.target.value;
+          else {
+            delete gframe.dividers;
+            delete gframe.dividerColor;
+          }
           setDirty(true);
           renderPage();
         };

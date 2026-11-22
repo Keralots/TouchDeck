@@ -219,6 +219,7 @@ void makeFrames(Page& p) {
     lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_grid_cell(o, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 0, 1);
     lv_obj_set_style_radius(o, 16, 0);
+    lv_obj_set_style_pad_all(o, 0, 0);
     lv_obj_set_style_border_width(o, s_theme == THEME_DAYLIGHT ? 1 : 0, 0);
     lv_obj_set_style_border_color(o, lv_color_hex(C_TILE_LINE), 0);
     lv_obj_set_style_bg_color(o, lv_color_hex(frameBg(f)), 0);
@@ -251,9 +252,65 @@ static bool cellsTouch(const Cell& a, const Cell& b) {
   return (rows && (a.x + a.w == b.x || b.x + b.w == a.x)) || (cols && (a.y + a.h == b.y || b.y + b.h == a.y));
 }
 
+// Divider rects (x, y, w, h in the frame's content coords) in the gaps where two
+// of its tiles touch: "short" keeps a fifth of the edge clear at each end, "full"
+// reaches the frame's edges and crosses the inner gaps so the lines meet.
+static std::vector<int32_t> dividerRects(const FrameRt& f, const std::vector<lv_obj_t*>& objs,
+                                         const std::vector<const Cell*>& cs, int32_t gapRow, int32_t gapCol) {
+  std::vector<int32_t> out;
+  if (f.def->dividers == FRAME_DIV_OFF) return out;
+  const bool full = f.def->dividers == FRAME_DIV_FULL;
+  lv_area_t fa, fc;
+  lv_obj_get_coords(f.obj, &fa);
+  lv_obj_get_content_coords(f.obj, &fc);
+  for (size_t i = 0; i < cs.size(); i++)
+    for (size_t j = 0; j < cs.size(); j++) {
+      const Cell &a = *cs[i], &b = *cs[j];
+      const bool side = a.x + a.w == b.x && a.y < b.y + b.h && b.y < a.y + a.h;
+      const bool below = a.y + a.h == b.y && a.x < b.x + b.w && b.x < a.x + a.w;
+      if (!side && !below) continue;
+      lv_area_t ca, cb;
+      lv_obj_get_coords(objs[i], &ca);
+      lv_obj_get_coords(objs[j], &cb);
+      int32_t s1, s2, at, lo, hi, ext;  // the shared span, the gap's middle, the frame's ends
+      if (side) {
+        s1 = max(ca.y1, cb.y1), s2 = min(ca.y2, cb.y2), at = (ca.x2 + cb.x1) / 2, lo = fa.y1, hi = fa.y2, ext = (gapRow + 1) / 2;
+      } else {
+        s1 = max(ca.x1, cb.x1), s2 = min(ca.x2, cb.x2), at = (ca.y2 + cb.y1) / 2, lo = fa.x1, hi = fa.x2, ext = (gapCol + 1) / 2;
+      }
+      if (full) {
+        if (s1 > lo) s1 -= ext;
+        if (s2 < hi) s2 += ext;
+      } else {
+        const int32_t in = (s2 - s1 + 1) / 5;
+        s1 += in, s2 -= in;
+      }
+      if (s2 < s1) continue;
+      if (side) out.insert(out.end(), {at - fc.x1, s1 - fc.y1, 1, s2 - s1 + 1});
+      else out.insert(out.end(), {s1 - fc.x1, at - fc.y1, s2 - s1 + 1, 1});
+    }
+  return out;
+}
+
+static void drawDividers(FrameRt& f, std::vector<int32_t>&& rs) {
+  lv_obj_clean(f.obj);
+  const lv_color_t c = lv_color_hex(f.def->hasDivColor ? f.def->divColor : C_TEXT);
+  const lv_opa_t opa = f.def->hasDivColor ? LV_OPA_COVER : 38;  // auto: the text colour at ~15 %
+  for (size_t i = 0; i + 3 < rs.size(); i += 4) {
+    lv_obj_t* o = lv_obj_create(f.obj);
+    lv_obj_remove_style_all(o);
+    lv_obj_remove_flag(o, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_set_pos(o, rs[i], rs[i + 1]);
+    lv_obj_set_size(o, rs[i + 2], rs[i + 3]);
+    lv_obj_set_style_bg_color(o, c, 0);
+    lv_obj_set_style_bg_opa(o, opa, 0);
+  }
+  f.lines = std::move(rs);
+}
+
 // A frame shows around its placed tiles while there are two or more, they all
 // connect edge to edge and no other placed tile is in their box. changed grows
-// by the page area (page coords) where a frame came, went or moved.
+// by the page area (page coords) where a frame came, went, moved or redrew its dividers.
 bool placeFrames(Page& p, const std::vector<Cell>& cells, lv_area_t& changed) {
   const PageDef& def = *p.def;
   bool any = false;
@@ -295,9 +352,30 @@ bool placeFrames(Page& p, const std::vector<Cell>& cells, lv_area_t& changed) {
     for (TileRt& r : s_tiles)
       if (r.obj && lv_obj_get_parent(r.obj) == p.grid && r.def->frame == id) setFramed(r, ok ? f.obj : nullptr);
     lv_obj_update_layout(p.root);
+    bool redrawn = false;
+    if (ok) {
+      std::vector<lv_obj_t*> objs;
+      std::vector<const Cell*> cs;
+      for (int i : m)
+        for (const TileRt& r : s_tiles)
+          if (r.def == &def.tiles[i] && r.obj) {
+            objs.push_back(r.obj), cs.push_back(&cells[i]);
+            break;
+          }
+      std::vector<int32_t> rs = dividerRects(f, objs, cs, lv_obj_get_style_pad_row(p.grid, LV_PART_MAIN),
+                                             lv_obj_get_style_pad_column(p.grid, LV_PART_MAIN));
+      if (rs != f.lines) {
+        drawDividers(f, std::move(rs));
+        lv_obj_update_layout(p.root);
+        redrawn = true;
+      }
+    } else if (!f.lines.empty()) {
+      lv_obj_clean(f.obj);
+      f.lines.clear();
+    }
     lv_area_t a1;
     lv_obj_get_coords(f.obj, &a1);
-    if (was == ok && (!ok || (a0.x1 == a1.x1 && a0.y1 == a1.y1 && a0.x2 == a1.x2 && a0.y2 == a1.y2))) continue;
+    if (was == ok && !redrawn && (!ok || (a0.x1 == a1.x1 && a0.y1 == a1.y1 && a0.x2 == a1.x2 && a0.y2 == a1.y2))) continue;
     any = true;
     for (const lv_area_t* a : {was ? &a0 : nullptr, ok ? &a1 : nullptr}) {
       if (!a) continue;

@@ -155,6 +155,7 @@ struct TileRt {
 struct FrameRt {
   const FrameDef* def;
   lv_obj_t* obj;
+  std::vector<int32_t> lines;  // the divider rects drawn now (x, y, w, h each, frame content coords)
 };
 
 struct Shared {
