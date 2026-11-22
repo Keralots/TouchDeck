@@ -1152,11 +1152,12 @@
       "</select>" +
       '<select data-cl="' +
       i +
-      '" style="width:auto" title="Roll: digits roll in. Orbit: a comet runs round the tile once a minute.">' +
+      '" style="width:auto" title="Roll: digits roll in. Orbit: a comet runs round the tile once a minute. Falling blocks: block digits over a self-playing block game (2x1 and bigger).">' +
       opt("", "Classic", !t.style) +
       opt("roll", "Roll", t.style === "roll") +
       opt("orbit", "Orbit", t.style === "orbit" && t.ring !== "tick") +
       opt("orbit-tick", "Orbit, ticking", t.style === "orbit" && t.ring === "tick") +
+      opt("blocks", "Falling blocks", t.style === "blocks") +
       "</select>" +
       sizeSel(t, i) +
       '<button type="button" class="btn' +

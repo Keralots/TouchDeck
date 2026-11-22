@@ -29,7 +29,8 @@ struct RingSeg {
 
 struct ClockFx {
   lv_obj_t* obj;
-  uint8_t style;
+  uint8_t style, want;  // style shown, style asked for (Blocks falls back to Roll on small tiles)
+  BlocksRt* blk;
   bool tick;
   bool hasColor;
   uint32_t color, accent;
@@ -56,7 +57,9 @@ struct ClockFx {
 };
 
 void clockFxFree(ClockFx* c) {
-  if (c) lv_free(c);
+  if (!c) return;
+  blocksFree(c->blk);
+  lv_free(c);
 }
 
 static bool fxShowing() {
@@ -349,6 +352,10 @@ static void clockDraw(lv_event_t* e) {
   lv_area_t a;
   lv_obj_get_coords(o, &a);
   const lv_color_t text = lv_obj_get_style_text_color(o, LV_PART_MAIN);
+  if (c->style == CLOCK_BLOCKS) {
+    blocksDraw(c->blk, L, a.x1, a.y1, c->hasColor ? lv_color_hex(c->color) : text);
+    return;
+  }
   if (c->style == CLOCK_ORBIT && c->len > 0) drawRing(L, *c, a.x1, a.y1, text);
   drawTime(L, *c, a.x1, a.y1, c->hasColor ? lv_color_hex(c->color) : text);
   if (c->dateY >= 0) {
@@ -376,7 +383,8 @@ void makeClockFx(TileRt& r, lv_obj_t* t) {
   lv_obj_remove_style_all(c->obj);
   lv_obj_remove_flag(c->obj, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
   lv_obj_remove_flag(t, LV_OBJ_FLAG_SCROLLABLE);
-  c->style = r.def->clockStyle;
+  c->style = c->want = r.def->clockStyle;
+  if (c->want == CLOCK_BLOCKS && !(c->blk = blocksNew())) c->style = c->want = CLOCK_ROLL;
   c->tick = r.def->clockTick;
   c->hasColor = r.def->hasColor;
   c->color = r.def->color;
@@ -431,6 +439,8 @@ void fitClockFx(TileRt& r, int cw, int ch) {
   c->h = (int16_t)(ch + 2 * pad);
   lv_obj_set_pos(c->obj, -pad, -pad);
   lv_obj_set_size(c->obj, c->w, c->h);
+  c->style = c->want;
+  if (c->style == CLOCK_BLOCKS && !blocksFit(c->blk, c->w, c->h, pad)) c->style = CLOCK_ROLL;
   int aw = cw, ah = ch;
   c->len = 0;
   if (c->style == CLOCK_ORBIT) {
@@ -499,6 +509,12 @@ void applyClockFx(TileRt& r, const char* h, const char* m, const char* ap, const
   char t[6];
   snprintf(t, sizeof(t), "%2s:%s", h, m);
   if (!strcmp(t, c->shown) && !strcmp(ap, c->ap) && !strcmp(date, c->date)) return;
+  if (c->style == CLOCK_BLOCKS) {  // kept for a fall back to Roll; the blocks run on their own
+    memcpy(c->shown, t, sizeof(c->shown));
+    snprintf(c->ap, sizeof(c->ap), "%s", ap);
+    snprintf(c->date, sizeof(c->date), "%s", date);
+    return;
+  }
   const bool live = c->shown[0] && strcmp(t, c->shown) && c->f && r.page == sh.active && fxShowing();
   memcpy(c->from, c->shown, sizeof(c->from));
   memcpy(c->shown, t, sizeof(c->shown));
@@ -509,6 +525,18 @@ void applyClockFx(TileRt& r, const char* h, const char* m, const char* ap, const
   c->el = live ? 0 : AT_REST;
   lv_obj_invalidate(c->obj);
   markPageStale(r.page);
+}
+
+// "HH:MM" at epoch t (12 h: " H:MM"), blank before the time is synced.
+static void blocksTime(time_t t, char* out) {
+  if (!t) {
+    memcpy(out, "  :  ", 6);
+    return;
+  }
+  struct tm lt;
+  localtime_r(&t, &lt);
+  const int h = netSettings.use24h ? lt.tm_hour : (lt.tm_hour + 11) % 12 + 1;
+  snprintf(out, 6, netSettings.use24h ? "%02d:%02d" : "%2d:%02d", h, lt.tm_min);
 }
 
 static uint32_t changeMs(const ClockFx& c) {
@@ -528,6 +556,19 @@ void clockFxTick() {
     ClockFx* c = r.cfx;
     if (!c || r.off || !c->f) continue;
     const bool live = showing && r.page == sh.active;
+    if (c->style == CLOCK_BLOCKS) {
+      char cur[6], next[6];
+      blocksTime(synced ? tv.tv_sec : 0, cur);
+      blocksTime(synced ? tv.tv_sec + 60 : 0, next);
+      struct tm lt;
+      localtime_r(&tv.tv_sec, &lt);
+      if (blocksTick(c->blk, c->obj, now, live, lit || !live, cur, next, synced ? lt.tm_sec : 0,
+                     (int32_t)(tv.tv_sec / 60))) {
+        if (live) painted = true;
+        else markPageStale(r.page);
+      }
+      continue;
+    }
     lv_area_t o;
     lv_obj_get_coords(c->obj, &o);
     const bool on = lit || !live;

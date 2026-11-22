@@ -505,6 +505,14 @@ void applyClockFx(TileRt& r, const char* h, const char* m, const char* ap, const
 void clockFxTick();
 void clockFxFree(ClockFx* c);
 void digitInk(const lv_font_t* f, int& top, int& h);
+// The Falling Blocks style (deck_ui_blocks.cpp), driven by the clock tile.
+struct BlocksRt;
+BlocksRt* blocksNew();
+void blocksFree(BlocksRt* b);
+bool blocksFit(BlocksRt* b, int w, int h, int pad);
+bool blocksTick(BlocksRt* b, lv_obj_t* o, uint32_t now, bool live, bool lit, const char* cur, const char* next, int sec,
+                int32_t minute);
+void blocksDraw(const BlocksRt* b, lv_layer_t* L, int ox, int oy, lv_color_t col);
 void dateInk(const lv_font_t* f, int& top, int& h);
 void wxFree(WxRt* w);
 void makeWeatherContent(TileRt& r, lv_obj_t* t);
