@@ -361,6 +361,7 @@ static void handleApiConfig() {
   doc["advanced"]["weather60"] = advSettings.weather60;
   doc["advanced"]["charts60"] = advSettings.charts60;
   doc["advanced"]["smoothDisplay"] = advSettings.smoothDisplay;
+  doc["advanced"]["smoothDisplayOption"] = deck::panelScanRingOption();
   doc["advanced"]["fps60"] = deckRefreshClock();
   printerSettingsJson(doc["printers"].to<JsonObject>());
   mqttConfigJson(doc["mqtt"].to<JsonObject>(), true);
