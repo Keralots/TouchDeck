@@ -499,7 +499,12 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
           }
         }
         if (t.type == TILE_VIZ) t.vizScope = !strcmp(tv["style"] | "bars", "scope");
-        if (t.type == TILE_CLOCK) t.clockDate = !strcmp(tv["date"] | "", "always");
+        if (t.type == TILE_CLOCK) {
+          t.clockDate = !strcmp(tv["date"] | "", "always");
+          const char* cs = tv["style"] | "";
+          t.clockStyle = !strcmp(cs, "roll") ? CLOCK_ROLL : !strcmp(cs, "orbit") ? CLOCK_ORBIT : CLOCK_CLASSIC;
+          t.clockTick = !strcmp(tv["ring"] | "", "tick");
+        }
         if (t.type == TILE_WEATHER) {
           const char* fc = tv["forecast"] | "days";
           t.wxForecast = !strcmp(fc, "hours") ? 1 : !strcmp(fc, "none") ? 2 : 0;

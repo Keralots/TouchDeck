@@ -540,6 +540,10 @@ void applyClock(TileRt& r) {
     if (!netSettings.use24h) ap = lt.tm_hour < 12 ? "AM" : "PM";
     snprintf(date, sizeof(date), "%s %d %s", kDay[lt.tm_wday], lt.tm_mday, kMon[lt.tm_mon]);
   }
+  if (r.cfx) {
+    applyClockFx(r, h, m, ap, date);
+    return;
+  }
   setText(r.sub, h);
   setText(r.mins, m);
   setText(r.unit, ap);

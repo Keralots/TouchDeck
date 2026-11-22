@@ -452,7 +452,7 @@ void fitMedia(TileRt& r, int cw, int ch) {
 
 // Digit ink in a line box: rows of air above it and its height. The clock
 // fonts are digits only and have no air; text fonts do.
-static void digitInk(const lv_font_t* f, int& top, int& h) {
+void digitInk(const lv_font_t* f, int& top, int& h) {
   lv_font_glyph_dsc_t g = {};
   if (!lv_font_get_glyph_dsc(f, &g, '0', 0)) {
     top = lineH(f) / 8;
@@ -464,7 +464,7 @@ static void digitInk(const lv_font_t* f, int& top, int& h) {
 }
 
 // Date ink: from the digit tops down to the descenders (Sep, Aug, May).
-static void dateInk(const lv_font_t* f, int& top, int& h) {
+void dateInk(const lv_font_t* f, int& top, int& h) {
   digitInk(f, top, h);
   lv_font_glyph_dsc_t g = {};
   const int bot = lv_font_get_glyph_dsc(f, &g, 'p', 0) ? lineH(f) - f->base_line - g.ofs_y : lineH(f);
@@ -476,6 +476,10 @@ static void dateInk(const lv_font_t* f, int& top, int& h) {
 // a tighter gap first, then any smaller time. Fit and centring go by the ink,
 // not by the line boxes.
 void fitClock(TileRt& r, int cw, int ch) {
+  if (r.cfx) {
+    fitClockFx(r, cw, ch);
+    return;
+  }
   static const lv_font_t* const kTime[] = {&deck_font_clock_72, &deck_font_clock_56, &lv_font_montserrat_40,
                                            &deck_font_28, &deck_font_20, &deck_font_14};
   constexpr int N = sizeof(kTime) / sizeof(kTime[0]);
