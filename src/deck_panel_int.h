@@ -68,15 +68,25 @@ struct ArcEdge {
   float x, y;  // unit direction
 };
 
+struct OverlayDial {
+  float scale;
+  uint16_t start;
+  int8_t value;
+};
+
 struct OverlayRun {
   FrameRect body, bodyClip, tag, picture;
-  FrameRect labelClip, meter;
+  FrameRect labelClip, meter, meterTrack, dot;
   const uint32_t* pixels;
   int pictureStepX, pictureStepY;
+  uint32_t pictureScaleX, pictureScaleY;
   ArcEdge arcStart, trackEnd, indicatorEnd;
+  OverlayDial dial;
   uint16_t borderColor, accent, trackColor;
   uint8_t arcWidth, trackOpacity;
+  uint8_t cornerRadius, dotOpacity;
   bool trackWide, indicatorWide, hasIndicator;
+  bool dotOn;
   uint8_t fillOpacity, borderOpacity, opacity, tagOpacity, contentOpacity;
 };
 

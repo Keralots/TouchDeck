@@ -892,6 +892,12 @@ ArcEdge arcEdge(int degrees) {
   return {cosf(angle), sinf(angle)};
 }
 
+FrameRect scaleOverlayRect(const FrameRect& r, int w, int h, int fullW, int fullH) {
+  const int x = r.x * w / fullW, y = r.y * h / fullH;
+  return {(int16_t)x, (int16_t)y, (int16_t)((r.x + r.w) * w / fullW - x),
+          (int16_t)((r.y + r.h) * h / fullH - y)};
+}
+
 OverlayRun overlayResolve(const PanelOverlay& o, uint8_t rot, int64_t atUs) {
   OverlayRun r = {};
   const PopupGeometry& g = o.geometry;
@@ -899,64 +905,98 @@ OverlayRun overlayResolve(const PanelOverlay& o, uint8_t rot, int64_t atUs) {
   const int progress = popupProgress(o.animation, atUs);
   if (o.animation.exiting && progress == POPUP_PROGRESS) return r;
   const PopupFrame f = o.animation.duration ? popupFrame(g, o.animation, progress) : popupRestFrame(g);
-  if (!f.opacity) return r;
+  if (!f.opacity || f.across <= 0 || f.along <= 0) return r;
 
   const bool pill = g.style == PopupStyle::Pill;
+  const bool card = g.style == PopupStyle::Card;
+  const bool newLook = g.style >= PopupStyle::Dial;
   const int w = g.outX ? f.across : f.along, h = g.outX ? f.along : f.across;
+  const int fullW = g.outX ? g.across : g.along, fullH = g.outX ? g.along : g.across;
+  const bool resized = w != fullW || h != fullH;
+  const bool scaleContent = newLook || o.animation.kind == PopupMotion::Spring || o.animation.kind == PopupMotion::Pop;
+  const auto scale = [&](const FrameRect& box) {
+    return resized && scaleContent ? scaleOverlayRect(box, w, h, fullW, fullH) : box;
+  };
+  const float uniform = scaleContent ? std::min((float)w / fullW, (float)h / fullH) : 1.0f;
   const int x = g.cx + g.outX * f.shift - w / 2, y = g.cy + g.outY * f.shift - h / 2;
   const FrameRect body = {(int16_t)x, (int16_t)y, (int16_t)w, (int16_t)h};
   const int anchor = pill ? popupAnchorShift(g, f.across) : 0;
-  const int rootX = pill ? g.cx + g.outX * (f.shift - anchor) - o.pillX : x;
-  const int rootY = pill ? g.cy + g.outY * (f.shift - anchor) - o.pillY : y;
-  const FrameRect tag = pill ? moveRect(o.tag, rootX, rootY) : FrameRect{};
-  const FrameRect picture = moveRect(o.picture, rootX, rootY);
+  const int rootX = pill ? g.cx + g.outX * (f.shift - (scaleContent ? 0 : anchor)) -
+                           (scaleContent ? o.pillX * w / fullW : o.pillX) : x;
+  const int rootY = pill ? g.cy + g.outY * (f.shift - (scaleContent ? 0 : anchor)) -
+                           (scaleContent ? o.pillY * h / fullH : o.pillY) : y;
+  const FrameRect tag = pill ? moveRect(scale(o.tag), rootX, rootY) : FrameRect{};
+  const FrameRect picture = moveRect(scale(o.picture), rootX, rootY);
   r.body = nativeRect(rot, body);
-  r.bodyClip = pill ? nativeRect(rot, intersectRect(body, moveRect(o.layout, rootX, rootY))) : r.body;
+  r.bodyClip = pill ? nativeRect(rot, intersectRect(body, moveRect(scale(o.layout), rootX, rootY))) : r.body;
   r.tag = nativeRect(rot, tag);
+  r.cornerRadius = (uint8_t)(o.cornerRadius * uniform + 0.5f);
   r.borderColor = o.borderColor;
   r.fillOpacity = o.fillOpacity;
   r.borderOpacity = o.borderOpacity;
   r.opacity = f.opacity;
   r.contentOpacity = mulOpacity(f.opacity, f.content);
   if (pill) r.tagOpacity = o.animation.kind == PopupMotion::Wobble ? r.contentOpacity : f.opacity;
-  if (!r.contentOpacity || f.across != g.across || f.along != g.along) return r;
+  if (!r.contentOpacity || (resized && !scaleContent)) return r;
   const PopupMeter& m = o.meter;
-  if (m.value >= 0) {
-    FrameRect box = m.box;
+  if (m.value >= 0 || newLook) {
+    FrameRect box = scale(m.box);
     r.accent = m.accent;
-    if (!pill) {
+    r.trackColor = m.trackColor;
+    r.trackOpacity = m.trackOpacity;
+    if (g.style == PopupStyle::Dial) {
+      r.dial = {std::min(w, h) / (2.0f * POPUP_MEDIUM_RADIUS), (uint16_t)(m.start + 90 * rot), m.value};
+      box = {};
+    } else if (!pill && !card) {
+      if (resized) {
+        const int d = std::min(box.w, box.h) & ~1;
+        box = {(int16_t)(box.x + (box.w - d) / 2), (int16_t)(box.y + (box.h - d) / 2),
+               (int16_t)d, (int16_t)d};
+      }
       const int start = m.start + 90 * rot;
       const int sweep = m.sweep * m.value / 100;
-      r.arcWidth = m.width;
+      r.arcWidth = std::max(1, (int)(m.width * uniform + 0.5f));
       r.arcStart = arcEdge(start);
       r.trackEnd = arcEdge(start + m.sweep);
       r.trackWide = m.sweep > 180;
-      r.trackColor = m.trackColor;
-      r.trackOpacity = m.trackOpacity;
       r.hasIndicator = sweep != 0;
       r.indicatorWide = sweep > 180;
       if (r.hasIndicator) r.indicatorEnd = sweep == m.sweep ? r.trackEnd : arcEdge(start + sweep);
-    } else if (m.value > 0) {
-      int16_t& span = g.outX ? box.h : box.w;
-      int16_t& origin = g.outX ? box.y : box.x;
-      const int length = std::max(1, span * m.value / 100);
-      if (m.fromEnd) origin += span - length;
-      span = length;
     } else {
-      box = {};
+      if (card) r.meterTrack = nativeRect(rot, moveRect(box, rootX, rootY));
+      if (m.value > 0) {
+        const bool vertical = pill && g.outX;
+        int16_t& span = vertical ? box.h : box.w;
+        int16_t& origin = vertical ? box.y : box.x;
+        const int length = std::max(1, span * m.value / 100);
+        if (m.fromEnd) origin += span - length;
+        span = length;
+      } else {
+        box = {};
+      }
     }
     r.meter = nativeRect(rot, moveRect(box, rootX, rootY));
   }
-  if (!o.pixels) return r;
+  if (card) {
+    r.dot = nativeRect(rot, moveRect(scale(o.dot), rootX, rootY));
+    r.dotOn = o.dotOn;
+    r.dotOpacity = mulOpacity(r.contentOpacity, o.dotOn ? 255 : 64);
+  }
+  if (!o.pixels || picture.w <= 0 || picture.h <= 0) return r;
   r.picture = nativeRect(rot, picture);
   r.labelClip = nativeRect(rot, intersectRect(picture, pill ? tag : body));
   r.pixels = o.pixels;
   const int s = o.stride;
+  const int sourceW = o.picture.w, sourceH = o.picture.h;
   switch (rot) {
-    case 1: r.pixels += (picture.h - 1) * s; r.pictureStepX = -s; r.pictureStepY = 1; break;
-    case 2: r.pixels += (picture.h - 1) * s + picture.w - 1; r.pictureStepX = -1; r.pictureStepY = -s; break;
-    case 3: r.pixels += picture.w - 1; r.pictureStepX = s; r.pictureStepY = -1; break;
+    case 1: r.pixels += (sourceH - 1) * s; r.pictureStepX = -s; r.pictureStepY = 1; break;
+    case 2: r.pixels += (sourceH - 1) * s + sourceW - 1; r.pictureStepX = -1; r.pictureStepY = -s; break;
+    case 3: r.pixels += sourceW - 1; r.pictureStepX = s; r.pictureStepY = -1; break;
     default: r.pictureStepX = 1; r.pictureStepY = s; break;
+  }
+  if (picture.w != sourceW || picture.h != sourceH) {
+    r.pictureScaleX = ((rot & 1 ? sourceH : sourceW) << 16) / r.picture.w;
+    r.pictureScaleY = ((rot & 1 ? sourceW : sourceH) << 16) / r.picture.h;
   }
   return r;
 }
@@ -1055,35 +1095,101 @@ void overlayArcRow(uint16_t* row, int y, int width, const OverlayRun& r) {
 }
 
 template <bool BIG_ENDIAN_PIXELS>
+void overlayLine(uint16_t* dst, int ny0, int rows, int width, const FrameRect& clip,
+                 float x0, float y0, float x1, float y1, float stroke, uint16_t color, uint8_t opacity) {
+  const float pad = (stroke + 1) * 0.5f;
+  const int top = std::max({ny0, (int)clip.y, (int)floorf(std::min(y0, y1) - pad)});
+  const int bottom = std::min({ny0 + rows, clip.y + clip.h, (int)ceilf(std::max(y0, y1) + pad)});
+  if (top >= bottom) return;
+  const int lo = std::max({0, (int)clip.x, (int)floorf(std::min(x0, x1) - pad)});
+  const int hi = std::min({width, clip.x + clip.w, (int)ceilf(std::max(x0, x1) + pad)});
+  if (lo >= hi) return;
+  const float vx = x1 - x0, vy = y1 - y0;
+  const float invLength2 = 1.0f / (vx * vx + vy * vy);
+  const float tx = vx * invLength2, ty = vy * invLength2, limit = pad * pad;
+  const float coverScale = 1.0f / stroke;
+  for (int y = top; y < bottom; ++y) {
+    uint16_t* row = dst + (y - ny0) * width;
+    const float dy = y + 0.5f - y0;
+    float dx = lo + 0.5f - x0, t = dx * tx + dy * ty;
+    for (int x = lo; x < hi; ++x, dx += 1, t += tx) {
+      const float p = clamp01(t), px = dx - p * vx, py = dy - p * vy;
+      const int alpha = (int)(opacity * clamp01((limit - px * px - py * py) * coverScale) + 0.5f);
+      if (alpha) overlayBlend<BIG_ENDIAN_PIXELS>(row[x], color, alpha);
+    }
+  }
+}
+
+template <bool BIG_ENDIAN_PIXELS>
+void overlayDial(uint16_t* dst, int ny0, int rows, int width, const OverlayRun& r) {
+  const float scale = r.dial.scale;
+  const FrameRect& box = r.body;
+  if (!scale || ny0 >= box.y + box.h || ny0 + rows <= box.y) return;
+  const float rx = box.w * 0.5f, ry = box.h * 0.5f, cx = box.x + rx, cy = box.y + ry;
+  const auto line = [&](const ArcEdge& v, int from, int to, int thickness, uint16_t color, int opacity) {
+    overlayLine<BIG_ENDIAN_PIXELS>(dst, ny0, rows, width, box,
+                                  cx + v.x * (rx - from * scale), cy + v.y * (ry - from * scale),
+                                  cx + v.x * (rx - to * scale), cy + v.y * (ry - to * scale),
+                                  std::max(1.0f, thickness * scale), color, mulOpacity(opacity, r.contentOpacity));
+  };
+  constexpr int LAST = 24, SWEEP = 160;
+  const int value = r.dial.value, lit = value > 0 ? (value * LAST + 50) / 100 : -1;
+  // Rotate once per tick. Each line walks only its own bounds.
+  constexpr ArcEdge step = {0.99323836f, 0.11609291f};  // 160 / 24 degrees
+  ArcEdge v = arcEdge(r.dial.start);
+  for (int i = 0; i <= LAST; ++i) {
+    const bool major = i % 6 == 0, active = i <= lit;
+    line(v, 3, major ? 24 : 16, major ? 4 : 3, active ? r.accent : r.trackColor,
+         active ? 255 : r.trackOpacity);
+    v = {v.x * step.x - v.y * step.y, v.x * step.y + v.y * step.x};
+  }
+  if (value >= 0) line(arcEdge(r.dial.start + (SWEEP * value + 50) / 100), 30, 44, 3, 0xFFFF, 255);
+}
+
+template <bool BIG_ENDIAN_PIXELS>
 void overlayPictureRow(uint16_t* row, int y, int width, const FrameRect& clip, const OverlayRun& r) {
   if (y < clip.y || y >= clip.y + clip.h) return;
   const int lo = std::max(0, (int)clip.x), hi = std::min(width, clip.x + clip.w);
   if (lo >= hi) return;
-  const int step = r.pictureStepX;
-  const uint32_t* src = r.pixels + (y - r.picture.y) * r.pictureStepY + (lo - r.picture.x) * step;
-  for (int x = lo; x < hi; x++) {
-    const uint32_t c = src[(x - lo) * step];
+  const auto pixel = [&](int x, uint32_t c) {
     if (c >> 24) {
       const uint16_t rgb = ((c >> 8) & 0xF800) | ((c >> 5) & 0x07E0) | ((c >> 3) & 0x001F);
       overlayBlend<BIG_ENDIAN_PIXELS>(row[x], rgb, mulOpacity(c >> 24, r.contentOpacity));
     }
+  };
+  const int step = r.pictureStepX;
+  if (r.pictureScaleX) {
+    const int sy = (int)(((y - r.picture.y) * r.pictureScaleY) >> 16);
+    const uint32_t* src = r.pixels + sy * r.pictureStepY;
+    uint32_t sx = (lo - r.picture.x) * r.pictureScaleX;
+    for (int x = lo; x < hi; ++x, sx += r.pictureScaleX) pixel(x, src[(int)(sx >> 16) * step]);
+  } else {
+    const uint32_t* src = r.pixels + (y - r.picture.y) * r.pictureStepY + (lo - r.picture.x) * step;
+    for (int x = lo; x < hi; ++x) pixel(x, src[(x - lo) * step]);
   }
 }
 
 template <bool BIG_ENDIAN_PIXELS>
 void overlayRow(uint16_t* row, int y, int width, const OverlayRun& r) {
   constexpr uint16_t glass = (0x20 >> 3) << 11 | (0x26 >> 2) << 5 | (0x30 >> 3);
-  overlayShapeRow<BIG_ENDIAN_PIXELS>(row, y, width, r.body, r.bodyClip, MAX_DIM,
-                                   glass, mulOpacity(r.fillOpacity, r.opacity),
-                                   r.borderColor, mulOpacity(r.borderOpacity, r.opacity));
+  overlayShapeRow<BIG_ENDIAN_PIXELS>(row, y, width, r.body, r.bodyClip,
+                                     r.cornerRadius ? 2 * r.cornerRadius : MAX_DIM,
+                                     glass, mulOpacity(r.fillOpacity, r.opacity),
+                                     r.borderColor, mulOpacity(r.borderOpacity, r.opacity));
   overlayShapeRow<BIG_ENDIAN_PIXELS>(row, y, width, r.tag, r.tag, 24,
                                    glass, mulOpacity(r.fillOpacity, r.tagOpacity),
                                    r.borderColor, mulOpacity(r.borderOpacity, r.tagOpacity));
+  if (r.meterTrack.w)
+    overlayShapeRow<BIG_ENDIAN_PIXELS>(row, y, width, r.meterTrack, r.meterTrack, MAX_DIM,
+                                       r.trackColor, mulOpacity(r.trackOpacity, r.contentOpacity), 0, 0);
   if (r.meter.w && r.meter.h) {
     if (r.arcWidth) overlayArcRow<BIG_ENDIAN_PIXELS>(row, y, width, r);
     else overlayShapeRow<BIG_ENDIAN_PIXELS>(row, y, width, r.meter, r.meter, std::min(r.meter.w, r.meter.h) & ~1,
                                          r.accent, r.contentOpacity, 0, 0);
   }
+  if (r.dotOpacity)
+    overlayShapeRow<BIG_ENDIAN_PIXELS>(row, y, width, r.dot, r.dot, MAX_DIM,
+                                       r.dotOn ? r.accent : r.trackColor, r.dotOpacity, 0, 0);
   if (r.pixels) overlayPictureRow<BIG_ENDIAN_PIXELS>(row, y, width, r.labelClip, r);
 }
 
@@ -1094,6 +1200,7 @@ void drawOverlays(const Frame& f, uint16_t* dst, int ny0) {
     const int hi = std::min(ny0 + PANEL_ROWS,
                             std::max(body.y + body.h, r.tagOpacity ? r.tag.y + r.tag.h : body.y));
     for (int y = lo; y < hi; y++) overlayRow<PANEL_BIG_ENDIAN>(dst + (y - ny0) * NATIVE_W, y, NATIVE_W, r);
+    if (r.dial.scale) overlayDial<PANEL_BIG_ENDIAN>(dst, ny0, PANEL_ROWS, NATIVE_W, r);
   }
 }
 
@@ -1756,7 +1863,11 @@ bool panelOverlayCapture(PanelOverlayCapture& capture) {
 }
 
 void panelOverlayCaptureRow(const PanelOverlayCapture& capture, uint16_t* row, int y, int w) {
-  for (const PanelOverlay& o : capture.overlays) overlayRow<false>(row, y, w, overlayResolve(o, 0, capture.atUs));
+  for (const PanelOverlay& o : capture.overlays) {
+    const OverlayRun r = overlayResolve(o, 0, capture.atUs);
+    overlayRow<false>(row, y, w, r);
+    if (r.dial.scale) overlayDial<false>(row, y, 1, w, r);
+  }
 }
 
 bool compBeginDrag(const Src& a, const Src& b, int off, int pageA, bool vertical) {

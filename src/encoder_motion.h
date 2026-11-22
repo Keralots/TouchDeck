@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <stdint.h>
 
 namespace deck {
@@ -11,9 +12,10 @@ constexpr int DROPLET_SWELL_MS = 220, DROPLET_SHRINK_MS = 160;
 constexpr int BEAD_DRIP_MS = 380, BEAD_RETURN_MS = 180, WOBBLE_MS = 520;
 constexpr int BEAD_BUMP_MS = BEAD_DRIP_MS * 45 / 100, BEAD_PEAK_MS = BEAD_DRIP_MS * 80 / 100;
 constexpr int CONTENT_IN_MS = 120, CONTENT_OUT_MS = 80;
+constexpr int SPRING_MS = 380, POP_MS = 300;
 
-enum class PopupStyle : uint8_t { Droplet, Edge, Bead, Pill };
-enum class PopupMotion : uint8_t { None, Droplet, Drip, Slide, Wobble, Fade };
+enum class PopupStyle : uint8_t { Droplet, Edge, Bead, Pill, Dial, Card };
+enum class PopupMotion : uint8_t { None, Droplet, Drip, Slide, Wobble, Fade, Spring, Pop };
 
 struct PopupFrame {
   int across, along, shift;
@@ -37,6 +39,13 @@ struct PopupAnimation {
 
 constexpr struct { int at, across, along; } WOBBLE_KEYS[] = {
   {0, 30, 70}, {350, 112, 90}, {580, 94, 106}, {780, 103, 98}, {1000, 100, 100}
+};
+struct PopupKey { int at, across, along, shift, opacity; };
+constexpr PopupKey SPRING_KEYS[] = {
+  {0, 100, 60, 70, 255}, {550, 100, 104, -6, 255}, {800, 100, 99, 2, 255}, {1000, 100, 100, 0, 255}
+};
+constexpr PopupKey POP_KEYS[] = {
+  {0, 20, 20, 0, 0}, {700, 108, 108, 0, 255}, {1000, 100, 100, 0, 255}
 };
 
 inline int64_t popupEndUs(const PopupAnimation& a) {
@@ -97,19 +106,51 @@ inline int popupAnchorShift(const PopupGeometry& g, int across) {
   return (g.across + round) / 2 - (across + round) / 2;
 }
 
+inline PopupFrame popupKeyFrame(const PopupGeometry& g, const PopupKey& k) {
+  const int span = g.style == PopupStyle::Pill ? g.slide : g.across;
+  return {g.across * k.across / 100, g.along * k.along / 100, span * k.shift / 100, k.opacity, 255};
+}
+
+template <std::size_t N>
+inline PopupFrame popupKeyMotion(const PopupGeometry& g, const PopupAnimation& a, int progress,
+                                 const PopupKey (&keys)[N]) {
+  if (!progress) return a.from;
+  const int age = a.exiting ? POPUP_PROGRESS - progress : progress;
+  std::size_t i = 1;
+  while (i + 1 < N && age > keys[i].at) ++i;
+  const PopupKey& lo = keys[i - 1];
+  const PopupKey& hi = keys[i];
+  const int phase = (age - lo.at) * POPUP_PROGRESS / (hi.at - lo.at);
+  const int t = popupSmooth(a.exiting ? POPUP_PROGRESS - phase : phase);
+  PopupFrame from = popupKeyFrame(g, a.exiting ? hi : lo);
+  PopupFrame to = popupKeyFrame(g, a.exiting ? lo : hi);
+  if (a.exiting ? i == N - 1 : i == 1) from = a.from;
+  if (a.exiting && i == 1) to.opacity = 0;
+  return {popupMix(from.across, to.across, t), popupMix(from.along, to.along, t),
+          popupMix(from.shift, to.shift, t), popupMix(from.opacity, to.opacity, t),
+          popupMix(from.content, to.content, t)};
+}
+
 inline PopupFrame popupStartFrame(const PopupGeometry& g, const PopupAnimation& a) {
   PopupFrame f = popupRestFrame(g);
   switch (a.kind) {
     case PopupMotion::Droplet: f.across = 0; f.along = g.along * 45 / 100; f.content = 0; break;
     case PopupMotion::Drip: f.across = 0; f.along = g.along / 2; f.shift = g.beadTravel; f.content = 0; break;
-    case PopupMotion::Slide: f.shift = g.slide; f.opacity = f.content = 0; break;
+    case PopupMotion::Slide:
+      f.shift = g.slide;
+      f.opacity = 0;
+      if (g.style < PopupStyle::Dial) f.content = 0;
+      break;
     case PopupMotion::Wobble:
       f.across = g.across * WOBBLE_KEYS[0].across / 100;
       f.along = g.along * WOBBLE_KEYS[0].along / 100;
       f.shift = popupAnchorShift(g, f.across);
-      f.opacity = f.content = 0;
+      f.opacity = 0;
+      if (g.style < PopupStyle::Dial) f.content = 0;
       break;
     case PopupMotion::Fade: f.opacity = 0; break;
+    case PopupMotion::Spring: return popupKeyFrame(g, SPRING_KEYS[0]);
+    case PopupMotion::Pop: return popupKeyFrame(g, POP_KEYS[0]);
     case PopupMotion::None: break;
   }
   return f;
@@ -156,7 +197,8 @@ inline PopupFrame popupWobbleFrame(const PopupGeometry& g, const PopupAnimation&
   PopupFrame f = popupRestFrame(g);
   const PopupFrame& from = a.from;
   const int wobbleMs = a.duration - CONTENT_IN_MS;
-  f.content = popupMix(from.content, 255, popupPhase(elapsed, wobbleMs, CONTENT_IN_MS));
+  if (g.style < PopupStyle::Dial)
+    f.content = popupMix(from.content, 255, popupPhase(elapsed, wobbleMs, CONTENT_IN_MS));
   if (!wobbleMs || elapsed >= wobbleMs * POPUP_PROGRESS) return f;
   const int age = popupPhase(elapsed, 0, wobbleMs);
   int next = 1;
@@ -208,13 +250,16 @@ inline PopupFrame popupFrame(const PopupGeometry& g, const PopupAnimation& a, in
       const int slide = popupSlideEase(popupPhase(elapsed, 0, time), a.exiting);
       f.shift = popupMix(from.shift, a.exiting ? g.slide : 0, slide);
       f.opacity = popupMix(from.opacity, a.exiting ? 0 : 255, slide);
-      f.content = a.exiting ? 0 : popupMix(from.content, 255, popupPhase(elapsed, time, CONTENT_IN_MS));
+      if (g.style < PopupStyle::Dial)
+        f.content = a.exiting ? 0 : popupMix(from.content, 255, popupPhase(elapsed, time, CONTENT_IN_MS));
       break;
     }
     case PopupMotion::Wobble: return popupWobbleFrame(g, a, elapsed);
     case PopupMotion::Fade:
       f.opacity = popupMix(from.opacity, a.exiting ? 0 : 255, popupSlideEase(progress, a.exiting));
       break;
+    case PopupMotion::Spring: return popupKeyMotion(g, a, progress, SPRING_KEYS);
+    case PopupMotion::Pop: return popupKeyMotion(g, a, progress, POP_KEYS);
     case PopupMotion::None: break;
   }
   return f;

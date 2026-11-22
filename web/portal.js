@@ -319,6 +319,11 @@
     $("encPopupSpeedVal").textContent = (Number($("encPopupSpeed").value) / 100).toFixed(1) + "x";
     $("encPopupHoldVal").textContent = (Number($("encPopupHoldMs").value) / 1000).toFixed(1) + " s";
     $("encPopupAccentField").classList.toggle("hidden", $("encPopupEntityColor").checked);
+    ["encPopupStyle", "encPopupAnim"].forEach((id) => {
+      const hint = $(id).selectedOptions[0]?.dataset.hint || "";
+      $(id + "Hint").textContent = hint;
+      $(id + "Hint").classList.toggle("hidden", !hint);
+    });
   }
   $("encoderPopup").addEventListener("input", updateEncoderPopupFields);
   ["input", "change"].forEach((type) => {

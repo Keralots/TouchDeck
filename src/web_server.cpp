@@ -805,12 +805,12 @@ static void handleConfigImport() {
     const JsonVariantConst popupValue = root["encoders"]["popup"];
     if (!popupValue.isNull()) {
       const JsonObjectConst popup = popupValue.as<JsonObjectConst>();
-      READ_INT(popup, "style", ENCODER_POPUP_DROPLET, ENCODER_POPUP_SIDE_PILL, nextPopup.style, uint8_t);
+      READ_INT(popup, "style", ENCODER_POPUP_DROPLET, ENCODER_POPUP_CARD, nextPopup.style, uint8_t);
       READ_INT(popup, "size", 0, 2, nextPopup.size, uint8_t);
       READ_INT(popup, "opacity", 40, 100, nextPopup.opacity, uint8_t);
       READ_INT(popup, "speed", 50, 200, nextPopup.speed, uint8_t);
       READ_INT(popup, "holdMs", 800, 4000, nextPopup.holdMs, uint16_t);
-      READ_INT(popup, "anim", ENCODER_POPUP_STYLE, ENCODER_POPUP_WOBBLE, nextPopup.anim, uint8_t);
+      READ_INT(popup, "anim", ENCODER_POPUP_STYLE, ENCODER_POPUP_POP, nextPopup.anim, uint8_t);
       READ_BOOL(popup, "entityColor", nextPopup.entityColor);
       READ_INT(popup, "accentColor", 0, 0xFFFFFF, nextPopup.accentColor, uint32_t);
     }
@@ -1137,12 +1137,12 @@ static void handleSaveLight() {
 // Hardware page: status LED, vibration motor, speaker.
 #if BOARD_HAS_ENCODER
 static bool readEncoderPopupForm(EncoderPopupSettings& p) {
-  p.style = clampedArg("encPopupStyle", p.style, ENCODER_POPUP_DROPLET, ENCODER_POPUP_SIDE_PILL);
+  p.style = clampedArg("encPopupStyle", p.style, ENCODER_POPUP_DROPLET, ENCODER_POPUP_CARD);
   p.size = clampedArg("encPopupSize", p.size, 0, 2);
   p.opacity = clampedArg("encPopupOpacity", p.opacity, 40, 100);
   p.speed = clampedArg("encPopupSpeed", p.speed, 50, 200);
   p.holdMs = clampedArg("encPopupHoldMs", p.holdMs, 800, 4000);
-  p.anim = clampedArg("encPopupAnim", p.anim, ENCODER_POPUP_STYLE, ENCODER_POPUP_WOBBLE);
+  p.anim = clampedArg("encPopupAnim", p.anim, ENCODER_POPUP_STYLE, ENCODER_POPUP_POP);
   p.entityColor = server.hasArg("encPopupEntityColor");
   if (server.hasArg("encPopupAccentColor")) {
     const String color = server.arg("encPopupAccentColor");
