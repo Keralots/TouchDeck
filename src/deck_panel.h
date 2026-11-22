@@ -94,12 +94,13 @@ enum CompMode : uint8_t { COMP_NONE = 0, COMP_DRAG, COMP_ANIM, COMP_HOLD, COMP_F
 struct FrameRect { int16_t x, y, w, h; };
 
 constexpr int PANEL_OVERLAY_SLOTS = 2;
+constexpr int POPUP_MEDIUM_RADIUS = 136;
 struct PopupMeter {
   FrameRect box;  // arc bounds or full fill track, relative to the content root
   uint16_t accent, trackColor;  // little-endian RGB565
-  uint16_t start, sweep;  // clockwise degrees, sweep 0 for a pill
+  uint16_t start, sweep;  // clockwise degrees for arcs
   uint8_t width, trackOpacity;
-  int8_t value;  // 0..100, -1 hides the meter
+  int8_t value;  // 0..100, -1 has no indicator
   bool fromEnd;
 };
 
@@ -109,10 +110,13 @@ struct PanelOverlay {
   int16_t pillX, pillY;
   FrameRect layout, tag, picture;  // relative to the content root
   PopupMeter meter;
+  FrameRect dot;
   const uint32_t* pixels;  // straight alpha ARGB8888
   uint16_t stride;         // pixels
   uint16_t borderColor;    // little-endian RGB565
   uint8_t fillOpacity, borderOpacity;
+  uint8_t cornerRadius;
+  bool dotOn;
 };
 // Loop task only. A picture stays immutable while published or in a build.
 void panelOverlaySet(int slot, const PanelOverlay& overlay);

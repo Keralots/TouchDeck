@@ -52,12 +52,12 @@ static constexpr EncoderKeys encoderKeys[ENCODER_COUNT] = {
 static void sanitizeEncoderPopups() {
   EncoderPopupSettings& p = encoderPopupSettings;
   const EncoderPopupSettings defaults;
-  if (p.style > ENCODER_POPUP_SIDE_PILL) p.style = defaults.style;
+  if (p.style > ENCODER_POPUP_CARD) p.style = defaults.style;
   if (p.size > 2) p.size = defaults.size;
   p.opacity = constrain(p.opacity, 40, 100);
   p.speed = constrain(p.speed, 50, 200);
   p.holdMs = constrain(p.holdMs, 800, 4000);
-  if (p.anim > ENCODER_POPUP_WOBBLE) p.anim = defaults.anim;
+  if (p.anim > ENCODER_POPUP_POP) p.anim = defaults.anim;
   if (p.accentColor > 0xFFFFFF) p.accentColor = defaults.accentColor;
   for (EncoderSettings& s : encoderSettings)
     if (s.edge > 1) s.edge = 0;

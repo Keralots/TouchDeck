@@ -1384,7 +1384,10 @@
                           <option value="2">Bead</option>
                           <option value="3">Side pill</option>
                           <option value="1">Edge</option>
+                          <option value="4" data-hint="A glass dial with 25 ticks and a white needle.">Dial ticks</option>
+                          <option value="5" data-hint="A glass card with a status dot and a horizontal level bar.">Glass card</option>
                         </select>
+                        <span class="field-hint hidden" id="encPopupStyleHint"></span>
                       </label>
                       <label class="field">
                         <span class="field-label">Size</span>
@@ -1424,9 +1427,12 @@
                           <option value="0">Style default</option>
                           <option value="1">Slide</option>
                           <option value="4">Wobble</option>
+                          <option value="5" data-hint="Slides in with a bounce.">Spring</option>
+                          <option value="6" data-hint="Grows quickly from the popup centre, then settles.">Pop</option>
                           <option value="2">Fade</option>
                           <option value="3">None</option>
                         </select>
+                        <span class="field-hint hidden" id="encPopupAnimHint"></span>
                       </label>
                       <div>
                         <label class="check-row standalone">
@@ -1474,7 +1480,20 @@
                             <option value="0">Follow last touched tile</option>
                             <option value="1">Fixed entity</option>
                             <option value="2">PC volume</option>
+                            <option value="3"
+                              data-hint="Turn to pick a tile. Click to tap it. Hold and turn to change page.">
+                              Tile picker
+                            </option>
+                            <option value="4"
+                              data-hint="Turn to change pages. Click for home. Hold and turn for screen brightness.">
+                              Pages
+                            </option>
+                            <option value="5"
+                              data-hint="Turn for brightness. Click for screen off. Hold and turn for speaker volume.">
+                              Deck
+                            </option>
                           </select>
+                          <span class="field-hint hidden" data-encoder-mode-hint></span>
                         </label>
                         <label class="field hidden" data-encoder-entity>
                           <span class="field-label">Entity</span>

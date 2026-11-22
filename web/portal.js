@@ -300,10 +300,14 @@
       field.disabled = true;
     });
     const entityField = section.querySelector("[data-encoder-entity]");
+    const modeHint = section.querySelector("[data-encoder-mode-hint]");
     const setMode = () => {
       const fixed = fields.mode.value === "1";
       entityField.classList.toggle("hidden", !fixed);
       fields.entity.disabled = !fixed;
+      const hint = fields.mode.selectedOptions[0]?.dataset.hint || "";
+      modeHint.textContent = hint;
+      modeHint.classList.toggle("hidden", !hint);
     };
     fields.mode.addEventListener("change", setMode);
     $("encoderRows").appendChild(section);
@@ -315,6 +319,11 @@
     $("encPopupSpeedVal").textContent = (Number($("encPopupSpeed").value) / 100).toFixed(1) + "x";
     $("encPopupHoldVal").textContent = (Number($("encPopupHoldMs").value) / 1000).toFixed(1) + " s";
     $("encPopupAccentField").classList.toggle("hidden", $("encPopupEntityColor").checked);
+    ["encPopupStyle", "encPopupAnim"].forEach((id) => {
+      const hint = $(id).selectedOptions[0]?.dataset.hint || "";
+      $(id + "Hint").textContent = hint;
+      $(id + "Hint").classList.toggle("hidden", !hint);
+    });
   }
   $("encoderPopup").addEventListener("input", updateEncoderPopupFields);
   ["input", "change"].forEach((type) => {

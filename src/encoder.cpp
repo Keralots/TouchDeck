@@ -130,7 +130,7 @@ void sanitizeEncoderSettings() {
     if (!ledPinAllowed(s.pinA)) s.pinA = 0;
     if (!ledPinAllowed(s.pinB)) s.pinB = 0;
     if (!ledPinAllowed(s.pinKey)) s.pinKey = 0;
-    if (s.mode > ENCODER_PC) s.mode = ENCODER_FOLLOW;
+    if (s.mode > ENCODER_DECK) s.mode = ENCODER_FOLLOW;
     s.stepPct = constrain(s.stepPct, 1, 25);
     s.countsPerDetent = s.countsPerDetent == 2 ? 2 : 4;
     s.popupY = constrain(s.popupY, 5, 95);

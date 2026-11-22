@@ -493,6 +493,9 @@ void setPager(int page) {
 
 void bandCancel();
 void destroyPages(bool keepGlass = false) {
+#if BOARD_HAS_ENCODER
+  encoderClearTiles(true);
+#endif
   bandCancel();
   glassBakeRelease();
   clearGlassCache();
@@ -562,6 +565,9 @@ void switchTo(int page) {
   const int w = logicalW();
   const int old = sh.active;
   if (page == old || page < 0 || page >= s_count) return;
+#if BOARD_HAS_ENCODER
+  encoderClearTiles();
+#endif
   lv_obj_set_x(s_pages[old].root, w);
   lv_obj_set_x(s_pages[page].root, 0);
   portENTER_CRITICAL(&s_mux);
@@ -1073,6 +1079,9 @@ bool arrangePages() {
     if (k < shown && from[k] == oldActive && oldActive < oldCount) active = k;
   }
   const bool left = active < 0;  // the shown page went (or there was none)
+#if BOARD_HAS_ENCODER
+  if (left) encoderClearTiles();
+#endif
 
   Page moved[MAX_PAGES];
   bool valid[MAX_PAGES] = {}, was[MAX_PAGES] = {};
