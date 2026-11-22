@@ -31,8 +31,9 @@ std::vector<uint32_t> glassKey(Page& p) {
     for (int32_t v : {tc.x1, tc.y1, tc.x2, tc.y2, lv_obj_get_style_radius(t, LV_PART_MAIN)})
       key.push_back((uint32_t)v);
     const TileRt* r = tileOf(t);
-    key.push_back(r ? tileBg(*r->def) : C_TILE);
-    key.push_back(r ? (uint32_t)tileTint(*r->def) : dispSettings.glassTint);
+    const FrameRt* f = r ? nullptr : frameOf(t);
+    key.push_back(r ? tileBg(*r->def) : f ? frameBg(*f->def) : C_TILE);
+    key.push_back(r ? (uint32_t)tileTint(*r->def) | (r->frameObj ? 0x100u : 0) : f ? frameTint(*f->def) : dispSettings.glassTint);
   }
   return key;
 }
@@ -93,6 +94,7 @@ struct GlassTile {
   uint32_t bg;
   uint32_t child;  // index in the page grid
   AutoPick pick;
+  int16_t frame;   // a tile in a frame: the frame's index in the plan (no glass of its own), else -1
 };
 
 // All a bake reads, so it can run off the loop task.
@@ -137,16 +139,18 @@ TileRt* tileOf(lv_obj_t* o) {
   return nullptr;
 }
 
-// a: the tile on its page.
+// a: the tile on its page. A tile in a frame reads its text against the frame's glass.
 GlassTile glassTile(lv_obj_t* t, const lv_area_t& a, uint32_t child) {
   const TileRt* r = tileOf(t);
+  const FrameRt* f = r ? (r->frameObj ? frameOf(r->frameObj) : nullptr) : frameOf(t);
   GlassTile g = {};
   g.x1 = a.x1, g.y1 = a.y1, g.x2 = a.x2, g.y2 = a.y2;
   g.radius = lv_obj_get_style_radius(t, LV_PART_MAIN);
-  g.base = r ? tileTint(*r->def) : dispSettings.glassTint;
+  g.base = f ? frameTint(*f->def) : r ? tileTint(*r->def) : dispSettings.glassTint;
   g.mode = !dispSettings.glassAutoText || !r || r->def->hasTextColor ? 0 : r->def->type == TILE_PRINTER ? 2 : 1;
-  g.bg = r ? tileBg(*r->def) : C_TILE;
+  g.bg = f ? frameBg(*f->def) : r ? tileBg(*r->def) : C_TILE;
   g.child = child;
+  g.frame = -1;
   return g;
 }
 
@@ -213,6 +217,11 @@ bool makePlan(Page& p, GlassPlan& pl) {
     lv_obj_get_coords(t, &tc);
     lv_area_move(&tc, -rc.x1, -rc.y1);
     pl.tiles.push_back(glassTile(t, tc, i));
+    // Frames come first in the grid, so a framed tile finds its frame already planned.
+    const TileRt* r = tileOf(t);
+    if (!r || !r->frameObj) continue;
+    for (size_t k = 0; k < pl.tiles.size(); k++)
+      if (lv_obj_get_child(p.grid, pl.tiles[k].child) == r->frameObj) pl.tiles.back().frame = (int16_t)k;
   }
   return true;
 }
@@ -235,16 +244,20 @@ void glassRender(GlassPlan& pl, uint8_t* out, uint32_t stride, const lv_area_t& 
   constexpr int LR = GLASS_BORDER_COLOR >> 16 & 0xFF, LG = GLASS_BORDER_COLOR >> 8 & 0xFF, LB = GLASS_BORDER_COLOR & 0xFF;
   for (GlassTile& t : pl.tiles) {
     t.hit = !(t.x2 < a.x1 || t.x1 > a.x2 || t.y2 < a.y1 || t.y1 > a.y2);
+    if (t.frame >= 0) t.hit = pl.tiles[t.frame].hit;  // its text reads against all of the frame
     if (t.hit) t.pick = pickFor(t, pl.blur);
     if (cancel && cancel->load()) return;
   }
+  // A frame darkens as far as the tile in it that needs the most.
+  for (const GlassTile& t : pl.tiles)
+    if (t.frame >= 0 && t.hit) pl.tiles[t.frame].pick.opa = std::max(pl.tiles[t.frame].pick.opa, t.pick.opa);
   for (int y = a.y1; y <= a.y2; y++) {
     if (cancel && cancel->load()) return;
     uint16_t* d = (uint16_t*)(out + (size_t)y * stride);
     memcpy(d + a.x1, pl.sharp->data + (size_t)y * pl.sharp->header.stride + a.x1 * 2, (a.x2 - a.x1 + 1) * 2);
     const uint8_t* brow = pl.blur->data + (size_t)y * pl.blur->header.stride;  // B, G, R
     for (const GlassTile& t : pl.tiles) {
-      if (!t.hit || y < t.y1 || y > t.y2) continue;
+      if (!t.hit || t.frame >= 0 || y < t.y1 || y > t.y2) continue;
       const int tw = t.x2 - t.x1 + 1, th = t.y2 - t.y1 + 1, ly = y - t.y1;
       const int r = std::min<int>(t.radius, std::min(tw, th) / 2), e = std::max(r, BW);
       const int opa = t.pick.opa, ia = 255 - opa;

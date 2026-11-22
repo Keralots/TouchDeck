@@ -343,6 +343,37 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
     p.home = pv["home"] | false;
     parseGrid(pv["layouts"]["landscape"], p.cols[ORIENT_LANDSCAPE], p.rows[ORIENT_LANDSCAPE]);
     parseGrid(pv["layouts"]["portrait"], p.cols[ORIENT_PORTRAIT], p.rows[ORIENT_PORTRAIT]);
+    JsonArrayConst frames = pv["frames"].as<JsonArrayConst>();
+    if (frames.size() > MAX_PAGE_FRAMES) {
+      if (err) *err = "page '" + p.id + "': too many frames (max " + String(MAX_PAGE_FRAMES) + ")";
+      return false;
+    }
+    for (JsonVariantConst fv : frames) {
+      FrameDef f;
+      f.id = (const char*)(fv["id"] | "");
+      if (!f.id.length()) {
+        if (err) *err = "page '" + p.id + "': a frame needs an id";
+        return false;
+      }
+      for (const FrameDef& o : p.frames)
+        if (o.id == f.id) {
+          if (err) *err = "page '" + p.id + "': frame id '" + f.id + "' used twice";
+          return false;
+        }
+      f.hasBgColor = parseColor(fv["bgColor"] | (const char*)nullptr, f.bgColor);
+      if (fv["opacity"].is<int>()) f.opacity = (int8_t)constrain(fv["opacity"].as<int>(), 0, 100);
+      const String div = fv["dividers"] | "";
+      f.dividers = div == "short" ? FRAME_DIV_SHORT : div == "full" ? FRAME_DIV_FULL : FRAME_DIV_OFF;
+      f.divWidth = (uint8_t)constrain(fv["dividerWidth"] | 1, 1, 3);
+      const String axis = fv["dividerAxis"] | "";
+      f.divAxis = axis == "cols" ? FRAME_AXIS_COLS : axis == "rows" ? FRAME_AXIS_ROWS : FRAME_AXIS_BOTH;
+      f.outline = (uint8_t)constrain(fv["outline"] | 0, 0, 2);
+      f.hasOutColor = parseColor(fv["outlineColor"] | (const char*)nullptr, f.outColor);
+      if (fv["outlineOpacity"].is<int>()) f.outOpa = (int8_t)constrain(fv["outlineOpacity"].as<int>(), 0, 100);
+      if (fv["dividerOpacity"].is<int>()) f.divOpa = (int8_t)constrain(fv["dividerOpacity"].as<int>(), 0, 100);
+      f.hasDivColor = parseColor(fv["dividerColor"] | (const char*)nullptr, f.divColor);
+      p.frames.push_back(f);
+    }
     JsonArrayConst tiles = pv["tiles"].as<JsonArrayConst>();
     if (tiles.size() > MAX_PAGE_TILES) {
       if (err) *err = "page '" + p.id + "': too many tiles";
@@ -398,6 +429,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       parsePos(tv["pos"]["landscape"], t.pos[ORIENT_LANDSCAPE]);
       parsePos(tv["pos"]["portrait"], t.pos[ORIENT_PORTRAIT]);
       if (!parseWhen(tv["when"], t.when, err, where)) return false;
+      t.frame = (const char*)(tv["frame"] | "");
       if (t.type == TILE_METRIC) {
         const int m = tv["metric"] | 0;
         if (m < 1 || m > MAX_METRICS) {

@@ -74,6 +74,14 @@
 // the glass tint in Glass), "onColor" (fill while on, default "color"),
 // "onTextColor", and in Glass "opacity" / "onOpacity" (0..100 %, else the
 // display's Tile opacity / On opacity; auto text may still darken the glass).
+// Frames: a page's "frames": [{ "id": "f1", "bgColor", "opacity" }] and
+// "frame": "f1" on tiles draw one card behind those tiles, which then lose
+// their own background. Only while at least two of them are shown, touch each
+// other and no other shown tile sits in their box; otherwise they stand alone.
+// A frame's "dividers": "short" | "full" draws a hairline between its touching
+// tiles ("dividerColor", else the theme text colour, faint; "dividerWidth" 1..3 px; "dividerOpacity" 0..100 %; "dividerAxis":
+// "cols" | "rows" for one direction only). "outline": 1..2 px draws a line round
+// the frame ("outlineColor", else the text colour; "outlineOpacity").
 // Action, toggle, slider and sensor tiles take "iconStyle": "plain" (no
 // circle, the icon fills its place), "iconColor" / "onIconColor" (else
 // "color"; a plain icon while on: the text colour), "onIcon" (toggle) and
@@ -251,8 +259,29 @@ struct TileDef {
   bool wxStill = false;    // TILE_WEATHER: "animate": false (icons at rest)
   std::vector<LightPreset> presets;  // toggle / slider light tiles
   WhenDef when;
+  String frame;  // "frame": the id of a frame on its page
   bool shown = true;  // runtime: "when" as the pages were last built
 };
+
+constexpr int MAX_PAGE_FRAMES = 8;
+struct FrameDef {
+  String id;
+  bool hasBgColor = false;
+  uint32_t bgColor = 0;
+  int8_t opacity = -1;  // Glass, %, -1 = the display setting
+  uint8_t dividers = 0;  // FRAME_DIV_*
+  uint8_t divWidth = 1;  // px, 1..3
+  int8_t divOpa = -1;    // %, -1 = 15 with the auto colour, else 100
+  uint8_t divAxis = 0;   // FRAME_AXIS_*
+  uint8_t outline = 0;   // px, 0 = none
+  bool hasOutColor = false;
+  uint32_t outColor = 0;
+  int8_t outOpa = -1;    // %, -1 = 25 with the auto colour, else 100
+  bool hasDivColor = false;
+  uint32_t divColor = 0;
+};
+enum : uint8_t { FRAME_DIV_OFF, FRAME_DIV_SHORT, FRAME_DIV_FULL };
+enum : uint8_t { FRAME_AXIS_BOTH, FRAME_AXIS_COLS, FRAME_AXIS_ROWS };
 
 struct PrinterDef {
   String id, name, ip;
@@ -273,6 +302,7 @@ struct PageDef {
   uint8_t cols[2] = {BOARD_GRID_LANDSCAPE_COLS, BOARD_GRID_PORTRAIT_COLS};
   uint8_t rows[2] = {BOARD_GRID_LANDSCAPE_ROWS, BOARD_GRID_PORTRAIT_ROWS};
   std::vector<TileDef> tiles;
+  std::vector<FrameDef> frames;
 };
 
 struct DeckConfig {

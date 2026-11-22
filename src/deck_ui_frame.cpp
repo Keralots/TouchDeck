@@ -227,6 +227,8 @@ bool capturePage() {
   for (uint32_t i = 0; i < lv_obj_get_child_count(page.grid); i++) {
     lv_obj_t* tile = lv_obj_get_child(page.grid, i);
     if (lv_obj_has_flag(tile, LV_OBJ_FLAG_HIDDEN)) continue;
+    const TileRt* r = tileOf(tile);
+    if (r && r->frameObj) continue;  // leaves with its frame
     lv_area_t a;
     lv_obj_get_coords(tile, &a);
     const int x = std::max<int>(0, a.x1), y = std::max<int>(0, a.y1);

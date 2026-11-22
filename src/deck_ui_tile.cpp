@@ -196,6 +196,224 @@ void glassStyle(lv_obj_t* t, const TileDef& def) {
   }
 }
 
+// --- Tile frames ----------------------------------------------------------------------
+std::vector<FrameRt> s_frames;
+
+uint32_t frameBg(const FrameDef& f) { return f.hasBgColor ? f.bgColor : C_TILE; }
+int frameTint(const FrameDef& f) { return f.opacity >= 0 ? f.opacity : dispSettings.glassTint; }
+
+const FrameRt* frameOf(lv_obj_t* o) {
+  for (const FrameRt& f : s_frames)
+    if (f.obj == o) return &f;
+  return nullptr;
+}
+
+// Not clickable: a touch on the gaps between its tiles reaches the grid (edit mode hold).
+void makeFrames(Page& p) {
+  const bool glass = s_theme == THEME_GLASS && wallBlur();
+  for (const FrameDef& f : p.def->frames) {
+    lv_obj_t* o = lv_obj_create(p.grid);
+    lv_obj_set_size(o, 0, 0);
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_grid_cell(o, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 0, 1);
+    lv_obj_set_style_radius(o, 16, 0);
+    lv_obj_set_style_pad_all(o, 0, 0);
+    if (f.outline) {
+      lv_obj_set_style_border_width(o, f.outline, 0);
+      lv_obj_set_style_border_color(o, lv_color_hex(f.hasOutColor ? f.outColor : C_TEXT), 0);
+      lv_obj_set_style_border_opa(o, f.outOpa >= 0 ? (lv_opa_t)(f.outOpa * 255 / 100) : f.hasOutColor ? LV_OPA_COVER : 64, 0);
+    } else {
+      lv_obj_set_style_border_width(o, s_theme == THEME_DAYLIGHT ? 1 : 0, 0);
+      lv_obj_set_style_border_color(o, lv_color_hex(C_TILE_LINE), 0);
+    }
+    lv_obj_set_style_bg_color(o, lv_color_hex(frameBg(f)), 0);
+    lv_obj_set_style_bg_opa(o, glass ? LV_OPA_TRANSP : LV_OPA_COVER, 0);  // Glass: baked like a tile
+    s_frames.push_back({&f, o});
+  }
+}
+
+static lv_color_t pressedBg(bool has, uint32_t bg) {
+  return has ? lv_color_mix(lv_color_hex(bg), lv_color_black(), 200) : lv_color_hex(C_TILE_PRESSED);
+}
+
+// A tile in a shown frame has no background of its own; pressed (darker frame colour) and on still fill it.
+void setFramed(TileRt& r, lv_obj_t* frame) {
+  if (r.frameObj == frame) return;
+  r.frameObj = frame;
+  const FrameRt* f = frame ? frameOf(frame) : nullptr;
+  lv_obj_set_style_bg_color(r.obj, f ? pressedBg(f->def->hasBgColor, f->def->bgColor)
+                                     : pressedBg(r.def->hasBgColor, r.def->bgColor), LV_STATE_PRESSED);
+  if (!(s_theme == THEME_GLASS && wallBlur())) {
+    lv_obj_set_style_bg_opa(r.obj, frame ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(r.obj, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(r.obj, LV_OPA_COVER, LV_STATE_CHECKED);
+  }
+  if (s_theme == THEME_DAYLIGHT) lv_obj_set_style_border_width(r.obj, frame ? 0 : 1, 0);
+}
+
+static bool cellsTouch(const Cell& a, const Cell& b) {
+  const bool rows = a.y < b.y + b.h && b.y < a.y + a.h, cols = a.x < b.x + b.w && b.x < a.x + a.w;
+  return (rows && (a.x + a.w == b.x || b.x + b.w == a.x)) || (cols && (a.y + a.h == b.y || b.y + b.h == a.y));
+}
+
+// Divider rects (x, y, w, h in the frame's content coords) in the gaps where two
+// of its tiles touch: "short" keeps a fifth of the edge clear at each end, "full"
+// reaches the frame's edges and meets the crossing lines. No two rects overlap:
+// a faint line would come out brighter where it is drawn twice.
+static std::vector<int32_t> dividerRects(const FrameRt& f, const std::vector<lv_obj_t*>& objs,
+                                         const std::vector<const Cell*>& cs, int32_t gapRow, int32_t gapCol) {
+  struct Seg { bool v; int32_t at, s1, s2; };  // v: vertical; at: first px across; s1..s2 along
+  std::vector<int32_t> out;
+  if (f.def->dividers == FRAME_DIV_OFF) return out;
+  const bool full = f.def->dividers == FRAME_DIV_FULL;
+  const int32_t t = f.def->divWidth;
+  auto line = [t](int32_t end, int32_t start) { return (end + start) / 2 - (t - 1) / 2; };  // in the gap end..start
+  lv_area_t fa, fc;
+  lv_obj_get_coords(f.obj, &fa);
+  lv_obj_get_content_coords(f.obj, &fc);
+  std::vector<Seg> segs;
+  for (size_t i = 0; i < cs.size(); i++)
+    for (size_t j = 0; j < cs.size(); j++) {
+      const Cell &a = *cs[i], &b = *cs[j];
+      const bool v = a.x + a.w == b.x && a.y < b.y + b.h && b.y < a.y + a.h;
+      if (!v && !(a.y + a.h == b.y && a.x < b.x + b.w && b.x < a.x + a.w)) continue;
+      if (f.def->divAxis == (v ? FRAME_AXIS_ROWS : FRAME_AXIS_COLS)) continue;
+      lv_area_t ca, cb;
+      lv_obj_get_coords(objs[i], &ca);
+      lv_obj_get_coords(objs[j], &cb);
+      Seg s = v ? Seg{true, line(ca.x2, cb.x1), max(ca.y1, cb.y1), min(ca.y2, cb.y2)}
+                : Seg{false, line(ca.y2, cb.y1), max(ca.x1, cb.x1), min(ca.x2, cb.x2)};
+      const int32_t lo = v ? fa.y1 : fa.x1, hi = v ? fa.y2 : fa.x2, gap = v ? gapRow : gapCol;
+      if (full) {
+        if (s.s1 > lo) s.s1 = line(s.s1 - gap - 1, s.s1);
+        if (s.s2 < hi) s.s2 = line(s.s2, s.s2 + gap + 1) + t - 1;
+        s.s1 = max(s.s1, v ? fc.y1 : fc.x1), s.s2 = min(s.s2, v ? fc.y2 : fc.x2);  // inside the outline
+      } else {
+        const int32_t in = (s.s2 - s.s1 + 1) / 5;
+        s.s1 += in, s.s2 -= in;
+      }
+      if (s.s2 >= s.s1) segs.push_back(s);
+    }
+  // Join lines that run on in one row, then cut the horizontal ones where a vertical one crosses.
+  std::sort(segs.begin(), segs.end(), [](const Seg& a, const Seg& b) {
+    return a.v != b.v ? a.v : a.at != b.at ? a.at < b.at : a.s1 < b.s1;
+  });
+  std::vector<Seg> m;
+  for (const Seg& s : segs)
+    if (!m.empty() && m.back().v == s.v && m.back().at == s.at && s.s1 <= m.back().s2 + 1) m.back().s2 = max(m.back().s2, s.s2);
+    else m.push_back(s);
+  for (const Seg& s : m) {
+    if (s.v) {
+      out.insert(out.end(), {s.at - fc.x1, s.s1 - fc.y1, t, s.s2 - s.s1 + 1});
+      continue;
+    }
+    int32_t x = s.s1;
+    for (const Seg& c : m) {  // verticals first in m, sorted by x
+      if (!c.v || c.at + t - 1 < x || c.at > s.s2 || c.s2 < s.at || c.s1 > s.at + t - 1) continue;
+      if (c.at > x) out.insert(out.end(), {x - fc.x1, s.at - fc.y1, c.at - x, t});
+      x = c.at + t;
+    }
+    if (x <= s.s2) out.insert(out.end(), {x - fc.x1, s.at - fc.y1, s.s2 - x + 1, t});
+  }
+  return out;
+}
+
+static void drawDividers(FrameRt& f, std::vector<int32_t>&& rs) {
+  lv_obj_clean(f.obj);
+  const lv_color_t c = lv_color_hex(f.def->hasDivColor ? f.def->divColor : C_TEXT);
+  const lv_opa_t opa = f.def->divOpa >= 0 ? (lv_opa_t)(f.def->divOpa * 255 / 100) : f.def->hasDivColor ? LV_OPA_COVER : 38;
+  for (size_t i = 0; i + 3 < rs.size(); i += 4) {
+    lv_obj_t* o = lv_obj_create(f.obj);
+    lv_obj_remove_style_all(o);
+    lv_obj_remove_flag(o, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_set_pos(o, rs[i], rs[i + 1]);
+    lv_obj_set_size(o, rs[i + 2], rs[i + 3]);
+    lv_obj_set_style_bg_color(o, c, 0);
+    lv_obj_set_style_bg_opa(o, opa, 0);
+  }
+  f.lines = std::move(rs);
+}
+
+// A frame shows around its placed tiles while there are two or more, they all
+// connect edge to edge and no other placed tile is in their box. changed grows
+// by the page area (page coords) where a frame came, went, moved or redrew its dividers.
+bool placeFrames(Page& p, const std::vector<Cell>& cells, lv_area_t& changed) {
+  const PageDef& def = *p.def;
+  bool any = false;
+  lv_area_t rc;
+  lv_obj_get_coords(p.root, &rc);
+  for (FrameRt& f : s_frames) {
+    if (lv_obj_get_parent(f.obj) != p.grid) continue;
+    const String& id = f.def->id;
+    std::vector<int> m;
+    int x1 = INT_MAX, y1 = INT_MAX, x2 = 0, y2 = 0;
+    for (size_t i = 0; i < def.tiles.size(); i++) {
+      const Cell& c = cells[i];
+      if (!c.placed || def.tiles[i].frame != id) continue;
+      m.push_back(i);
+      x1 = min(x1, c.x), y1 = min(y1, c.y), x2 = max(x2, c.x + c.w), y2 = max(y2, c.y + c.h);
+    }
+    bool ok = m.size() >= 2;
+    for (size_t i = 0; ok && i < def.tiles.size(); i++) {
+      const Cell& c = cells[i];
+      if (c.placed && def.tiles[i].frame != id && c.x < x2 && c.x + c.w > x1 && c.y < y2 && c.y + c.h > y1) ok = false;
+    }
+    if (ok) {  // connected: grow from the first tile through shared edges
+      std::vector<bool> in(m.size(), false);
+      in[0] = true;
+      size_t n = 1;
+      for (bool grew = true; grew;) {
+        grew = false;
+        for (size_t a = 0; a < m.size(); a++)
+          for (size_t b = 0; !in[a] && b < m.size(); b++)
+            if (in[b] && cellsTouch(cells[m[a]], cells[m[b]])) in[a] = true, n++, grew = true;
+      }
+      ok = n == m.size();
+    }
+    const bool was = !lv_obj_has_flag(f.obj, LV_OBJ_FLAG_HIDDEN);
+    lv_area_t a0;
+    lv_obj_get_coords(f.obj, &a0);
+    if (ok) lv_obj_set_grid_cell(f.obj, LV_GRID_ALIGN_STRETCH, x1, x2 - x1, LV_GRID_ALIGN_STRETCH, y1, y2 - y1);
+    showObj(f.obj, ok);
+    for (TileRt& r : s_tiles)
+      if (r.obj && lv_obj_get_parent(r.obj) == p.grid && r.def->frame == id) setFramed(r, ok ? f.obj : nullptr);
+    lv_obj_update_layout(p.root);
+    bool redrawn = false;
+    if (ok) {
+      std::vector<lv_obj_t*> objs;
+      std::vector<const Cell*> cs;
+      for (int i : m)
+        for (const TileRt& r : s_tiles)
+          if (r.def == &def.tiles[i] && r.obj) {
+            objs.push_back(r.obj), cs.push_back(&cells[i]);
+            break;
+          }
+      std::vector<int32_t> rs = dividerRects(f, objs, cs, lv_obj_get_style_pad_row(p.grid, LV_PART_MAIN),
+                                             lv_obj_get_style_pad_column(p.grid, LV_PART_MAIN));
+      if (rs != f.lines) {
+        drawDividers(f, std::move(rs));
+        lv_obj_update_layout(p.root);
+        redrawn = true;
+      }
+    } else if (!f.lines.empty()) {
+      lv_obj_clean(f.obj);
+      f.lines.clear();
+    }
+    lv_area_t a1;
+    lv_obj_get_coords(f.obj, &a1);
+    if (was == ok && !redrawn && (!ok || (a0.x1 == a1.x1 && a0.y1 == a1.y1 && a0.x2 == a1.x2 && a0.y2 == a1.y2))) continue;
+    any = true;
+    for (const lv_area_t* a : {was ? &a0 : nullptr, ok ? &a1 : nullptr}) {
+      if (!a) continue;
+      changed = {LV_MIN(changed.x1, a->x1 - rc.x1), LV_MIN(changed.y1, a->y1 - rc.y1),
+                 LV_MAX(changed.x2, a->x2 - rc.x1), LV_MAX(changed.y2, a->y2 - rc.y1)};
+    }
+  }
+  return any;
+}
+
 // Text on an "on" tile: its own colour, else dark while the fill is bright
 // enough, else the normal light text (Glass with a faint fill over a dark picture).
 uint32_t onTextColor(const TileDef& def, bool glass) {
@@ -226,8 +444,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_text_color(t, lv_color_hex(tileText(def)), 0);
   lv_obj_set_style_text_color(t, lv_color_hex(onTextColor(def, glass)), LV_STATE_CHECKED);
   // Press feedback: the card darkens and shrinks a little, eased in 90 ms.
-  lv_obj_set_style_bg_color(t, def.hasBgColor ? lv_color_mix(lv_color_hex(def.bgColor), lv_color_black(), 200)
-                                              : lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(t, pressedBg(def.hasBgColor, def.bgColor), LV_STATE_PRESSED);
   lv_obj_set_style_bg_color(t, lv_color_mix(lv_color_hex(onFill), lv_color_black(), 200),
                             LV_STATE_PRESSED | LV_STATE_CHECKED);
   lv_obj_set_style_transform_width(t, -3, LV_STATE_PRESSED);

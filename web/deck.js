@@ -30,6 +30,11 @@
 .dk-gt i{font:20px dkmdi, dkcbi;font-style:normal;line-height:1}.dk-chip{display:grid;place-items:center;flex:none;width:26px;height:26px;border-radius:50%}.dk-chip i{font-size:17px}.dk-chip.pl i{font-size:23px}.dk-gt.row .dk-chip{width:20px;height:20px}.dk-gt.row .dk-chip i{font-size:14px}.dk-gt i.tx{font:600 11px var(--mono)}
 .dk-gt b{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dk-rs{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 55%,var(--mute) 55%);opacity:.7}
+.dk-gt.msel{outline:2px dashed var(--accent);outline-offset:1px;background:var(--accent-soft)}
+.dk-frame{border-radius:10px;outline:2px solid var(--accent);outline-offset:3px;pointer-events:none}
+.dk-div{z-index:3;pointer-events:none}
+.dk-band{z-index:4;border:1px dashed var(--accent);border-radius:8px;background:var(--accent-soft);pointer-events:none}
+.dk-gbar{grid-template-columns:minmax(0,1fr) auto;margin-bottom:8px}
 .dk-ghost{z-index:4;border:2px solid var(--ok);border-radius:8px;background:rgba(92,201,167,.15);pointer-events:none}.dk-ghost.bad{border-color:var(--err);background:rgba(229,83,75,.15)}
 .dk-tray{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}.dk-tray .dk-gt{width:120px;height:60px}
 .dk-save{position:sticky;bottom:0;display:flex;align-items:center;gap:12px;margin:18px -24px -22px;padding:12px 24px;background:var(--card);border-top:1px solid var(--line);border-radius:0 0 var(--r-lg) var(--r-lg)}
@@ -159,6 +164,8 @@
     ori = null,
     sel = -1,
     more = -1;
+  /* Tiles selected together on the current page (the group bar), kept as objects so a reorder keeps them. */
+  const msel = new Set();
   const PAL = ["#3987E5", "#00A35C", "#D55181", "#C98500", "#199E70", "#D95926", "#9085E9", "#E66767"];
   /* The device's landscape screen and grid limits (older firmware: the 3.5" deck). */
   let scr = { w: 480, h: 320, gridMax: 6, grid: { landscape: [4, 3], portrait: [3, 4] } };
@@ -636,6 +643,7 @@
     const th = (document.getElementById("theme") || {}).value;
     return th === "1" ? "#FFFFFF" : th === "2" ? "#0B0E13" : "#1A1D23";
   };
+  const themeText = () => ((document.getElementById("theme") || {}).value === "1" ? "#1D2129" : "#E6E8EC");
   function lookOff(t, i) {
     return (
       colRow(
@@ -2313,6 +2321,7 @@
     return (
       '<div class="dk-gt' +
       (k === sel ? " sel" : "") +
+      (msel.has(t) ? " msel" : "") +
       (a && a.h < 2 ? " row" : "") +
       (a && a.h < 2 && a.w < 2 ? " ic" : "") +
       '" data-g="' +
@@ -2346,10 +2355,233 @@
   }
   /* Drag a tile to a free place or onto another tile, which moves to the dragged
    tile's old place (swapPlan, shown live); the corner handle resizes. A press without movement selects the tile. */
+  /* Frames: one card behind tiles that touch. Mirrors placeFrames() in deck_ui_tile.cpp. */
+  const touch = (a, b) => {
+    const rows = a.y < b.y + b.h && b.y < a.y + a.h,
+      cols = a.x < b.x + b.w && b.x < a.x + a.w;
+    return (rows && (a.x + a.w === b.x || b.x + b.w === a.x)) || (cols && (a.y + a.h === b.y || b.y + b.h === a.y));
+  };
+  /* The box of tiles ks when they can share a frame (two or more placed, connected
+   edge to edge, no other placed tile inside), else null. */
+  function frameBox(at, ks) {
+    const rs = ks.map((k) => at[k]);
+    if (rs.length < 2 || rs.some((a) => !a)) return null;
+    const x = Math.min(...rs.map((a) => a.x)),
+      y = Math.min(...rs.map((a) => a.y)),
+      box = { x: x, y: y, w: Math.max(...rs.map((a) => a.x + a.w)) - x, h: Math.max(...rs.map((a) => a.y + a.h)) - y };
+    if (at.some((a, i) => a && !ks.includes(i) && ovl(a, box))) return null;
+    const got = [0];
+    for (let grew = true; grew; ) {
+      grew = false;
+      rs.forEach((a, i) => {
+        if (got.includes(i) || !got.some((j) => touch(a, rs[j]))) return;
+        got.push(i);
+        grew = true;
+      });
+    }
+    return got.length === rs.length ? box : null;
+  }
+  /* Preview of a frame's dividers in box b: a hairline in the gap where two of rs touch. Mirrors dividerRects() in deck_ui_tile.cpp. */
+  function divLines(f, b, rs) {
+    if (!f.dividers) return "";
+    const full = f.dividers === "full",
+      bg = f.dividerColor ? rgba(f.dividerColor, (f.dividerOpacity != null ? f.dividerOpacity : 100) / 100) : "var(--mute)",
+      w = f.dividerWidth || 1,
+      mg = "-" + (3 + w / 2) + "px";
+    let h = "";
+    rs.forEach((a) =>
+      rs.forEach((c) => {
+        const side = a.x + a.w === c.x && a.y < c.y + c.h && c.y < a.y + a.h,
+          below = a.y + a.h === c.y && a.x < c.x + c.w && c.x < a.x + a.w;
+        if ((!side && !below) || f.dividerAxis === (side ? "rows" : "cols")) return;
+        const s1 = side ? Math.max(a.y, c.y) : Math.max(a.x, c.x),
+          s2 = side ? Math.min(a.y + a.h, c.y + c.h) : Math.min(a.x + a.w, c.x + c.w),
+          lo = side ? b.y : b.x,
+          hi = side ? b.y + b.h : b.x + b.w,
+          /* -3px: half the preview grid's 6px gap */
+          e1 = full && s1 > lo ? "-3px" : "0",
+          e2 = full && s2 < hi ? "-3px" : "0",
+          area = side ? s1 + 1 + "/" + (c.x + 1) + "/" + (s2 + 1) + "/" + (c.x + 2) : c.y + 1 + "/" + (s1 + 1) + "/" + (c.y + 2) + "/" + (s2 + 1),
+          st = side
+            ? "justify-self:start;width:" + w + "px;margin-left:" + mg + ";" + (full ? "margin-top:" + e1 + ";margin-bottom:" + e2 : "align-self:center;height:60%")
+            : "align-self:start;height:" + w + "px;margin-top:" + mg + ";" + (full ? "margin-left:" + e1 + ";margin-right:" + e2 : "justify-self:center;width:60%");
+        h += '<div class="dk-div" style="grid-area:' + area + ";background:" + bg + ";" + st + '"></div>';
+      }),
+    );
+    return h;
+  }
+  const frameMates = (p, t) => (t.frame ? p.tiles.filter((x) => x.frame === t.frame && !hidT(x)) : []);
+  const isSel = (ts) => ts.length === msel.size && ts.every((x) => msel.has(x));
+  /* Frames with fewer than two tiles go, and so do links to frames that are gone. */
+  function pruneFrames(p) {
+    const fs = (p.frames || []).filter((f) => p.tiles.filter((t) => t.frame === f.id).length >= 2);
+    p.tiles.forEach((t) => {
+      if (t.frame && !fs.some((f) => f.id === t.frame)) delete t.frame;
+    });
+    if (fs.length) p.frames = fs;
+    else delete p.frames;
+  }
+  /* A tap on a tile: Ctrl/Shift, a long press, or any tap on touch while some are
+   selected toggles it in the multi-selection; a plain tap selects it alone. */
+  function tapTile(p, k, ev, long) {
+    const t = p.tiles[k];
+    if (long || ev.ctrlKey || ev.metaKey || ev.shiftKey || (msel.size && ev.pointerType !== "mouse")) {
+      if (!msel.size && sel >= 0 && sel !== k && p.tiles[sel]) msel.add(p.tiles[sel]);
+      if (msel.has(t)) msel.delete(t);
+      else msel.add(t);
+      sel = -1;
+      more = -1;
+      renderPage();
+      return;
+    }
+    /* A framed tile selects its frame first, a second tap the tile alone. */
+    const fm = frameMates(p, t),
+      grab = fm.length > 1 && !isSel(fm);
+    msel.clear();
+    if (grab) {
+      fm.forEach((x) => msel.add(x));
+      sel = -1;
+      more = -1;
+      renderPage();
+      return;
+    }
+    sel = k;
+    renderPage();
+    const row = document.querySelector(".dk-tile.sel");
+    if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+  /* Touch and pen: holding a tile still this long selects it. */
+  const LONG_MS = 450;
+  const longPress = (e, n, f) =>
+    e.pointerType === "mouse"
+      ? 0
+      : setTimeout(() => {
+          n.onpointermove = n.onpointerup = n.onpointercancel = null;
+          f();
+        }, LONG_MS);
+  /* Grid geometry: half-cell pitch in px from the grid's box, padding and gap. */
+  function gmetrics(p) {
+    const g = $("dkGrid"),
+      [gc, gr] = grid(p),
+      c = gc * 2,
+      r = gr * 2,
+      b = g.getBoundingClientRect(),
+      cs = getComputedStyle(g),
+      pad = parseFloat(cs.paddingLeft) || 0,
+      gap = parseFloat(cs.columnGap) || 0;
+    return { g: g, c: c, r: r, b: b, pad: pad, sx: (b.width - 2 * pad + gap) / c, sy: (b.height - 2 * pad + gap) / r };
+  }
+  /* Selected tiles dragged together, by whole half cells, onto free cells only (no swaps). */
+  function gdragGroup(e, p, at, k, fresh) {
+    const n = e.currentTarget,
+      m = gmetrics(p),
+      ks = p.tiles.map((t, i) => i).filter((i) => at[i] && msel.has(p.tiles[i])),
+      rest = at.map((a, i) => (ks.includes(i) ? null : a)),
+      nodes = ks.map((i) => m.g.querySelector('[data-g="' + i + '"]')),
+      ghosts = ks.map(() => {
+        const d = document.createElement("div");
+        d.className = "dk-ghost";
+        d.hidden = true;
+        m.g.appendChild(d);
+        return d;
+      });
+    let moved = false,
+      dx = 0,
+      dy = 0,
+      ok = false;
+    const lp = longPress(e, n, () => tapTile(p, k, e, true));
+    n.setPointerCapture(e.pointerId);
+    n.onpointermove = (ev) => {
+      const mx = ev.clientX - e.clientX,
+        my = ev.clientY - e.clientY;
+      if (!moved && Math.abs(mx) + Math.abs(my) < 6) return;
+      moved = true;
+      clearTimeout(lp);
+      nodes.forEach((x) => {
+        x.classList.add("drag");
+        x.style.transform = "translate(" + mx + "px," + my + "px)";
+      });
+      dx = Math.round(mx / m.sx);
+      dy = Math.round(my / m.sy);
+      const to = ks.map((i) => ({ x: at[i].x + dx, y: at[i].y + dy, w: at[i].w, h: at[i].h }));
+      ok = to.every((q) => free(rest, -1, q, m.c, m.r));
+      to.forEach((q, j) => {
+        const d = ghosts[j];
+        d.hidden = q.x < 0 || q.y < 0 || q.x + q.w > m.c || q.y + q.h > m.r;
+        d.className = "dk-ghost" + (ok ? "" : " bad");
+        if (!d.hidden) d.style.gridArea = garea(q);
+      });
+    };
+    n.onpointerup = n.onpointercancel = (ev) => {
+      n.onpointermove = n.onpointerup = n.onpointercancel = null;
+      clearTimeout(lp);
+      if (!moved) return fresh ? renderPage() : tapTile(p, k, ev, false);
+      if (ev.type === "pointerup" && ok && (dx || dy)) {
+        pinAll(p, at);
+        ks.forEach((i) => setPos(p.tiles[i], cell(at[i].x + dx, at[i].y + dy, at[i].w, at[i].h)));
+        setDirty(true);
+      }
+      renderPage();
+    };
+  }
+  /* A drag across the grid from an empty cell selects every tile the box touches
+   (Ctrl/Shift adds to the selection); a plain click there clears it. */
+  function gband(e, p, at) {
+    if (e.button > 0) return;
+    const m = gmetrics(p),
+      bd = $("dkBand"),
+      add = e.ctrlKey || e.metaKey || e.shiftKey,
+      hx = (v) => Math.min(m.c - 1, Math.max(0, Math.floor((v - m.b.left - m.pad) / m.sx))),
+      hy = (v) => Math.min(m.r - 1, Math.max(0, Math.floor((v - m.b.top - m.pad) / m.sy))),
+      x0 = hx(e.clientX),
+      y0 = hy(e.clientY);
+    let box = null;
+    m.g.setPointerCapture(e.pointerId);
+    m.g.onpointermove = (ev) => {
+      if (!box && Math.abs(ev.clientX - e.clientX) + Math.abs(ev.clientY - e.clientY) < 6) return;
+      const x1 = hx(ev.clientX),
+        y1 = hy(ev.clientY);
+      box = { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0) + 1, h: Math.abs(y1 - y0) + 1 };
+      bd.hidden = false;
+      bd.style.gridArea = garea(box);
+    };
+    m.g.onpointerup = m.g.onpointercancel = (ev) => {
+      m.g.onpointermove = m.g.onpointerup = m.g.onpointercancel = null;
+      bd.hidden = true;
+      if (ev.type !== "pointerup") return;
+      if (!box) {
+        if (!add && (msel.size || sel >= 0)) {
+          msel.clear();
+          sel = -1;
+          renderPage();
+        }
+        return;
+      }
+      if (!add) msel.clear();
+      at.forEach((a, i) => {
+        if (a && ovl(a, box)) msel.add(p.tiles[i]);
+      });
+      sel = -1;
+      more = -1;
+      renderPage();
+    };
+  }
   function gdrag(e, p, at, k, size) {
     if (e.button > 0) return;
     e.preventDefault();
     e.stopPropagation();
+    /* A press on a framed tile that is not picked yet takes its whole frame along. */
+    let fresh = false;
+    if (!size && at[k] && sel !== k && !msel.has(p.tiles[k]) && !(e.ctrlKey || e.metaKey || e.shiftKey)) {
+      const fm = frameMates(p, p.tiles[k]);
+      if (fm.length > 1) {
+        msel.clear();
+        fm.forEach((x) => msel.add(x));
+        sel = -1;
+        fresh = true;
+      }
+    }
+    if (!size && at[k] && msel.size > 1 && msel.has(p.tiles[k])) return gdragGroup(e, p, at, k, fresh);
     const n = e.currentTarget,
       tile = size ? n.parentElement : n,
       g = $("dkGrid"),
@@ -2371,12 +2603,14 @@
     let moved = false,
       tgt = null,
       shown = -1;
+    const lp = size ? 0 : longPress(e, n, () => tapTile(p, k, e, true));
     n.setPointerCapture(e.pointerId);
     n.onpointermove = (ev) => {
       const dx = ev.clientX - e.clientX,
         dy = ev.clientY - e.clientY;
       if (!moved && Math.abs(dx) + Math.abs(dy) < 6) return;
       moved = true;
+      clearTimeout(lp);
       tile.classList.add("drag");
       if (size)
         tgt = {
@@ -2424,13 +2658,8 @@
     };
     n.onpointerup = n.onpointercancel = (ev) => {
       n.onpointermove = n.onpointerup = n.onpointercancel = null;
-      if (!moved) {
-        sel = k;
-        renderPage();
-        const row = document.querySelector(".dk-tile.sel");
-        if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
-        return;
-      }
+      clearTimeout(lp);
+      if (!moved) return tapTile(p, k, ev, false);
       if (ev.type === "pointerup" && tgt && tgt.ok) {
         pinAll(p, at);
         if (tgt.j >= 0) setPos(p.tiles[tgt.j], cell(tgt.to.x, tgt.to.y, tgt.to.w, tgt.to.h));
@@ -2538,6 +2767,273 @@
     for (let n = Math.min(2, v); n <= Math.max(max, v); n++) if ((n >= 2 && n <= max) || n === v) ns.push(n);
     return ns.map((n) => "<option" + (n === v ? " selected" : "") + ">" + n + "</option>").join("");
   }
+  /* The group bar: fields that set every selected tile at once. A value the tiles
+   do not share shows as Auto with "Mixed" beside it. */
+  const SIMPLE_WHEN = [
+    ["", "Always"],
+    ["pc-on", "Only while the PC is on"],
+    ["pc-off", "Only while the PC is off"],
+    ["sound-on", "Only while the PC plays sound"],
+    ["sound-off", "Only while the PC is silent"],
+  ];
+  /* The frame the selected tiles make up exactly (the group bar edits its look), else null. */
+  let gframe = null;
+  /* Orientations where tiles ts (those shown) cannot share a frame: the deck hides it there. */
+  function frameMiss(p, ts) {
+    const ks = ts.filter((t) => !hidT(t)).map((t) => p.tiles.indexOf(t)),
+      keep = ori,
+      miss = [];
+    if (ks.length < 2) return miss;
+    for (const o of ["landscape", "portrait"]) {
+      ori = o;
+      if (!frameBox(layout(p), ks)) miss.push(o);
+    }
+    ori = keep;
+    return miss;
+  }
+  function groupBar(p, ps, at) {
+    const ts = [...msel],
+      mixed = (k) => !ts.every((t) => t[k] === ts[0][k]),
+      f = {},
+      fid = ts[0].frame;
+    gframe = (fid && isSel(frameMates(p, ts[0])) && (p.frames || []).find((x) => x.id === fid)) || null;
+    const can = !!gframe || !!frameBox(at, ts.map((t) => p.tiles.indexOf(t))),
+      full = !gframe && (p.frames || []).length >= 8,
+      miss = ts.length > 1 && can && !full ? frameMiss(p, gframe ? p.tiles.filter((t) => t.frame === fid) : ts) : [],
+      missNote = miss.length
+        ? '<br><span class="dk-warn" style="margin:0">Not shown in ' +
+          miss.join(" or ") +
+          ": there these tiles do not touch or another tile sits between them.</span>"
+        : "";
+    ["bgColor", "opacity", "color", "textColor"].forEach((k) => {
+      if (!mixed(k) && ts[0][k] !== undefined) f[k] = ts[0][k];
+    });
+    const mx = (k) => (mixed(k) ? "Mixed" : ""),
+      wk = (t) => (typeof t.when === "string" ? t.when : t.when ? "?" : ""),
+      w0 = wk(ts[0]),
+      wsame = w0 !== "?" && ts.every((t) => wk(t) === w0);
+    let h =
+      '<div class="dk-tile sel dk-gbar"><div class="dk-tmain"><b>' +
+      ts.length +
+      (ts.length === 1 ? " tile" : " tiles") +
+      ' selected</b><div class="dk-tsub">' +
+      (gnote ? '<span class="dk-warn" style="margin:0">' + esc(gnote) + "</span>" : "Changes here apply to all of them.") +
+      '</div></div><div class="dk-tact"><button type="button" class="btn" id="dkGClr">Clear</button></div><div class="dk-more">';
+    if (ts.length > 1)
+      h +=
+        '<div class="field wide"><label class="check-row standalone"><input type="checkbox" id="dkGFrame"' +
+        (gframe ? " checked" : "") +
+        (can && !full ? "" : " disabled") +
+        '><span class="check-box"></span><span class="check-text"><strong>Frame</strong><span class="ct-hint">' +
+        (full
+          ? "A page holds at most 8 frames."
+          : can
+            ? "One card behind these tiles, which then lose their own background. A tap on one of them in the grid selects the frame, a second tap the tile."
+            : "Only for tiles that touch each other with no other tile between them.") +
+        missNote +
+        "</span></span></label></div>";
+    /* With a frame, Background and Opacity are the frame's: its tiles have none of their own. */
+    const [bo, bk] = gframe ? [gframe, "f"] : [f, "m"];
+    h += grp(
+      "Colours",
+      colRow(
+        bo,
+        bk,
+        "bgColor",
+        gframe ? "Frame background" : "Background",
+        themeBg(),
+        "The " + (gframe ? "frame" : "tile") + " background; in Glass the tint of its glass. Auto uses the theme.",
+        {
+          sw: ["#1A1D23", "#0B0E13", "#FFFFFF"].concat(SW),
+          warn: gframe ? "" : mx("bgColor"),
+        },
+      ) +
+        opRow(
+          bo,
+          bk,
+          "opacity",
+          gframe ? "Frame opacity" : "Opacity",
+          "glassTint",
+          10,
+          "Glass only: how much of the background colour covers the picture. Auto = Glass look.",
+        ) +
+        colRow(f, "m", "color", "Accent colour", "#7DB5FF", "Each tile's accent (icon, metric name). Auto picks it per tile.", {
+          warn: mx("color"),
+        }) +
+        colRow(f, "m", "textColor", "Text colour", "#E6E8EC", "Auto uses the theme text colour.", {
+          sw: TXT.concat(SW),
+          warn: mx("textColor") || readHint(f.textColor),
+        }),
+      true,
+    );
+    if (gframe)
+      h += grp(
+        "Dividers",
+        '<div class="field">' +
+          lbl("Dividers", "A thin line between the tiles in the frame where they touch.") +
+          '<select id="dkGDiv">' +
+          [
+            ["", "Off"],
+            ["short", "Short"],
+            ["full", "Full"],
+          ]
+            .map((o) => opt(o[0], o[1], (gframe.dividers || "") === o[0]))
+            .join("") +
+          "</select></div>" +
+          (gframe.dividers
+            ? '<div class="field">' +
+              lbl("Direction") +
+              '<select id="dkGDivA">' +
+              [
+                ["", "Both"],
+                ["cols", "Between columns only"],
+                ["rows", "Between rows only"],
+              ]
+                .map((o) => opt(o[0], o[1], (gframe.dividerAxis || "") === o[0]))
+                .join("") +
+              "</select></div>" +
+              '<div class="field">' +
+              lbl("Thickness") +
+              '<select id="dkGDivW">' +
+              [1, 2, 3].map((n) => opt(String(n), n + " px", (gframe.dividerWidth || 1) === n)).join("") +
+              "</select></div>"
+            : "") +
+          (gframe.dividers
+            ? colRow(gframe, "f", "dividerColor", "Divider colour", themeText(), "Auto: the theme text colour.", {
+                sw: TXT.concat(SW),
+              }) +
+              opRow(
+                gframe,
+                "f",
+                "dividerOpacity",
+                "Divider opacity",
+                "",
+                gframe.dividerColor ? 100 : 15,
+                "Auto: 15 % with the auto colour, else 100 %.",
+              )
+            : ""),
+      );
+    if (gframe)
+      h += grp(
+        "Outline",
+        '<div class="field">' +
+          lbl("Outline", "A line round the whole frame.") +
+          '<select id="dkGOut">' +
+          [0, 1, 2].map((n) => opt(String(n), n ? n + " px" : "Off", (gframe.outline || 0) === n)).join("") +
+          "</select></div>" +
+          (gframe.outline
+            ? colRow(gframe, "f", "outlineColor", "Outline colour", themeText(), "Auto: the theme text colour.", {
+                sw: TXT.concat(SW),
+              }) +
+              opRow(
+                gframe,
+                "f",
+                "outlineOpacity",
+                "Outline opacity",
+                "",
+                gframe.outlineColor ? 100 : 25,
+                "Auto: 25 % with the auto colour, else 100 %.",
+              )
+            : ""),
+      );
+    h += grp(
+      "Visibility",
+      '<div class="field">' +
+        lbl(
+          "Show",
+          "Sets the same condition on every selected tile (printer tiles skip the PC and sound ones). A condition on an entity or a printer is set per tile.",
+        ) +
+        '<select id="dkGWhen">' +
+        (wsame ? "" : '<option value="?" selected disabled>Mixed</option>') +
+        SIMPLE_WHEN.map((o) => opt(o[0], o[1], wsame && o[0] === w0)).join("") +
+        "</select></div>",
+    );
+    if (ps.length > 1)
+      h += grp(
+        "Page",
+        '<div class="field wide">' +
+          lbl(
+            "Move or copy to",
+            "The tiles keep their arrangement, at the same place when it is free there, otherwise at the first place where they all fit. If there is no such place they go wherever there is room.",
+          ) +
+          '<div class="dk-row"><select id="dkGPg" style="width:auto">' +
+          ps.map((q, i) => (i === cur ? "" : opt(String(i), q.name || q.id, false))).join("") +
+          '</select><button type="button" class="btn" id="dkGMv">Move</button><button type="button" class="btn" id="dkGCp">Copy</button></div></div>',
+        true,
+      );
+    h +=
+      '<div class="field wide"><div class="dk-row"><button type="button" class="btn btn-danger" id="dkGDel">Remove ' +
+      (ts.length === 1 ? "tile" : ts.length + " tiles") +
+      "</button></div></div></div></div>";
+    return h;
+  }
+  /* Move or copy the selected tiles to page q, keeping their arrangement in each
+   orientation where it fits there; where it does not they lose their cells and flow. */
+  function groupTo(p, q, copy) {
+    const ts = p.tiles.filter((t) => msel.has(t)),
+      keep = ori,
+      plan = {};
+    for (const o of ["landscape", "portrait"]) {
+      ori = o;
+      plan[o] = null;
+      const as = layout(p),
+        aq = layout(q),
+        [gc, gr] = grid(q),
+        c = gc * 2,
+        r = gr * 2,
+        rs = ts.map((t) => as[p.tiles.indexOf(t)]);
+      if (rs.some((a) => !a)) continue;
+      const x0 = Math.min(...rs.map((a) => a.x)),
+        y0 = Math.min(...rs.map((a) => a.y)),
+        fitAt = (x, y) => rs.every((a) => free(aq, -1, { x: a.x - x0 + x, y: a.y - y0 + y, w: a.w, h: a.h }, c, r));
+      let spot = fitAt(x0, y0) ? [x0, y0] : null;
+      for (let y = 0; y < r && !spot; y++) for (let x = 0; x < c && !spot; x++) if (fitAt(x, y)) spot = [x, y];
+      if (!spot) continue;
+      pinAll(q, aq);
+      plan[o] = rs.map((a) => cell(a.x - x0 + spot[0], a.y - y0 + spot[1], a.w, a.h));
+    }
+    ori = keep;
+    /* Their frames go along under ids free on q. */
+    const fmap = {};
+    ts.forEach((t) => {
+      const f = t.frame && !fmap[t.frame] && (p.frames || []).find((x) => x.id === t.frame);
+      if (!f) return;
+      let n = 1;
+      while ((q.frames || []).some((x) => x.id === "f" + n)) n++;
+      fmap[t.frame] = "f" + n;
+      q.frames = (q.frames || []).concat([Object.assign({}, f, { id: "f" + n })]);
+    });
+    const out = ts.map((t0, j) => {
+      const t = copy ? JSON.parse(JSON.stringify(t0)) : t0;
+      if (t.frame) t.frame = fmap[t.frame];
+      t.pos = t.pos || {};
+      for (const o of ["landscape", "portrait"]) {
+        if (plan[o]) t.pos[o] = plan[o][j];
+        else if (t.pos[o]) {
+          delete t.pos[o].x;
+          delete t.pos[o].y;
+          if (!Object.keys(t.pos[o]).length) delete t.pos[o];
+        }
+      }
+      if (!Object.keys(t.pos).length) delete t.pos;
+      if (t.id) {
+        let id = t.id,
+          n = 2;
+        while (q.tiles.some((x) => x.id === id)) id = t.id + "_" + n++;
+        t.id = id;
+      }
+      q.tiles.push(t);
+      return t;
+    });
+    if (!copy) p.tiles = p.tiles.filter((t) => !msel.has(t));
+    pruneFrames(p);
+    pruneFrames(q);
+    msel.clear();
+    out.forEach((t) => msel.add(t));
+    return !!plan[ori];
+  }
+  /* Shown once in the group bar after a move or copy that could not keep the arrangement. */
+  let gnote = "";
   function renderPage() {
     const ps = pages();
     const el = $("dkPage");
@@ -2546,6 +3042,7 @@
       return;
     }
     const p = ps[cur];
+    for (const t of msel) if (!p.tiles.includes(t) || hidT(t)) msel.delete(t);
     const [c, r] = grid(p),
       land = ori === "landscape",
       pick = (scr.pick || { landscape: [6, 4], portrait: [4, 6] })[ori],
@@ -2624,22 +3121,47 @@
       ((land ? scr.h : scr.w) - hd) +
       '">' +
       g +
+      (p.frames || [])
+        .map((f) => {
+          const b = frameBox(
+            at,
+            p.tiles.map((t, k) => k).filter((k) => p.tiles[k].frame === f.id && at[k]),
+          );
+          return b
+            ? '<div class="dk-frame" style="grid-area:' +
+                garea(b) +
+                (f.bgColor ? ";background:" + rgba(f.bgColor, 0.35) : "") +
+                (f.outline
+                  ? ";box-shadow:inset 0 0 0 " +
+                    f.outline +
+                    "px " +
+                    (f.outlineColor
+                      ? rgba(f.outlineColor, (f.outlineOpacity != null ? f.outlineOpacity : 100) / 100)
+                      : "var(--mute)")
+                  : "") +
+                '"></div>' +
+                divLines(f, b, p.tiles.map((t, k) => k).filter((k) => p.tiles[k].frame === f.id && at[k]).map((k) => at[k]))
+            : "";
+        })
+        .join("") +
       p.tiles.map((t, k) => (at[k] ? gtile(t, k, at[k]) : "")).join("") +
-      '<div class="dk-ghost" id="dkGhost" hidden></div></div>';
+      '<div class="dk-ghost" id="dkGhost" hidden></div><div class="dk-band" id="dkBand" hidden></div></div>';
     if (lost.length)
       h +=
         '<p class="dk-cap over">No room on the page for these: drag one to a free place, make it smaller or remove it.</p><div class="dk-tray">' +
         lost.map((k) => gtile(p.tiles[k], k, null)).join("") +
         "</div>";
     h +=
-      '<p class="field-hint">Drag a tile to move it, or onto another tile, which then moves to where the dragged one was; the corner handle resizes. Both go in half-cell steps. Tap a tile to find it in the list.</p>';
+      '<p class="field-hint">Drag a tile to move it, or onto another tile, which then moves to where the dragged one was; the corner handle resizes. Both go in half-cell steps. Tap a tile to find it in the list. To select several, Ctrl+click or long-press them, or drag across them from an empty cell: they then move together and share one set of settings.</p>';
     if (sel >= 0 && p.tiles[sel] && ps.length > 1)
       h +=
         '<div class="dk-row"><span class="dk-tsub" style="margin:0">Move the selected tile to</span><select id="dkMvPg" style="width:auto">' +
         ps.map((q, i) => (i === cur ? "" : opt(String(i), q.name || q.id, false))).join("") +
         '</select><button type="button" class="btn" id="dkMv">Move</button></div>';
     h +=
-      '</div><div class="dk-right"><div class="dk-tiles" id="dkTiles">' +
+      '</div><div class="dk-right">' +
+      (msel.size ? groupBar(p, ps, at) : "") +
+      '<div class="dk-tiles" id="dkTiles">' +
       p.tiles
         .map((t, i) => {
           if (t.type === "metric") return metricRow(t, i);
@@ -2747,6 +3269,7 @@
         row.onclick = (e) => {
           const k = +x.dataset.x;
           if (k === sel || e.target.closest("input,select,button,textarea,a,label,.dk-more")) return;
+          msel.clear();
           sel = k;
           renderPage();
         };
@@ -2860,6 +3383,105 @@
     el.querySelectorAll("[data-rs]").forEach(
       (n) => (n.onpointerdown = (e) => gdrag(e, p, at, +n.dataset.rs, true)),
     );
+    $("dkGrid").onpointerdown = (e) => {
+      if (!e.target.closest(".dk-gt")) gband(e, p, at);
+    };
+    if (msel.size) {
+      $("dkGClr").onclick = () => {
+        msel.clear();
+        renderPage();
+      };
+      if ($("dkGFrame"))
+        $("dkGFrame").onchange = (e) => {
+          if (e.target.checked) {
+            let n = 1;
+            while ((p.frames || []).some((f) => f.id === "f" + n)) n++;
+            p.frames = (p.frames || []).concat([{ id: "f" + n }]);
+            msel.forEach((t) => (t.frame = "f" + n));
+          } else msel.forEach((t) => delete t.frame);
+          pruneFrames(p);
+          setDirty(true);
+          renderPage();
+        };
+      if ($("dkGDivA"))
+        $("dkGDivA").onchange = (e) => {
+          if (e.target.value) gframe.dividerAxis = e.target.value;
+          else delete gframe.dividerAxis;
+          setDirty(true);
+          renderPage();
+        };
+      if ($("dkGOut"))
+        $("dkGOut").onchange = (e) => {
+          if (+e.target.value) gframe.outline = +e.target.value;
+          else {
+            delete gframe.outline;
+            delete gframe.outlineColor;
+            delete gframe.outlineOpacity;
+          }
+          setDirty(true);
+          renderPage();
+        };
+      if ($("dkGDivW"))
+        $("dkGDivW").onchange = (e) => {
+          if (+e.target.value > 1) gframe.dividerWidth = +e.target.value;
+          else delete gframe.dividerWidth;
+          setDirty(true);
+          renderPage();
+        };
+      if ($("dkGDiv"))
+        $("dkGDiv").onchange = (e) => {
+          if (e.target.value) gframe.dividers = e.target.value;
+          else {
+            delete gframe.dividers;
+            delete gframe.dividerColor;
+            delete gframe.dividerWidth;
+            delete gframe.dividerOpacity;
+            delete gframe.dividerAxis;
+          }
+          setDirty(true);
+          renderPage();
+        };
+      /* A newly hidden tile would drop out of the selection: the preview switches to show it. */
+      $("dkGWhen").onchange = (e) => {
+        const v = e.target.value;
+        msel.forEach((t) => {
+          if (t.type === "printer" && /^(pc|sound)-/.test(v)) return;
+          if (v) t.when = v;
+          else delete t.when;
+          const w = whenOf(t);
+          if (w) pv[w.k] = !w.neg;
+        });
+        setDirty(true);
+        renderPage();
+      };
+      const toPage = (copy) => {
+        const q = ps[+$("dkGPg").value];
+        if (!q) return;
+        gnote = groupTo(p, q, copy)
+          ? ""
+          : "They did not fit together on " + (q.name || q.id) + "; move them into place.";
+        cur = ps.indexOf(q);
+        sel = -1;
+        more = -1;
+        setDirty(true);
+        render();
+        gnote = "";
+      };
+      if ($("dkGMv")) {
+        $("dkGMv").onclick = () => toPage(false);
+        $("dkGCp").onclick = () => toPage(true);
+      }
+      $("dkGDel").onclick = () => {
+        if (!confirm("Remove " + msel.size + (msel.size === 1 ? " tile?" : " tiles?"))) return;
+        p.tiles = p.tiles.filter((t) => !msel.has(t));
+        pruneFrames(p);
+        msel.clear();
+        sel = -1;
+        more = -1;
+        setDirty(true);
+        renderPage();
+      };
+    }
     /* The page and the pages stacked under it move together. */
     $("dkPStack").onchange = (e) => {
       const prev = ps[cur - 1];
@@ -2960,6 +3582,7 @@
       (x) =>
         (x.onclick = () => {
           p.tiles.splice(+x.dataset.x, 1);
+          pruneFrames(p);
           sel = -1;
           more = -1;
           setDirty(true);
@@ -3205,9 +3828,11 @@
           setDirty(true);
         }),
     );
+    /* "m" = the group bar: every selected tile. */
+    const tg = (key) => (key === "m" ? [...msel] : key === "f" ? [gframe] : [p.tiles[+key]]);
     el.querySelectorAll("[data-co]").forEach((x) => {
       x.oninput = (e) => {
-        p.tiles[+x.dataset.co][x.dataset.ck] = e.target.value.toUpperCase();
+        tg(x.dataset.co).forEach((t) => (t[x.dataset.ck] = e.target.value.toUpperCase()));
         setDirty(true);
       };
       x.onchange = () => renderPage();
@@ -3215,7 +3840,7 @@
     el.querySelectorAll("[data-cs]").forEach(
       (x) =>
         (x.onclick = () => {
-          p.tiles[+x.dataset.cs][x.dataset.ck] = x.dataset.v;
+          tg(x.dataset.cs).forEach((t) => (t[x.dataset.ck] = x.dataset.v));
           setDirty(true);
           renderPage();
         }),
@@ -3223,14 +3848,14 @@
     el.querySelectorAll("[data-ca]").forEach(
       (x) =>
         (x.onclick = () => {
-          delete p.tiles[+x.dataset.ca][x.dataset.ck];
+          tg(x.dataset.ca).forEach((t) => delete t[x.dataset.ck]);
           setDirty(true);
           renderPage();
         }),
     );
     el.querySelectorAll("[data-op]").forEach((x) => {
       x.oninput = (e) => {
-        p.tiles[+x.dataset.op][x.dataset.ok] = +e.target.value;
+        tg(x.dataset.op).forEach((t) => (t[x.dataset.ok] = +e.target.value));
         x.nextElementSibling.textContent = e.target.value + "%";
         setDirty(true);
       };
@@ -3239,7 +3864,7 @@
     el.querySelectorAll("[data-oa]").forEach(
       (x) =>
         (x.onclick = () => {
-          delete p.tiles[+x.dataset.oa][x.dataset.ok];
+          tg(x.dataset.oa).forEach((t) => delete t[x.dataset.ok]);
           setDirty(true);
           renderPage();
         }),
