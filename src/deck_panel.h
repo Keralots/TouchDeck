@@ -43,6 +43,8 @@ bool panelBegin(uint8_t rotation);
 // Next TE edge on the millis() time base, or current time when TE is stale.
 // Monotonic across wrap; called only by the loop task.
 uint32_t panelFrameClockMs();
+// Smooth display picks whether the DSI scan ring runs: only with libs lacking a cache-safe DSI ISR.
+bool panelScanRingOption();
 
 // The refresh a frame the loop starts drawing now should reach the glass on
 // (esp_timer us), and the refresh period. 0 when the transport has no clock.

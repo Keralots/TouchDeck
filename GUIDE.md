@@ -58,7 +58,6 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 - **Network:** WiFi, hostname / mDNS, static IP.
 - **Advanced:** optional features, off by default: Bambu Lab printers and MQTT. On the Waveshare 7B also **Animation**:
   - **Weather icons at 60 fps** and **Charts and printer effects at 60 fps:** animate on every screen refresh instead of every second one. Smoother, uses more CPU time.
-  - **Smooth display (60 fps):** page slides, cards and popups at up to 60 fps instead of 30, but saving settings or files (firmware update, icons, daily pictures) can flash the screen green for a moment. Off by default; applies after a restart.
 - **Maintenance:** microSD card, configuration backup (pages and settings; WiFi and the Home Assistant token are never included), firmware update, factory reset.
 
 ## Home Assistant

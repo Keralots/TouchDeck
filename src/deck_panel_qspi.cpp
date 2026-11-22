@@ -243,6 +243,8 @@ int64_t transportOverlayPresentUs(int64_t) { return 0; }
 
 bool transportBackToBack() { return false; }
 
+bool panelScanRingOption() { return false; }
+
 int64_t transportAnimTargetUs(int64_t, int64_t*) { return 0; }
 
 bool transportBegin() {

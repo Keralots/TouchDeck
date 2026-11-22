@@ -347,6 +347,14 @@ int64_t transportPresentUs(int64_t nowUs) {
 
 bool transportBackToBack() { return !s_ringOn; }
 
+bool panelScanRingOption() {
+#if CONFIG_LCD_DSI_ISR_CACHE_SAFE
+  return false;  // the driver restarts the scan with the cache off: no flash, no ring
+#else
+  return true;
+#endif
+}
+
 int64_t transportOverlayPresentUs(int64_t nowUs) {
   if (!lastVsyncUs()) return 0;
   const int64_t t = vsyncAfter(nowUs + SWAP_GUARD_US + 2000);
@@ -427,7 +435,8 @@ bool transportBegin() {
   if ((e = esp_lcd_dpi_panel_register_event_callbacks(s_dpi, &cbs, nullptr)) != ESP_OK)
     return fail("callbacks", e);
   // The ring guards against flash-write flashes but costs every second refresh (30 fps).
-  if (advSettings.smoothDisplay) Serial.println("Deck panel: smooth display, scan ring off");
+  if (!panelScanRingOption()) Serial.println("Deck panel: cache-safe DSI ISR, scan ring off");
+  else if (advSettings.smoothDisplay) Serial.println("Deck panel: smooth display, scan ring off");
   else ringBegin(fb);
   return true;
 }
