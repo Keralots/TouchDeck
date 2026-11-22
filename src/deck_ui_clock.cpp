@@ -5,6 +5,7 @@
 
 #include <utility>
 
+#include "board.h"
 #include "deck_ui_int.h"
 
 namespace deckui {
@@ -12,6 +13,7 @@ namespace deckui {
 constexpr uint32_t ROLL_MS = 620, ROLL_STAGGER_MS = 85, SLIDE_MS = 520, FLASH_MS = 650;
 constexpr uint32_t AT_REST = 100000;  // el of a clock that is not changing
 constexpr int TAIL_STEP_PX = 3;  // tail fades in steps this long
+constexpr int TAIL_STEPS = 6;     // boards without BOARD_CLOCK_SMOOTH_TAIL
 constexpr float TAIL_PART = 0.14f;  // comet tail, share of the ring
 
 // One piece of the ring: a straight side or a quarter circle.
@@ -211,6 +213,13 @@ static void dot(lv_layer_t* L, float x, float y, float r, lv_color_t col, lv_opa
 static void ringTail(lv_layer_t* L, const ClockFx& c, int ox, int oy, float d0, float d1, lv_color_t col) {
   if (d1 <= d0) return;
   auto opa = [&](float d) { return (lv_opa_t)(100 + 155 * clampf((d - d0) / (d1 - d0), 0, 1)); };
+#if !defined(BOARD_CLOCK_SMOOTH_TAIL)
+  for (int k = 0; k < TAIL_STEPS; k++) {
+    const float b = d0 + (d1 - d0) * (k + 1) / TAIL_STEPS;
+    ringStroke(L, c, ox, oy, d0 + (d1 - d0) * k / TAIL_STEPS, b, c.lw, col, opa(b));
+  }
+  return;
+#endif
   for (const RingSeg& s : c.seg) {
     const float a = LV_MAX(d0, s.at), b = LV_MIN(d1, s.at + s.len);
     if (b <= a) continue;
