@@ -111,6 +111,7 @@ constexpr uint8_t HAPTIC_MAX_MS = 200;
 
 constexpr size_t ENCODER_COUNT = 2;
 constexpr uint8_t ENCODER_FOLLOW = 0, ENCODER_FIXED = 1, ENCODER_PC = 2;
+constexpr uint8_t ENCODER_TILES = 3, ENCODER_PAGES = 4, ENCODER_DECK = 5;
 constexpr uint8_t ENCODER_POPUP_DROPLET = 0, ENCODER_POPUP_EDGE = 1,
                   ENCODER_POPUP_BEAD = 2, ENCODER_POPUP_SIDE_PILL = 3;
 constexpr uint8_t ENCODER_POPUP_STYLE = 0, ENCODER_POPUP_SLIDE = 1,

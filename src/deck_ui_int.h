@@ -361,6 +361,7 @@ void httpSync();
 std::vector<String> entityIds();
 #if BOARD_HAS_ENCODER
 void encoderFocus(const TileRt& r);
+void encoderClearTiles(bool rebuild = false);
 void encoderTick();
 void encoderAnimTick();
 void encoderClimatePreview(const String& entity, float& low, float& high, const char*& mode);
@@ -394,6 +395,7 @@ void qpMarkStale();
 // The page under the panel changed: also drops a frost being made.
 void qpMarkPageStale();
 uint8_t& screenLevelRef();
+bool qpWantVolume();
 void qpSyncValues();
 void qpUpdateStatus(bool force);
 void qpCheckLayout();
@@ -623,6 +625,8 @@ extern lv_style_transition_dsc_t s_pressTrans;
 extern portMUX_TYPE s_mux;
 extern Shared sh;
 void styleIconChip(lv_obj_t* chip, uint32_t accent);
+bool slideBy(int dir, bool vertical);
+int homePage();
 void goToPage(const String& id);
 int pageIndexOf(const String& id);
 String activePageId();

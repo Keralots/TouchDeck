@@ -300,10 +300,14 @@
       field.disabled = true;
     });
     const entityField = section.querySelector("[data-encoder-entity]");
+    const modeHint = section.querySelector("[data-encoder-mode-hint]");
     const setMode = () => {
       const fixed = fields.mode.value === "1";
       entityField.classList.toggle("hidden", !fixed);
       fields.entity.disabled = !fixed;
+      const hint = fields.mode.selectedOptions[0]?.dataset.hint || "";
+      modeHint.textContent = hint;
+      modeHint.classList.toggle("hidden", !hint);
     };
     fields.mode.addEventListener("change", setMode);
     $("encoderRows").appendChild(section);

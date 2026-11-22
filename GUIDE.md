@@ -324,6 +324,9 @@ Under **Hardware > Rotary encoders**, enable an encoder, pick its A (S1), B (S2)
 - **Follow last touched tile:** controls the light, media, PC volume or thermostat tile you touched last.
 - **Fixed entity:** always one `light`, `media_player` or `climate` entity.
 - **PC volume:** the master volume of the first PC, no tile needed.
+- **Tile picker:** selects and taps tiles on the current page.
+- **Pages:** changes pages and jumps home.
+- **Deck:** controls the screen and speaker.
 
 **Controls:**
 
@@ -333,8 +336,12 @@ Under **Hardware > Rotary encoders**, enable an encoder, pick its A (S1), B (S2)
 | Media player (HA or PC) | volume | play / pause | next / previous track |
 | PC volume | volume | mute | - |
 | Thermostat | setpoint | shows its state | HVAC mode |
+| Tile picker | select a tile | tap the selected tile | change page |
+| Pages | change page | go home | screen brightness |
+| Deck | screen brightness | turn screen off | speaker volume |
 
-Step per detent sets how far one click of the knob moves the level. Turning the knob while the screen sleeps only wakes it.
+Step per detent sets how far one click of the knob moves the level.
+Turning or clicking the knob while the screen sleeps only wakes it.
 
 **Popup:** a value popup at the screen edge. Style (Droplet, Bead, Side pill, Edge), size, background opacity, hold time, animation and its speed, and the accent colour (from the entity or fixed) apply to both encoders; the edge (right or left) and the position along it are set per encoder, to line up with the knobs in a case. **Preview** shows unsaved popup settings on the deck.
 

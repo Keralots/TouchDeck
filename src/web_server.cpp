@@ -827,7 +827,7 @@ static void handleConfigImport() {
       READ_INT(item, "pinB", 0, GPIO_PIN_MAX, s.pinB, uint8_t);
       READ_INT(item, "pinKey", 0, GPIO_PIN_MAX, s.pinKey, uint8_t);
       READ_BOOL(item, "reverse", s.reverse);
-      READ_INT(item, "mode", ENCODER_FOLLOW, ENCODER_PC, s.mode, uint8_t);
+      READ_INT(item, "mode", ENCODER_FOLLOW, ENCODER_DECK, s.mode, uint8_t);
       READ_INT(item, "stepPct", 1, 25, s.stepPct, uint8_t);
       READ_INT(item, "countsPerDetent", 2, 4, s.countsPerDetent, uint8_t);
       READ_INT(item, "popupY", 5, 95, s.popupY, uint8_t);
@@ -1188,7 +1188,7 @@ static bool readEncoderForm(EncoderSettings* items) {
       }
       *pins[j] = pin;
     }
-    s.mode = clampedArg((prefix + "mode").c_str(), s.mode, ENCODER_FOLLOW, ENCODER_PC);
+    s.mode = clampedArg((prefix + "mode").c_str(), s.mode, ENCODER_FOLLOW, ENCODER_DECK);
     s.stepPct = clampedArg((prefix + "stepPct").c_str(), s.stepPct, 1, 25);
     s.popupY = clampedArg((prefix + "popupY").c_str(), s.popupY, 5, 95);
     s.edge = clampedArg((prefix + "edge").c_str(), s.edge, 0, 1);
