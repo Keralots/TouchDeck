@@ -2393,7 +2393,7 @@
       rs.forEach((c) => {
         const side = a.x + a.w === c.x && a.y < c.y + c.h && c.y < a.y + a.h,
           below = a.y + a.h === c.y && a.x < c.x + c.w && c.x < a.x + a.w;
-        if (!side && !below) return;
+        if ((!side && !below) || f.dividerAxis === (side ? "rows" : "cols")) return;
         const s1 = side ? Math.max(a.y, c.y) : Math.max(a.x, c.x),
           s2 = side ? Math.min(a.y + a.h, c.y + c.h) : Math.min(a.x + a.w, c.x + c.w),
           lo = side ? b.y : b.x,
@@ -2882,6 +2882,17 @@
           "</select></div>" +
           (gframe.dividers
             ? '<div class="field">' +
+              lbl("Direction") +
+              '<select id="dkGDivA">' +
+              [
+                ["", "Both"],
+                ["cols", "Between columns only"],
+                ["rows", "Between rows only"],
+              ]
+                .map((o) => opt(o[0], o[1], (gframe.dividerAxis || "") === o[0]))
+                .join("") +
+              "</select></div>" +
+              '<div class="field">' +
               lbl("Thickness") +
               '<select id="dkGDivW">' +
               [1, 2, 3].map((n) => opt(String(n), n + " px", (gframe.dividerWidth || 1) === n)).join("") +
@@ -2899,6 +2910,29 @@
                 "",
                 gframe.dividerColor ? 100 : 15,
                 "Auto: 15 % with the auto colour, else 100 %.",
+              )
+            : ""),
+      );
+    if (gframe)
+      h += grp(
+        "Outline",
+        '<div class="field">' +
+          lbl("Outline", "A line round the whole frame.") +
+          '<select id="dkGOut">' +
+          [0, 1, 2].map((n) => opt(String(n), n ? n + " px" : "Off", (gframe.outline || 0) === n)).join("") +
+          "</select></div>" +
+          (gframe.outline
+            ? colRow(gframe, "f", "outlineColor", "Outline colour", themeText(), "Auto: the theme text colour.", {
+                sw: TXT.concat(SW),
+              }) +
+              opRow(
+                gframe,
+                "f",
+                "outlineOpacity",
+                "Outline opacity",
+                "",
+                gframe.outlineColor ? 100 : 25,
+                "Auto: 25 % with the auto colour, else 100 %.",
               )
             : ""),
       );
@@ -3097,6 +3131,14 @@
             ? '<div class="dk-frame" style="grid-area:' +
                 garea(b) +
                 (f.bgColor ? ";background:" + rgba(f.bgColor, 0.35) : "") +
+                (f.outline
+                  ? ";box-shadow:inset 0 0 0 " +
+                    f.outline +
+                    "px " +
+                    (f.outlineColor
+                      ? rgba(f.outlineColor, (f.outlineOpacity != null ? f.outlineOpacity : 100) / 100)
+                      : "var(--mute)")
+                  : "") +
                 '"></div>' +
                 divLines(f, b, p.tiles.map((t, k) => k).filter((k) => p.tiles[k].frame === f.id && at[k]).map((k) => at[k]))
             : "";
@@ -3361,6 +3403,24 @@
           setDirty(true);
           renderPage();
         };
+      if ($("dkGDivA"))
+        $("dkGDivA").onchange = (e) => {
+          if (e.target.value) gframe.dividerAxis = e.target.value;
+          else delete gframe.dividerAxis;
+          setDirty(true);
+          renderPage();
+        };
+      if ($("dkGOut"))
+        $("dkGOut").onchange = (e) => {
+          if (+e.target.value) gframe.outline = +e.target.value;
+          else {
+            delete gframe.outline;
+            delete gframe.outlineColor;
+            delete gframe.outlineOpacity;
+          }
+          setDirty(true);
+          renderPage();
+        };
       if ($("dkGDivW"))
         $("dkGDivW").onchange = (e) => {
           if (+e.target.value > 1) gframe.dividerWidth = +e.target.value;
@@ -3376,6 +3436,7 @@
             delete gframe.dividerColor;
             delete gframe.dividerWidth;
             delete gframe.dividerOpacity;
+            delete gframe.dividerAxis;
           }
           setDirty(true);
           renderPage();

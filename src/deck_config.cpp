@@ -365,6 +365,11 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       const String div = fv["dividers"] | "";
       f.dividers = div == "short" ? FRAME_DIV_SHORT : div == "full" ? FRAME_DIV_FULL : FRAME_DIV_OFF;
       f.divWidth = (uint8_t)constrain(fv["dividerWidth"] | 1, 1, 3);
+      const String axis = fv["dividerAxis"] | "";
+      f.divAxis = axis == "cols" ? FRAME_AXIS_COLS : axis == "rows" ? FRAME_AXIS_ROWS : FRAME_AXIS_BOTH;
+      f.outline = (uint8_t)constrain(fv["outline"] | 0, 0, 2);
+      f.hasOutColor = parseColor(fv["outlineColor"] | (const char*)nullptr, f.outColor);
+      if (fv["outlineOpacity"].is<int>()) f.outOpa = (int8_t)constrain(fv["outlineOpacity"].as<int>(), 0, 100);
       if (fv["dividerOpacity"].is<int>()) f.divOpa = (int8_t)constrain(fv["dividerOpacity"].as<int>(), 0, 100);
       f.hasDivColor = parseColor(fv["dividerColor"] | (const char*)nullptr, f.divColor);
       p.frames.push_back(f);

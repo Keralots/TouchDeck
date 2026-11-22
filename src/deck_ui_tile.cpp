@@ -220,8 +220,14 @@ void makeFrames(Page& p) {
     lv_obj_set_grid_cell(o, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 0, 1);
     lv_obj_set_style_radius(o, 16, 0);
     lv_obj_set_style_pad_all(o, 0, 0);
-    lv_obj_set_style_border_width(o, s_theme == THEME_DAYLIGHT ? 1 : 0, 0);
-    lv_obj_set_style_border_color(o, lv_color_hex(C_TILE_LINE), 0);
+    if (f.outline) {
+      lv_obj_set_style_border_width(o, f.outline, 0);
+      lv_obj_set_style_border_color(o, lv_color_hex(f.hasOutColor ? f.outColor : C_TEXT), 0);
+      lv_obj_set_style_border_opa(o, f.outOpa >= 0 ? (lv_opa_t)(f.outOpa * 255 / 100) : f.hasOutColor ? LV_OPA_COVER : 64, 0);
+    } else {
+      lv_obj_set_style_border_width(o, s_theme == THEME_DAYLIGHT ? 1 : 0, 0);
+      lv_obj_set_style_border_color(o, lv_color_hex(C_TILE_LINE), 0);
+    }
     lv_obj_set_style_bg_color(o, lv_color_hex(frameBg(f)), 0);
     lv_obj_set_style_bg_opa(o, glass ? LV_OPA_TRANSP : LV_OPA_COVER, 0);  // Glass: baked like a tile
     s_frames.push_back({&f, o});
@@ -273,6 +279,7 @@ static std::vector<int32_t> dividerRects(const FrameRt& f, const std::vector<lv_
       const Cell &a = *cs[i], &b = *cs[j];
       const bool v = a.x + a.w == b.x && a.y < b.y + b.h && b.y < a.y + a.h;
       if (!v && !(a.y + a.h == b.y && a.x < b.x + b.w && b.x < a.x + a.w)) continue;
+      if (f.def->divAxis == (v ? FRAME_AXIS_ROWS : FRAME_AXIS_COLS)) continue;
       lv_area_t ca, cb;
       lv_obj_get_coords(objs[i], &ca);
       lv_obj_get_coords(objs[j], &cb);
@@ -282,6 +289,7 @@ static std::vector<int32_t> dividerRects(const FrameRt& f, const std::vector<lv_
       if (full) {
         if (s.s1 > lo) s.s1 = line(s.s1 - gap - 1, s.s1);
         if (s.s2 < hi) s.s2 = line(s.s2, s.s2 + gap + 1) + t - 1;
+        s.s1 = max(s.s1, v ? fc.y1 : fc.x1), s.s2 = min(s.s2, v ? fc.y2 : fc.x2);  // inside the outline
       } else {
         const int32_t in = (s.s2 - s.s1 + 1) / 5;
         s.s1 += in, s.s2 -= in;

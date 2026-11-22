@@ -79,7 +79,9 @@
 // their own background. Only while at least two of them are shown, touch each
 // other and no other shown tile sits in their box; otherwise they stand alone.
 // A frame's "dividers": "short" | "full" draws a hairline between its touching
-// tiles ("dividerColor", else the theme text colour, faint; "dividerWidth" 1..3 px; "dividerOpacity" 0..100 %).
+// tiles ("dividerColor", else the theme text colour, faint; "dividerWidth" 1..3 px; "dividerOpacity" 0..100 %; "dividerAxis":
+// "cols" | "rows" for one direction only). "outline": 1..2 px draws a line round
+// the frame ("outlineColor", else the text colour; "outlineOpacity").
 // Action, toggle, slider and sensor tiles take "iconStyle": "plain" (no
 // circle, the icon fills its place), "iconColor" / "onIconColor" (else
 // "color"; a plain icon while on: the text colour), "onIcon" (toggle) and
@@ -270,10 +272,16 @@ struct FrameDef {
   uint8_t dividers = 0;  // FRAME_DIV_*
   uint8_t divWidth = 1;  // px, 1..3
   int8_t divOpa = -1;    // %, -1 = 15 with the auto colour, else 100
+  uint8_t divAxis = 0;   // FRAME_AXIS_*
+  uint8_t outline = 0;   // px, 0 = none
+  bool hasOutColor = false;
+  uint32_t outColor = 0;
+  int8_t outOpa = -1;    // %, -1 = 25 with the auto colour, else 100
   bool hasDivColor = false;
   uint32_t divColor = 0;
 };
 enum : uint8_t { FRAME_DIV_OFF, FRAME_DIV_SHORT, FRAME_DIV_FULL };
+enum : uint8_t { FRAME_AXIS_BOTH, FRAME_AXIS_COLS, FRAME_AXIS_ROWS };
 
 struct PrinterDef {
   String id, name, ip;
