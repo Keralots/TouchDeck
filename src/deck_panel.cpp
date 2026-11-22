@@ -5,6 +5,7 @@
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <atomic>
+#include <math.h>
 
 namespace deck {
 namespace {
@@ -26,6 +27,23 @@ SemaphoreHandle_t s_lvReady = nullptr;
 SemaphoreHandle_t s_quiet = nullptr;
 bool s_quiescing = false;
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
+
+PanelOverlay s_overlays[PANEL_OVERLAY_SLOTS] = {};
+const uint32_t* s_overlayReads[PANEL_OVERLAY_SLOTS] = {};
+int s_overlayFront = 0;
+bool s_overlayDirty = false;
+const uint16_t* s_overlayLvRead = nullptr;
+const uint16_t* s_lvWriting = nullptr;
+bool s_lvLatestBorrowable = false, s_overlayLvAborted = false;
+bool s_leaseAborted = false;  // flush task only: the last released lease had timed out
+SemaphoreHandle_t s_overlayLvDone = nullptr;
+int64_t s_overlaySampleUs = 0;  // flush task only
+
+void copyOverlaySlots(PanelOverlay (&out)[PANEL_OVERLAY_SLOTS]) {
+  // Copy back to front while holding s_mux.
+  out[0] = s_overlays[1 - s_overlayFront];
+  out[1] = s_overlays[s_overlayFront];
+}
 
 // Page dots: shown while a page slide owns the screen, then held and faded
 // out over LVGL frames by this task (LVGL never draws them). Horizontal dots
@@ -85,13 +103,15 @@ State s;
 // them, and the framebuffer built from it would keep their old pixels.
 DirtyMask s_lvNext = {{}, false};
 volatile PageFx s_pageFx = PAGE_SLIDE;
-volatile bool s_lvReading = false;  // a resend frame is reading s.lvLatest
 
 
 // --- Stats (approximate, single writer) ----------------------------------------
 volatile uint32_t st_frames = 0, st_comp = 0, st_flushSum = 0, st_flushMax = 0;
 volatile uint32_t st_buildSum = 0, st_teLate = 0, st_teTimeout = 0, st_lvDropped = 0;
 volatile uint32_t st_gapMax = 0, st_frameSum = 0, st_frameMax = 0;
+std::atomic<uint32_t> st_overlayOnly{0}, st_overlayFrames{0};
+uint32_t st_popupCount = 0, st_popupTotal = 0, st_popupMax = 0;
+uint32_t st_writableCount = 0, st_writableTotal = 0, st_writableMax = 0;
 PanelStats s_frameStats = {};
 uint64_t s_frameSum = 0, s_frameBuildSum = 0, s_frameFlushSum = 0;
 int64_t s_frameStart = 0;
@@ -824,6 +844,19 @@ inline void toNative(uint8_t rot, int lx, int ly, int& nx, int& ny) {
   }
 }
 
+FrameRect nativeRect(uint8_t rot, const FrameRect& r) {
+  if (r.w <= 0 || r.h <= 0) return {};
+  int x0, y0, x1, y1;
+  toNative(rot, r.x, r.y, x0, y0);
+  toNative(rot, r.x + r.w - 1, r.y + r.h - 1, x1, y1);
+  return {(int16_t)std::min(x0, x1), (int16_t)std::min(y0, y1),
+          (int16_t)(std::abs(x1 - x0) + 1), (int16_t)(std::abs(y1 - y0) + 1)};
+}
+
+void addRect(DirtyMask& mask, const FrameRect& r) {
+  if (r.w > 0 && r.h > 0) mask.addRect(r.x, r.y, r.x + r.w - 1, r.y + r.h - 1);
+}
+
 inline uint16_t blendLE(uint16_t bg, uint16_t fg, uint32_t a) {
   if (a >= 255) return fg;
   const uint32_t ia = 255 - a;
@@ -833,7 +866,236 @@ inline uint16_t blendLE(uint16_t bg, uint16_t fg, uint32_t a) {
   return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
+inline uint8_t mulOpacity(int a, int b) { return (a * b + 127) / 255; }
+
+FrameRect moveRect(FrameRect r, int x, int y) {
+  r.x += x;
+  r.y += y;
+  return r;
+}
+
+FrameRect intersectRect(const FrameRect& a, const FrameRect& b) {
+  const int x = std::max(a.x, b.x), y = std::max(a.y, b.y);
+  const int w = std::min(a.x + a.w, b.x + b.w) - x, h = std::min(a.y + a.h, b.y + b.h) - y;
+  if (w <= 0 || h <= 0) return {};
+  return {(int16_t)x, (int16_t)y, (int16_t)w, (int16_t)h};
+}
+
+ArcEdge arcEdge(int degrees) {
+  switch (degrees % 360) {
+    case 0: return {1, 0};
+    case 90: return {0, 1};
+    case 180: return {-1, 0};
+    case 270: return {0, -1};
+  }
+  const float angle = degrees * (3.14159265f / 180);
+  return {cosf(angle), sinf(angle)};
+}
+
+OverlayRun overlayResolve(const PanelOverlay& o, uint8_t rot, int64_t atUs) {
+  OverlayRun r = {};
+  const PopupGeometry& g = o.geometry;
+  if (!g.across) return r;
+  const int progress = popupProgress(o.animation, atUs);
+  if (o.animation.exiting && progress == POPUP_PROGRESS) return r;
+  const PopupFrame f = o.animation.duration ? popupFrame(g, o.animation, progress) : popupRestFrame(g);
+  if (!f.opacity) return r;
+
+  const bool pill = g.style == PopupStyle::Pill;
+  const int w = g.outX ? f.across : f.along, h = g.outX ? f.along : f.across;
+  const int x = g.cx + g.outX * f.shift - w / 2, y = g.cy + g.outY * f.shift - h / 2;
+  const FrameRect body = {(int16_t)x, (int16_t)y, (int16_t)w, (int16_t)h};
+  const int anchor = pill ? popupAnchorShift(g, f.across) : 0;
+  const int rootX = pill ? g.cx + g.outX * (f.shift - anchor) - o.pillX : x;
+  const int rootY = pill ? g.cy + g.outY * (f.shift - anchor) - o.pillY : y;
+  const FrameRect tag = pill ? moveRect(o.tag, rootX, rootY) : FrameRect{};
+  const FrameRect picture = moveRect(o.picture, rootX, rootY);
+  r.body = nativeRect(rot, body);
+  r.bodyClip = pill ? nativeRect(rot, intersectRect(body, moveRect(o.layout, rootX, rootY))) : r.body;
+  r.tag = nativeRect(rot, tag);
+  r.borderColor = o.borderColor;
+  r.fillOpacity = o.fillOpacity;
+  r.borderOpacity = o.borderOpacity;
+  r.opacity = f.opacity;
+  r.contentOpacity = mulOpacity(f.opacity, f.content);
+  if (pill) r.tagOpacity = o.animation.kind == PopupMotion::Wobble ? r.contentOpacity : f.opacity;
+  if (!r.contentOpacity || f.across != g.across || f.along != g.along) return r;
+  const PopupMeter& m = o.meter;
+  if (m.value >= 0) {
+    FrameRect box = m.box;
+    r.accent = m.accent;
+    if (!pill) {
+      const int start = m.start + 90 * rot;
+      const int sweep = m.sweep * m.value / 100;
+      r.arcWidth = m.width;
+      r.arcStart = arcEdge(start);
+      r.trackEnd = arcEdge(start + m.sweep);
+      r.trackWide = m.sweep > 180;
+      r.trackColor = m.trackColor;
+      r.trackOpacity = m.trackOpacity;
+      r.hasIndicator = sweep != 0;
+      r.indicatorWide = sweep > 180;
+      if (r.hasIndicator) r.indicatorEnd = sweep == m.sweep ? r.trackEnd : arcEdge(start + sweep);
+    } else if (m.value > 0) {
+      int16_t& span = g.outX ? box.h : box.w;
+      int16_t& origin = g.outX ? box.y : box.x;
+      const int length = std::max(1, span * m.value / 100);
+      if (m.fromEnd) origin += span - length;
+      span = length;
+    } else {
+      box = {};
+    }
+    r.meter = nativeRect(rot, moveRect(box, rootX, rootY));
+  }
+  if (!o.pixels) return r;
+  r.picture = nativeRect(rot, picture);
+  r.labelClip = nativeRect(rot, intersectRect(picture, pill ? tag : body));
+  r.pixels = o.pixels;
+  const int s = o.stride;
+  switch (rot) {
+    case 1: r.pixels += (picture.h - 1) * s; r.pictureStepX = -s; r.pictureStepY = 1; break;
+    case 2: r.pixels += (picture.h - 1) * s + picture.w - 1; r.pictureStepX = -1; r.pictureStepY = -s; break;
+    case 3: r.pixels += picture.w - 1; r.pictureStepX = s; r.pictureStepY = -1; break;
+    default: r.pictureStepX = 1; r.pictureStepY = s; break;
+  }
+  return r;
+}
+
+template <bool BIG_ENDIAN_PIXELS>
+inline void overlayBlend(uint16_t& out, uint16_t color, uint8_t alpha) {
+  const uint16_t bg = BIG_ENDIAN_PIXELS ? __builtin_bswap16(out) : out;
+  const uint16_t fg = blendLE(bg, color, alpha);
+  out = BIG_ENDIAN_PIXELS ? __builtin_bswap16(fg) : fg;
+}
+
+template <bool BIG_ENDIAN_PIXELS>
+void overlayShapeRow(uint16_t* row, int y, int width, const FrameRect& box, const FrameRect& clip, int radius2,
+                     uint16_t fill, uint8_t fillA, uint16_t border, uint8_t borderA) {
+  if ((!fillA && !borderA) || clip.w <= 0 || y < clip.y || y >= clip.y + clip.h) return;
+  // Distances in half pixels preserve the center for odd dimensions.
+  radius2 = std::min<int>(radius2, std::min(box.w, box.h));
+  const int dx0 = box.w - radius2;
+  const int dy = std::max(0, std::abs(2 * (y - box.y) + 1 - box.h) - (box.h - radius2));
+  const int dyy = dy * dy, outer = radius2 + 1, inner = radius2 - 3;
+  const auto inset = [&](int limit) {
+    const int reach = (int)sqrtf((float)(limit * limit - dyy));
+    return std::max(0, (box.w - dx0 - reach) / 2);
+  };
+  const int edge = inset(outer);
+  const int lo = std::max(std::max(0, box.x + edge), (int)clip.x);
+  const int hi = std::min(std::min(width, box.x + box.w - edge), clip.x + clip.w);
+  if (lo >= hi) return;
+  const int solid = inner >= dy ? inset(inner) : box.w;
+  const int solidLo = std::clamp(box.x + solid, lo, hi);
+  const int solidHi = std::clamp(box.x + box.w - solid, solidLo, hi);
+  const auto drawEdge = [&](int first, int last) {
+    for (int x = first; x < last; x++) {
+      const int dx = std::max(0, std::abs(2 * (x - box.x) + 1 - box.w) - dx0);
+      const float dist = dx ? sqrtf((float)(dx * dx + dyy)) : (float)dy;
+      const float cover = std::clamp((outer - dist) * 0.5f, 0.0f, 1.0f);
+      if (cover > 0) {
+        if (fillA) overlayBlend<BIG_ENDIAN_PIXELS>(row[x], fill, (uint8_t)(fillA * cover + 0.5f));
+        if (borderA) {
+          const float innerCover = std::clamp((outer - 2 - dist) * 0.5f, 0.0f, 1.0f);
+          overlayBlend<BIG_ENDIAN_PIXELS>(row[x], border, (uint8_t)(borderA * (cover - innerCover) + 0.5f));
+        }
+      }
+    }
+  };
+  drawEdge(lo, solidLo);
+  if (fillA)
+    for (int x = solidLo; x < solidHi; x++) overlayBlend<BIG_ENDIAN_PIXELS>(row[x], fill, fillA);
+  drawEdge(solidHi, hi);
+}
+
 inline float clamp01(float v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
+
+template <bool BIG_ENDIAN_PIXELS>
+void overlayArcRow(uint16_t* row, int y, int width, const OverlayRun& r) {
+  const FrameRect& box = r.meter;
+  if (y < box.y || y >= box.y + box.h) return;
+  const int radius = box.w / 2, inner = radius - r.arcWidth, cx = box.x + radius;
+  const float dy = y + 0.5f - (box.y + radius), yy = dy * dy;
+  const float outer = radius + 0.5f, hole = inner - 0.5f;
+  const float outer2 = outer * outer, hole2 = hole * hole;
+  // Approximate one pixel of coverage at each edge using squared distances.
+  const float outerScale = 0.5f / radius, innerScale = 0.5f / inner;
+  const int reach = (int)(sqrtf(outer2 - yy) + 0.5f);
+  const int skip = yy < hole2 ? (int)(sqrtf(hole2 - yy) + 0.5f) : 0;
+  const int lo = std::max(0, cx - reach), hi = std::min(width, cx + reach);
+  const float mid = (radius + inner) * 0.5f, cap = r.arcWidth * 0.5f;
+  const float capOuter = (cap + 0.5f) * (cap + 0.5f);
+  const float capScale = 1.0f / r.arcWidth;
+  const float startY = dy - r.arcStart.y * mid, endY = dy - r.indicatorEnd.y * mid;
+  const auto span = [&](int first, int last) {
+    for (int x = first; x < last; x++) {
+      const float dx = x + 0.5f - cx, dist2 = dx * dx + yy;
+      const float ring = clamp01(std::min((outer2 - dist2) * outerScale, (dist2 - hole2) * innerScale));
+      const float start = r.arcStart.x * dy - r.arcStart.y * dx;
+      const float end = r.trackEnd.y * dx - r.trackEnd.x * dy;
+      const float track = ring * clamp01(0.5f + (r.trackWide ? std::max(start, end) : std::min(start, end)));
+      float indicator = 0;
+      if (r.hasIndicator) {
+        const float tip = r.indicatorEnd.y * dx - r.indicatorEnd.x * dy;
+        const float startX = dx - r.arcStart.x * mid, endX = dx - r.indicatorEnd.x * mid;
+        const float capDist2 = std::min(startX * startX + startY * startY, endX * endX + endY * endY);
+        const float sector = r.indicatorWide ? std::max(start, tip) : std::min(start, tip);
+        indicator = std::max(ring * clamp01(0.5f + sector), clamp01((capOuter - capDist2) * capScale));
+      }
+      const int a = (int)(255 * indicator + 0.5f);
+      const int t = (int)(r.trackOpacity * track * (1 - indicator) + 0.5f);
+      if (a || t) {
+        const uint16_t color = !a ? r.trackColor : !t ? r.accent : blendLE(r.trackColor, r.accent, 255 * a / (a + t));
+        overlayBlend<BIG_ENDIAN_PIXELS>(row[x], color, mulOpacity(a + t, r.contentOpacity));
+      }
+    }
+  };
+  span(lo, std::min(hi, cx - skip));
+  span(std::max(lo, cx + skip), hi);
+}
+
+template <bool BIG_ENDIAN_PIXELS>
+void overlayPictureRow(uint16_t* row, int y, int width, const FrameRect& clip, const OverlayRun& r) {
+  if (y < clip.y || y >= clip.y + clip.h) return;
+  const int lo = std::max(0, (int)clip.x), hi = std::min(width, clip.x + clip.w);
+  if (lo >= hi) return;
+  const int step = r.pictureStepX;
+  const uint32_t* src = r.pixels + (y - r.picture.y) * r.pictureStepY + (lo - r.picture.x) * step;
+  for (int x = lo; x < hi; x++) {
+    const uint32_t c = src[(x - lo) * step];
+    if (c >> 24) {
+      const uint16_t rgb = ((c >> 8) & 0xF800) | ((c >> 5) & 0x07E0) | ((c >> 3) & 0x001F);
+      overlayBlend<BIG_ENDIAN_PIXELS>(row[x], rgb, mulOpacity(c >> 24, r.contentOpacity));
+    }
+  }
+}
+
+template <bool BIG_ENDIAN_PIXELS>
+void overlayRow(uint16_t* row, int y, int width, const OverlayRun& r) {
+  constexpr uint16_t glass = (0x20 >> 3) << 11 | (0x26 >> 2) << 5 | (0x30 >> 3);
+  overlayShapeRow<BIG_ENDIAN_PIXELS>(row, y, width, r.body, r.bodyClip, MAX_DIM,
+                                   glass, mulOpacity(r.fillOpacity, r.opacity),
+                                   r.borderColor, mulOpacity(r.borderOpacity, r.opacity));
+  overlayShapeRow<BIG_ENDIAN_PIXELS>(row, y, width, r.tag, r.tag, 24,
+                                   glass, mulOpacity(r.fillOpacity, r.tagOpacity),
+                                   r.borderColor, mulOpacity(r.borderOpacity, r.tagOpacity));
+  if (r.meter.w && r.meter.h) {
+    if (r.arcWidth) overlayArcRow<BIG_ENDIAN_PIXELS>(row, y, width, r);
+    else overlayShapeRow<BIG_ENDIAN_PIXELS>(row, y, width, r.meter, r.meter, std::min(r.meter.w, r.meter.h) & ~1,
+                                         r.accent, r.contentOpacity, 0, 0);
+  }
+  if (r.pixels) overlayPictureRow<BIG_ENDIAN_PIXELS>(row, y, width, r.labelClip, r);
+}
+
+void drawOverlays(const Frame& f, uint16_t* dst, int ny0) {
+  for (const OverlayRun& r : f.overlays) {
+    const FrameRect& body = r.bodyClip;
+    const int lo = std::max(ny0, std::min<int>(body.y, r.tagOpacity ? r.tag.y : body.y));
+    const int hi = std::min(ny0 + PANEL_ROWS,
+                            std::max(body.y + body.h, r.tagOpacity ? r.tag.y + r.tag.h : body.y));
+    for (int y = lo; y < hi; y++) overlayRow<PANEL_BIG_ENDIAN>(dst + (y - ny0) * NATIVE_W, y, NATIVE_W, r);
+  }
+}
 
 // Page dots on a translucent pill, bottom centre (columns) or right edge
 // (pages of a column), drawn into the native chunk (panel byte order) after
@@ -1010,6 +1272,7 @@ void buildChunk(const Frame& f, uint16_t* dst, int ny0) {
   ChunkJob c = {&f, dst, ny0};
   if (f.comp) panelShare(buildBatch, &c, n, 16);
   else buildPart(f, dst, ny0, 0, n);
+  drawOverlays(f, dst, ny0);
   overlayDots(f, dst, ny0);
 }
 
@@ -1030,9 +1293,12 @@ inline uint8_t dotsAlphaAt(int64_t now) {
 bool decide(Frame& f) {
   bool have = false;
   bool give = false;
+  PanelOverlay overlays[PANEL_OVERLAY_SLOTS];
   const int64_t te = transportLastSyncUs();
   const int64_t now = esp_timer_get_time();
   const int64_t shown = transportPresentUs(now);
+  const int64_t overlayAt = transportOverlayPresentUs(now);
+  const bool backToBack = transportBackToBack();
   const int64_t frameTime = shown ? shown
                           : te && now - te <= 2 * PANEL_SYNC_PERIOD_US ? te + PANEL_SYNC_PERIOD_US + PANEL_SYNC_LEAD_US
                                                                       : now + PANEL_ANIM_LEAD_US;
@@ -1044,17 +1310,30 @@ bool decide(Frame& f) {
   f.w = w;
   f.h = h;
   f.releaseLv = false;
-  f.resend = false;
   f.build0Us = 0;
   f.frameLast = false;
+  f.frameRepeat = false;
   f.showAtUs = 0;
+  f.overlayRead = false;
+  f.overlayOnly = false;
   f.dotsV = s.dotsV;
   f.dotCount = (uint8_t)(s.dotsV ? s.vCount : s.pageCount);
   f.dotActive = (uint8_t)(s.dotsV ? s.vActive : s.pageActive);
-  if (s.lvPending) {
+  bool overlayDue = s_overlayDirty;
+  bool overlayMotion = false;
+  for (const PanelOverlay& o : s_overlays)
+    overlayMotion |= o.geometry.across && o.animation.duration && s_overlaySampleUs < popupEndUs(o.animation);
+  overlayDue |= overlayMotion;
+  const uint16_t* latest = s.lvLatest >= 0 ? s_fb[s.lvLatest] : nullptr;
+  const bool borrowable = latest && (!s_overlayLvDone || (s_lvLatestBorrowable && latest != s_lvWriting));
+  // Give a free refresh to the motion while a chart frame targets a later one.
+  const bool repeatFirst = backToBack && overlayMotion && borrowable && s.mode == COMP_NONE && overlayAt &&
+                           s.lvAt > overlayAt + PANEL_SYNC_PERIOD_US / 2;
+  if (s.lvPending && !repeatFirst) {
     s.lvPending = false;
     if (s.mode == COMP_HOLD && s.lvGen >= s.holdGen) s.mode = COMP_NONE;
     s.lvLatest = s.lvIdx;
+    s_lvLatestBorrowable = true;
     if (s.mode == COMP_NONE) {
       f.comp = false;
       f.lv = s_fb[s.lvIdx];
@@ -1069,10 +1348,12 @@ bool decide(Frame& f) {
     }
     s.lvAt = 0;
   }
-  if (!have && !s_quiescing && s.mode == COMP_FRAME) {
+  if (!have && !s_quiescing && (s.mode == COMP_FRAME || (overlayDue && s.mode == COMP_FRAME_HOLD))) {
+    f.frameRepeat = s.mode == COMP_FRAME_HOLD;
     const int64_t elapsed = frameTime - s.t0;
     f.comp = true;
     f.kind = KIND_FRAME;
+    f.overlayOnly = f.frameRepeat && !give;
     f.scene = s.scene;
     f.durationMs = (s.durUs + 999) / 1000;
     f.elapsedMs = elapsed > 0 ? elapsed / 1000 : 0;
@@ -1087,18 +1368,24 @@ bool decide(Frame& f) {
     f.lv = s_fb[s.lvLatest];
     have = true;
   }
-  if (!have && s.mode == COMP_ANIM && s.kind == KIND_MORPH) {
+  const uint16_t* current = s.lvLatest >= 0 ? s_fb[s.lvLatest] : nullptr;
+  const bool currentReady = current && s_lvLatestBorrowable && current != s_lvWriting;
+  const bool morphBaseReady = (!s.morph.base.px || s.morph.base.px == current)
+                                ? currentReady : s.morph.base.px != s_fb[0] && s.morph.base.px != s_fb[1];
+  if (!have && s.kind == KIND_MORPH &&
+      (s.mode == COMP_ANIM || (overlayDue && s.mode == COMP_HOLD && morphBaseReady))) {
+    const bool held = s.mode == COMP_HOLD;
     const int64_t t = frameTime - s.t0;
     // Begun early: the scrim fades in from the tap, the card's own animation
     // runs from the moment its picture arrives (tc).
     const bool early = s.morphEarly, waiting = !s.morph.card.px;
     const int64_t tc = !early ? t : waiting ? 0 : frameTime - s.morphCardUs;
-    const bool last = !waiting && tc >= (int64_t)s.durUs;
+    const bool last = held || (!waiting && tc >= (int64_t)s.durUs);
     const float u = last ? 1.0f : tc <= 0 ? 0.0f : (float)tc / (float)s.durUs;
     const float p = last ? 1.0f : easeOutCubic(u);
     // Waiting with the scrim done: no frames, the loop needs both cores.
     const bool still = waiting && t >= SCRIM_IN_US + PANEL_SYNC_PERIOD_US;
-    const bool skip = still && s.morphStill;
+    const bool skip = still && s.morphStill && !overlayDue;
     s.morphStill = still;
     if (last) {
       s.mode = COMP_HOLD;
@@ -1108,6 +1395,8 @@ bool decide(Frame& f) {
     f.kind = KIND_MORPH;
     f.morph = s.morph;
     if (!f.morph.base.px) f.morph.base = {s_fb[s.lvLatest], (uint16_t)w, true, (uint16_t)h};
+    if (held && f.morph.base.px == current) s_overlayLvRead = current;
+    f.overlayOnly = held && overlayDue && !give;
     const FrameRect& a = f.morph.from;
     const FrameRect& b = f.morph.to;
     auto mix = [p](int x, int y) { return (int16_t)(x + (int)lroundf((y - x) * p)); };
@@ -1145,7 +1434,8 @@ bool decide(Frame& f) {
     }
     have = !skip;
   }
-  if (!have && s.kind != KIND_MORPH && (s.mode == COMP_DRAG || s.mode == COMP_ANIM)) {
+  if (!have && s.kind != KIND_MORPH &&
+      (s.mode == COMP_DRAG || s.mode == COMP_ANIM || (overlayDue && s.mode == COMP_HOLD))) {
     int off = s.off;
     if (s.mode == COMP_ANIM) {
       const int64_t t = frameTime - s.t0;
@@ -1167,15 +1457,19 @@ bool decide(Frame& f) {
       }
       s.off = off;
     }
-    if ((!s.sentAny || off != s.lastSentOff) && s.lvLatest >= 0) {
+    const bool held = s.mode == COMP_HOLD && s.sentAny && off == s.lastSentOff;
+    const bool readsLv = !s.a.px || !s.b.px || s.a.px == current || s.b.px == current;
+    const bool canRepeat = !held || !readsLv || currentReady;
+    if (canRepeat && (!s.sentAny || off != s.lastSentOff || overlayDue) && current) {
       f.comp = true;
       f.kind = s.kind;
       f.a = s.a;
       f.b = s.b;
       f.pageFx = s.kind != KIND_PANEL ? s.pageFx : PAGE_SLIDE;
-      const uint16_t* cur = s_fb[s.lvLatest];
-      if (!f.a.px) f.a = {cur, (uint16_t)w, true, (uint16_t)h, f.a.cols, f.a.top, f.a.cuts};
-      if (!f.b.px) f.b = {cur, (uint16_t)w, true, (uint16_t)h, f.b.cols, f.b.top, f.b.cuts};
+      if (!f.a.px) f.a = {current, (uint16_t)w, true, (uint16_t)h, f.a.cols, f.a.top, f.a.cuts};
+      if (!f.b.px) f.b = {current, (uint16_t)w, true, (uint16_t)h, f.b.cols, f.b.top, f.b.cuts};
+      if (held && overlayDue && readsLv) s_overlayLvRead = current;
+      f.overlayOnly = held && overlayDue && !give;
       if (s.kind == KIND_HSTRIP) {
         f.off = off < 0 ? 0 : (off > w ? w : off);
         f.dotActive = (uint8_t)(s.pageA + (f.off * 2 >= w ? 1 : 0));
@@ -1198,33 +1492,56 @@ bool decide(Frame& f) {
   uint8_t dots = panelOwns ? 0 : dotsAlphaAt(now);
   if (have && f.comp && f.kind == KIND_FRAME && !f.scene.waking)
     dots = f.elapsedMs >= 300 || f.frameLast ? 0 : s.frameDots * (300 - f.elapsedMs) / 300;
-  // Dots fading over a static LVGL screen: resend the latest complete frame.
-  // LVGL may start drawing into that buffer meanwhile, so it waits (panelLvReading);
-  // while it posts frames the dots ride on those and it never has to.
-  if (!have && s.mode == COMP_NONE && s.lvLatest >= 0 && dots != s.lastSentDots &&
-      now - s.lvPostUs > 3 * PANEL_SYNC_PERIOD_US) {
+  // While LVGL posts frames, popups and dots ride on them: borrowed frames in between
+  // make LVGL wait for its buffer and cost the page more than they give the popup.
+  const bool lvStill = now - s.lvPostUs > 3 * PANEL_SYNC_PERIOD_US;
+  if (!have && !s_quiescing && s.mode == COMP_NONE && borrowable && lvStill &&
+      (overlayDue || dots != s.lastSentDots)) {
+    // Borrow the latest complete pixels until the copy finishes.
     f.comp = false;
-    f.lv = s_fb[s.lvLatest];
-    f.resend = true;
-    s_lvReading = true;
+    f.lv = latest;
+    f.overlayOnly = overlayDue;
+    if (overlayDue) f.showAtUs = overlayAt;
     have = true;
   }
   if (have) {
     f.dotAlpha = dots;
     if (!f.comp) {
-      f.dirty = s.lvDirty;
-      s.lvDirty.clear();
-      if (rot != 0) f.dirty.full = true;
-      // The dots are drawn over the copy, and must go from it afterwards.
-      if (f.dotCount >= 2 && (dots || s.lastSentDots)) {
-        const DotsBox b = dotsBox(f);
-        f.dirty.addRect(b.x0, b.y0, b.x1, b.y1);
+      f.dirty.clear();
+      if (!repeatFirst) {
+        f.dirty = s.lvDirty;
+        s.lvDirty.clear();
       }
+      if (!f.releaseLv && s_overlayLvDone) s_overlayLvRead = f.lv;
     }
+    copyOverlaySlots(overlays);
+    for (int i = 0; i < PANEL_OVERLAY_SLOTS; i++) {
+      s_overlayReads[i] = s_overlays[i].pixels;
+      f.overlayRead |= s_overlayReads[i] != nullptr;
+    }
+    f.overlayRead |= s_overlayLvRead != nullptr;
+    s_overlayDirty = false;
     s.lastSentDots = dots;
   }
   portEXIT_CRITICAL(&s_mux);
   if (give) xSemaphoreGive(s_lvReady);
+  if (have) {
+    const bool overlayFrame = overlayDue || overlays[0].geometry.across || overlays[1].geometry.across;
+    const int64_t plainAt = !f.comp && overlayFrame ? overlayAt : 0;
+    const int64_t at = std::max(s_overlaySampleUs, std::max(f.showAtUs, plainAt ? plainAt : frameTime));
+    if (overlayFrame) s_overlaySampleUs = at;
+    f.effectDirty.clear();
+    for (int i = 0; i < PANEL_OVERLAY_SLOTS; i++) {
+      f.overlays[i] = overlayResolve(overlays[i], rot, at);
+      addRect(f.effectDirty, f.overlays[i].bodyClip);
+      if (f.overlays[i].tagOpacity) addRect(f.effectDirty, f.overlays[i].tag);
+    }
+    if (f.dotCount >= 2 && dots) {
+      const DotsBox b = dotsBox(f);
+      addRect(f.effectDirty, nativeRect(rot, {(int16_t)b.x0, (int16_t)b.y0,
+                                            (int16_t)(b.x1 - b.x0 + 1), (int16_t)(b.y1 - b.y0 + 1)}));
+    }
+  }
   return have;
 }
 
@@ -1285,6 +1602,8 @@ bool panelBegin(uint8_t rotation) {
     }
     memset(s_fb[i], 0, FRAME_BYTES);
   }
+  s_overlayLvDone = xSemaphoreCreateBinary();
+  if (!s_overlayLvDone) return false;
   if (!transportBegin()) return false;
 
   s_lvReady = xSemaphoreCreateCounting(2, 0);  // up to two LVGL frames in flight
@@ -1303,10 +1622,15 @@ bool panelBegin(uint8_t rotation) {
 
 void panelSetRotation(uint8_t rotation) {
   compCancel();
-  s_rot = (rotation + BOARD_ROT_BASE) & 3;
   portENTER_CRITICAL(&s_mux);
+  s_rot = (rotation + BOARD_ROT_BASE) & 3;
   s.lvDirty.full = true;
+  s.lvLatest = -1;  // old pixels have the wrong stride
+  s_lvLatestBorrowable = false;
+  for (PanelOverlay& o : s_overlays) o = {};
+  s_overlayDirty = false;
   portEXIT_CRITICAL(&s_mux);
+  if (s_overlayLvDone) panelQuiesce();
 }
 
 uint8_t panelRotation() { return (s_rot + 4 - BOARD_ROT_BASE) & 3; }
@@ -1325,7 +1649,10 @@ const uint16_t* panelLatestLvFrame() {
   return idx >= 0 ? s_fb[idx] : nullptr;
 }
 
-void panelLvDirty(int x0, int y0, int x1, int y1) { s_lvNext.addRect(x0, y0, x1, y1); }
+void panelLvDirty(int x0, int y0, int x1, int y1) {
+  addRect(s_lvNext, nativeRect(s_rot, {(int16_t)x0, (int16_t)y0,
+                                      (int16_t)(x1 - x0 + 1), (int16_t)(y1 - y0 + 1)}));
+}
 
 int64_t s_lvNextAt = 0;  // loop task only, like s_lvNext
 void panelLvShowAt(int64_t us) { s_lvNextAt = us; }
@@ -1348,6 +1675,88 @@ void panelPostLv(int idx, uint32_t gen) {
 
 bool panelWaitLvReady(uint32_t timeoutMs) {
   return xSemaphoreTake(s_lvReady, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+}
+
+void panelWaitLvWritable(const uint16_t* pixels) {
+  if (!pixels || !s_overlayLvDone) return;
+  xSemaphoreTake(s_overlayLvDone, 0);
+  portENTER_CRITICAL(&s_mux);
+  s_lvWriting = pixels;
+  if (s.lvLatest >= 0 && pixels == s_fb[s.lvLatest]) s_lvLatestBorrowable = false;
+  const bool reading = s_overlayLvRead == pixels;
+  portEXIT_CRITICAL(&s_mux);
+  if (!reading) return;
+
+  const int64_t start = esp_timer_get_time();
+  TimeOut_t timeout;
+  vTaskSetTimeOutState(&timeout);
+  // Far above a dirty copy (~5 ms) and a whole one (~17 ms): only a bug can hit it.
+  TickType_t ticks = std::max<TickType_t>(1, pdMS_TO_TICKS(40));
+  bool timedOut = false;
+  for (;;) {
+    const bool signaled = xSemaphoreTake(s_overlayLvDone, ticks) == pdTRUE;
+    const bool expired = !signaled || xTaskCheckForTimeOut(&timeout, &ticks) == pdTRUE;
+    portENTER_CRITICAL(&s_mux);
+    const bool busy = s_overlayLvRead == pixels;
+    if (busy && expired) s_overlayLvAborted = timedOut = true;
+    portEXIT_CRITICAL(&s_mux);
+    if (!busy || expired) break;
+  }
+  const uint32_t us = esp_timer_get_time() - start;
+  st_writableCount++;
+  st_writableTotal += us;
+  st_writableMax = std::max(st_writableMax, us);
+  static bool warned = false;
+  if (timedOut && !warned) {
+    warned = true;
+    Serial.println("Deck panel: overlay LVGL buffer wait timed out");
+  }
+}
+
+void panelLvWriteDone() {
+  portENTER_CRITICAL(&s_mux);
+  s_lvWriting = nullptr;
+  portEXIT_CRITICAL(&s_mux);
+}
+
+void panelOverlaySet(int slot, const PanelOverlay& overlay) {
+  if (slot < 0 || slot >= PANEL_OVERLAY_SLOTS) return;
+  portENTER_CRITICAL(&s_mux);
+  if (!s_overlays[slot].geometry.across) s_overlayFront = slot;
+  s_overlays[slot] = overlay;
+  s_overlayDirty = true;
+  portEXIT_CRITICAL(&s_mux);
+  if (s_task) xTaskNotifyGive(s_task);
+}
+
+void panelOverlayClear(int slot) {
+  if (slot < 0 || slot >= PANEL_OVERLAY_SLOTS) return;
+  portENTER_CRITICAL(&s_mux);
+  const bool changed = s_overlays[slot].geometry.across != 0;
+  s_overlays[slot] = {};
+  s_overlayDirty |= changed;
+  portEXIT_CRITICAL(&s_mux);
+  if (changed && s_task) xTaskNotifyGive(s_task);
+}
+
+bool panelOverlayPictureInUse(int slot, const uint32_t* pixels) {
+  if (!pixels || slot < 0 || slot >= PANEL_OVERLAY_SLOTS) return false;
+  portENTER_CRITICAL(&s_mux);
+  const bool used = s_overlays[slot].pixels == pixels || s_overlayReads[slot] == pixels;
+  portEXIT_CRITICAL(&s_mux);
+  return used;
+}
+
+bool panelOverlayCapture(PanelOverlayCapture& capture) {
+  portENTER_CRITICAL(&s_mux);
+  copyOverlaySlots(capture.overlays);
+  portEXIT_CRITICAL(&s_mux);
+  capture.atUs = esp_timer_get_time();
+  return capture.overlays[0].geometry.across || capture.overlays[1].geometry.across;
+}
+
+void panelOverlayCaptureRow(const PanelOverlayCapture& capture, uint16_t* row, int y, int w) {
+  for (const PanelOverlay& o : capture.overlays) overlayRow<false>(row, y, w, overlayResolve(o, 0, capture.atUs));
 }
 
 bool compBeginDrag(const Src& a, const Src& b, int off, int pageA, bool vertical) {
@@ -1545,6 +1954,12 @@ bool compFrameResult(PanelStats& out) {
   return done;
 }
 
+void panelCountPopupRefresh(uint32_t us) {
+  st_popupCount++;
+  st_popupTotal += us;
+  st_popupMax = std::max(st_popupMax, us);
+}
+
 PanelStats panelTakeStats() {
   PanelStats p;
   const uint32_t n = st_frames;
@@ -1559,6 +1974,16 @@ PanelStats panelTakeStats() {
   p.teTimeouts = st_teTimeout;
   p.lvDropped = st_lvDropped;
   p.gapMaxUs = st_gapMax;
+  p.overlayOnlyFrames = st_overlayOnly.exchange(0, std::memory_order_relaxed);
+  p.overlayFrames = st_overlayFrames.exchange(0, std::memory_order_relaxed);
+  p.popupRefreshCount = st_popupCount;
+  p.popupRefreshUsTotal = st_popupTotal;
+  p.popupRefreshUsMax = st_popupMax;
+  p.lvWritableWaitCount = st_writableCount;
+  p.lvWritableWaitUsTotal = st_writableTotal;
+  p.lvWritableWaitUsMax = st_writableMax;
+  st_popupCount = st_popupTotal = st_popupMax = 0;
+  st_writableCount = st_writableTotal = st_writableMax = 0;
   st_frames = 0;
   st_comp = 0;
   st_flushSum = 0;
@@ -1577,8 +2002,10 @@ PanelStats panelTakeStats() {
 bool frameDecide(Frame& f) { return decide(f); }
 void frameBuild(const Frame& f, uint16_t* dst, int ny0) { buildChunk(f, dst, ny0); }
 
+void releaseLvLease();
+
 bool frameBuildDirty(const Frame& f, uint16_t* dst, const DirtyMask& m) {
-  if (PANEL_BIG_ENDIAN || f.comp || f.rot != 0 || m.full || PANEL_ROWS != NATIVE_H) return false;
+  if (PANEL_BIG_ENDIAN || f.comp || m.full || PANEL_ROWS != NATIVE_H) return false;
   for (int r = 0; r < DIRTY_ROWS; r++) {
     uint32_t bits = m.rows[r];
     const int y0 = r * DIRTY_CH, y1 = std::min(y0 + DIRTY_CH, NATIVE_H);
@@ -1589,26 +2016,65 @@ bool frameBuildDirty(const Frame& f, uint16_t* dst, const DirtyMask& m) {
       bits &= c1 >= 32 ? 0 : ~0u << c1;
       const int x0 = c0 * DIRTY_CW, x1 = std::min(c1 * DIRTY_CW, NATIVE_W);
       if (x0 >= x1) continue;
-      for (int y = y0; y < y1; y++)
-        memcpy(dst + y * NATIVE_W + x0, f.lv + y * NATIVE_W + x0, (size_t)(x1 - x0) * 2);
+      switch (f.rot) {
+        case 1:
+          for (int x = x1 - 1; x >= x0; x--)
+            emitRow(f, NATIVE_W - 1 - x, y0, y1 - y0, dst + y0 * NATIVE_W + x, NATIVE_W);
+          break;
+        case 2:
+          for (int y = y0; y < y1; y++)
+            emitRow(f, NATIVE_H - 1 - y, NATIVE_W - x1, x1 - x0, dst + y * NATIVE_W + x1 - 1, -1);
+          break;
+        case 3:
+          for (int x = x0; x < x1; x++)
+            emitRow(f, x, NATIVE_H - y1, y1 - y0, dst + (y1 - 1) * NATIVE_W + x, -NATIVE_W);
+          break;
+        default:
+          for (int y = y0; y < y1; y++)
+            memcpy(dst + y * NATIVE_W + x0, f.lv + y * NATIVE_W + x0, (size_t)(x1 - x0) * 2);
+          break;
+      }
     }
   }
+  if (f.overlayRead) releaseLvLease();  // the overlays below never read LVGL pixels
+  drawOverlays(f, dst, 0);
   overlayDots(f, dst, 0);
   return true;
 }
 
 void frameIdleWait() {
-  const CompMode mode = compMode();
-  const bool animating = mode == COMP_ANIM || mode == COMP_FRAME;
+  portENTER_CRITICAL(&s_mux);
+  bool animating = s.mode == COMP_ANIM || s.mode == COMP_FRAME;
+  for (const PanelOverlay& o : s_overlays)
+    animating |= o.geometry.across && o.animation.duration && s_overlaySampleUs < popupEndUs(o.animation);
+  portEXIT_CRITICAL(&s_mux);
   ulTaskNotifyTake(pdTRUE, animating ? 1 : pdMS_TO_TICKS(50));
 }
 
-void frameDoneWithLv(const Frame& f) {
-  if (f.releaseLv) xSemaphoreGive(s_lvReady);
-  if (f.resend) s_lvReading = false;
+void frameReleaseLv() { xSemaphoreGive(s_lvReady); }
+
+// The borrowed LVGL pixels are copied: LVGL may render into them again.
+void releaseLvLease() {
+  portENTER_CRITICAL(&s_mux);
+  const bool lv = s_overlayLvRead != nullptr;
+  s_leaseAborted |= s_overlayLvAborted;
+  s_overlayDirty |= s_overlayLvAborted;
+  s_overlayLvAborted = false;
+  s_overlayLvRead = nullptr;
+  portEXIT_CRITICAL(&s_mux);
+  if (lv && s_overlayLvDone) xSemaphoreGive(s_overlayLvDone);
 }
 
-bool panelLvReading() { return s_lvReading; }
+bool frameReleaseOverlays(const Frame& f) {
+  if (!f.overlayRead) return true;
+  portENTER_CRITICAL(&s_mux);
+  for (const uint32_t*& px : s_overlayReads) px = nullptr;
+  portEXIT_CRITICAL(&s_mux);
+  releaseLvLease();
+  const bool aborted = s_leaseAborted;
+  s_leaseAborted = false;
+  return !aborted;
+}
 
 void frameStarted(const Frame& f, int64_t startUs, bool backToBack) {
   if (backToBack && f.comp && s_lastWasComp) {
@@ -1622,12 +2088,20 @@ void frameStarted(const Frame& f, int64_t startUs, bool backToBack) {
 void frameFinished(const Frame& f, int64_t startUs, uint32_t buildUs, uint32_t flushUs, uint32_t costUs) {
   st_frames = st_frames + 1;
   if (f.comp) st_comp = st_comp + 1;
+  if (f.overlayOnly) st_overlayOnly.fetch_add(1, std::memory_order_relaxed);
+  for (const OverlayRun& r : f.overlays) {
+    if ((r.opacity && intersectRect({0, 0, NATIVE_W, NATIVE_H}, r.bodyClip).w > 0) ||
+        (r.tagOpacity && intersectRect({0, 0, NATIVE_W, NATIVE_H}, r.tag).w > 0)) {
+      st_overlayFrames.fetch_add(1, std::memory_order_relaxed);
+      break;
+    }
+  }
   st_flushSum = st_flushSum + flushUs;
   if (flushUs > st_flushMax) st_flushMax = flushUs;
   st_buildSum = st_buildSum + buildUs;
   st_frameSum = st_frameSum + costUs;
   if (costUs > st_frameMax) st_frameMax = costUs;
-  if (f.comp && f.kind == KIND_FRAME) {
+  if (f.comp && f.kind == KIND_FRAME && !f.frameRepeat) {
     s_frameStats.frames++;
     s_frameStats.compFrames++;
     s_frameSum += costUs;

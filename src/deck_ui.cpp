@@ -132,7 +132,15 @@ void flushWaitCb(lv_display_t*) {
     }
     s_lvOut--;
   }
-  for (int i = 0; i < 50 && panelLvReading(); i++) vTaskDelay(1);
+}
+
+void lvWriteCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_REFR_START) {
+    const lv_draw_buf_t* active = lv_display_get_buf_active((lv_display_t*)lv_event_get_target(e));
+    if (active) panelWaitLvWritable((const uint16_t*)active->data);
+  } else {
+    panelLvWriteDone();
+  }
 }
 
 void indevRead(lv_indev_t* indev, lv_indev_data_t* data) {
@@ -1192,7 +1200,17 @@ PanelStats takePanelStats() {
   s_perfPanel.teTimeouts += p.teTimeouts;
   s_perfPanel.lvDropped += p.lvDropped;
   s_perfPanel.flushUsMax = std::max(s_perfPanel.flushUsMax, p.flushUsMax);
+  s_perfPanel.frameUsMax = std::max(s_perfPanel.frameUsMax, p.frameUsMax);
+  s_perfPanel.buildUsAvg = std::max(s_perfPanel.buildUsAvg, p.buildUsAvg);
   s_perfPanel.gapMaxUs = std::max(s_perfPanel.gapMaxUs, p.gapMaxUs);
+  s_perfPanel.overlayOnlyFrames += p.overlayOnlyFrames;
+  s_perfPanel.overlayFrames += p.overlayFrames;
+  s_perfPanel.popupRefreshCount += p.popupRefreshCount;
+  s_perfPanel.popupRefreshUsTotal += p.popupRefreshUsTotal;
+  s_perfPanel.popupRefreshUsMax = std::max(s_perfPanel.popupRefreshUsMax, p.popupRefreshUsMax);
+  s_perfPanel.lvWritableWaitCount += p.lvWritableWaitCount;
+  s_perfPanel.lvWritableWaitUsTotal += p.lvWritableWaitUsTotal;
+  s_perfPanel.lvWritableWaitUsMax = std::max(s_perfPanel.lvWritableWaitUsMax, p.lvWritableWaitUsMax);
   return p;
 }
 
@@ -1248,6 +1266,8 @@ bool deckBegin(uint8_t rotation) {
                          LV_DISPLAY_RENDER_MODE_DIRECT);
   lv_display_set_flush_cb(s_disp, flushCb);
   lv_display_set_flush_wait_cb(s_disp, flushWaitCb);
+  lv_display_add_event_cb(s_disp, lvWriteCb, LV_EVENT_REFR_START, nullptr);
+  lv_display_add_event_cb(s_disp, lvWriteCb, LV_EVENT_REFR_READY, nullptr);
 
   // Timers run newest first: recreate animation before adding input,
   // so each pass reads input, advances animations, then draws.
@@ -1480,15 +1500,21 @@ void deckPerfJson(String& out, uint32_t minUs) {
   takePanelStats();
   const PanelStats& p = s_perfPanel;
   const uint32_t ms = millis() - t0;
-  char b[400];
+  char b[720];
   snprintf(b, sizeof(b),
            "{\"ms\":%u,\"frames\":%u,\"fps\":%.1f,\"comp\":%u,\"teLate\":%u,\"teTimeouts\":%u,\"lvDrop\":%u,"
            "\"flushUsMax\":%u,\"gapMaxUs\":%u,\"passes\":%u,\"passUsMax\":%u,\"vizPackets\":%u,\"vizPeak\":%u,"
+           "\"frameUsMax\":%u,\"buildUsAvgMax\":%u,\"overlayOnlyFrames\":%u,\"overlayFrames\":%u,"
+           "\"popupRefreshCount\":%u,\"popupRefreshUsTotal\":%u,\"popupRefreshUsMax\":%u,"
+           "\"lvWritableWaitCount\":%u,\"lvWritableWaitUsTotal\":%u,\"lvWritableWaitUsMax\":%u,"
            "\"sound\":%s,\"minUs\":%u,\"lost\":%u,\"cols\":\"%s\",\"rows\":[",
            (unsigned)ms, (unsigned)p.frames, ms ? p.frames * 1000.0f / ms : 0.0f, (unsigned)p.compFrames,
            (unsigned)p.teLate, (unsigned)p.teTimeouts, (unsigned)p.lvDropped, (unsigned)p.flushUsMax,
            (unsigned)p.gapMaxUs, (unsigned)s_perfPasses, (unsigned)s_perfPassMax, (unsigned)(vizSerial() - viz0),
-           (unsigned)vizPeak(), vizSoundOn() ? "true" : "false", (unsigned)s_perfMinUs, (unsigned)s_perfLost,
+           (unsigned)vizPeak(), (unsigned)p.frameUsMax, (unsigned)p.buildUsAvg, (unsigned)p.overlayOnlyFrames, (unsigned)p.overlayFrames,
+           (unsigned)p.popupRefreshCount, (unsigned)p.popupRefreshUsTotal, (unsigned)p.popupRefreshUsMax,
+           (unsigned)p.lvWritableWaitCount, (unsigned)p.lvWritableWaitUsTotal, (unsigned)p.lvWritableWaitUsMax,
+           vizSoundOn() ? "true" : "false", (unsigned)s_perfMinUs, (unsigned)s_perfLost,
            PERF_COLS);
   out = b;
   out.reserve(out.length() + s_perfCount * 64 + 4);

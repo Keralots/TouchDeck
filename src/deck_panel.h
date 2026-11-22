@@ -8,6 +8,7 @@
 
 #include <Arduino.h>
 #include "board.h"
+#include "encoder_motion.h"
 
 namespace deck {
 
@@ -78,9 +79,9 @@ void panelPostLv(int idx, uint32_t gen);
 // An area (inclusive, logical pixels) LVGL redrew in the frame it posts next.
 void panelLvDirty(int x0, int y0, int x1, int y1);
 bool panelWaitLvReady(uint32_t timeoutMs);
-// The panel is copying the latest posted frame again (pager dots fading over
-// a still screen): LVGL must not draw into a buffer until this is false.
-bool panelLvReading();
+// Bracket LVGL writes so overlay repeats only borrow complete buffers.
+void panelWaitLvWritable(const uint16_t* pixels);
+void panelLvWriteDone();
 
 // --- Page-slide compositor ---------------------------------------------------
 // The visible strip is A | B (or A over B), offset `off` pixels into it
@@ -89,6 +90,41 @@ bool panelLvReading();
 enum CompMode : uint8_t { COMP_NONE = 0, COMP_DRAG, COMP_ANIM, COMP_HOLD, COMP_FRAME, COMP_FRAME_HOLD };
 
 struct FrameRect { int16_t x, y, w, h; };
+
+constexpr int PANEL_OVERLAY_SLOTS = 2;
+struct PopupMeter {
+  FrameRect box;  // arc bounds or full fill track, relative to the content root
+  uint16_t accent, trackColor;  // little-endian RGB565
+  uint16_t start, sweep;  // clockwise degrees, sweep 0 for a pill
+  uint8_t width, trackOpacity;
+  int8_t value;  // 0..100, -1 hides the meter
+  bool fromEnd;
+};
+
+struct PanelOverlay {
+  PopupGeometry geometry;
+  PopupAnimation animation;
+  int16_t pillX, pillY;
+  FrameRect layout, tag, picture;  // relative to the content root
+  PopupMeter meter;
+  const uint32_t* pixels;  // straight alpha ARGB8888
+  uint16_t stride;         // pixels
+  uint16_t borderColor;    // little-endian RGB565
+  uint8_t fillOpacity, borderOpacity;
+};
+// Loop task only. A picture stays immutable while published or in a build.
+void panelOverlaySet(int slot, const PanelOverlay& overlay);
+void panelOverlayClear(int slot);
+bool panelOverlayPictureInUse(int slot, const uint32_t* pixels);
+
+// Loop task only. The caller streams the capture before changing the slots.
+struct PanelOverlayCapture {
+  PanelOverlay overlays[PANEL_OVERLAY_SLOTS];
+  int64_t atUs;
+};
+bool panelOverlayCapture(PanelOverlayCapture& capture);
+void panelOverlayCaptureRow(const PanelOverlayCapture& capture, uint16_t* row, int y, int w);
+
 // Scratch for the compositor: one entry per rect, filled each frame.
 struct FrameTileRun {
   int16_t left, top, w, h, srcX, srcY;
@@ -190,7 +226,13 @@ struct PanelStats {
   uint32_t teTimeouts;  // frames sent without a TE edge (TE line dead)
   uint32_t lvDropped;   // LVGL frames superseded by the compositor
   uint32_t gapMaxUs;    // longest interval between frame starts while animating
+  uint32_t overlayOnlyFrames;
+  uint32_t overlayFrames;
+  uint32_t popupRefreshCount, popupRefreshUsTotal, popupRefreshUsMax;
+  uint32_t lvWritableWaitCount, lvWritableWaitUsTotal, lvWritableWaitUsMax;
 };
+// Loop task only.
+void panelCountPopupRefresh(uint32_t us);
 // Snapshot and reset the counters.
 PanelStats panelTakeStats();
 // Independent counters, published after the last flush or a quiesced cancellation.
