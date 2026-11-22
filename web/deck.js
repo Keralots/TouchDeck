@@ -2385,7 +2385,7 @@
   function divLines(f, b, rs) {
     if (!f.dividers) return "";
     const full = f.dividers === "full",
-      bg = f.dividerColor || "var(--mute)",
+      bg = f.dividerColor ? rgba(f.dividerColor, (f.dividerOpacity != null ? f.dividerOpacity : 100) / 100) : "var(--mute)",
       w = f.dividerWidth || 1,
       mg = "-" + (3 + w / 2) + "px";
     let h = "";
@@ -2888,9 +2888,18 @@
               "</select></div>"
             : "") +
           (gframe.dividers
-            ? colRow(gframe, "f", "dividerColor", "Divider colour", themeText(), "Auto: the theme text colour, faint.", {
-                sw: [],
-              })
+            ? colRow(gframe, "f", "dividerColor", "Divider colour", themeText(), "Auto: the theme text colour.", {
+                sw: TXT.concat(SW),
+              }) +
+              opRow(
+                gframe,
+                "f",
+                "dividerOpacity",
+                "Divider opacity",
+                "",
+                gframe.dividerColor ? 100 : 15,
+                "Auto: 15 % with the auto colour, else 100 %.",
+              )
             : ""),
       );
     h += grp(
@@ -3366,6 +3375,7 @@
             delete gframe.dividers;
             delete gframe.dividerColor;
             delete gframe.dividerWidth;
+            delete gframe.dividerOpacity;
           }
           setDirty(true);
           renderPage();

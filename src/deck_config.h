@@ -79,7 +79,7 @@
 // their own background. Only while at least two of them are shown, touch each
 // other and no other shown tile sits in their box; otherwise they stand alone.
 // A frame's "dividers": "short" | "full" draws a hairline between its touching
-// tiles ("dividerColor", else the theme text colour, faint; "dividerWidth" 1..3 px).
+// tiles ("dividerColor", else the theme text colour, faint; "dividerWidth" 1..3 px; "dividerOpacity" 0..100 %).
 // Action, toggle, slider and sensor tiles take "iconStyle": "plain" (no
 // circle, the icon fills its place), "iconColor" / "onIconColor" (else
 // "color"; a plain icon while on: the text colour), "onIcon" (toggle) and
@@ -269,6 +269,7 @@ struct FrameDef {
   int8_t opacity = -1;  // Glass, %, -1 = the display setting
   uint8_t dividers = 0;  // FRAME_DIV_*
   uint8_t divWidth = 1;  // px, 1..3
+  int8_t divOpa = -1;    // %, -1 = 15 with the auto colour, else 100
   bool hasDivColor = false;
   uint32_t divColor = 0;
 };

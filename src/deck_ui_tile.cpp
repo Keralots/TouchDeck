@@ -315,7 +315,7 @@ static std::vector<int32_t> dividerRects(const FrameRt& f, const std::vector<lv_
 static void drawDividers(FrameRt& f, std::vector<int32_t>&& rs) {
   lv_obj_clean(f.obj);
   const lv_color_t c = lv_color_hex(f.def->hasDivColor ? f.def->divColor : C_TEXT);
-  const lv_opa_t opa = f.def->hasDivColor ? LV_OPA_COVER : 38;  // auto: the text colour at ~15 %
+  const lv_opa_t opa = f.def->divOpa >= 0 ? (lv_opa_t)(f.def->divOpa * 255 / 100) : f.def->hasDivColor ? LV_OPA_COVER : 38;
   for (size_t i = 0; i + 3 < rs.size(); i += 4) {
     lv_obj_t* o = lv_obj_create(f.obj);
     lv_obj_remove_style_all(o);
