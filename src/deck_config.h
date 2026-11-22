@@ -55,7 +55,10 @@
 //   "nozzle": "left" | "right", "unit": 1 } (unit is the 1-based AMS position).
 //
 // "type": "clock": the time, and the date when the tile has room
-// (24h and time zone from the device settings). Read-only.
+// (24h and time zone from the device settings). Read-only. "style": "roll"
+// (digits roll in), "orbit" (a comet runs round the border once a minute;
+// "ring": "tick" steps it each second, "chartColor" colours it) or "blocks"
+// (block digits rebuilt dot by dot over a self-playing block strip, 2x1 and up).
 //
 // "type": "media": the PC's current track, cover and playback controls.
 // { "type": "media", "pc": "<pc_id>" (optional), "color": "#7DB5FF" }.
@@ -150,7 +153,7 @@ constexpr int MAX_PAGE_TILES = BOARD_MAX_PAGE_TILES;
 // Cells per grid side; tiles sit and span in half cells.
 constexpr int GRID_MAX = BOARD_GRID_MAX;
 
-enum ClockStyle : uint8_t { CLOCK_CLASSIC = 0, CLOCK_ROLL, CLOCK_ORBIT };
+enum ClockStyle : uint8_t { CLOCK_CLASSIC = 0, CLOCK_ROLL, CLOCK_ORBIT, CLOCK_BLOCKS };
 enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER, TILE_CLOCK, TILE_PRINTER, TILE_MEDIA, TILE_VIZ, TILE_COVER, TILE_WEATHER, TILE_AGENT };
 enum PrinterShow : uint8_t { PS_HERO = 0, PS_NOZZLE, PS_BED, PS_CHAMBER, PS_FILAMENT, PS_LAYER, PS_LIGHT, PS_AMS, PS_SLOTS, PS_SUMMARY };
 constexpr int MAX_PRINTERS = 2;

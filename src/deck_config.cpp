@@ -502,7 +502,10 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         if (t.type == TILE_CLOCK) {
           t.clockDate = !strcmp(tv["date"] | "", "always");
           const char* cs = tv["style"] | "";
-          t.clockStyle = !strcmp(cs, "roll") ? CLOCK_ROLL : !strcmp(cs, "orbit") ? CLOCK_ORBIT : CLOCK_CLASSIC;
+          t.clockStyle = !strcmp(cs, "roll")     ? CLOCK_ROLL
+                         : !strcmp(cs, "orbit")  ? CLOCK_ORBIT
+                         : !strcmp(cs, "blocks") ? CLOCK_BLOCKS
+                                                 : CLOCK_CLASSIC;
           t.clockTick = !strcmp(tv["ring"] | "", "tick");
         }
         if (t.type == TILE_WEATHER) {
