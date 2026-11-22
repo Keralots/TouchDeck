@@ -523,6 +523,7 @@ void destroyPages(bool keepGlass = false) {
     sparkFree(r.spark);
     vizFree(r.vz);
     wxFree(r.wx);
+    clockFxFree(r.cfx);
     prnFxFree(r.pfx);
   }
   s_tiles.clear();
@@ -1480,6 +1481,7 @@ void deckTick() {
     heroTick();
     vizTick();
     wxTick();
+    clockFxTick();
     agentTileSync();
 #if BOARD_HAS_ENCODER
     encoderAnimTick();

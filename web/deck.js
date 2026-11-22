@@ -542,6 +542,7 @@
         "Colours",
         colRow(t, i, "color", "Time colour", "#E6E8EC", theme, { sw: tx, warn: readHint(t.color) }) +
           colRow(t, i, "textColor", "Date colour", "#E6E8EC", theme, { sw: tx, warn: readHint(t.textColor) }) +
+          (t.style === "orbit" ? colRow(t, i, "chartColor", "Ring colour", "#5CC9A7", "Auto uses the theme accent.") : "") +
           lookOff(t, i),
         true,
       );
@@ -1148,6 +1149,14 @@
       '" style="width:auto" title="Small tiles leave the date out unless Always">' +
       opt("", "Date if it fits", t.date !== "always") +
       opt("always", "Date always", t.date === "always") +
+      "</select>" +
+      '<select data-cl="' +
+      i +
+      '" style="width:auto" title="Roll: digits roll in. Orbit: a comet runs round the tile once a minute.">' +
+      opt("", "Classic", !t.style) +
+      opt("roll", "Roll", t.style === "roll") +
+      opt("orbit", "Orbit", t.style === "orbit" && t.ring !== "tick") +
+      opt("orbit-tick", "Orbit, ticking", t.style === "orbit" && t.ring === "tick") +
       "</select>" +
       sizeSel(t, i) +
       '<button type="button" class="btn' +
@@ -3973,6 +3982,19 @@
           const t = p.tiles[+x.dataset.cd];
           if (x.value === "always") t.date = "always";
           else delete t.date;
+          setDirty(true);
+          renderPage();
+        }),
+    );
+    el.querySelectorAll("[data-cl]").forEach(
+      (x) =>
+        (x.onchange = () => {
+          const t = p.tiles[+x.dataset.cl];
+          delete t.style;
+          delete t.ring;
+          if (x.value) t.style = x.value === "orbit-tick" ? "orbit" : x.value;
+          if (x.value === "orbit-tick") t.ring = "tick";
+          if (t.style !== "orbit") delete t.chartColor;
           setDirty(true);
           renderPage();
         }),

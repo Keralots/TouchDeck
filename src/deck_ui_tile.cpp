@@ -616,6 +616,23 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     return;
   }
 
+  // Roll and Orbit clocks: one object the deck draws, see deck_ui_clock.cpp.
+  if (def.type == TILE_CLOCK && def.clockStyle != CLOCK_CLASSIC) {
+    TileRt r = {};
+    r.def = &def;
+    r.page = page;
+    r.obj = t;
+    makeClockFx(r, t);
+    if (r.cfx) {  // else Classic
+      lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);
+      const size_t idx = s_tiles.size();
+      s_tiles.push_back(r);
+      applyClock(s_tiles.back());
+      lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
+      return;
+    }
+  }
+
   // Clock: the time ("color") over the date, centred; fitClock sizes them.
   if (def.type == TILE_CLOCK) {
     lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);  // read-only

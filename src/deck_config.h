@@ -150,6 +150,7 @@ constexpr int MAX_PAGE_TILES = BOARD_MAX_PAGE_TILES;
 // Cells per grid side; tiles sit and span in half cells.
 constexpr int GRID_MAX = BOARD_GRID_MAX;
 
+enum ClockStyle : uint8_t { CLOCK_CLASSIC = 0, CLOCK_ROLL, CLOCK_ORBIT };
 enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_METRIC, TILE_SLIDER, TILE_CLOCK, TILE_PRINTER, TILE_MEDIA, TILE_VIZ, TILE_COVER, TILE_WEATHER, TILE_AGENT };
 enum PrinterShow : uint8_t { PS_HERO = 0, PS_NOZZLE, PS_BED, PS_CHAMBER, PS_FILAMENT, PS_LAYER, PS_LIGHT, PS_AMS, PS_SLOTS, PS_SUMMARY };
 constexpr int MAX_PRINTERS = 2;
@@ -255,6 +256,8 @@ struct TileDef {
   bool mediaAuto = false;  // TILE_MEDIA: "auto": the PC or the HA player, whichever plays
   bool vizScope = false;   // TILE_VIZ: "style": "scope" (waveform) instead of bars
   bool clockDate = false;  // TILE_CLOCK: "date": "always" (default: only when it fits)
+  uint8_t clockStyle = 0;  // TILE_CLOCK: CLOCK_*
+  bool clockTick = false;  // TILE_CLOCK orbit: "ring": "tick"
   uint8_t wxForecast = 0;  // TILE_WEATHER: "forecast": 0 days, 1 hours, 2 none
   bool wxStill = false;    // TILE_WEATHER: "animate": false (icons at rest)
   std::vector<LightPreset> presets;  // toggle / slider light tiles

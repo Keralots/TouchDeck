@@ -145,6 +145,7 @@ struct TileRt {
   lv_obj_t* coverBtns[3];  // cover tiles: up, stop, down
   lv_obj_t* presetBtns[MAX_LIGHT_PRESETS];  // light presets, as many as the tile has
   struct WxRt* wx;         // weather tiles: data and layout
+  struct ClockFx* cfx;     // clock tiles with a Roll or Orbit style
   // Glass auto text: the colour picked from the picture under the tile.
   uint32_t autoText;
   bool hasAuto;
@@ -497,6 +498,14 @@ void vizDrawEvent(lv_event_t* e);
 void vizTick();
 
 // deck_ui_weather.cpp
+// Clock tiles drawn by the deck (Roll, Orbit): deck_ui_clock.cpp.
+void makeClockFx(TileRt& r, lv_obj_t* t);
+void fitClockFx(TileRt& r, int cw, int ch);
+void applyClockFx(TileRt& r, const char* h, const char* m, const char* ap, const char* date);
+void clockFxTick();
+void clockFxFree(ClockFx* c);
+void digitInk(const lv_font_t* f, int& top, int& h);
+void dateInk(const lv_font_t* f, int& top, int& h);
 void wxFree(WxRt* w);
 void makeWeatherContent(TileRt& r, lv_obj_t* t);
 void fitWeather(TileRt& r, int cw, int ch);
