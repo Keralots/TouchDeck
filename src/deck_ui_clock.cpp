@@ -554,7 +554,7 @@ static uint32_t changeMs(const ClockFx& c) {
 }
 
 void clockFxTick() {
-  if (!s_animDue) return;
+  if (!(advSettings.clock60 ? s_animFastDue : s_animDue)) return;
   const uint32_t now = s_animMs;
   const bool showing = fxShowing();
   struct timeval tv;

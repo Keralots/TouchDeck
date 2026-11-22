@@ -82,6 +82,7 @@ struct AdvancedSettings {
   bool printers;  // Bambu printers over LAN; off hides their pages and tiles, config kept
   bool weather60;  // weather icons every refresh (boards with a refresh clock, the 7B)
   bool charts60;   // chart glide and printer effects every refresh
+  bool clock60;    // clock tile animations every refresh
   bool smoothDisplay;  // DSI with stock libs: no scan ring, 60 fps but flash writes may flash the panel; on restart
 };
 
