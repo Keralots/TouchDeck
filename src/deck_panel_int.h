@@ -64,16 +64,31 @@ struct DirtyMask {
   }
 };
 
+struct ArcEdge {
+  float x, y;  // unit direction
+};
+
+struct OverlayRun {
+  FrameRect body, bodyClip, tag, picture;
+  FrameRect labelClip, meter;
+  const uint32_t* pixels;
+  int pictureStepX, pictureStepY;
+  ArcEdge arcStart, trackEnd, indicatorEnd;
+  uint16_t borderColor, accent, trackColor;
+  uint8_t arcWidth, trackOpacity;
+  bool trackWide, indicatorWide, hasIndicator;
+  uint8_t fillOpacity, borderOpacity, opacity, tagOpacity, contentOpacity;
+};
+
 // A frame to send, resolved under the lock so the build never reads shared
 // state: one LVGL framebuffer, a horizontal or vertical A|B strip, or a panel
-// pulled down over a (dimmed) page. Plus the page-dot overlay.
+// pulled down over a (dimmed) page. The popups and page dots are drawn last.
 struct Frame {
   FrameScene scene;
   uint32_t elapsedMs, durationMs, build0Us;
-  bool frameLast;
+  bool frameLast, frameRepeat;
   bool comp;
   bool releaseLv;
-  bool resend;  // reads s.lvLatest again, a buffer LVGL may already draw into (panelLvReading)
   uint8_t rot;
   int w, h;
   const uint16_t* lv;
@@ -93,6 +108,10 @@ struct Frame {
   bool dotsV;
   // Plain LVGL frame: what differs from the plain frame decided before it.
   DirtyMask dirty;
+  DirtyMask effectDirty;  // native cells written by overlays or dots
+  OverlayRun overlays[PANEL_OVERLAY_SLOTS];
+  bool overlayRead;
+  bool overlayOnly;
   int64_t showAtUs;  // plain LVGL frame: not on the glass before this refresh, 0 = at once
 };
 
@@ -107,7 +126,9 @@ bool frameBuildDirty(const Frame& f, uint16_t* dst, const DirtyMask& m);
 // Nothing to show: sleep until LVGL posts a frame or an animation needs one.
 void frameIdleWait();
 // f no longer reads its LVGL framebuffer: LVGL may render into it again.
-void frameDoneWithLv(const Frame& f);
+void frameReleaseLv();
+// Release the picture and LVGL leases. False if the LVGL copy timed out.
+bool frameReleaseOverlays(const Frame& f);
 // Statistics: f goes out now; then it is on the glass (or queued) with these costs.
 void frameStarted(const Frame& f, int64_t startUs, bool backToBack);
 void frameFinished(const Frame& f, int64_t startUs, uint32_t buildUs, uint32_t flushUs, uint32_t costUs);
@@ -128,6 +149,10 @@ int64_t transportLastSyncUs();
 // When a frame decided now will be on the glass; 0 = no prediction, the
 // compositor uses the sync edge and the constants above.
 int64_t transportPresentUs(int64_t nowUs);
+// Same prediction for a plain frame carrying a popup.
+int64_t transportOverlayPresentUs(int64_t nowUs);
+// Frames can go on consecutive refreshes (the DSI scan ring takes every 2nd).
+bool transportBackToBack();
 // See panelAnimTargetUs.
 int64_t transportAnimTargetUs(int64_t nowUs, int64_t* periodUs);
 

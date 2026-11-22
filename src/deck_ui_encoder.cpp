@@ -3,19 +3,20 @@
 #if BOARD_HAS_ENCODER
 #include "deck_ui_int.h"
 #include "encoder.h"
+#include <esp_timer.h>
 #include <math.h>
 #include <string_view>
 
 namespace deckui {
 namespace {
 
-constexpr int POPUP_PROGRESS = 1000;
 constexpr int RADIUS_PCT[] = {15, 19, 23};
-constexpr int SLIDE_IN_MS = 150, SLIDE_OUT_MS = 200;
-constexpr int DROPLET_SWELL_MS = 220, DROPLET_SHRINK_MS = 160;
-constexpr int BEAD_DRIP_MS = 380, BEAD_RETURN_MS = 180, WOBBLE_MS = 520;
-constexpr int BEAD_BUMP_MS = BEAD_DRIP_MS * 45 / 100, BEAD_PEAK_MS = BEAD_DRIP_MS * 80 / 100;
-constexpr int CONTENT_IN_MS = 120, CONTENT_OUT_MS = 80, VALUE_MS = 120;
+constexpr int VALUE_MS = 120;
+static_assert(ENCODER_COUNT == PANEL_OVERLAY_SLOTS);
+static_assert((int)PopupStyle::Droplet == ENCODER_POPUP_DROPLET &&
+              (int)PopupStyle::Edge == ENCODER_POPUP_EDGE &&
+              (int)PopupStyle::Bead == ENCODER_POPUP_BEAD &&
+              (int)PopupStyle::Pill == ENCODER_POPUP_SIDE_PILL);
 constexpr int PILL_WIDTH = 46, PILL_INSET = 4, PILL_GAP = 8;
 constexpr int TAG_WIDTH = 170, TAG_PAD_X = 12, TAG_PAD_Y = 8, LABEL_GAP = 2;
 constexpr uint32_t PREVIEW_STEP_MS = 200;
@@ -41,43 +42,31 @@ struct ClimateTurn {
   bool tempSent = false, modeSent = false;
 };
 
-enum class PopupMotion { Droplet, Drip, Slide, Wobble, Fade, None };
 enum class PopupRun { Idle, Shape, Value };
 
-struct PopupFrame {
-  int across = -1, along = -1, shift = 0;
-  int opacity = -1, content = -1;
-};
-
-constexpr struct { int at, across, along; } WOBBLE_KEYS[] = {
-  {0, 30, 70}, {350, 112, 90}, {580, 94, 106}, {780, 103, 98}, {1000, 100, 100}
+struct PictureBuffer {
+  uint32_t* pixels = nullptr;
+  uint32_t bytes = 0;
 };
 
 struct Popup {
   lv_obj_t* root = nullptr;
-  lv_obj_t* arc = nullptr;
-  lv_obj_t* capsule = nullptr;
-  lv_obj_t* fill = nullptr;
-  lv_obj_t* tag = nullptr;
   lv_obj_t* value = nullptr;
   lv_obj_t* name = nullptr;
   char valueText[24] = "";
   char nameText[128] = "", nameSource[128] = "";
   const lv_font_t* valueFont = nullptr;
-  int cx = 0, cy = 0, outX = 0, outY = 0, across = 0, along = 0;
-  int slide = 0, beadTravel = 0, pillX = 0, pillY = 0, textWidth = 0;
-  bool fillFromEnd = true;
+  PanelOverlay overlay = {};
+  PictureBuffer buffers[2];
+  int slot = 0, textWidth = 0, valueH = 0;
+  bool contentDirty = false;
   int rotation = -1, position = -1, edge = -1, size = -1;
   EncoderPopupSettings settings;
-  PopupMotion motion = PopupMotion::Droplet;
   PopupRun run = PopupRun::Idle;
-  uint32_t runAt = 0;  // anim clock ms the running motion started at
-  int runMs = 0;
-  bool runEaseOut = false;
-  PopupFrame frame, from;
-  int duration = 0, shownValue = -1, valueFrom = 0, valueTarget = -1;
+  uint32_t runAt = 0;
+  int shownValue = -1, valueFrom = 0, valueTarget = -1;
   uint32_t lastInput = 0;
-  bool visible = false, exiting = false;
+  bool visible = false;
 };
 
 struct Knob {
@@ -105,6 +94,7 @@ struct PopupPreview {
 };
 
 Knob s_knobs[ENCODER_COUNT];
+lv_obj_t* s_popupScreen = nullptr;
 PopupPreview s_preview;
 int s_previewKnob = -1, s_previewValue = PREVIEW_START;
 uint32_t s_previewAt = 0;
@@ -117,8 +107,6 @@ lv_obj_t* popupLabel(lv_obj_t* parent, const lv_font_t* font, uint32_t color, ch
   lv_obj_t* label = lv_label_create(parent);
   lv_obj_remove_style_all(label);
   lv_obj_remove_flag(label, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
-  lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_set_style_opa(label, LV_OPA_TRANSP, 0);
   lv_obj_set_style_text_font(label, font, 0);
   lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
   lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
@@ -127,42 +115,15 @@ lv_obj_t* popupLabel(lv_obj_t* parent, const lv_font_t* font, uint32_t color, ch
   return label;
 }
 
-lv_obj_t* popupBox(lv_obj_t* parent) {
-  lv_obj_t* box = lv_obj_create(parent);
-  lv_obj_remove_style_all(box);
-  lv_obj_remove_flag(box, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-  lv_obj_add_flag(box, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_set_style_opa(box, LV_OPA_COVER, 0);
-  return box;
-}
-
-void popupGlass(lv_obj_t* box, int radius) {
-  lv_obj_set_style_bg_color(box, lv_color_hex(0x202630), 0);
-  lv_obj_set_style_radius(box, radius, 0);
-  lv_obj_set_style_border_color(box, lv_color_hex(GLASS_BORDER_COLOR), 0);
-  lv_obj_set_style_border_width(box, GLASS_BORDER_WIDTH, 0);
-  lv_obj_set_style_border_opa(box, LV_OPA_30, 0);
-  lv_obj_set_style_border_post(box, true, 0);
-}
-
 void popupCreate(Popup& p) {
-  p.root = popupBox(lv_layer_top());
-  lv_obj_add_flag(p.root, LV_OBJ_FLAG_FLOATING);
-  popupGlass(p.root, LV_RADIUS_CIRCLE);
-
-  p.arc = lv_arc_create(p.root);
-  lv_obj_remove_style_all(p.arc);
-  lv_obj_remove_flag(p.arc, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-  lv_obj_add_flag(p.arc, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_set_style_opa(p.arc, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_arc_color(p.arc, lv_color_hex(0xE6E8EC), LV_PART_MAIN);
-  lv_obj_set_style_arc_opa(p.arc, LV_OPA_20, LV_PART_MAIN);
-  lv_obj_set_style_arc_width(p.arc, 5, LV_PART_MAIN);
-  lv_obj_set_style_arc_width(p.arc, 5, LV_PART_INDICATOR);
-  lv_obj_set_style_arc_color(p.arc, lv_color_hex(WARM_AMBER), LV_PART_INDICATOR);
-  lv_obj_set_style_arc_rounded(p.arc, true, LV_PART_INDICATOR);
-  lv_arc_set_range(p.arc, 0, 100);
-  lv_arc_set_value(p.arc, 0);
+  // An inactive screen allows snapshots without invalidating the live display.
+  if (!s_popupScreen) {
+    s_popupScreen = lv_obj_create(nullptr);
+    lv_obj_remove_style_all(s_popupScreen);
+  }
+  p.root = lv_obj_create(s_popupScreen);
+  lv_obj_remove_style_all(p.root);
+  lv_obj_remove_flag(p.root, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
   p.value = popupLabel(p.root, &deck_font_28, 0xF2F4F8, p.valueText);
   lv_label_set_long_mode(p.value, LV_LABEL_LONG_MODE_WRAP);  // messages take two lines
   p.name = popupLabel(p.root, &deck_font_14, 0xC6CCD7, p.nameText);
@@ -170,108 +131,92 @@ void popupCreate(Popup& p) {
 
 bool popupIsPill(const Popup& p) { return p.settings.style == ENCODER_POPUP_SIDE_PILL; }
 
-void popupSetHidden(lv_obj_t* obj, bool hidden) {
-  if (!obj || lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN) == hidden) return;
-  if (hidden) lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
-  else lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
-}
-
-void popupCreatePill(Popup& p) {
-  p.capsule = popupBox(p.root);
-  popupGlass(p.capsule, LV_RADIUS_CIRCLE);
-  p.fill = popupBox(p.capsule);
-  lv_obj_set_style_radius(p.fill, (PILL_WIDTH - 2 * PILL_INSET) / 2, 0);
-  lv_obj_set_style_bg_color(p.fill, lv_color_hex(WARM_AMBER), 0);
-  lv_obj_set_style_bg_opa(p.fill, LV_OPA_COVER, 0);
-  p.tag = popupBox(p.root);
-  popupGlass(p.tag, 12);
-}
-
-void popupStyle(Popup& p) {
-  const bool pill = popupIsPill(p);
-  const lv_opa_t opacity = (lv_opa_t)(p.settings.opacity * 255 / 100);
-  lv_obj_set_style_bg_opa(p.root, pill ? LV_OPA_TRANSP : opacity, 0);
-  lv_obj_set_style_border_width(p.root, pill ? 0 : GLASS_BORDER_WIDTH, 0);
-  lv_obj_set_style_border_opa(p.root, p.settings.style == ENCODER_POPUP_EDGE ? GLASS_BORDER_OPA : LV_OPA_30, 0);
-  if (pill) {
-    if (!p.capsule) popupCreatePill(p);
-    lv_obj_set_style_bg_opa(p.capsule, opacity, 0);
-    lv_obj_set_style_bg_opa(p.tag, opacity, 0);
-  }
-  popupSetHidden(p.capsule, !pill);
-  popupSetHidden(p.tag, !pill);
-  lv_obj_t* labelParent = pill ? p.tag : p.root;
-  if (lv_obj_get_parent(p.value) != labelParent) {
-    lv_obj_set_parent(p.value, labelParent);
-    lv_obj_set_parent(p.name, labelParent);
-  }
-}
-
 void popupLabels(Popup& p, int x, int y, int valueH, int nameH) {
+  FrameRect& picture = p.overlay.picture;
+  const int h = valueH + LABEL_GAP + nameH;
+  if (picture.w != p.textWidth || picture.h != h || p.valueH != valueH) {
+    p.overlay.pixels = nullptr;
+    p.contentDirty = true;
+  }
+  p.valueH = valueH;
+  picture = {(int16_t)x, (int16_t)y, (int16_t)p.textWidth, (int16_t)h};
+  lv_obj_set_size(p.root, picture.w, picture.h);
   lv_obj_set_size(p.value, p.textWidth, valueH);
-  lv_obj_set_pos(p.value, x, y);
+  lv_obj_set_pos(p.value, 0, 0);
   lv_obj_set_size(p.name, p.textWidth, nameH);
-  lv_obj_set_pos(p.name, x, y + valueH + LABEL_GAP);
+  lv_obj_set_pos(p.name, 0, valueH + LABEL_GAP);
+}
+
+void popupArc(Popup& p, int d, int inset, int start, int sweep) {
+  const int diameter = 2 * (d / 2 - inset);
+  PopupMeter& m = p.overlay.meter;
+  m.box = {(int16_t)inset, (int16_t)inset, (int16_t)diameter, (int16_t)diameter};
+  m.start = start;
+  m.sweep = sweep;
+  m.width = 5;
+  m.trackColor = lv_color_to_u16(lv_color_hex(0xE6E8EC));
+  m.trackOpacity = LV_OPA_20;
 }
 
 void popupLayoutDisc(Popup& p, int r, int angle) {
-  lv_obj_set_size(p.arc, 2 * r - 14, 2 * r - 14);
-  lv_obj_set_pos(p.arc, 7 - GLASS_BORDER_WIDTH, 7 - GLASS_BORDER_WIDTH);
-  lv_arc_set_bg_angles(p.arc, 0, 180);
-  lv_arc_set_rotation(p.arc, angle);
+  popupArc(p, 2 * r, 7, angle, 180);
 
   // Text box: as wide as the circle inside the arc allows at the block's farthest row.
   constexpr int VALUE_H = 34, NAME_H = 20, BLOCK_H = VALUE_H + LABEL_GAP + NAME_H, EDGE = 8;
   const int inner = r - 18;  // arc outer edge r - 7, width 5, 6 px padding
   int x, y;
-  if (p.outX) {
+  const PopupGeometry& g = p.overlay.geometry;
+  if (g.outX) {
     const int half = (int)sqrtf((float)(inner * inner - (BLOCK_H / 2) * (BLOCK_H / 2)));
     p.textWidth = half - EDGE;
-    x = p.outX > 0 ? r - half : r + EDGE;
+    x = g.outX > 0 ? r - half : r + EDGE;
     y = r - BLOCK_H / 2;
   } else {
     const int far = EDGE + BLOCK_H;
     const int half = (int)sqrtf((float)std::max(0, inner * inner - far * far));
     p.textWidth = 2 * half;
     x = r - half;
-    y = p.outY > 0 ? r - far : r + EDGE;
+    y = g.outY > 0 ? r - far : r + EDGE;
   }
-  popupLabels(p, x, y, VALUE_H, NAME_H);
+  popupLabels(p, x + GLASS_BORDER_WIDTH, y + GLASS_BORDER_WIDTH, VALUE_H, NAME_H);
 }
 
 void popupLayoutBead(Popup& p, int d) {
   constexpr int ARC_INSET = 9;
   const int valueH = lv_font_get_line_height(&deck_font_28), nameH = lv_font_get_line_height(&deck_font_14);
-  lv_obj_set_size(p.arc, d - 2 * ARC_INSET, d - 2 * ARC_INSET);
-  lv_obj_set_pos(p.arc, ARC_INSET - GLASS_BORDER_WIDTH, ARC_INSET - GLASS_BORDER_WIDTH);
-  lv_arc_set_bg_angles(p.arc, 135, 45);
-  lv_arc_set_rotation(p.arc, 0);
+  popupArc(p, d, ARC_INSET, 135, 270);
   p.textWidth = d * 64 / 100;
-  popupLabels(p, (d - p.textWidth) / 2 - GLASS_BORDER_WIDTH,
-              (d - valueH - LABEL_GAP - nameH) / 2 - GLASS_BORDER_WIDTH, valueH, nameH);
+  popupLabels(p, (d - p.textWidth) / 2,
+              (d - valueH - LABEL_GAP - nameH) / 2, valueH, nameH);
 }
 
 void popupLayoutPill(Popup& p, int tagH) {
-  const bool landscape = p.outX != 0, farSide = p.outX + p.outY > 0;
+  PanelOverlay& o = p.overlay;
+  const PopupGeometry& g = o.geometry;
+  const bool landscape = g.outX != 0, farSide = g.outX + g.outY > 0;
   const int tagAcross = landscape ? TAG_WIDTH : tagH, tagAlong = landscape ? tagH : TAG_WIDTH;
   const int across = PILL_WIDTH + PILL_GAP + tagAcross;
-  const int along = std::max(p.along * 106 / 100, tagAlong);
+  const int along = std::max(g.along * 106 / 100, tagAlong);
   const int capsuleCenter = PILL_WIDTH / 2 + (farSide ? tagAcross + PILL_GAP : 0);
   const int tagStart = farSide ? 0 : PILL_WIDTH + PILL_GAP;
-  p.pillX = landscape ? capsuleCenter : along / 2;
-  p.pillY = landscape ? along / 2 : capsuleCenter;
-  lv_obj_set_size(p.root, landscape ? across : along, landscape ? along : across);
-  lv_obj_set_size(p.tag, TAG_WIDTH, tagH);
-  lv_obj_set_pos(p.tag, landscape ? tagStart : p.pillX - TAG_WIDTH / 2,
-                 landscape ? p.pillY - tagH / 2 : tagStart);
+  o.pillX = landscape ? capsuleCenter : along / 2;
+  o.pillY = landscape ? along / 2 : capsuleCenter;
+  o.layout = {0, 0, (int16_t)(landscape ? across : along), (int16_t)(landscape ? along : across)};
+  const int w = landscape ? g.across : g.along, h = landscape ? g.along : g.across;
+  o.meter.box = {(int16_t)(o.pillX - w / 2 + PILL_INSET), (int16_t)(o.pillY - h / 2 + PILL_INSET),
+                 (int16_t)(w - 2 * PILL_INSET), (int16_t)(h - 2 * PILL_INSET)};
+  o.meter.sweep = 0;
+  o.tag = {(int16_t)(landscape ? tagStart : o.pillX - TAG_WIDTH / 2),
+           (int16_t)(landscape ? o.pillY - tagH / 2 : tagStart), TAG_WIDTH, (int16_t)tagH};
   p.textWidth = TAG_WIDTH - 2 * TAG_PAD_X;
-  popupLabels(p, TAG_PAD_X - GLASS_BORDER_WIDTH, TAG_PAD_Y - GLASS_BORDER_WIDTH,
-              lv_font_get_line_height(&deck_font_28), lv_font_get_line_height(&deck_font_14));
+  popupLabels(p, o.tag.x + TAG_PAD_X, o.tag.y + TAG_PAD_Y, lv_font_get_line_height(&deck_font_28),
+              lv_font_get_line_height(&deck_font_14));
 }
 
 bool popupLayout(Popup& p, int position, int edge, int size) {
   const int rotation = panelRotation();
   if (p.rotation == rotation && p.position == position && p.edge == edge && p.size == size) return false;
+  PopupGeometry& g = p.overlay.geometry;
   const int w = logicalW(), h = logicalH();
   const int r = std::min(w, h) * RADIUS_PCT[size] / 100;
   p.rotation = rotation;
@@ -282,48 +227,48 @@ bool popupLayout(Popup& p, int position, int edge, int size) {
   const int offset = (landscape ? h : w) * position / 100;
   const int side = edge == 0 ? 1 : -1;
   int angle;
-  p.outX = p.outY = 0;
+  g.outX = g.outY = 0;
   switch (rotation) {
-    case 0: p.cx = w - offset; p.outY = side; angle = 180; break;
-    case 1: p.cy = offset; p.outX = side; angle = 90; break;
-    case 2: p.cx = offset; p.outY = -side; angle = 0; break;
-    default: p.cy = h - offset; p.outX = -side; angle = 270; break;
+    case 0: g.cx = w - offset; g.outY = side; angle = 180; break;
+    case 1: g.cy = offset; g.outX = side; angle = 90; break;
+    case 2: g.cx = offset; g.outY = -side; angle = 0; break;
+    default: g.cy = h - offset; g.outX = -side; angle = 270; break;
   }
-  if (landscape) p.cx = p.outX > 0 ? w : 0;
-  else p.cy = p.outY > 0 ? h : 0;
+  if (landscape) g.cx = g.outX > 0 ? w : 0;
+  else g.cy = g.outY > 0 ? h : 0;
   angle = (angle + (edge ? 180 : 0)) % 360;
-  p.frame = {};
+  p.overlay.layout = p.overlay.tag = {};
   p.shownValue = -1;
   int inset = 0, span = 0;
   if (popupIsPill(p)) {
     const int tagH = 2 * TAG_PAD_Y + lv_font_get_line_height(&deck_font_28) +
                      LABEL_GAP + lv_font_get_line_height(&deck_font_14);
-    p.across = PILL_WIDTH;
-    p.along = 22 * r / 10;
+    g.across = PILL_WIDTH;
+    g.along = 22 * r / 10;
     // In portrait, start the fill from the same end as the half-disc arc.
-    p.fillFromEnd = landscape || angle == 0;
+    p.overlay.meter.fromEnd = landscape || angle == 0;
     inset = PILL_WIDTH / 2 + 12;
-    span = std::max(p.along, landscape ? tagH : TAG_WIDTH);
-    p.slide = inset + PILL_WIDTH / 2 + PILL_GAP + (landscape ? TAG_WIDTH : tagH);
+    span = std::max(g.along, landscape ? tagH : TAG_WIDTH);
+    g.slide = inset + PILL_WIDTH / 2 + PILL_GAP + (landscape ? TAG_WIDTH : tagH);
     popupLayoutPill(p, tagH);
   } else if (p.settings.style == ENCODER_POPUP_BEAD) {
-    p.across = p.along = 17 * r / 10;
-    const int round = p.outX + p.outY > 0 ? 1 : 0;
-    p.beadTravel = inset = (p.across + round) / 2 + 14;
-    span = p.along;
-    p.slide = p.across + 14;
-    popupLayoutBead(p, p.across);
+    g.across = g.along = 17 * r / 10;
+    const int round = g.outX + g.outY > 0 ? 1 : 0;
+    g.beadTravel = inset = (g.across + round) / 2 + 14;
+    span = g.along;
+    g.slide = g.across + 14;
+    popupLayoutBead(p, g.across);
   } else {
-    p.across = p.along = 2 * r;
-    p.slide = r;
+    g.across = g.along = 2 * r;
+    g.slide = r;
     popupLayoutDisc(p, r, angle);
   }
   if (span) {
     // Keep the new styles on screen at positions near the ends of the edge.
-    if (landscape) p.cy = std::clamp(p.cy, span / 2, h - (span + 1) / 2);
-    else p.cx = std::clamp(p.cx, span / 2, w - (span + 1) / 2);
-    p.cx -= p.outX * inset;
-    p.cy -= p.outY * inset;
+    if (landscape) g.cy = std::clamp(g.cy, span / 2, h - (span + 1) / 2);
+    else g.cx = std::clamp(g.cx, span / 2, w - (span + 1) / 2);
+    g.cx -= g.outX * inset;
+    g.cy -= g.outY * inset;
   }
   return true;
 }
@@ -342,297 +287,95 @@ PopupMotion popupStyleMotion(const EncoderPopupSettings& s, bool show) {
   return PopupMotion::Slide;
 }
 
-int popupMix(int from, int to, int progress) {
-  const int mixed = from * (POPUP_PROGRESS - progress) + to * progress;
-  return (mixed + (mixed < 0 ? -POPUP_PROGRESS / 2 : POPUP_PROGRESS / 2)) / POPUP_PROGRESS;
-}
-
-int popupPhase(int elapsed, int start, int duration) {
-  return std::clamp((elapsed - start * POPUP_PROGRESS) / duration, 0, POPUP_PROGRESS);
-}
-
-int popupEaseIn(int progress) {
-  return progress * progress / POPUP_PROGRESS;
-}
-
-int popupEaseOut(int progress) {
-  return POPUP_PROGRESS - popupEaseIn(POPUP_PROGRESS - progress);
-}
-
-int popupSmooth(int progress) {
-  return progress * progress * (3 * POPUP_PROGRESS - 2 * progress) / (POPUP_PROGRESS * POPUP_PROGRESS);
-}
-
-int popupSlideEase(int progress, bool exiting) {
-  const int x = progress * LV_BEZIER_VAL_MAX / POPUP_PROGRESS;
-  const int y = exiting ? lv_cubic_bezier(x, LV_BEZIER_VAL_FLOAT(0.42), 0, LV_BEZIER_VAL_MAX, LV_BEZIER_VAL_MAX) :
-                         lv_cubic_bezier(x, 0, 0, LV_BEZIER_VAL_FLOAT(0.58), LV_BEZIER_VAL_MAX);
-  return y * POPUP_PROGRESS / LV_BEZIER_VAL_MAX;
-}
-
-PopupFrame popupRestFrame(const Popup& p) {
-  return {p.across, p.along, 0, LV_OPA_COVER, LV_OPA_COVER};
-}
-
-int popupAnchorShift(const Popup& p, int across) {
-  if (p.settings.style != ENCODER_POPUP_BEAD && !popupIsPill(p)) return 0;
-  const int round = p.outX + p.outY > 0 ? 1 : 0;
-  return (p.across + round) / 2 - (across + round) / 2;
-}
-
-PopupFrame popupStartFrame(const Popup& p) {
-  PopupFrame f = popupRestFrame(p);
-  switch (p.motion) {
-    case PopupMotion::Droplet: f.across = 0; f.along = p.along * 45 / 100; f.content = 0; break;
-    case PopupMotion::Drip: f.across = 0; f.along = p.along / 2; f.shift = p.beadTravel; f.content = 0; break;
-    case PopupMotion::Slide: f.shift = p.slide; f.opacity = f.content = 0; break;
-    case PopupMotion::Wobble:
-      f.across = p.across * WOBBLE_KEYS[0].across / 100;
-      f.along = p.along * WOBBLE_KEYS[0].along / 100;
-      f.shift = popupAnchorShift(p, f.across);
-      f.opacity = f.content = 0;
-      break;
-    case PopupMotion::Fade: f.opacity = 0; break;
-    case PopupMotion::None: break;
-  }
-  return f;
-}
-
-PopupFrame popupDripFrame(const Popup& p, int elapsed) {
-  PopupFrame f = popupRestFrame(p);
-  const PopupFrame& from = p.from;
-  if (p.exiting) {
-    const int t = popupEaseIn(popupPhase(elapsed, CONTENT_OUT_MS, BEAD_RETURN_MS));
-    f.across = popupMix(from.across, 0, t);
-    f.along = popupMix(from.along, p.along * 40 / 100, t);
-    f.shift = popupMix(from.shift, p.beadTravel, t);
-    f.content = popupMix(from.content, 0, popupPhase(elapsed, 0, CONTENT_OUT_MS));
-    return f;
-  }
-  const int dripMs = p.duration - CONTENT_IN_MS;
-  f.content = popupMix(from.content, LV_OPA_COVER, popupPhase(elapsed, dripMs, CONTENT_IN_MS));
-  if (!dripMs) return f;
-  // Resume at takeoff if the bead is already partway through its return.
-  const int age = elapsed + (BEAD_DRIP_MS - dripMs) * POPUP_PROGRESS;
-  const int bumpAcross = p.across * 90 / 100, bumpAlong = p.along * 85 / 100;
-  const int peakAcross = p.across * 108 / 100, peakAlong = p.along * 94 / 100;
-  if (age < BEAD_BUMP_MS * POPUP_PROGRESS) {
-    const int t = popupEaseOut(popupPhase(age, 0, BEAD_BUMP_MS));
-    f.across = popupMix(from.across, bumpAcross, t);
-    f.along = popupMix(from.along, bumpAlong, t);
-    f.shift = p.beadTravel;
-  } else if (age < BEAD_PEAK_MS * POPUP_PROGRESS) {
-    const int t = popupSmooth(popupPhase(age, BEAD_BUMP_MS, BEAD_PEAK_MS - BEAD_BUMP_MS));
-    const bool fullDrip = dripMs == BEAD_DRIP_MS;
-    f.across = popupMix(fullDrip ? bumpAcross : from.across, peakAcross, t);
-    f.along = popupMix(fullDrip ? bumpAlong : from.along, peakAlong, t);
-    f.shift = popupMix(fullDrip ? p.beadTravel : from.shift, 0, t);
-  } else {
-    const int t = popupSmooth(popupPhase(age, BEAD_PEAK_MS, BEAD_DRIP_MS - BEAD_PEAK_MS));
-    f.across = popupMix(peakAcross, p.across, t);
-    f.along = popupMix(peakAlong, p.along, t);
-  }
-  return f;
-}
-
-PopupFrame popupWobbleFrame(const Popup& p, int elapsed) {
-  PopupFrame f = popupRestFrame(p);
-  const PopupFrame& from = p.from;
-  const int wobbleMs = p.duration - CONTENT_IN_MS;
-  f.content = popupMix(from.content, LV_OPA_COVER, popupPhase(elapsed, wobbleMs, CONTENT_IN_MS));
-  if (!wobbleMs || elapsed >= wobbleMs * POPUP_PROGRESS) return f;
-  const int age = popupPhase(elapsed, 0, wobbleMs);
-  size_t next = 1;
-  while (age >= WOBBLE_KEYS[next].at) ++next;
-  const auto& a = WOBBLE_KEYS[next - 1];
-  const auto& b = WOBBLE_KEYS[next];
-  const int t = popupSmooth((age - a.at) * POPUP_PROGRESS / (b.at - a.at));
-  f.across = popupMix(next == 1 ? from.across : p.across * a.across / 100, p.across * b.across / 100, t);
-  f.along = popupMix(next == 1 ? from.along : p.along * a.along / 100, p.along * b.along / 100, t);
-  f.shift = popupAnchorShift(p, f.across);
-  if (next == 1) {
-    f.shift += popupMix(from.shift - popupAnchorShift(p, from.across), 0, t);
-    f.opacity = popupMix(from.opacity, LV_OPA_COVER, t);
-  }
-  return f;
-}
-
-PopupFrame popupFrame(const Popup& p, int progress) {
-  PopupFrame f = popupRestFrame(p);
-  const PopupFrame& from = p.from;
-  const int elapsed = progress * p.duration;  // Thousandths of a millisecond.
-  switch (p.motion) {
-    case PopupMotion::Droplet:
-      if (p.exiting) {
-        f.content = popupMix(from.content, 0, popupPhase(elapsed, 0, CONTENT_OUT_MS));
-        const int shrink = popupEaseIn(popupPhase(elapsed, CONTENT_OUT_MS, DROPLET_SHRINK_MS));
-        const int remaining = POPUP_PROGRESS - shrink;
-        f.across = popupMix(0, from.across, remaining);
-        f.along = popupMix(0, from.along, popupEaseIn(remaining));
-      } else {
-        const int swellMs = p.duration - CONTENT_IN_MS;
-        if (swellMs) {
-          constexpr int PEAK_MS = 143, STRETCH_MS = 195;
-          const int peak = std::max(from.across, f.across * 112 / 100);
-          if (elapsed < PEAK_MS * POPUP_PROGRESS) {
-            f.across = popupMix(from.across, peak, popupEaseOut(popupPhase(elapsed, 0, PEAK_MS)));
-          } else {
-            const int t = popupPhase(elapsed, PEAK_MS, DROPLET_SWELL_MS - PEAK_MS);
-            f.across = popupMix(peak, f.across, popupSmooth(t));
-          }
-          f.along = popupMix(from.along, f.along, popupEaseOut(popupPhase(elapsed, 0, STRETCH_MS)));
-        }
-        f.content = popupMix(from.content, LV_OPA_COVER, popupPhase(elapsed, swellMs, CONTENT_IN_MS));
-      }
-      break;
-    case PopupMotion::Drip: return popupDripFrame(p, elapsed);
-    case PopupMotion::Slide: {
-      const int time = p.exiting ? SLIDE_OUT_MS : SLIDE_IN_MS;
-      const int slide = popupSlideEase(popupPhase(elapsed, 0, time), p.exiting);
-      f.shift = popupMix(from.shift, p.exiting ? p.slide : 0, slide);
-      f.opacity = popupMix(from.opacity, p.exiting ? 0 : LV_OPA_COVER, slide);
-      f.content = p.exiting ? 0 : popupMix(from.content, LV_OPA_COVER, popupPhase(elapsed, time, CONTENT_IN_MS));
-      break;
-    }
-    case PopupMotion::Wobble: return popupWobbleFrame(p, elapsed);
-    case PopupMotion::Fade:
-      f.opacity = popupMix(from.opacity, p.exiting ? 0 : LV_OPA_COVER, popupSlideEase(progress, p.exiting));
-      break;
-    case PopupMotion::None: break;
-  }
-  return f;
-}
-
-void popupValueVisibility(Popup& p, int opacity) {
-  const bool pill = popupIsPill(p);
-  const bool hidden = opacity <= 0 || p.valueTarget < 0;
-  popupSetHidden(p.arc, hidden || pill);
-  popupSetHidden(p.fill, hidden || !pill || p.shownValue <= 0);
-}
-
-void popupContent(Popup& p, int opacity) {
-  popupValueVisibility(p, opacity);
-  const bool fadeTag = popupIsPill(p) && p.motion == PopupMotion::Wobble;
-  if (popupIsPill(p)) {
-    popupSetHidden(p.tag, fadeTag && opacity == 0);
-    lv_obj_set_style_opa(p.tag, fadeTag ? (lv_opa_t)opacity : LV_OPA_COVER, 0);
-    lv_obj_set_style_opa(p.fill, (lv_opa_t)opacity, 0);
-  } else {
-    lv_obj_set_style_opa(p.arc, (lv_opa_t)opacity, 0);
-  }
-  popupSetHidden(p.value, opacity == 0);
-  popupSetHidden(p.name, opacity == 0);
-  lv_obj_set_style_opa(p.value, fadeTag ? LV_OPA_COVER : (lv_opa_t)opacity, 0);
-  lv_obj_set_style_opa(p.name, fadeTag ? LV_OPA_COVER : (lv_opa_t)opacity, 0);
-}
-
-void popupPlacePill(const Popup& p, const PopupFrame& f, bool sizeChanged) {
-  const int anchor = popupAnchorShift(p, f.across);
-  if (sizeChanged) {
-    const int w = p.outX ? f.across : f.along, h = p.outX ? f.along : f.across;
-    lv_obj_set_size(p.capsule, w, h);
-    lv_obj_set_pos(p.capsule, p.pillX - w / 2 + p.outX * anchor, p.pillY - h / 2 + p.outY * anchor);
-  }
-  const int shift = f.shift - anchor;
-  lv_obj_set_pos(p.root, p.cx - p.pillX + p.outX * shift, p.cy - p.pillY + p.outY * shift);
-}
-
-void popupApplyFrame(Popup& p, const PopupFrame& f) {
-  if (f.content == 0 && p.frame.content != 0) popupContent(p, 0);
-  const bool sizeChanged = p.frame.across != f.across || p.frame.along != f.along;
-  if (popupIsPill(p)) {
-    if (sizeChanged || p.frame.shift != f.shift) popupPlacePill(p, f, sizeChanged);
-  } else if (sizeChanged || p.frame.shift != f.shift) {
-    const int w = p.outX ? f.across : f.along, h = p.outX ? f.along : f.across;
-    if (sizeChanged) lv_obj_set_size(p.root, w, h);
-    lv_obj_set_pos(p.root, p.cx - w / 2 + p.outX * f.shift, p.cy - h / 2 + p.outY * f.shift);
-  }
-  if (p.frame.opacity != f.opacity) lv_obj_set_style_opa(p.root, (lv_opa_t)f.opacity, 0);
-  if (f.content && p.frame.content != f.content) popupContent(p, f.content);
-  p.frame = f;
-}
-
-void popupSetValue(Popup& p, int value) {
-  if (p.shownValue == value) return;
+bool popupSetValue(Popup& p, int value) {
   p.shownValue = value;
-  if (!popupIsPill(p)) {
-    lv_arc_set_value(p.arc, value);
-    return;
-  }
-  const int track = p.along - 2 * PILL_INSET;
-  const int length = std::max(1, track * std::clamp(value, 0, 100) / 100);
-  const int across = PILL_WIDTH - 2 * PILL_INSET;
-  const int inset = PILL_INSET - GLASS_BORDER_WIDTH;
-  const int start = inset + (p.fillFromEnd ? track - length : 0);
-  lv_obj_set_size(p.fill, p.outX ? across : length, p.outX ? length : across);
-  lv_obj_set_pos(p.fill, p.outX ? inset : start, p.outX ? start : inset);
-  popupValueVisibility(p, p.frame.content);
+  const int meterValue = p.valueTarget < 0 ? -1 : std::clamp(value, 0, 100);
+  if (p.overlay.meter.value == meterValue) return false;
+  p.overlay.meter.value = meterValue;
+  return true;
 }
 
-void popupPause(Popup& p) { p.run = PopupRun::Idle; }
+bool popupRefreshPicture(Popup& p) {
+  if (!p.contentDirty) return false;
+  for (PictureBuffer& b : p.buffers) {
+    if (b.pixels && (b.pixels == p.overlay.pixels || panelOverlayPictureInUse(p.slot, b.pixels))) continue;
+    const int64_t start = esp_timer_get_time();
+    const FrameRect& picture = p.overlay.picture;
+    const uint32_t stride = lv_draw_buf_width_to_stride(picture.w, LV_COLOR_FORMAT_ARGB8888);
+    const uint32_t bytes = stride * picture.h;
+    if (b.bytes != bytes) {
+      free(b.pixels);
+      b.pixels = (uint32_t*)heap_caps_aligned_alloc(64, bytes, MALLOC_CAP_SPIRAM);
+      b.bytes = b.pixels ? bytes : 0;
+    }
+    lv_draw_buf_t buf;
+    const bool ok = b.pixels &&
+                    lv_draw_buf_init(&buf, picture.w, picture.h, LV_COLOR_FORMAT_ARGB8888, stride,
+                                     b.pixels, b.bytes) == LV_RESULT_OK &&
+                    lv_snapshot_take_to_draw_buf(p.root, LV_COLOR_FORMAT_ARGB8888, &buf) == LV_RESULT_OK;
+    panelCountPopupRefresh(esp_timer_get_time() - start);
+    if (!ok) return false;
+    p.overlay.stride = buf.header.stride / 4;
+    p.overlay.pixels = (const uint32_t*)buf.data;
+    p.contentDirty = false;
+    return true;
+  }
+  return false;
+}
+
+void popupReleaseSparePictures(Popup& p) {
+  for (PictureBuffer& b : p.buffers) {
+    if (!b.pixels || b.pixels == p.overlay.pixels || panelOverlayPictureInUse(p.slot, b.pixels)) continue;
+    free(b.pixels);
+    b = {};
+  }
+}
 
 void popupHide(Popup& p) {
   if (!p.visible) return;
-  popupPause(p);
-  lv_obj_add_flag(p.root, LV_OBJ_FLAG_HIDDEN);
-  p.visible = p.exiting = false;
-}
-
-void popupStep(Popup& p, int progress) {
-  if (p.run == PopupRun::Shape) popupApplyFrame(p, popupFrame(p, progress));
-  else if (p.run == PopupRun::Value) popupSetValue(p, popupMix(p.valueFrom, p.valueTarget, progress));
-  if (progress != POPUP_PROGRESS) return;
+  panelOverlayClear(p.slot);
   p.run = PopupRun::Idle;
-  if (p.exiting) popupHide(p);
-}
-
-// Motions step in encoderAnimTick on the deck's animation clock, so they share
-// one refresh with the page's own animation frame.
-void popupRun(Popup& p, PopupRun run, int duration, bool easeOut) {
-  p.run = run;
-  if (!duration) {
-    popupStep(p, POPUP_PROGRESS);
-    return;
-  }
-  p.runAt = millis();
-  p.runMs = duration;
-  p.runEaseOut = easeOut;
+  p.visible = false;
+  popupReleaseSparePictures(p);
 }
 
 void popupAnimate(Popup& p, bool show, bool fresh = false) {
-  p.exiting = !show;
-  const PopupMotion motion = popupStyleMotion(p.settings, show);
-  const bool motionChanged = p.motion != motion;
-  p.motion = motion;
-  p.from = fresh ? popupStartFrame(p) : p.frame;
-  if (popupIsPill(p) && motionChanged) p.frame.content = -1;
-  const bool settled = p.from.across == p.across && p.from.along == p.along && !p.from.shift;
-  switch (p.motion) {
+  const int64_t now = esp_timer_get_time();
+  PanelOverlay& o = p.overlay;
+  const PopupGeometry& g = o.geometry;
+  PopupAnimation& a = o.animation;
+  const PopupFrame last = !fresh && a.duration ? popupFrame(g, a, popupProgress(a, now)) : popupRestFrame(g);
+  a = {popupStyleMotion(p.settings, show), !show, p.settings.speed, 0, now, last};
+  if (fresh) a.from = popupStartFrame(g, a);
+  const bool settled = a.from.across == g.across && a.from.along == g.along && !a.from.shift;
+  switch (a.kind) {
     case PopupMotion::Droplet:
-      p.duration = show ? CONTENT_IN_MS : CONTENT_OUT_MS + DROPLET_SHRINK_MS;
-      if (show && !settled) p.duration += DROPLET_SWELL_MS;
+      a.duration = show ? CONTENT_IN_MS : CONTENT_OUT_MS + DROPLET_SHRINK_MS;
+      if (show && !settled) a.duration += DROPLET_SWELL_MS;
       break;
     case PopupMotion::Drip:
-      p.duration = show ? CONTENT_IN_MS : CONTENT_OUT_MS + BEAD_RETURN_MS;
-      if (show && !settled) p.duration += fresh ? BEAD_DRIP_MS : BEAD_DRIP_MS - BEAD_BUMP_MS;
+      a.duration = show ? CONTENT_IN_MS : CONTENT_OUT_MS + BEAD_RETURN_MS;
+      if (show && !settled) a.duration += fresh ? BEAD_DRIP_MS : BEAD_DRIP_MS - BEAD_BUMP_MS;
       break;
-    case PopupMotion::Slide: p.duration = show ? SLIDE_IN_MS + CONTENT_IN_MS : SLIDE_OUT_MS; break;
-    case PopupMotion::Wobble: p.duration = CONTENT_IN_MS + (settled ? 0 : WOBBLE_MS); break;
-    case PopupMotion::Fade: p.duration = show ? SLIDE_IN_MS : SLIDE_OUT_MS; break;
+    case PopupMotion::Slide: a.duration = show ? SLIDE_IN_MS + CONTENT_IN_MS : SLIDE_OUT_MS; break;
+    case PopupMotion::Wobble: a.duration = CONTENT_IN_MS + (settled ? 0 : WOBBLE_MS); break;
+    case PopupMotion::Fade: a.duration = show ? SLIDE_IN_MS : SLIDE_OUT_MS; break;
     case PopupMotion::None:
-      p.duration = 0;
-      if (show) popupApplyFrame(p, popupRestFrame(p));
-      else popupHide(p);
-      return;
+      if (!show) {
+        popupHide(p);
+        return;
+      }
+      break;
   }
-  popupApplyFrame(p, popupFrame(p, 0));
-  popupRun(p, PopupRun::Shape, p.duration, false);
+  p.run = a.duration ? PopupRun::Shape : PopupRun::Idle;
+  panelOverlaySet(p.slot, o);
 }
 
 void popupAnimateValue(Popup& p) {
-  if (p.run != PopupRun::Idle || p.exiting || p.valueTarget < 0 || p.valueTarget == p.shownValue) return;
+  if (p.run != PopupRun::Idle || p.overlay.animation.exiting || p.valueTarget < 0 || p.valueTarget == p.shownValue) return;
   p.valueFrom = p.shownValue;
-  popupRun(p, PopupRun::Value, VALUE_MS, true);
+  p.run = PopupRun::Value;
+  p.runAt = millis();
 }
 
 int textWidth(const char* text, const lv_font_t* font) {
@@ -655,35 +398,33 @@ void popupName(Popup& p, const char* name, bool relayout) {
     len = strlen(source);
     do {
       do { --len; } while (len && (source[len] & 0xC0) == 0x80);
-      memcpy(p.nameText, source, len);
-      strcpy(p.nameText + len, "...");
-    } while (len && textWidth(p.nameText, &deck_font_14) > p.textWidth);
-  } else {
-    strcpy(p.nameText, source);
+      strcpy(source + len, "...");
+    } while (len && textWidth(source, &deck_font_14) > p.textWidth);
   }
+  if (!strcmp(p.nameText, source)) return;
+  strcpy(p.nameText, source);
   lv_label_set_text_static(p.name, p.nameText);
+  p.contentDirty = true;
 }
 
 void popupShow(Popup& p, int position, int edge, uint32_t now, const char* value, const char* name,
                int percent = -1, int32_t entityAccent = -1,
                const EncoderPopupSettings& settings = encoderPopupSettings) {
-  const bool create = !p.root;
-  if (create) popupCreate(p);
+  if (!p.root) popupCreate(p);
   if (p.visible && p.rotation != panelRotation()) popupHide(p);
   const bool fresh = !p.visible;
   if (fresh) {
     const bool styleChanged = p.settings.style != settings.style;
-    const bool applyStyle = create || styleChanged || p.settings.opacity != settings.opacity;
     p.settings = settings;
+    p.overlay.geometry.style = (PopupStyle)settings.style;
+    p.overlay.fillOpacity = settings.opacity * 255 / 100;
+    p.overlay.borderColor = lv_color_to_u16(lv_color_hex(GLASS_BORDER_COLOR));
+    p.overlay.borderOpacity = settings.style == ENCODER_POPUP_EDGE ? GLASS_BORDER_OPA : LV_OPA_30;
     if (styleChanged) p.size = -1;
-    if (applyStyle) {
-      popupStyle(p);
-      p.frame.content = -1;
-    }
   }
   const bool relayout = popupLayout(p, position, edge, p.settings.size);
   const bool hasValueChanged = (percent >= 0) != (p.valueTarget >= 0);
-  if (p.run == PopupRun::Value && percent != p.valueTarget) popupPause(p);
+  if (p.run == PopupRun::Value && percent != p.valueTarget) p.run = PopupRun::Idle;
   p.valueTarget = percent;
   if (relayout || hasValueChanged || strcmp(p.valueText, value)) {
     const lv_font_t* font = percent >= 0 ? &deck_font_28 : &deck_font_14;
@@ -692,31 +433,32 @@ void popupShow(Popup& p, int position, int edge, uint32_t now, const char* value
     if (p.valueFont != font) {
       p.valueFont = font;
       lv_obj_set_style_text_font(p.value, font, 0);
+      p.contentDirty = true;
     }
-    strcpy(p.valueText, value);
-    lv_label_set_text_static(p.value, p.valueText);
+    if (strcmp(p.valueText, value)) {
+      strcpy(p.valueText, value);
+      lv_label_set_text_static(p.value, p.valueText);
+      p.contentDirty = true;
+    }
   }
   popupName(p, name, relayout);
+  bool meterChanged = false;
   if (percent >= 0) {
     const uint32_t color = p.settings.entityColor && entityAccent >= 0 ? (uint32_t)entityAccent : p.settings.accentColor;
-    const lv_color_t accent = lv_color_hex(color);
-    if (popupIsPill(p)) {
-      if (!lv_color_eq(lv_obj_get_style_bg_color(p.fill, LV_PART_MAIN), accent))
-        lv_obj_set_style_bg_color(p.fill, accent, 0);
-    } else if (!lv_color_eq(lv_obj_get_style_arc_color(p.arc, LV_PART_INDICATOR), accent)) {
-      lv_obj_set_style_arc_color(p.arc, accent, LV_PART_INDICATOR);
-    }
+    const uint16_t accent = lv_color_to_u16(lv_color_hex(color));
+    meterChanged = p.overlay.meter.accent != accent;
+    p.overlay.meter.accent = accent;
   }
   p.lastInput = now;
-  if (fresh) {
-    popupSetValue(p, std::max(0, percent));
-    popupAnimate(p, true, true);
+  if (fresh || relayout) meterChanged |= popupSetValue(p, std::max(0, percent));
+  else if (hasValueChanged) meterChanged |= popupSetValue(p, p.shownValue);
+  p.contentDirty |= !p.overlay.pixels;
+  const bool pictureChanged = popupRefreshPicture(p);
+  if (fresh || relayout || p.overlay.animation.exiting) {
     p.visible = true;
-    lv_obj_remove_flag(p.root, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(p.root);
+    popupAnimate(p, true, fresh || relayout);
   } else {
-    if (hasValueChanged) popupValueVisibility(p, p.frame.content);
-    if (p.exiting) popupAnimate(p, true);
+    if (pictureChanged || meterChanged) panelOverlaySet(p.slot, p.overlay);
     popupAnimateValue(p);
   }
 }
@@ -758,14 +500,14 @@ void popupPreviewTick(uint32_t now, bool allowed, bool sleeping) {
       return;
     }
     if (s_previewValue == PREVIEW_END) {
-      if (!p.exiting && now - p.lastInput >= p.settings.holdMs) popupAnimate(p, false);
+      if (!p.overlay.animation.exiting && now - p.lastInput >= p.settings.holdMs) popupAnimate(p, false);
       if (p.visible) popupAnimateValue(p);
       return;
     }
     if (p.run == PopupRun::Shape) return;
     popupAnimateValue(p);
     // Let the opening motion finish before the first change.
-    const int start = std::max((int)(2 * PREVIEW_STEP_MS), p.duration);
+    const int start = std::max((int)(2 * PREVIEW_STEP_MS), p.overlay.animation.duration);
     const int elapsed = (int)(now - s_previewAt) - start + (int)PREVIEW_STEP_MS;
     const int step = std::clamp(elapsed / (int)PREVIEW_STEP_MS, 0, PREVIEW_STEPS);
     value = PREVIEW_START + (PREVIEW_END - PREVIEW_START) * step / PREVIEW_STEPS;
@@ -1212,29 +954,35 @@ void encoderClimatePreview(const String& entity, float& low, float& high, const 
 
 void encoderAnimTick() {
   if (!(advSettings.charts60 ? s_animFastDue : s_animDue)) return;
-  bool moved = false;
   for (Knob& k : s_knobs) {
     Popup& p = k.popup;
-    if (p.run == PopupRun::Idle) continue;
-    // Keyframes are in nominal ms; the speed setting scales the clock.
-    const int32_t elapsed = (int32_t)(s_animMs - p.runAt) * p.settings.speed / 100;
-    int progress = elapsed <= 0 ? 0 : elapsed >= p.runMs ? POPUP_PROGRESS : elapsed * POPUP_PROGRESS / p.runMs;
-    if (p.runEaseOut) progress = popupEaseOut(progress);
-    popupStep(p, progress);
-    moved = true;
+    if (!p.visible) continue;
+    bool meterChanged = false;
+    if (p.run == PopupRun::Value) {
+      const int elapsed = (int32_t)(s_animMs - p.runAt) * p.settings.speed / 100;
+      const int t = std::clamp(elapsed, 0, VALUE_MS) * POPUP_PROGRESS / VALUE_MS;
+      meterChanged = popupSetValue(p, popupMix(p.valueFrom, p.valueTarget, popupEaseOut(t)));
+      if (t == POPUP_PROGRESS) p.run = PopupRun::Idle;
+    }
+    if (popupRefreshPicture(p) || meterChanged) panelOverlaySet(p.slot, p.overlay);
   }
-  if (!moved) return;
-  s_sparkPaintMs = millis();  // like a chart glide: other pages snapshot rarely meanwhile
-  s_animPainted = true;
 }
 
 void encoderTick() {
   const uint32_t now = millis();
   const bool allowed = getScreenState() == SCREEN_DECK && !s_ed.root;
   const bool sleeping = displaySleepingForTouch() || !currentBacklightLevel() || frameActive();
+  const int64_t nowUs = esp_timer_get_time();
   bool wake = false;
   for (size_t i = 0; i < ENCODER_COUNT; i++) {
     Knob& k = s_knobs[i];
+    Popup& p = k.popup;
+    p.slot = i;
+    if (p.visible && p.run == PopupRun::Shape && nowUs >= popupEndUs(p.overlay.animation)) {
+      p.run = PopupRun::Idle;
+      if (p.overlay.animation.exiting) popupHide(p);
+    }
+    if (!p.visible) popupReleaseSparePictures(p);
     const EncoderInput in = encoderPoll(i);
     if (allowed && in.activity) {
       touchNoteActivity();
@@ -1261,14 +1009,13 @@ void encoderTick() {
       knobAction(k, encoderSettings[i], in, click, now);
     }
 
-    Popup& p = k.popup;
     if (!p.visible || s_previewKnob == (int)i) continue;
     if (p.rotation != panelRotation()) {
       popupHide(p);
     } else if (in.activity) {
       p.lastInput = now;
-      if (p.exiting) popupAnimate(p, true);
-    } else if (!p.exiting && now - p.lastInput >= p.settings.holdMs) {
+      if (p.overlay.animation.exiting) popupAnimate(p, true);
+    } else if (!p.overlay.animation.exiting && now - p.lastInput >= p.settings.holdMs) {
       popupAnimate(p, false);
     }
     if (p.visible) popupAnimateValue(p);

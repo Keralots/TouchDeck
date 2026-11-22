@@ -45,6 +45,23 @@ constexpr int64_t ANIM_LEAD_US = 20000;
 esp_lcd_panel_handle_t s_dpi = nullptr;
 uint16_t* s_fb[NFB] = {};
 DirtyMask s_stale[NFB];  // what each framebuffer lacks of the latest LVGL frame
+DirtyMask s_effects[NFB];  // cells overlays and dots painted over the base on each framebuffer
+// What the overlays and dots on each framebuffer look like; valid = they may be kept as they are.
+OverlayRun s_fbOverlays[NFB][PANEL_OVERLAY_SLOTS];
+uint32_t s_fbDots[NFB];
+bool s_fbFxValid[NFB];
+Frame s_bare;  // flush task only: f without overlays and dots
+
+uint32_t dotsKey(const Frame& f) {
+  return f.dotAlpha ? (uint32_t)f.dotAlpha << 24 | f.dotCount << 16 | f.dotActive << 8 | f.dotsV : 0;
+}
+
+bool intersects(const DirtyMask& a, const DirtyMask& b) {
+  if (a.full || b.full) return true;
+  for (int r = 0; r < DIRTY_ROWS; r++)
+    if (a.rows[r] & b.rows[r]) return true;
+  return false;
+}
 int s_glass = 0;         // being scanned
 int s_pending = -1;      // presented, scanned from the next refresh on
 SemaphoreHandle_t s_swapped = nullptr;
@@ -259,12 +276,33 @@ void presentFrame(const Frame& f, bool backToBack) {
     for (DirtyMask& m : s_stale) m.add(f.dirty);
   const int x = pickBack(plain);
   uint16_t* dst = s_fb[x];
-  if (!plain || !frameBuildDirty(f, dst, s_stale[x])) frameBuild(f, dst, 0);
-  if (plain) s_stale[x].clear();
+  // The same overlays already on x, with nothing new from LVGL under them: keep those pixels.
+  const bool keep = plain && s_fbFxValid[x] && dotsKey(f) == s_fbDots[x] &&
+                    !memcmp(s_fbOverlays[x], f.overlays, sizeof(f.overlays)) && !intersects(s_stale[x], s_effects[x]);
+  if (keep) {
+    s_bare = f;
+    for (OverlayRun& r : s_bare.overlays) r = {};
+    s_bare.dotAlpha = 0;
+    if (!frameBuildDirty(s_bare, dst, s_stale[x])) frameBuild(f, dst, 0);
+  } else if (plain) {
+    DirtyMask dirty = s_stale[x];
+    dirty.add(s_effects[x]);
+    dirty.add(f.effectDirty);
+    if (!frameBuildDirty(f, dst, dirty)) frameBuild(f, dst, 0);
+  } else {
+    frameBuild(f, dst, 0);
+  }
+  // A timed-out LVGL lease may have mixed two frames: still show it, rebuild fully next time.
+  const bool complete = frameReleaseOverlays(f);
+  s_effects[x] = f.effectDirty;
+  memcpy(s_fbOverlays[x], f.overlays, sizeof(f.overlays));
+  s_fbDots[x] = dotsKey(f);
+  s_fbFxValid[x] = plain && complete;
+  if (plain && complete) s_stale[x].clear();
   else s_stale[x].full = true;
   const int64_t built = esp_timer_get_time();
   if (!plain) s_buildUs = (s_buildUs * 3 + (uint32_t)(built - f0)) / 4;
-  frameDoneWithLv(f);
+  if (f.releaseLv) frameReleaseLv();
   settle();
   int64_t now = esp_timer_get_time();
   // An animation frame built early waits for the refresh it was drawn for.
@@ -305,6 +343,14 @@ int64_t transportPresentUs(int64_t nowUs) {
   if (!lastVsyncUs()) return 0;
   const int64_t t = vsyncAfter(nowUs + s_buildUs + SWAP_GUARD_US);
   return t > s_shownUs ? t : s_shownUs + PERIOD_US;
+}
+
+bool transportBackToBack() { return !s_ringOn; }
+
+int64_t transportOverlayPresentUs(int64_t nowUs) {
+  if (!lastVsyncUs()) return 0;
+  const int64_t t = vsyncAfter(nowUs + SWAP_GUARD_US + 2000);
+  return std::max(t, s_shownUs + PERIOD_US);
 }
 
 int64_t transportAnimTargetUs(int64_t nowUs, int64_t* periodUs) {

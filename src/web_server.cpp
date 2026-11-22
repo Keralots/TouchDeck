@@ -1964,9 +1964,7 @@ static void handleApiStatus() {
 
 // ---------------------------------------------------------------------------
 //  Live frame (GET /screen_live.bmp)
-//  Streams the framebuffer the deck pipeline last sent to the panel, i.e. what
-//  is really on the glass. LVGL runs in this same loop task, so the buffer
-//  cannot change while the handler streams it.
+//  Streams the latest LVGL frame with the encoder popups sampled at capture time.
 // ---------------------------------------------------------------------------
 static void handleLiveScreenshot() {
   String name, code;
@@ -1984,11 +1982,15 @@ static void handleLiveScreenshot() {
   const uint32_t rowBytes = (uint32_t)w * 3;
   const uint32_t imgBytes = rowBytes * (uint32_t)h;
   const uint32_t fileBytes = 54 + imgBytes;
-  uint8_t* row = (uint8_t*)malloc(rowBytes);
-  if (!row) {
+  deck::PanelOverlayCapture capture;
+  const bool overlay = deck::panelOverlayCapture(capture);
+  const size_t scratchBytes = overlay ? (size_t)w * sizeof(uint16_t) : 0;
+  uint8_t* pixels = (uint8_t*)malloc(rowBytes + scratchBytes);
+  if (!pixels) {
     server.send(503, "text/plain", "Not enough RAM for row buffer");
     return;
   }
+  uint8_t* row = pixels + scratchBytes;
   uint8_t hdr[54] = {0};
   hdr[0] = 'B'; hdr[1] = 'M';
   hdr[2] = fileBytes & 0xFF; hdr[3] = (fileBytes >> 8) & 0xFF;
@@ -2007,6 +2009,12 @@ static void handleLiveScreenshot() {
   bool ok = writeClientAll(client, hdr, sizeof(hdr));
   for (int y = h - 1; y >= 0 && ok; y--) {
     const uint16_t* src = fb + (size_t)y * w;
+    if (overlay) {
+      uint16_t* scratch = (uint16_t*)pixels;
+      memcpy(scratch, src, scratchBytes);
+      deck::panelOverlayCaptureRow(capture, scratch, y, w);
+      src = scratch;
+    }
     for (int x = 0; x < w; x++) {
       const uint16_t c = src[x];
       row[x * 3 + 0] = (uint8_t)(((c & 0x1F) * 255) / 31);
@@ -2017,7 +2025,7 @@ static void handleLiveScreenshot() {
     esp_task_wdt_reset();
   }
   if (!ok) client.stop();
-  free(row);
+  free(pixels);
 }
 
 // POST /api/deck/swipe?dir=1|-1[&axis=v] - bench hook, one full page slide.
