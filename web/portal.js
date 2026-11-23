@@ -632,6 +632,7 @@
     document.querySelectorAll(".wall-prn-pause").forEach((el) => (el.hidden = !prnPause));
     setVal("wallOrder", c.display.wallOrder ?? 0);
     setVal("wallSource", c.display.wallSource ?? (c.display.wallDaily ? 1 : 0));
+    setVal("wallFollow", (c.display.wallFollow ?? true) ? 1 : 0);
     setCheck("sdCard", c.display.sdCard ?? false);
     $("sdSave").disabled = true;
     setVal("dailyMax", c.display.dailyMax ?? 100);

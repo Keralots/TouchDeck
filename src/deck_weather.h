@@ -44,6 +44,8 @@ struct WeatherData {
 // The place and units of deck.json's "weather"; wanted = a weather tile exists.
 void weatherConfigure(bool wanted, float lat, float lon, bool imperial);
 bool weatherPlaceSet();
+// The place; false when none is set. Any task.
+bool weatherPlace(float& lat, float& lon);
 // Call from the loop: starts a fetch when one is due.
 void weatherTick();
 uint32_t weatherSerial();

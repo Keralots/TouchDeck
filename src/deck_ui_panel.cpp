@@ -301,16 +301,14 @@ void frostUp(void* ctx, int lo, int hi) {
     const uint16_t* a0 = across[0];
     const uint16_t* a1 = across[1];
     // Same sums as wallDither565, divisions as multiplies.
-    uint32_t thr[8];
-    for (int i = 0; i < 8; i++) thr[i] = wallDitherT(f.x + i, f.y + yy);
     const uint32_t w0 = (4 - wy) * (100 - FROST_TINT), w1 = wy * (100 - FROST_TINT);
     for (int xx = 0; xx < w; xx++) {
-      const uint32_t t = thr[xx & 7];
+      const uint32_t t = wallDitherT(f.x + xx, f.y + yy);
       const uint32_t r = div1600(a0[xx] * w0 + a1[xx] * w1 + tint[0]);
       const uint32_t g = div1600(a0[w + xx] * w0 + a1[w + xx] * w1 + tint[1]);
       const uint32_t b = div1600(a0[2 * w + xx] * w0 + a1[2 * w + xx] * w1 + tint[2]);
       const uint32_t r5 = std::min<uint32_t>(div32640(r * 31 * 128 + t), 31);
-      const uint32_t g6 = std::min<uint32_t>(div32640(g * 63 * 128 + t), 63);
+      const uint32_t g6 = std::min<uint32_t>(div32640(g * 63 * 128 + WALL_DITHER_ONE - t), 63);
       const uint32_t b5 = std::min<uint32_t>(div32640(b * 31 * 128 + t), 31);
       row[xx] = (uint16_t)(r5 << 11 | g6 << 5 | b5);
     }

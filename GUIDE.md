@@ -108,7 +108,7 @@ On the **Screen** page, the Sleep card sets the time without touch and without p
 
 ## Wallpapers and microSD
 
-The **Wallpapers** page (used by the Glass theme and the photo frame) picks the pictures: My pictures (uploaded in the portal, cropped in the browser), Daily (Windows Spotlight, downloaded by the deck at a set hour), Both or Built-in: six scenes the deck draws itself, at any size and without using storage. While the chosen gallery is empty the built-in pictures are shown, in the photo frame too. Internal storage fits a few dozen pictures, and Daily replaces its set every day.
+The **Wallpapers** page (used by the Glass theme and the photo frame) picks the pictures: My pictures (uploaded in the portal, cropped in the browser), Daily (Windows Spotlight, downloaded by the deck at a set hour), Both or Built-in: six scenes the deck draws itself, at any size and without using storage. While the chosen gallery is empty the built-in pictures are shown, in the photo frame too. They follow the time of day (on by default): sky, sun and moon for the place of the weather tile, redrawn every 5 to 10 minutes. Internal storage fits a few dozen pictures, and Daily replaces its set every day.
 
 Daily runs at the set hour while the deck is on; a day missed while it was off waits for the next one, and **Download now** on the Wallpapers page fetches at once. During the download Home Assistant and MQTT are paused, because the pictures need the memory their connections hold: tiles keep their last state for a few minutes. A note at the top of the screen shows the progress; a tap on it skips the rest for today.
 

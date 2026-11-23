@@ -158,6 +158,14 @@ void weatherConfigure(bool wanted, float lat, float lon, bool imperial) {
 // 0,0 (open sea) is "not set".
 bool weatherPlaceSet() { return s_lat != 0 || s_lon != 0; }
 
+bool weatherPlace(float& lat, float& lon) {
+  portENTER_CRITICAL(&s_mux);
+  lat = s_lat;
+  lon = s_lon;
+  portEXIT_CRITICAL(&s_mux);
+  return lat != 0 || lon != 0;
+}
+
 void weatherTick() {
   const uint32_t now = millis();
   if (s_task) {
