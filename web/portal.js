@@ -206,7 +206,7 @@
   $("tileFx").addEventListener("change", updateFxFields);
   for (let h = 0; h < 24; h++) $("dailyHour").add(new Option(String(h).padStart(2, "0") + ":00", h));
   function updateDailyFields() {
-    $("dailyFields").classList.toggle("hidden", $("wallSource").value === "0");
+    $("dailyFields").classList.toggle("hidden", !["1", "2"].includes($("wallSource").value));
   }
   $("wallSource").addEventListener("change", updateDailyFields);
   function updateNightFields() {
@@ -1205,7 +1205,7 @@
   let wallSource = 0,
     wallView = 0;
   function wallGallery() {
-    return wallSource === 2 ? $("wallBrowse").value : wallSource === 1 ? "d" : "m";
+    return wallSource === 2 ? $("wallBrowse").value : wallSource === 1 ? "d" : wallSource === 3 ? "b" : "m";
   }
   function resetWalls() {
     wallView++;
@@ -1243,14 +1243,17 @@
     for (const o of ["l", "p"]) {
       const s = walls[o];
       $("wallMore_" + o).disabled = wallBusy || wallRefreshing;
-      $("wallPick_" + o).disabled = wallBusy || wallSource === 1;
-      $("wallHint_" + o).textContent =
-        wallGallery() === "d"
-          ? "Daily pictures, downloaded by the deck. Uploads go to My pictures."
-          : "Add pictures or drop them here.";
+      const art = wallGallery() === "b";
+      $("wallPick_" + o).disabled = wallBusy || wallSource === 1 || art;
+      $("wallHint_" + o).textContent = art
+        ? "Built-in pictures. Pick one and press Show now, or let them change on their own."
+        : (wallGallery() === "d"
+            ? "Daily pictures, downloaded by the deck. Uploads go to My pictures."
+            : "Add pictures or drop them here.") +
+          ((s.current || "").startsWith("b/") ? " The built-in pictures are shown meanwhile." : "");
       $("wallShow_" + o).disabled = wallBusy || s.selected.size !== 1;
-      $("wallDelete_" + o).disabled = wallBusy || !s.selected.size;
-      $("wallAll_" + o).disabled = wallBusy || !s.files.length;
+      $("wallDelete_" + o).disabled = wallBusy || !s.selected.size || art;
+      $("wallAll_" + o).disabled = wallBusy || !s.files.length || art;
       qa("button", $("wallLegacy_" + o)).forEach((b) => (b.disabled = wallBusy));
     }
   }
@@ -1286,12 +1289,12 @@
       button.style.cssText =
         "position:relative;display:flex;flex-direction:column;gap:5px;padding:5px;white-space:normal;border-width:2px";
       button.setAttribute("aria-pressed", sel ? "true" : "false");
-      button.title = f.n;
+      button.title = f.t || f.n;
       let img = s.imgs.get(f.n);
       if (!img) {
         img = document.createElement("img");
         img.loading = "lazy";
-        img.alt = f.n;
+        img.alt = f.t || f.n;
         img.src =
           "/api/deck/walls/file?o=" +
           o +
@@ -1306,7 +1309,7 @@
       }
       const label = document.createElement("span");
       label.style.cssText = "font-size:11px;min-height:14px;color:var(--accent)";
-      label.textContent = [s.current === f.n ? "Current" : "", s.pinned === f.n ? "Pinned" : ""]
+      label.textContent = [f.t || "", s.current === f.n ? "Current" : "", s.pinned === f.n ? "Pinned" : ""]
         .filter(Boolean)
         .join(" - ");
       button.style.borderColor = sel ? "var(--accent)" : "";
@@ -1326,6 +1329,7 @@
       grid.appendChild(button);
     }
     $("wallSpace_" + o).textContent =
+      wallGallery() === "b" ? s.files.length + " pictures" :
       (wallSource === 2 ? (wallGallery() === "d" ? "Daily: " : "My pictures: ") : "") +
       s.files.length +
       " of " +
@@ -1500,11 +1504,11 @@
     const gallery = $("wallGallery_" + o);
     gallery.ondragover = (e) => {
       e.preventDefault();
-      e.dataTransfer.dropEffect = wallBusy || wallSource === 1 ? "none" : "copy";
+      e.dataTransfer.dropEffect = wallBusy || wallSource === 1 || wallSource === 3 ? "none" : "copy";
     };
     gallery.ondrop = (e) => {
       e.preventDefault();
-      if (wallSource !== 1) wallBatch(o, [...e.dataTransfer.files]);
+      if (wallSource !== 1 && wallSource !== 3) wallBatch(o, [...e.dataTransfer.files]);
     };
     $("wallShow_" + o).onclick = () =>
       wallAction(o, "walls/show?o=" + o + "&n=" + encodeURIComponent([...walls[o].selected][0]), false);

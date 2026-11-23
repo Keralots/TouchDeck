@@ -50,8 +50,8 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 
 - **Overview:** live picture of the screen, PC stream, Home Assistant link, diagnostics.
 - **Pages & tiles:** Home Assistant address and token, the icon font, pages (Duplicate copies one as a plain page), tiles, entity and icon pickers (None leaves a tile without an icon; a name of just a space leaves it without a name, `"label": ""`), columns, and a grid editor: drag tiles to move them (dropped onto another tile, that tile jumps to the dragged one's old place if it fits there), resize from the corner (half-cell steps), separately for landscape and portrait.
-- **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper), the Glass look, animations, PC metric tile scales.
-- **Wallpapers:** pictures for the Glass theme and the photo frame: your own uploads, daily pictures the deck downloads from Windows Spotlight once a day, or both mixed. See [Wallpapers and microSD](#wallpapers-and-microsd).
+- **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper, the default on a new install), the Glass look, animations, PC metric tile scales.
+- **Wallpapers:** pictures for the Glass theme and the photo frame: your own uploads, daily pictures the deck downloads from Windows Spotlight once a day, both mixed, or the built-in ones. See [Wallpapers and microSD](#wallpapers-and-microsd).
 - **Printers:** Bambu Lab printers, their errors and alerts, the energy of a print. Shown once printers are turned on under Advanced. See [Bambu Lab printers](#bambu-lab-printers).
 - **Screen:** day brightness and the night schedule, screen sleep and presence.
 - **Hardware:** the speaker, the status LED and its Home Assistant entity, the vibration motor, rotary encoders (Waveshare 7B, see [Rotary encoders](#rotary-encoders-waveshare-7b)).
@@ -108,7 +108,7 @@ On the **Screen** page, the Sleep card sets the time without touch and without p
 
 ## Wallpapers and microSD
 
-The **Wallpapers** page (used by the Glass theme and the photo frame) picks the pictures: My pictures (uploaded in the portal, cropped in the browser), Daily (Windows Spotlight, downloaded by the deck at a set hour) or Both. Internal storage fits a few dozen pictures, and Daily replaces its set every day.
+The **Wallpapers** page (used by the Glass theme and the photo frame) picks the pictures: My pictures (uploaded in the portal, cropped in the browser), Daily (Windows Spotlight, downloaded by the deck at a set hour), Both or Built-in: six scenes the deck draws itself, at any size and without using storage. While the chosen gallery is empty the built-in pictures are shown, in the photo frame too. Internal storage fits a few dozen pictures, and Daily replaces its set every day.
 
 Daily runs at the set hour while the deck is on; a day missed while it was off waits for the next one, and **Download now** on the Wallpapers page fetches at once. During the download Home Assistant and MQTT are paused, because the pictures need the memory their connections hold: tiles keep their last state for a few minutes. A note at the top of the screen shows the progress; a tap on it skips the rest for today.
 

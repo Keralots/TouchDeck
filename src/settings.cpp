@@ -253,6 +253,8 @@ void loadSettings() {
   defaultLedSettings(ledSettings);
 
   prefs.begin(NVS_NAMESPACE, false);
+  // New installs start in Glass; a stored network or old settings mean an upgrade.
+  if (!prefs.isKey("rot") && !prefs.isKey("disp") && !prefs.isKey("ssid")) prefs.putUChar("theme", THEME_GLASS);
   if (!prefs.isKey("rot")) {
     migrateFromStatNode();
   } else {
@@ -271,9 +273,9 @@ void loadSettings() {
   dispSettings.wallEvery = prefs.getUChar("wevery", 5);
   if (!validWallEvery(dispSettings.wallEvery)) dispSettings.wallEvery = 5;
   dispSettings.wallOrder = min<uint8_t>(prefs.getUChar("worder", 0), 1);
-  dispSettings.wallSource = prefs.isKey("wsrc") ? min<uint8_t>(prefs.getUChar("wsrc", 0), 2)
+  dispSettings.wallSource = prefs.isKey("wsrc") ? min<uint8_t>(prefs.getUChar("wsrc", 0), 3)
                                                : prefs.getBool("wdaily", false) ? 1 : 0;
-  dispSettings.wallDaily = dispSettings.wallSource != 0;
+  dispSettings.wallDaily = wallSourceDaily(dispSettings.wallSource);
   dispSettings.sdCard = prefs.getBool("sdon", false);
   dispSettings.dailyMax = prefs.getUShort("dmax", 100);
   if (!validDailyMax(dispSettings.dailyMax)) dispSettings.dailyMax = 100;
@@ -420,7 +422,7 @@ void saveSettings() {
   prefs.putUChar("gon", dispSettings.glassOn);
   prefs.putUChar("wevery", dispSettings.wallEvery);
   prefs.putUChar("worder", dispSettings.wallOrder);
-  prefs.putBool("wdaily", dispSettings.wallSource != 0);
+  prefs.putBool("wdaily", wallSourceDaily(dispSettings.wallSource));
   prefs.putUChar("wsrc", dispSettings.wallSource);
   prefs.putBool("sdon", dispSettings.sdCard);
   prefs.putUShort("dmax", dispSettings.dailyMax);

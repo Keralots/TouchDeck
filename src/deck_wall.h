@@ -23,20 +23,26 @@ struct WallFile {
 using WallFiles = WallVector<WallFile>;
 uint64_t wallId(const String& name);
 bool wallValidRef(const String& name);
+// "b/0000000N.jpg" = built-in picture N, -1 for any other name.
+int wallArtIndex(const String& name);
+bool wallExists(bool portrait, const String& name);
 void wallRebuildIndex();
 void wallIndexChanged(bool portrait, bool daily, const String& name);
 bool wallRemoveFile(bool portrait, bool daily, const String& name, bool protect = false);
 // Slots: wallpaper, queued wallpaper, frame, queued frame, three source pins, pending pin.
 void wallProtect(bool portrait, int slot, const String& name);
 bool wallValidName(const String& name);
-// Galleries: own uploads or daily downloads.
+// Galleries: own uploads or daily downloads. Built-in pictures have no files.
 const char* wallDir(bool portrait, bool daily);
 bool wallDaily();
 // Loop task only, after dispSettings.wallSource changed.
+// 0 = own, 1 = daily, 2 = both, 3 = built-in.
 uint8_t wallSource();
 void wallSetSource(uint8_t source);
 String wallGalleryPath(bool portrait, const String& name = "");
+// The pictures of the source; the built-in ones while it has none.
 WallFiles wallFiles(bool portrait);
+WallFiles wallArtFiles();
 WallFiles wallListDir(const char* path);
 String wallCurrent(bool portrait);
 String wallPinned(bool portrait);
@@ -63,7 +69,7 @@ void wallRestartTimer();
 
 // Where the wallpaper for a w x h screen lives on LittleFS.
 const char* wallPath(int w, int h);
-// Load the w x h wallpaper (a built-in gradient when there is no file),
+// Load the w x h wallpaper (a plain gradient when there is nothing else),
 // darken it by dimPct and blur a copy by blurR px (0 = an unblurred copy).
 // False when memory is short or the selected JPEG cannot be decoded.
 bool wallLoad(int w, int h, int blurR, int dimPct);

@@ -46,7 +46,7 @@ struct DisplaySettings {
   uint8_t  wallEvery;         // Wallpaper interval in minutes, 0 = off
   uint8_t  wallOrder;         // 0 = in order, 1 = shuffle
   bool     wallDaily;         // Daily downloads enabled
-  uint8_t  wallSource;        // 0 = own, 1 = daily, 2 = both
+  uint8_t  wallSource;        // 0 = own, 1 = daily, 2 = both, 3 = built-in
   bool     sdCard;
   uint16_t dailyMax;          // SD archive per orientation: 50, 100, 200 or 500
   uint8_t  dailyHour;         // Daily fetch hour, local time 0..23
@@ -216,6 +216,7 @@ extern char wifiSSID[33];
 extern char wifiPass[65];
 extern uint8_t brightness;
 extern DisplaySettings dispSettings;
+inline bool wallSourceDaily(uint8_t source) { return source == 1 || source == 2; }
 extern NetworkSettings netSettings;
 // Where the clock comes from: network time (NTP) or Home Assistant, for decks
 // on a network that reaches only Home Assistant. NVS key "tsrc", outside the
