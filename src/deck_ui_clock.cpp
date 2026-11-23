@@ -49,7 +49,7 @@ struct ClockFx {
   int16_t w, h;
   int16_t cell, colonW, tw, tx, ty;  // digit cell, colon cell, time width, time line box
   int16_t inkTop, inkH, colonDy, apX, apY;
-  int16_t dateY;  // date line box top, -1 = no date
+  int16_t dateY, dateW;  // date line box top, -1 = no date; its width
   lv_area_t timeArea;
   // Orbit.
   RingSeg seg[9];
@@ -440,7 +440,7 @@ static void clockDraw(lv_event_t* e) {
   if (c->len > 0) drawRing(L, *c, a.x1, a.y1, text);
   drawTime(L, *c, a.x1, a.y1, ink);
   if (c->dateY >= 0) {
-    const lv_area_t d = {a.x1, a.y1 + c->dateY, a.x2, a.y1 + c->dateY + lineH(c->df) - 1};
+    const lv_area_t d = {a.x1, a.y1 + c->dateY, a.x1 + c->dateW - 1, a.y1 + c->dateY + lineH(c->df) - 1};
     if (!areaHits(d, L->_clip_area)) return;
     lv_draw_label_dsc_t ld;
     lv_draw_label_dsc_init(&ld);
@@ -460,6 +460,20 @@ static void orbitExt(lv_event_t* e) {
   lv_event_set_ext_draw_size(e, ((const ClockFx*)lv_event_get_user_data(e))->ext);
 }
 
+static ClockScene* sceneFor(int style) {
+  switch (style) {
+    case CLOCK_BLOCKS: return blocksScene();
+    case CLOCK_BREAKOUT: return breakoutScene();
+    case CLOCK_ROCKS: return rocksScene();
+    default: return nullptr;
+  }
+}
+
+static void sceneFree(ClockScene* s) {
+  s->~ClockScene();
+  lv_free(s);
+}
+
 void makeClockFx(TileRt& r, lv_obj_t* t) {
   ClockFx* c = (ClockFx*)lv_malloc_zeroed(sizeof(ClockFx));
   if (!c) return;
@@ -469,12 +483,7 @@ void makeClockFx(TileRt& r, lv_obj_t* t) {
   lv_obj_remove_flag(c->obj, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
   lv_obj_remove_flag(t, LV_OBJ_FLAG_SCROLLABLE);
   c->orbit = r.def->clockStyle == CLOCK_ORBIT;
-  switch (r.def->clockStyle) {  // Roll when there is no memory for it
-    case CLOCK_BLOCKS: c->scene = blocksScene(); break;
-    case CLOCK_BREAKOUT: c->scene = breakoutScene(); break;
-    case CLOCK_ROCKS: c->scene = rocksScene(); break;
-    default: break;
-  }
+  c->scene = sceneFor(r.def->clockStyle);  // Roll when there is no memory for it
   c->tick = r.def->clockTick;
   c->hasColor = r.def->hasColor;
   c->color = r.def->color;
@@ -488,6 +497,101 @@ void makeClockFx(TileRt& r, lv_obj_t* t) {
   // The head's glow reaches into the gap round the tile.
   lv_obj_add_flag(t, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
   for (lv_obj_t* o : {t, c->obj}) lv_obj_add_event_cb(o, orbitExt, LV_EVENT_REFR_EXT_DRAW_SIZE, c);
+}
+
+// The time ("color") over the date, centred (fitClock sizes them), or the drawn style.
+void makeClockContent(TileRt& r, lv_obj_t* t) {
+  if (r.def->clockStyle != CLOCK_CLASSIC) makeClockFx(r, t);
+  if (r.cfx) return;
+  lv_obj_set_flex_flow(t, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(t, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_t* row = lv_obj_create(t);
+  lv_obj_remove_style_all(row);
+  lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+  lv_obj_set_style_pad_column(row, 4, 0);
+  lv_obj_remove_flag(row, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+  lv_obj_t* hm = lv_obj_create(row);
+  lv_obj_remove_style_all(hm);
+  lv_obj_set_size(hm, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(hm, LV_FLEX_FLOW_ROW);
+  lv_obj_remove_flag(hm, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+  if (r.def->hasColor) lv_obj_set_style_text_color(hm, lv_color_hex(r.def->color), 0);
+  r.sub = lv_label_create(hm);
+  r.colon = lv_label_create(hm);
+  lv_label_set_text(r.colon, ":");
+  r.colonLit = true;
+  r.mins = lv_label_create(hm);
+  r.unit = lv_label_create(row);
+  lv_obj_set_style_text_opa(r.unit, LV_OPA_70, 0);
+  r.name = lv_label_create(t);
+  lv_obj_set_style_text_opa(r.name, LV_OPA_70, 0);
+}
+
+// The tile shows its def's new style; the rest of the page stays as it is.
+void clockRestyle(TileRt& r) {
+  lv_obj_t* t = r.obj;
+  lv_obj_invalidate(t);
+  if (r.cfx) {
+    lv_obj_remove_event_cb_with_user_data(t, orbitExt, r.cfx);
+    lv_obj_delete(r.cfx->obj);
+    clockFxFree(r.cfx);
+    r.cfx = nullptr;
+    lv_obj_remove_flag(t, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    lv_obj_refresh_ext_draw_size(t);
+  } else {
+    lv_obj_delete(lv_obj_get_parent(lv_obj_get_parent(r.sub)));
+    lv_obj_delete(r.name);
+    r.sub = r.colon = r.mins = r.unit = r.name = nullptr;
+    lv_obj_set_layout(t, LV_LAYOUT_NONE);
+  }
+  makeClockContent(r, t);
+  if (r.pill) lv_obj_delete(r.pill);  // placed again for the new style
+  r.pill = nullptr;
+  r.pillW = 0;
+  r.fitW = r.fitH = 0;
+  applyClock(r);
+  fitTile(r);
+  markPageStale(r.page);
+}
+
+// Where the time and the date line are drawn, screen coordinates (an empty
+// date area when there is none). False for the scenes: they move all over.
+bool clockInk(const TileRt& r, lv_area_t& time, lv_area_t& date) {
+  date = {0, 0, -1, -1};
+  if (r.cfx) {
+    const ClockFx& c = *r.cfx;
+    if (c.sceneFits || !c.f) return false;
+    lv_area_t o;
+    lv_obj_get_coords(c.obj, &o);
+    time = {o.x1 + c.tx, o.y1 + c.ty + c.inkTop, o.x1 + c.tx + c.tw, o.y1 + c.ty + c.inkTop + c.inkH};
+    if (c.dateY >= 0) {
+      const int w = textW(c.date, c.df), x = o.x1 + (c.dateW - w) / 2;
+      date = {x, o.y1 + c.dateY, x + w, o.y1 + c.dateY + lineH(c.df)};
+    }
+    return true;
+  }
+  lv_obj_update_layout(r.obj);
+  lv_area_t a;
+  lv_obj_get_coords(lv_obj_get_parent(r.unit), &time);
+  lv_obj_get_coords(r.sub, &a);
+  int top, h;
+  digitInk(lv_obj_get_style_text_font(r.sub, LV_PART_MAIN), top, h);
+  time.y1 = a.y1 + top;
+  time.y2 = time.y1 + h;
+  if (!lv_obj_has_flag(r.name, LV_OBJ_FLAG_HIDDEN)) lv_obj_get_coords(r.name, &date);
+  return true;
+}
+
+// False when the tile is too small for the style and would show Roll.
+bool clockStyleFits(const TileRt& r, int style) {
+  ClockScene* s = sceneFor(style);
+  if (!s) return style < CLOCK_BLOCKS;
+  const bool ok = s->fit(lv_obj_get_width(r.obj), lv_obj_get_height(r.obj),
+                         lv_obj_get_style_pad_left(r.obj, LV_PART_MAIN));
+  sceneFree(s);
+  return ok;
 }
 
 static void buildRing(ClockFx& c, int rad) {
@@ -543,6 +647,7 @@ void fitClockFx(TileRt& r, int cw, int ch) {
     aw = LV_MIN(aw, c->w - 2 * keep);
     ah = LV_MIN(ah, c->h - 2 * keep);
   }
+  aw -= r.pillW;
   const bool ampm = !netSettings.use24h;
   const lv_font_t* df = ch >= 120 ? &deck_font_20 : &deck_font_14;
   int dTop, dH;
@@ -563,7 +668,8 @@ void fitClockFx(TileRt& r, int cw, int ch) {
     }
   }
   if (best < 0) best = CLOCK_FONTS - 1;
-  const bool date = dated >= 0 && (dated <= best + 1 || r.def->clockDate);
+  // Beside the timer pill the time stays large instead.
+  const bool date = dated >= 0 && ((dated <= best + 1 && !r.pillW) || r.def->clockDate);
   const lv_font_t* f = CLOCK_FONT[date ? dated : best];
   c->f = f;
   c->df = df;
@@ -579,7 +685,8 @@ void fitClockFx(TileRt& r, int cw, int ch) {
   const int block = h + (date ? gap + dH : 0);
   const int bt = (c->h - block) / 2;
   c->ty = (int16_t)(bt - top);
-  c->tx = (int16_t)((c->w - c->tw) / 2);
+  c->tx = (int16_t)((c->w - r.pillW - c->tw) / 2);
+  c->dateW = (int16_t)(c->w - r.pillW);
   c->dateY = date ? (int16_t)(bt + h + gap - dTop) : -1;
   c->colonDy = (int16_t)clockColonDy(f);
   c->apX = (int16_t)(c->tx + 4 * c->cell + c->colonW + 4);

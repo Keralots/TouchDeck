@@ -356,6 +356,7 @@ void loadSettings() {
   audioSettings.finished = prefs.getBool("audfin", true);
   audioSettings.error = prefs.getBool("auderr", true);
   audioSettings.cooled = prefs.getBool("audcool", true);
+  audioSettings.timer = prefs.getBool("audtim", true);
   audioSettings.wakeMs = min<uint16_t>(prefs.getUShort("audwake", BOARD_AUDIO_WAKE_MS), AUDIO_WAKE_MAX_MS);
   audioSettings.keepOnMs = constrain(prefs.getUInt("audkeep", BOARD_AUDIO_KEEP_ON_MS), AUDIO_KEEP_ON_MIN_MS,
                                      AUDIO_KEEP_ON_MAX_MS);
@@ -363,6 +364,7 @@ void loadSettings() {
   if (prefs.isKey("audffin")) prefs.getString("audffin", audioSettings.fileFinished, AUDIO_FILE_LEN);
   if (prefs.isKey("audferr")) prefs.getString("audferr", audioSettings.fileError, AUDIO_FILE_LEN);
   if (prefs.isKey("audfcool")) prefs.getString("audfcool", audioSettings.fileCooled, AUDIO_FILE_LEN);
+  if (prefs.isKey("audftim")) prefs.getString("audftim", audioSettings.fileTimer, AUDIO_FILE_LEN);
   agentSettings.enabled = prefs.getBool("agon", false);
   agentSettings.backend = min<uint8_t>(prefs.getUChar("agback", AGENT_BACKEND_XIAOZHI), AGENT_BACKEND_HA);
   if (prefs.isKey("agpipe")) prefs.getString("agpipe", agentSettings.pipeline, AGENT_PIPELINE_LEN);
@@ -476,6 +478,7 @@ void saveSettings() {
   prefs.putBool("audfin", audioSettings.finished);
   prefs.putBool("auderr", audioSettings.error);
   prefs.putBool("audcool", audioSettings.cooled);
+  prefs.putBool("audtim", audioSettings.timer);
   prefs.putBool("agon", agentSettings.enabled);
   prefs.putUChar("agback", agentSettings.backend);
   prefs.putString("agpipe", agentSettings.pipeline);
@@ -492,6 +495,7 @@ void saveSettings() {
   prefs.putString("audffin", audioSettings.fileFinished);
   prefs.putString("audferr", audioSettings.fileError);
   prefs.putString("audfcool", audioSettings.fileCooled);
+  prefs.putString("audftim", audioSettings.fileTimer);
   String ids;
   for (const String& id : presenceSettings.entities)
     if (id.length()) ids += (ids.length() ? "," : "") + id;

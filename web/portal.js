@@ -380,7 +380,7 @@
   ["ledBrightness", "ledPin"].forEach((id) => $(id).addEventListener("input", queueLedPreview));
 
   // Speaker (Hardware page): sound pickers, Test buttons, WAV files.
-  const AUDIO_PICKS = ["audioFileFinished", "audioFileError", "audioFileCooled"];
+  const AUDIO_PICKS = ["audioFileFinished", "audioFileError", "audioFileCooled", "audioFileTimer"];
   let audioFiles = [];
   function updateAudioFields() {
     $("audioFields").classList.toggle("hidden", !$("audioEnabled").checked);
@@ -540,7 +540,7 @@
     if (!t) return;
     if (t.dataset.audioTest) {
       const k = t.dataset.audioTest,
-        pick = { finished: "audioFileFinished", error: "audioFileError", cooled: "audioFileCooled" }[k];
+        pick = { finished: "audioFileFinished", error: "audioFileError", cooled: "audioFileCooled", timer: "audioFileTimer" }[k];
       audioTest(k, pick ? $(pick).value : "");
     } else if (t.dataset.audioPlay) {
       audioTest("finished", t.dataset.audioPlay);
@@ -551,7 +551,7 @@
         const d = await getJson("/api/audio/delete", { method: "POST", body: new URLSearchParams({ n: name }) });
         showToast(d.message || "Deleted", false);
         if (config && config.audio)
-          ["fileFinished", "fileError", "fileCooled"].forEach((k) => {
+          ["fileFinished", "fileError", "fileCooled", "fileTimer"].forEach((k) => {
             if (config.audio[k] === name) config.audio[k] = "";
           });
         await loadAudio(audioPickValues().map((v) => (v === name ? "" : v)));
@@ -695,7 +695,8 @@
     setCheck("audioFinished", au.finished !== false);
     setCheck("audioError", au.error !== false);
     setCheck("audioCooled", au.cooled !== false);
-    fillAudioPicks([au.fileFinished, au.fileError, au.fileCooled]);
+    setCheck("audioTimer", au.timer !== false);
+    fillAudioPicks([au.fileFinished, au.fileError, au.fileCooled, au.fileTimer]);
     updateAudioFields();
     $("audioState").textContent = au.enabled ? "on" : "disabled";
     const ag = c.agent || {};

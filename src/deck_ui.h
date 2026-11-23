@@ -84,6 +84,12 @@ bool deckHeaderVisible();
 bool deckTestSwipe(int dir, bool vertical);
 // Bench hook (/api/deck/card): open the detail card of the tile with this id.
 bool deckTestCard(const String& tileId);
+// Bench hook (/api/deck/timer): start (seconds), add, pause, resume, cancel,
+// act (a button of the open clock card); the timer's state.
+bool deckTimerCommand(const String& op, int value);
+void deckTimerJson(JsonObject o);
+// A clock style picked on the deck goes to the stored deck.json now.
+void deckClockStyleFlush();
 // Bench hooks (/api/deck/tap, /api/deck/confirm): tap or hold a tile, answer
 // its confirm card.
 bool deckTestTap(const String& tileId, bool hold);

@@ -1431,6 +1431,7 @@ void deckTick() {
     deckToastShow("microSD card not working, using internal storage", 6000);
   }
 
+  clockTimerTick(systemScreen);
   if (compOwnsScreen()) return;  // LVGL stays frozen during a drag or slide
 
   mqttTick();
@@ -1647,6 +1648,7 @@ bool deckApplyConfig(const String& text, String& err) {
   }
   DeckConfig next;
   if (!deckConfigStore(text, next, err)) return false;
+  clockStyleDrop();
   // Tiles point into s_cfg: tear the pages down before replacing it.
   stopGestures();
   destroyPages(true);
@@ -1663,6 +1665,7 @@ String deckLedEntity() { return s_cfg.ledEntity; }
 
 bool deckSetLedEntity(const String& id, String& err) {
   if (id == s_cfg.ledEntity) return true;
+  clockStyleFlush();
   String text;
   deckConfigText(text);
   JsonDocument doc(psramJson());
@@ -1806,7 +1809,8 @@ bool deckTestCard(const String& tileId) {
   for (size_t i = 0; i < s_tiles.size(); i++) {
     if (s_tiles[i].def->id != tileId || s_tiles[i].off) continue;
     if (s_tiles[i].def->type == TILE_PRINTER) return false;  // touch never opens a card there
-    openModal((int)i);
+    if (s_tiles[i].def->type == TILE_CLOCK) openClockCard((int)i);
+    else openModal((int)i);
     return true;
   }
   return false;

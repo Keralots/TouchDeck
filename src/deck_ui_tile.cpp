@@ -616,57 +616,18 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     return;
   }
 
-  // Clocks with a drawn style: one object the deck draws, see deck_ui_clock.cpp.
-  if (def.type == TILE_CLOCK && def.clockStyle != CLOCK_CLASSIC) {
-    TileRt r = {};
-    r.def = &def;
-    r.page = page;
-    r.obj = t;
-    makeClockFx(r, t);
-    if (r.cfx) {  // else Classic
-      lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);
-      const size_t idx = s_tiles.size();
-      s_tiles.push_back(r);
-      applyClock(s_tiles.back());
-      lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
-      return;
-    }
-  }
-
-  // Clock: the time ("color") over the date, centred; fitClock sizes them.
+  // Clock: a tap opens its card, a hold the page editor.
   if (def.type == TILE_CLOCK) {
-    lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);  // read-only
-    lv_obj_set_flex_flow(t, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(t, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     TileRt r = {};
     r.def = &def;
     r.page = page;
     r.obj = t;
-    lv_obj_t* row = lv_obj_create(t);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
-    lv_obj_set_style_pad_column(row, 4, 0);
-    lv_obj_remove_flag(row, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-    lv_obj_t* hm = lv_obj_create(row);
-    lv_obj_remove_style_all(hm);
-    lv_obj_set_size(hm, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(hm, LV_FLEX_FLOW_ROW);
-    lv_obj_remove_flag(hm, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-    if (def.hasColor) lv_obj_set_style_text_color(hm, lv_color_hex(def.color), 0);
-    r.sub = lv_label_create(hm);
-    r.colon = lv_label_create(hm);
-    lv_label_set_text(r.colon, ":");
-    r.colonLit = true;
-    r.mins = lv_label_create(hm);
-    r.unit = lv_label_create(row);
-    lv_obj_set_style_text_opa(r.unit, LV_OPA_70, 0);
-    r.name = lv_label_create(t);
-    lv_obj_set_style_text_opa(r.name, LV_OPA_70, 0);
+    makeClockContent(r, t);
     const size_t idx = s_tiles.size();
     s_tiles.push_back(r);
     applyClock(s_tiles.back());
+    lv_obj_add_event_cb(t, clockTap, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
+    lv_obj_add_event_cb(t, clockTap, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)idx);
     lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
     return;
   }

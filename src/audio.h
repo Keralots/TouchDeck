@@ -6,7 +6,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
-enum AudioSound : uint8_t { SND_FINISHED = 0, SND_ERROR, SND_COOLED, SND_CLICK, SND_COUNT };
+enum AudioSound : uint8_t { SND_FINISHED = 0, SND_ERROR, SND_COOLED, SND_CLICK, SND_TIMER, SND_COUNT };
 
 // Starts the task when the speaker is enabled; the save handler calls it again.
 void audioInit();
@@ -14,6 +14,10 @@ void audioInit();
 void audioEvent(AudioSound s);
 // Tile tap; dropped while another sound plays.
 void audioClick();
+// Timer melody, once; not muted at night. False when it is off. Stop leaves other sounds alone.
+bool audioTimer();
+void audioStopTimer();
+bool audioBusy();  // a sound is waiting, loading or playing
 // Portal Test button: ignores the enabled switch and the night. file "" = built-in.
 bool audioTest(AudioSound s, uint8_t vol, const String& file, String& err);
 bool audioPlayTone(uint16_t hz, uint16_t ms, uint8_t vol);
