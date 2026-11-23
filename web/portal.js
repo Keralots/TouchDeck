@@ -769,6 +769,7 @@
     if (window.dkPrnSync) window.dkPrnSync();
     setVal("timeFormat", c.clock.use24h ? "24" : "12");
     setVal("timeSource", c.clock.source === "ha" ? "ha" : "ntp");
+    browserTimezone(c.clock);
     setVal("timezone", c.clock.timezone || "");
     const tz = qa("#timezonePreset option").find((o) => o.value === (c.clock.timezone || ""));
     setVal("timezonePreset", tz ? tz.value : "");
@@ -788,6 +789,75 @@
     populating = false;
     dirty = false;
     updateSaveBar();
+  }
+
+  /* This browser's timezone as a POSIX rule: a preset with the same rule, else built from its clock changes. */
+  function posixTimezone() {
+    const STEP = 1800000;
+    const off = (t) => -new Date(t).getTimezoneOffset();
+    const num = (m) => Math.floor(Math.abs(m) / 60) + (m % 60 ? ":" + String(Math.abs(m) % 60).padStart(2, "0") : "");
+    const posix = (m) => (m > 0 ? "-" : "") + num(m);
+    const name = (m) => {
+      const a = Math.abs(m);
+      const two = (v) => String(v).padStart(2, "0");
+      return "<" + (m < 0 ? "-" : "+") + two(Math.floor(a / 60)) + (a % 60 ? two(a % 60) : "") + ">";
+    };
+    const year = new Date().getFullYear();
+    const found = [];
+    for (let y = year; y < year + 6; y++) {
+      const list = [];
+      for (let t = Date.UTC(y, 0, 1), end = Date.UTC(y + 1, 0, 1); t < end; t += STEP)
+        if (off(t) !== off(t - STEP)) list.push(t);
+      found.push(list);
+    }
+    const fixed = off(Date.now());
+    const plain = fixed ? name(fixed) + posix(fixed) : "UTC0";
+    if (found.some((list) => list.length !== 2)) return plain;
+    /* The change to (up) or from summer time, when every year follows one rule. */
+    const side = (up) => {
+      const days = [];
+      for (const list of found) {
+        const t = list.find((v) => off(v) > off(v - STEP) === up);
+        if (!t) return null;
+        const old = off(t - STEP);
+        const d = new Date(t + old * 60000); /* wall time before the change, in UTC fields */
+        const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+        days.push({
+          key: [d.getUTCMonth() + 1, d.getUTCDay(), d.getUTCHours() * 60 + d.getUTCMinutes(), old, off(t)].join(),
+          month: d.getUTCMonth() + 1,
+          week: Math.ceil(d.getUTCDate() / 7),
+          last: last - d.getUTCDate() < 7,
+          day: d.getUTCDay(),
+          at: d.getUTCHours() * 60 + d.getUTCMinutes(),
+          old,
+          next: off(t),
+        });
+      }
+      const a = days[0];
+      const week = days.every((v) => v.last) ? 5 : days.every((v) => v.week === a.week) ? a.week : 0;
+      if (!week || days.some((v) => v.key !== a.key)) return null;
+      return { rule: ",M" + a.month + "." + week + "." + a.day + "/" + num(a.at), old: a.old, next: a.next };
+    };
+    const up = side(true);
+    const down = side(false);
+    if (!up || !down) return plain;
+    const hour = up.next - up.old === 60;
+    const preset = qa("#timezonePreset option").find((v) => {
+      const p = v.value.match(/^[A-Z]+(-?[0-9]+)[A-Z]+(,.*)$/);
+      return hour && p && p[1] === posix(up.old) && p[2] === up.rule + down.rule;
+    });
+    if (preset) return preset.value;
+    return name(up.old) + posix(up.old) + name(up.next) + (hour ? "" : posix(up.next)) + up.rule + down.rule;
+  }
+  /* A new deck has no timezone (clock in UTC): the first browser that opens the portal sets its own. */
+  let timezoneSent = false;
+  function browserTimezone(clock) {
+    if (clock.timezone || timezoneSent) return;
+    timezoneSent = true;
+    clock.timezone = posixTimezone();
+    getJson("/save/clock", { method: "POST", body: new URLSearchParams({ timezone: clock.timezone }) })
+      .then(() => showToast("Timezone set from this browser", false))
+      .catch(() => {});
   }
 
   $("ipMode").addEventListener("change", () =>

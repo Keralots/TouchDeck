@@ -1790,6 +1790,9 @@ static void handleSaveClock() {
   if (server.hasArg("timezone"))
     strlcpy(netSettings.timezoneStr, server.arg("timezone").c_str(),
             sizeof(netSettings.timezoneStr));
+  // Empty means never set: the portal would fill in the browser's.
+  if (server.hasArg("timezone") && !netSettings.timezoneStr[0])
+    strlcpy(netSettings.timezoneStr, "UTC0", sizeof(netSettings.timezoneStr));
   if (server.hasArg("timeSource"))
     timeSource = server.arg("timeSource") == "ha" ? TIME_SRC_HA : TIME_SRC_NTP;
   saveSettings();
