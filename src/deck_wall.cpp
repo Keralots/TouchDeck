@@ -4,10 +4,12 @@
 #include "deck_art.h"
 #include "deck_config.h"
 #include "deck_panel.h"
+#include "deck_weather.h"
 #include <LittleFS.h>
 #include <esp_heap_caps.h>
 #include <esp_task_wdt.h>
 #include <math.h>
+#include <time.h>
 #include <Preferences.h>
 #include <esp_random.h>
 #include <algorithm>
@@ -41,11 +43,16 @@ struct WallJob {
   uint16_t* sharp;
   uint8_t* blurred;
   bool ok, automatic;
+  bool redraw;  // the picture on screen again, in its new light
+  ArtTime art;
 };
 WallJob s_job = {};
+ArtTime s_loadedArt = {};
+volatile uint32_t s_artPreview = 0;
 
 uint64_t settingsKey() {
   return (uint64_t)dispSettings.rotation | (uint64_t)dispSettings.theme << 8 |
+         (uint64_t)dispSettings.wallFollow << 15 |
          (uint64_t)dispSettings.glassBlur << 16 | (uint64_t)dispSettings.glassDim << 24 |
          (uint64_t)dispSettings.glassTint << 32 | (uint64_t)dispSettings.wallEvery << 40 |
          (uint64_t)dispSettings.wallOrder << 48 | (uint64_t)dispSettings.glassOn << 56;
@@ -131,6 +138,18 @@ int artIndex(const char* ref) {
   return i < ART_COUNT ? (int)i : -1;
 }
 
+// The light to draw this picture in; {} = as designed, or not a built-in one.
+ArtTime artTime(const char* ref) {
+  ArtTime at = {};
+  const uint32_t now = s_artPreview ? s_artPreview : (uint32_t)time(nullptr);
+  if (!dispSettings.wallFollow || now < 1609459200 || !artFollows(artIndex(ref))) return at;
+  at.utc = now;
+  at.place = weatherPlace(at.lat, at.lon);
+  if (!at.place) at.lat = at.lon = 0;
+  at.utc = artStep(at);
+  return at;
+}
+
 struct ArtOutput {
   uint8_t *r, *g, *b;
   uint16_t* rgb565;
@@ -152,11 +171,11 @@ void artRow(void* ctx, int y, const uint8_t* src) {
 
 // A file, or a built-in picture ("b/...") drawn at this size.
 bool jpegLoad(const char* path, int w, int h, uint8_t* r, uint8_t* g, uint8_t* b, uint16_t* rgb565 = nullptr,
-              int step = 1) {
+              int step = 1, const ArtTime& at = {}) {
   const int art = artIndex(path);
   if (art >= 0) {
     ArtOutput out = {r, g, b, rgb565, w, step};
-    return artDraw(art, w, h, artRow, &out);
+    return artDraw(art, w, h, at, artRow, &out);
   }
   JpegInput in(path, r, g, b, w, h);
   in.rgb565 = rgb565;
@@ -395,7 +414,7 @@ bool prepareImage(WallJob& job) {
   uint8_t *b = job.blurred, *g = job.blurred + 1, *r = job.blurred + 2;
   uint32_t start = millis();
   const bool jpeg = job.name[0];
-  const bool loaded = jpeg ? jpegLoad(job.path, w, h, r, g, b, nullptr, 3)
+  const bool loaded = jpeg ? jpegLoad(job.path, w, h, r, g, b, nullptr, 3, job.art)
                            : loadFile(r, g, b, w, h, 3);
   if (jpeg && !loaded) {
     Serial.printf("Deck: wallpaper decode failed: %s\n", job.name);
@@ -478,7 +497,8 @@ void installImage(WallJob& job) {
   s_current[job.w < job.h] = job.name;
   wallProtect(job.w < job.h, 0, sourceRef(job.name));
   wallProtect(job.w < job.h, 1, "");
-  s_changedMs = millis();
+  s_loadedArt = job.art;
+  if (!job.redraw) s_changedMs = millis();
   ++s_generation;
   fillDsc(s_sharpDsc, s_sharp, s_w, s_h, LV_COLOR_FORMAT_RGB565, 2);
   fillDsc(s_blurDsc, s_blur, s_w, s_h, LV_COLOR_FORMAT_RGB888, 3);
@@ -507,6 +527,7 @@ bool wallLoad(int w, int h, int blurR, int dimPct) {
   job.dim = dimPct;
   strlcpy(job.name, s_current[p].c_str(), sizeof(job.name));
   strlcpy(job.path, wallGalleryPath(p, job.name).c_str(), sizeof(job.path));
+  job.art = artTime(job.name);
   wallProtect(p, 1, sourceRef(job.name));
   if (!prepareImage(job)) {
     free(job.sharp);
@@ -653,7 +674,7 @@ void wallClearPin(bool portrait) {
 }
 
 bool wallLoadPicture(const char* path, int w, int h, uint16_t* pixels) {
-  return pixels && jpegLoad(path, w, h, nullptr, nullptr, nullptr, pixels);
+  return pixels && jpegLoad(path, w, h, nullptr, nullptr, nullptr, pixels, 1, artTime(path));
 }
 
 bool wallValidateJpeg(const char* path, bool portrait) {
@@ -756,14 +777,18 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch, bool rotate, void (*makeR
   initGallery(p);
   if (s_request[p] && s_automatic[p] && !rotate) s_request[p] = false;
   if (s_request[p] && s_automatic[p] && !idle) return false;
+  bool redraw = false;
   if (!s_request[p]) {
-    if (!rotate || !idle || !dispSettings.wallEvery || now - s_changedMs < (uint32_t)dispSettings.wallEvery * 60000)
-      return false;
-    if (now - s_scanMs < 1000) return false;
+    if (!rotate || !idle || now - s_scanMs < 1000) return false;
     s_scanMs = now;
-    if (wallFiles(p).size() < 2) return false;
-    wallNext(p);
-    s_automatic[p] = true;
+    if (dispSettings.wallEvery && now - s_changedMs >= (uint32_t)dispSettings.wallEvery * 60000 &&
+        wallFiles(p).size() > 1) {
+      wallNext(p);
+      s_automatic[p] = true;
+    } else {
+      redraw = s_sharp && s_w == w && s_h == h && !(artTime(s_loadedName.c_str()) == s_loadedArt);
+      if (!redraw) return false;
+    }
   }
   if (makeRoom) makeRoom();
   WallJob job = {};
@@ -774,8 +799,10 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch, bool rotate, void (*makeR
   job.settings = settingsKey();
   job.epoch = s_epoch;
   job.requestId = s_requestId[p];
-  job.automatic = s_automatic[p];
-  strlcpy(job.name, s_requested[p].c_str(), sizeof(job.name));
+  job.automatic = redraw || s_automatic[p];
+  job.redraw = redraw;
+  strlcpy(job.name, redraw ? s_loadedName.c_str() : s_requested[p].c_str(), sizeof(job.name));
+  job.art = artTime(job.name);
   strlcpy(job.path, wallGalleryPath(p, job.name).c_str(), sizeof(job.path));
   portENTER_CRITICAL(&s_jobMux);
   s_job = job;
@@ -799,6 +826,8 @@ void wallCommit() {
   discardJob();
   Serial.printf("Deck: wallpaper swap %lu ms\n", (unsigned long)(millis() - start));
 }
+
+void wallArtPreview(uint32_t utc) { s_artPreview = utc; }
 
 void wallRestartTimer() { s_changedMs = millis(); }
 

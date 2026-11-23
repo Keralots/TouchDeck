@@ -322,6 +322,7 @@ static void handleApiConfig() {
   display["wallOrder"] = dispSettings.wallOrder;
   display["wallDaily"] = wallSourceDaily(dispSettings.wallSource);
   display["wallSource"] = dispSettings.wallSource;
+  display["wallFollow"] = dispSettings.wallFollow;
   display["sdCard"] = dispSettings.sdCard;
   display["dailyMax"] = dispSettings.dailyMax;
   display["dailyHour"] = dispSettings.dailyHour;
@@ -465,6 +466,7 @@ static void handleConfigExport() {
   display["wallOrder"] = dispSettings.wallOrder;
   display["wallDaily"] = wallSourceDaily(dispSettings.wallSource);
   display["wallSource"] = dispSettings.wallSource;
+  display["wallFollow"] = dispSettings.wallFollow;
   display["sdCard"] = dispSettings.sdCard;
   display["dailyMax"] = dispSettings.dailyMax;
   display["dailyHour"] = dispSettings.dailyHour;
@@ -712,6 +714,7 @@ static void handleConfigImport() {
   nextDisplay.wallOrder = displayDefaults.wallOrder;
   nextDisplay.wallDaily = displayDefaults.wallDaily;
   nextDisplay.wallSource = 0;
+  nextDisplay.wallFollow = displayDefaults.wallFollow;
   nextDisplay.sdCard = false;
   nextDisplay.dailyMax = 100;
   nextDisplay.dailyHour = displayDefaults.dailyHour;
@@ -738,6 +741,7 @@ static void handleConfigImport() {
     nextDisplay.wallSource = nextDisplay.wallDaily ? 1 : 0;
   }
   nextDisplay.wallDaily = wallSourceDaily(nextDisplay.wallSource);
+  if (!display["wallFollow"].isNull()) READ_BOOL(display, "wallFollow", nextDisplay.wallFollow);
   if (!display["sdCard"].isNull()) READ_BOOL(display, "sdCard", nextDisplay.sdCard);
   if (!display["dailyMax"].isNull()) READ_INT(display, "dailyMax", 50, 500, nextDisplay.dailyMax, uint16_t);
   if (!validDailyMax(nextDisplay.dailyMax)) {
@@ -1728,11 +1732,19 @@ static void handleSaveWallpapers() {
   const uint32_t oldPlan = dispSettings.dailyOrient << 8 | dispSettings.dailyCount;
   if (server.hasArg("wallSource")) dispSettings.wallSource = server.arg("wallSource").toInt();
   dispSettings.wallDaily = wallSourceDaily(dispSettings.wallSource);
+  const bool oldFollow = dispSettings.wallFollow;
+  if (server.hasArg("wallFollow")) dispSettings.wallFollow = server.arg("wallFollow") == "1";
   dispSettings.dailyHour = (uint8_t)clampedArg("dailyHour", dispSettings.dailyHour, 0, 23);
   dispSettings.dailyOrient = (uint8_t)clampedArg("dailyOrient", dispSettings.dailyOrient, 0, 2);
   dispSettings.dailyCount = (uint8_t)clampedArg("dailyCount", dispSettings.dailyCount, 1, DAILY_MAX_COUNT);
   saveSettings();
   if (dispSettings.wallSource != oldSource) deck::wallSetSource(dispSettings.wallSource);
+  // The picture on screen changes light now, not after 30 idle seconds.
+  if (dispSettings.wallFollow != oldFollow)
+    for (int p = 0; p < 2; p++) {
+      const String name = deck::wallCurrent(p);
+      if (deck::wallArtIndex(name) >= 0) deck::wallRequest(p, name);
+    }
   // A new plan fetches again today instead of waiting for the hour.
   if (oldPlan != (uint32_t)(dispSettings.dailyOrient << 8 | dispSettings.dailyCount)) deck::dailyReplan();
   sendJsonMessage(200, true, "Wallpaper settings applied.");
@@ -2453,7 +2465,7 @@ static void sendArtThumb(int index, bool portrait) {
   put(22, bmp.h);
   out[26] = 1;
   out[28] = 24;
-  const bool ok = deck::artDraw(index, bmp.w, bmp.h, [](void* ctx, int y, const uint8_t* rgb) {
+  const bool ok = deck::artDraw(index, bmp.w, bmp.h, {}, [](void* ctx, int y, const uint8_t* rgb) {
     const Bmp& b = *(Bmp*)ctx;
     uint8_t* d = b.px + (b.h - 1 - y) * b.stride;
     for (int x = 0; x < b.w; x++, d += 3, rgb += 3) {
@@ -2741,6 +2753,13 @@ static void handleDebugAnimPost() {
 static void handleWeatherPreview() {
   const bool ok = deck::weatherPreview(constrain((int)server.arg("code").toInt(), 0, 99), server.arg("night") != "1");
   sendJsonMessage(ok ? 200 : 409, ok, ok ? "Preview shown until the next fetch" : "No weather data yet");
+}
+
+// POST /api/deck/art-time?t=<UTC seconds> - bench hook: the built-in pictures
+// follow this time, t=0 the clock again.
+static void handleArtTime() {
+  deck::wallArtPreview(strtoul(server.arg("t").c_str(), nullptr, 10));
+  sendJsonMessage(200, true, "Picture time set");
 }
 
 static void handleFrameGet() {
@@ -3201,6 +3220,7 @@ void initWebServer() {
   server.on("/api/debug/anim", HTTP_GET, handleDebugAnimGet);
   server.on("/api/debug/anim", HTTP_POST, handleDebugAnimPost);
   server.on("/api/deck/weather-preview", HTTP_POST, handleWeatherPreview);
+  server.on("/api/deck/art-time", HTTP_POST, handleArtTime);
   server.on("/api/deck/frame", HTTP_GET, handleFrameGet);
   server.on("/api/deck/frame", HTTP_POST, handleFramePost);
   server.on("/api/deck/prefs", HTTP_POST, handleDeckPrefs);
