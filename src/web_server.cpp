@@ -360,6 +360,7 @@ static void handleApiConfig() {
   doc["advanced"]["printers"] = advSettings.printers;
   doc["advanced"]["weather60"] = advSettings.weather60;
   doc["advanced"]["charts60"] = advSettings.charts60;
+  doc["advanced"]["clock60"] = advSettings.clock60;
   doc["advanced"]["smoothDisplay"] = advSettings.smoothDisplay;
   doc["advanced"]["smoothDisplayOption"] = deck::panelScanRingOption();
   doc["advanced"]["fps60"] = deckRefreshClock();
@@ -503,6 +504,7 @@ static void handleConfigExport() {
   doc["advanced"]["printers"] = advSettings.printers;
   doc["advanced"]["weather60"] = advSettings.weather60;
   doc["advanced"]["charts60"] = advSettings.charts60;
+  doc["advanced"]["clock60"] = advSettings.clock60;
   doc["advanced"]["smoothDisplay"] = advSettings.smoothDisplay;
   printerSettingsJson(doc["printers"].to<JsonObject>());
   mqttConfigJson(doc["mqtt"].to<JsonObject>(), false);
@@ -900,9 +902,10 @@ static void handleConfigImport() {
   bool nextPrinters = false;  // backups from before the Advanced page: the default
   JsonObjectConst advanced = root["advanced"].as<JsonObjectConst>();
   if (!advanced.isNull() && !advanced["printers"].isNull()) READ_BOOL(advanced, "printers", nextPrinters);
-  bool nextWeather60 = false, nextCharts60 = false, nextSmoothDisplay = false;
+  bool nextWeather60 = false, nextCharts60 = false, nextClock60 = false, nextSmoothDisplay = false;
   if (!advanced.isNull() && !advanced["weather60"].isNull()) READ_BOOL(advanced, "weather60", nextWeather60);
   if (!advanced.isNull() && !advanced["charts60"].isNull()) READ_BOOL(advanced, "charts60", nextCharts60);
+  if (!advanced.isNull() && !advanced["clock60"].isNull()) READ_BOOL(advanced, "clock60", nextClock60);
   if (!advanced.isNull() && !advanced["smoothDisplay"].isNull())
     READ_BOOL(advanced, "smoothDisplay", nextSmoothDisplay);
   PrinterSettings nextPrn;  // older backups: the defaults
@@ -1068,6 +1071,7 @@ static void handleConfigImport() {
   advSettings.printers = nextPrinters;
   advSettings.weather60 = nextWeather60;
   advSettings.charts60 = nextCharts60;
+  advSettings.clock60 = nextClock60;
   advSettings.smoothDisplay = nextSmoothDisplay;
   printerSettings = nextPrn;
   presenceSettings = nextPresence;
@@ -1333,6 +1337,7 @@ static void handleSaveAdvanced() {
   deckSetPrinters(server.hasArg("printers"));
   advSettings.weather60 = server.hasArg("weather60");
   advSettings.charts60 = server.hasArg("charts60");
+  advSettings.clock60 = server.hasArg("clock60");
   advSettings.smoothDisplay = server.hasArg("smoothDisplay");
   saveSettings();
   sendJsonMessage(200, true, "Advanced settings applied.");

@@ -616,7 +616,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     return;
   }
 
-  // Roll and Orbit clocks: one object the deck draws, see deck_ui_clock.cpp.
+  // Clocks with a drawn style: one object the deck draws, see deck_ui_clock.cpp.
   if (def.type == TILE_CLOCK && def.clockStyle != CLOCK_CLASSIC) {
     TileRt r = {};
     r.def = &def;

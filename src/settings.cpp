@@ -291,6 +291,7 @@ void loadSettings() {
   advSettings.printers = prefs.getBool("prn", false);
   advSettings.weather60 = prefs.getBool("wx60", false);
   advSettings.charts60 = prefs.getBool("ch60", false);
+  advSettings.clock60 = prefs.getBool("clk60", false);
   advSettings.smoothDisplay = prefs.getBool("smoothDsp", false);
   printerSettings.errors = prefs.getBool("perr", true);
   printerSettings.errorsAll = prefs.getBool("perrall", false);
@@ -435,6 +436,7 @@ void saveSettings() {
   prefs.putBool("prn", advSettings.printers);
   prefs.putBool("wx60", advSettings.weather60);
   prefs.putBool("ch60", advSettings.charts60);
+  prefs.putBool("clk60", advSettings.clock60);
   prefs.putBool("smoothDsp", advSettings.smoothDisplay);
   prefs.putBool("perr", printerSettings.errors);
   prefs.putBool("perrall", printerSettings.errorsAll);

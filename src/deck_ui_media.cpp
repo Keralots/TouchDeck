@@ -1,5 +1,5 @@
 // Deck UI: the Now playing and clock tiles.
-#include "deck_ui_int.h"
+#include "deck_ui_clock.h"
 
 namespace deckui {
 
@@ -480,9 +480,6 @@ void fitClock(TileRt& r, int cw, int ch) {
     fitClockFx(r, cw, ch);
     return;
   }
-  static const lv_font_t* const kTime[] = {&deck_font_clock_72, &deck_font_clock_56, &lv_font_montserrat_40,
-                                           &deck_font_28, &deck_font_20, &deck_font_14};
-  constexpr int N = sizeof(kTime) / sizeof(kTime[0]);
   const lv_font_t* df = ch >= 120 ? &deck_font_20 : &deck_font_14;
   const bool ampm = !netSettings.use24h;
   auto unitFont = [](const lv_font_t* f) { return lineH(f) >= 48 ? &deck_font_20 : &deck_font_14; };
@@ -498,9 +495,9 @@ void fitClock(TileRt& r, int cw, int ch) {
     digitInk(f, top, h);
     bot = withDate ? dateY(f) + dTop + dH : top + h;
   };
-  int best = N - 1, dated = -1;
-  for (int i = N - 1; i >= 0; i--) {
-    const lv_font_t* f = kTime[i];
+  int best = CLOCK_FONTS - 1, dated = -1;
+  for (int i = CLOCK_FONTS - 1; i >= 0; i--) {
+    const lv_font_t* f = CLOCK_FONT[i];
     const int w = textW("00:00", f) + (ampm ? 4 + textW("PM", unitFont(f)) : 0);
     int top, bot;
     inkSpan(f, false, top, bot);
@@ -511,9 +508,9 @@ void fitClock(TileRt& r, int cw, int ch) {
   }
   // Fonts from best down already fit the width and, without the date, the height.
   if (r.def->clockDate) {
-    const int last = dated < 0 ? N : dated;
+    const int last = dated < 0 ? CLOCK_FONTS : dated;
     for (int i = best; i < last; i++) {
-      const lv_font_t* f = kTime[i];
+      const lv_font_t* f = CLOCK_FONT[i];
       int top, bot, h;
       inkSpan(f, true, top, bot);
       digitInk(f, top, h);
@@ -526,7 +523,7 @@ void fitClock(TileRt& r, int cw, int ch) {
     }
   }
   const bool date = dated >= 0 && (dated <= best + 1 || r.def->clockDate);
-  const lv_font_t* f = kTime[date ? dated : best];
+  const lv_font_t* f = CLOCK_FONT[date ? dated : best];
   // Flex centres the boxes; move them so the ink is centred instead.
   int top, bot;
   inkSpan(f, date, top, bot);
@@ -537,10 +534,7 @@ void fitClock(TileRt& r, int cw, int ch) {
   setFont(r.sub, f);
   setFont(r.colon, f);
   setFont(r.mins, f);
-  // Fonts put the colon at x-height middle: centre it on the digits instead.
-  lv_font_glyph_dsc_t dg = {}, dc = {};
-  if (lv_font_get_glyph_dsc(f, &dg, '0', 0) && lv_font_get_glyph_dsc(f, &dc, ':', 0))
-    lv_obj_set_style_translate_y(r.colon, (dc.ofs_y * 2 + dc.box_h - dg.ofs_y * 2 - dg.box_h) / 2, 0);
+  lv_obj_set_style_translate_y(r.colon, clockColonDy(f), 0);
   setFont(r.unit, unitFont(f));
   lv_obj_set_style_pad_bottom(r.unit, (lineH(f) - lineH(unitFont(f))) / 5, 0);  // share the baseline
   setFont(r.name, df);

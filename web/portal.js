@@ -737,6 +737,7 @@
     setCheck("printersEnabled", adv.printers);
     setCheck("weather60", adv.weather60);
     setCheck("charts60", adv.charts60);
+    setCheck("clock60", adv.clock60);
     setCheck("smoothDisplay", adv.smoothDisplay);
     $("smoothDisplayRow").classList.toggle("hidden", !adv.smoothDisplayOption);
     $("fps60Card").classList.toggle("hidden", !adv.fps60);

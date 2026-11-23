@@ -1354,14 +1354,15 @@ void animClockTick() {
   s_animDue = true;
 }
 
-// The shown page's PC charts glide on the animation clock while the screen is
-// lit and nothing covers the page.
+// The screen is lit and nothing covers the shown page: its tiles may animate.
+bool tilesShowing() {
+  return !manualDisplayOff() && currentBacklightLevel() && !s_qp.open && !s_modalCard && !s_ed.root;
+}
+
+// The shown page's PC charts glide on the animation clock.
 uint32_t s_sparkMs = 0;
 
-bool sparkGliding() {
-  return dispSettings.smoothCharts && !manualDisplayOff() && currentBacklightLevel() && !s_qp.open &&
-         !s_modalCard && !s_ed.root;
-}
+bool sparkGliding() { return dispSettings.smoothCharts && tilesShowing(); }
 
 void sparkTick() {
   if (!(advSettings.charts60 ? s_animFastDue : s_animDue)) return;
