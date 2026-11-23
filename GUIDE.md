@@ -22,6 +22,8 @@ Full reference for the deck's features. For installing and first-time setup, see
 
 ## Pages and tiles
 
+A new deck starts with a Home page (clock, weather for London as an example place), a Clocks page, and PC stats that appear once the companion connects. Change or remove any of it in the portal or in edit mode; the weather place is under the weather tile's "more options".
+
 - **Grid:** up to 6x4 cells per page (8x6 on the Waveshare 7B). Tiles are placed and sized in half-cell steps (1x1.5, 1.5x1, 0.5x0.5...); text and icons scale with the tile, so small tiles shrink instead of overlapping.
 - **Columns:** pages stacked into a column. Swipe left and right between columns, up and down between the pages of a column.
 - **Home Assistant tiles:** live state over the WebSocket API, optimistic toggles, scenes / scripts / buttons, a detail card on long press with a level slider (light brightness, cover position, fan speed, volume, numbers). Icons come from Material Design Icons, the set Home Assistant uses (the font is installed from the portal).
@@ -56,7 +58,7 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 - **Screen:** day brightness and the night schedule, screen sleep and presence.
 - **Hardware:** the speaker, the status LED and its Home Assistant entity, the vibration motor, rotary encoders (Waveshare 7B, see [Rotary encoders](#rotary-encoders-waveshare-7b)).
 - **AI Agent:** the voice assistant, on a board with microphones (the Waveshare 7B). See [AI agent](#ai-agent-waveshare-7b).
-- **Time:** 12/24 h clock, timezone, and where the time comes from: network time (pool.ntp.org, the default) or Home Assistant, for a deck on a network that reaches only Home Assistant. With Home Assistant the deck reads its clock over the WebSocket on every connection and then hourly; the timezone is still the deck's own.
+- **Time:** 12/24 h clock, timezone, and where the time comes from: network time (pool.ntp.org, the default) or Home Assistant, for a deck on a network that reaches only Home Assistant. With Home Assistant the deck reads its clock over the WebSocket on every connection and then hourly; the timezone is still the deck's own. A new deck runs in UTC until the first browser opens the portal, which sets its own timezone (a place with irregular clock changes gets its present offset only).
 - **Network:** WiFi, hostname / mDNS, static IP.
 - **Advanced:** optional features, off by default: Bambu Lab printers and MQTT. On the Waveshare 7B also **Animation**:
   - **Weather icons**, **Charts and printer effects** and **Clock animations at 60 fps:** animate on every screen refresh instead of every second one. Smoother, uses more CPU time.

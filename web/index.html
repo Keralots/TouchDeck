@@ -1768,7 +1768,7 @@
                     <label class="field-label" for="timezonePreset">Timezone preset</label>
                     <div class="select-wrap">
                       <select id="timezonePreset">
-                        <option value="">Custom or UTC</option>
+                        <option value="">Custom</option>
                         <option value="UTC0">UTC</option>
                         <option value="GMT0BST,M3.5.0/1,M10.5.0/2">United Kingdom</option>
                         <option value="CET-1CEST,M3.5.0/2,M10.5.0/3">Central Europe</option>
@@ -1790,7 +1790,8 @@
                       placeholder="CET-1CEST,M3.5.0/2,M10.5.0/3"
                     />
                     <p class="field-hint">
-                      Use a preset or enter a POSIX timezone rule. Leave empty for the firmware default.
+                      Use a preset or enter a POSIX timezone rule; empty is UTC. A new deck takes it from the
+                      first browser that opens this portal.
                     </p>
                   </div>
                 </div>

@@ -11,46 +11,56 @@ namespace {
 
 const char* const CONFIG_PATH = "/deck.json";
 
-// Built-in starter deck: an example Home Assistant page (placeholder entity
-// ids) and the PC stats from the companion's first eight metrics.
-const char kDefaultDeck[] PROGMEM = R"JSON({
-  "schema": 1,
-  "theme": "midnight",
-  "pages": [
-    { "id": "desk", "name": "Desk",
-      "tiles": [
-        { "id": "lamp", "type": "toggle", "entity": "light.desk_lamp", "label": "Desk lamp", "icon": "mdi:lightbulb",
-          "pos": { "landscape": { "x": 0, "y": 0, "w": 2, "h": 1 } } },
-        { "id": "ceiling", "type": "toggle", "entity": "light.ceiling", "label": "Ceiling", "icon": "mdi:ceiling-light" },
-        { "id": "bias", "type": "toggle", "entity": "light.bias", "label": "Bias light", "icon": "mdi:television-ambient-light" },
-        { "id": "fan", "type": "toggle", "entity": "fan.desk_fan", "label": "Fan", "icon": "mdi:fan" },
-        { "id": "evening", "type": "action", "entity": "scene.evening", "label": "Evening", "icon": "mdi:weather-night",
-          "tap": { "action": "call-service", "domain": "scene", "service": "turn_on" } },
-        { "id": "focus", "type": "action", "entity": "scene.focus", "label": "Focus", "icon": "mdi:eye" },
-        { "id": "printer", "type": "toggle", "entity": "switch.printer", "label": "Printer", "icon": "mdi:printer-3d" },
-        { "id": "speakers", "type": "toggle", "entity": "switch.speakers", "label": "Speakers", "icon": "mdi:speaker" },
-        { "id": "door", "type": "toggle", "entity": "lock.front_door", "label": "Front door", "icon": "mdi:lock" },
-        { "id": "alloff", "type": "action", "entity": "script.all_off", "label": "All off", "icon": "mdi:power", "color": "#FF8A7A" },
-        { "id": "topc", "type": "action", "label": "PC", "sub": "Page", "icon": "mdi:chevron-right",
-          "tap": { "action": "page", "page": "pc" } }
-      ] },
-    { "id": "pc", "name": "PC",
-      "tiles": [
-        { "id": "m1", "type": "metric", "metric": 1, "style": "chart",
-          "pos": { "landscape": { "x": 0, "y": 0, "w": 2, "h": 1 } } },
-        { "id": "m2", "type": "metric", "metric": 2, "style": "chart",
-          "pos": { "landscape": { "x": 2, "y": 0, "w": 2, "h": 1 } } },
-        { "id": "m3", "type": "metric", "metric": 3 },
-        { "id": "m4", "type": "metric", "metric": 4 },
-        { "id": "m5", "type": "metric", "metric": 5 },
-        { "id": "m6", "type": "metric", "metric": 6 },
-        { "id": "m7", "type": "metric", "metric": 7, "style": "bar",
-          "pos": { "landscape": { "x": 0, "y": 2, "w": 2, "h": 1 } } },
-        { "id": "m8", "type": "metric", "metric": 8, "style": "bar",
-          "pos": { "landscape": { "x": 2, "y": 2, "w": 2, "h": 1 } } }
-      ] }
-  ]
-})JSON";
+// Built-in starter deck: everything on it works before anything is set up.
+// The PC tile and page come with the companion.
+#define CELL(x, y, w, h) "{\"x\":" #x ",\"y\":" #y ",\"w\":" #w ",\"h\":" #h "}"
+#if BOARD_GRID_MAX > 6
+#define POS(large, small, portrait) "\"pos\":{\"landscape\":" large ",\"portrait\":" portrait "}"
+#define START_GRID "\"layouts\":{\"landscape\":{\"cols\":6,\"rows\":4},\"portrait\":{\"cols\":4,\"rows\":6}}"
+#define COMPANION "Companion app"
+#else
+#define POS(large, small, portrait) "\"pos\":{\"landscape\":" small ",\"portrait\":" portrait "}"
+#define START_GRID "\"layouts\":{\"landscape\":{\"cols\":4,\"rows\":4},\"portrait\":{\"cols\":4,\"rows\":6}}"
+#define COMPANION "App"
+#endif
+const char kDefaultDeck[] PROGMEM =
+    R"({"schema":1,"theme":"midnight","weather":{"lat":51.5074,"lon":-0.1278,"name":"London"},"pages":[)"
+    R"({"id":"home","name":"Home",)" START_GRID R"(,"tiles":[)"
+    R"({"id":"clock","type":"clock","style":"orbit","ring":"tick",)"
+    POS(CELL(0, 0, 3, 2), CELL(0, 0, 2, 2), CELL(0, 0, 4, 2)) "},"
+    R"({"id":"weather","type":"weather",)"
+    POS(CELL(4, 0, 2, 2), CELL(2, 0, 2, 2), CELL(0, 2, 4, 2)) "},"
+    R"({"id":"setup","type":"action","label":"Set up in a browser","sub":"touchdeck.local","icon":"mdi:cog",)"
+    R"("color":"#F6C56B","tap":{"action":"none"},)"
+    POS(CELL(0, 3, 2, 1), CELL(0, 3, 2, 1), CELL(0, 5, 2, 1)) "},"
+    R"({"id":"toclocks","type":"action","label":"Clocks","icon":"mdi:chevron-right","color":"#B3A6FF",)"
+    R"("tap":{"action":"page","page":"clocks"},)"
+    POS(CELL(2, 3, 1, 1), CELL(2, 3, 1, 1), CELL(2, 5, 1, 1)) "},"
+    R"({"id":"pchint","type":"action","label":"PC stats","sub":")" COMPANION R"(","icon":"mdi:console",)"
+    R"("color":"#7DB5FF","when":"pc-off","tap":{"action":"none"},)"
+    POS(CELL(4, 3, 2, 1), CELL(3, 3, 1, 1), CELL(3, 5, 1, 1)) "},"
+    R"({"id":"pccpu","type":"metric","metric":1,"style":"chart","when":"pc-on",)"
+    POS(CELL(4, 3, 2, 1), CELL(3, 3, 1, 1), CELL(3, 5, 1, 1)) "}]},"
+    R"({"id":"clocks","name":"Clocks",)" START_GRID R"(,"tiles":[)"
+    R"({"id":"blocks","type":"clock","style":"blocks",)"
+    POS(CELL(0, 0, 3, 2), CELL(0, 0, 2, 2), CELL(0, 0, 4, 2)) "},"
+    R"({"id":"breakout","type":"clock","style":"breakout",)"
+    POS(CELL(3, 0, 3, 2), CELL(2, 0, 2, 2), CELL(0, 2, 4, 2)) "},"
+    R"({"id":"tohome","type":"action","label":"Home","icon":"mdi:home","color":"#B3A6FF",)"
+    R"("tap":{"action":"page","page":"home"},)"
+    POS(CELL(0, 3, 1, 1), CELL(0, 3, 1, 1), CELL(0, 5, 1, 1)) "}]},"
+    R"({"id":"pc","name":"PC","when":"pc-on",)"
+    R"("layouts":{"landscape":{"cols":4,"rows":3},"portrait":{"cols":2,"rows":4}},"tiles":[)"
+    R"({"id":"m1","type":"metric","metric":1,"style":"chart","pos":{"landscape":{"x":0,"y":0,"w":2}}},)"
+    R"({"id":"m2","type":"metric","metric":2,"style":"chart","pos":{"landscape":{"x":2,"y":0,"w":2}}},)"
+    R"({"id":"m3","type":"metric","metric":3},{"id":"m4","type":"metric","metric":4},)"
+    R"({"id":"m5","type":"metric","metric":5},{"id":"m6","type":"metric","metric":6},)"
+    R"({"id":"m7","type":"metric","metric":7,"style":"bar","pos":{"landscape":{"x":0,"y":2,"w":2}}},)"
+    R"({"id":"m8","type":"metric","metric":8,"style":"bar","pos":{"landscape":{"x":2,"y":2,"w":2}}}]}]})";
+#undef CELL
+#undef POS
+#undef START_GRID
+#undef COMPANION
 
 bool parseColor(const char* s, uint32_t& out) {
   if (!s || s[0] != '#' || strlen(s) != 7) return false;
