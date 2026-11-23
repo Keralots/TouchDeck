@@ -480,6 +480,10 @@ void fitClock(TileRt& r, int cw, int ch) {
     fitClockFx(r, cw, ch);
     return;
   }
+  if (r.pillW) {
+    lv_obj_set_style_pad_right(r.obj, lv_obj_get_style_pad_left(r.obj, LV_PART_MAIN) + r.pillW, 0);
+    cw -= r.pillW;
+  }
   const lv_font_t* df = ch >= 120 ? &deck_font_20 : &deck_font_14;
   const bool ampm = !netSettings.use24h;
   auto unitFont = [](const lv_font_t* f) { return lineH(f) >= 48 ? &deck_font_20 : &deck_font_14; };

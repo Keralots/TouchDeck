@@ -185,11 +185,13 @@ static void audioSettingsJson(JsonObject o) {
   o["finished"] = audioSettings.finished;
   o["error"] = audioSettings.error;
   o["cooled"] = audioSettings.cooled;
+  o["timer"] = audioSettings.timer;
   o["wakeMs"] = audioSettings.wakeMs;
   o["keepOnMs"] = audioSettings.keepOnMs;
   o["fileFinished"] = audioSettings.fileFinished;
   o["fileError"] = audioSettings.fileError;
   o["fileCooled"] = audioSettings.fileCooled;
+  o["fileTimer"] = audioSettings.fileTimer;
 }
 
 // An HA entity id as typed into the portal: domain.object, lowercase letters, digits, '_'.
@@ -941,12 +943,13 @@ static void handleConfigImport() {
     READ_BOOL(audio, "finished", nextAudio.finished);
     READ_BOOL(audio, "error", nextAudio.error);
     READ_BOOL(audio, "cooled", nextAudio.cooled);
+    if (!audio["timer"].isNull()) READ_BOOL(audio, "timer", nextAudio.timer);
     if (!audio["wakeMs"].isNull()) READ_INT(audio, "wakeMs", 0, AUDIO_WAKE_MAX_MS, nextAudio.wakeMs, uint16_t);
     if (!audio["keepOnMs"].isNull())
       READ_INT(audio, "keepOnMs", AUDIO_KEEP_ON_MIN_MS, AUDIO_KEEP_ON_MAX_MS, nextAudio.keepOnMs, uint32_t);
-    const char* const keys[] = {"fileFinished", "fileError", "fileCooled"};
-    char* const targets[] = {nextAudio.fileFinished, nextAudio.fileError, nextAudio.fileCooled};
-    for (int i = 0; i < 3; i++) {
+    const char* const keys[] = {"fileFinished", "fileError", "fileCooled", "fileTimer"};
+    char* const targets[] = {nextAudio.fileFinished, nextAudio.fileError, nextAudio.fileCooled, nextAudio.fileTimer};
+    for (int i = 0; i < 4; i++) {
       const char* v = audio[keys[i]] | "";
       if (*v && !audioValidName(v)) {
         sendJsonMessage(400, false, "audio sound files must be .wav names");
@@ -1269,12 +1272,13 @@ static void handleSaveHardware() {
   nextAudio.finished = server.hasArg("audioFinished");
   nextAudio.error = server.hasArg("audioError");
   nextAudio.cooled = server.hasArg("audioCooled");
+  nextAudio.timer = server.hasArg("audioTimer");
   nextAudio.wakeMs = (uint16_t)clampedArg("audioWakeMs", nextAudio.wakeMs, 0, AUDIO_WAKE_MAX_MS);
   nextAudio.keepOnMs = (uint32_t)clampedArg("audioKeepOnMs", nextAudio.keepOnMs, AUDIO_KEEP_ON_MIN_MS,
                                             AUDIO_KEEP_ON_MAX_MS);
-  const char* const fields[] = {"audioFileFinished", "audioFileError", "audioFileCooled"};
-  char* const targets[] = {nextAudio.fileFinished, nextAudio.fileError, nextAudio.fileCooled};
-  for (int i = 0; i < 3; i++) {
+  const char* const fields[] = {"audioFileFinished", "audioFileError", "audioFileCooled", "audioFileTimer"};
+  char* const targets[] = {nextAudio.fileFinished, nextAudio.fileError, nextAudio.fileCooled, nextAudio.fileTimer};
+  for (int i = 0; i < 4; i++) {
     const String v = server.arg(fields[i]);
     if (v.length() && !audioValidName(v)) {
       sendJsonMessage(400, false, "Pick a sound from the list.");
@@ -1402,7 +1406,7 @@ static void handleAudioTest() {
     sendJsonMessage(200, true, "Playing.");
     return;
   }
-  static const char* const names[SND_COUNT] = {"finished", "error", "cooled", "click"};
+  static const char* const names[SND_COUNT] = {"finished", "error", "cooled", "click", "timer"};
   int s = -1;
   for (int i = 0; i < SND_COUNT; i++)
     if (kind == names[i]) s = i;
@@ -1596,7 +1600,7 @@ static void handleAudioDelete() {
   }
   // Events that used it go back to the built-in sound.
   bool changed = false;
-  for (char* f : {audioSettings.fileFinished, audioSettings.fileError, audioSettings.fileCooled})
+  for (char* f : {audioSettings.fileFinished, audioSettings.fileError, audioSettings.fileCooled, audioSettings.fileTimer})
     if (name == f) {
       f[0] = 0;
       changed = true;
@@ -2056,6 +2060,7 @@ static void handleDeckPage() {
 
 // GET /api/deck -> {"source": "...", "deck": <deck.json>}
 static void handleDeckGet() {
+  deckClockStyleFlush();
   String text;
   deck::deckConfigText(text);
   String out;
@@ -2724,6 +2729,24 @@ static void handleDeckCard() {
   sendJsonMessage(ok ? 200 : 404, ok, ok ? "Card open" : "No such tile");
 }
 
+// POST /api/deck/timer?op=start|add|pause|resume|cancel|act&v= - bench hook for
+// the clock card; GET = the timer's state.
+static void handleTimerGet() {
+  JsonDocument doc;
+  deckTimerJson(doc.to<JsonObject>());
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+static void handleTimerPost() {
+  if (!deckTimerCommand(server.arg("op"), server.arg("v").toInt())) {
+    sendJsonMessage(409, false, "Not possible now");
+    return;
+  }
+  handleTimerGet();
+}
+
 // POST /api/deck/http-test, body = an "http" action object: queue it, answer
 // {ticket}. GET ?ticket=N: {done, code, err, body}. POST ?sensor=1 tests a sensor GET.
 static void handleHttpTestPost() {
@@ -3085,6 +3108,8 @@ void initWebServer() {
   server.on("/api/deck/panel", HTTP_POST, handleDeckPanel);
   server.on("/api/deck/card", HTTP_POST, handleDeckCard);
   server.on("/api/deck/tap", HTTP_POST, handleDeckTap);
+  server.on("/api/deck/timer", HTTP_GET, handleTimerGet);
+  server.on("/api/deck/timer", HTTP_POST, handleTimerPost);
   server.on("/api/pc/forget", HTTP_POST, handlePcForget);
   server.on("/api/pc/status", HTTP_GET, handlePcStatus);
   server.on("/api/pc/pair", HTTP_POST, handlePcPair);

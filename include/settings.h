@@ -158,11 +158,13 @@ struct AudioSettings {
   bool finished = true;    // print finished
   bool error = true;       // new printer error
   bool cooled = true;      // bed cooled after a print
+  bool timer = true;       // clock card timer, also at night
   uint16_t wakeMs = BOARD_AUDIO_WAKE_MS;       // amp + codec settle after power-up
   uint32_t keepOnMs = BOARD_AUDIO_KEEP_ON_MS;  // idle time before the amp is cut
   char fileFinished[AUDIO_FILE_LEN] = "";
   char fileError[AUDIO_FILE_LEN] = "";
   char fileCooled[AUDIO_FILE_LEN] = "";
+  char fileTimer[AUDIO_FILE_LEN] = "";
 };
 
 // AI Agent (portal AI Agent page): a xiaozhi-protocol voice server or a Home

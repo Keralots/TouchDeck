@@ -57,6 +57,8 @@ Req s_req;
 volatile bool s_has = false;
 volatile bool s_stop = false;
 volatile bool s_playing = false;
+volatile bool s_busy = false;       // the task works on a request
+volatile bool s_busyTimer = false;  // and it is the timer melody
 volatile uint32_t s_fileGen = 0;
 TaskHandle_t s_task = nullptr;
 
@@ -208,6 +210,7 @@ Clip* render(AudioSound s) {
   static const Note finished[] = {{0, 1046.5f, 0.35f}, {0.12f, 1318.5f, 0.35f}, {0.24f, 1568.0f, 0.35f}, {0.36f, 2093.0f, 0.6f}};
   static const Note error[] = {{0, 880.0f, 0.18f}, {0.18f, 659.3f, 0.18f}, {0.5f, 880.0f, 0.18f}, {0.68f, 659.3f, 0.25f}};
   static const Note cooled[] = {{0, 784.0f, 0.3f}, {0.15f, 1174.7f, 0.35f}};
+  static const Note timer[] = {{0, 659.3f, 0.4f}, {0.22f, 830.6f, 0.4f}, {0.44f, 987.8f, 0.4f}, {0.66f, 1318.5f, 0.5f}, {1.05f, 987.8f, 0.6f}};
   static const Note click[] = {{0, 2400.0f, 0.004f}};
   const uint32_t t0 = millis();
   const Note* notes;
@@ -219,6 +222,7 @@ Clip* render(AudioSound s) {
     case SND_ERROR: notes = error; nn = 4; p = ALERT; np = 3; lenS = 1.3f; break;
     case SND_COOLED: notes = cooled; nn = 2; p = MARIMBA; np = 3; lenS = 1.2f; break;
     case SND_CLICK: notes = click; nn = 1; p = TICK; np = 2; lenS = 0.03f; peak = 12000.0f; break;
+    case SND_TIMER: notes = timer; nn = 5; p = BELL; np = 5; lenS = 2.2f; break;
     default: return nullptr;
   }
   const uint32_t frames = (uint32_t)(lenS * SYNTH_RATE);
@@ -447,7 +451,9 @@ bool takeReq(Req& r) {
   if (has) {
     r = s_req;
     s_stop = false;  // a stop after this point cancels this request, also while it loads
+    s_busyTimer = r.type == REQ_SOUND && r.sound == SND_TIMER;
   }
+  s_busy = has;
   s_has = false;
   portEXIT_CRITICAL(&s_mux);
   return has;
@@ -456,6 +462,8 @@ bool takeReq(Req& r) {
 void audioTask(void*) {
   static int16_t buf[CHUNK];
   for (;;) {
+    s_busyTimer = false;
+    s_busy = false;
     const uint32_t woke = ulTaskNotifyTake(pdTRUE, s_tx ? pdMS_TO_TICKS(audioSettings.keepOnMs) : portMAX_DELAY);
     Req r;
     if (!takeReq(r)) {
@@ -472,7 +480,7 @@ void audioTask(void*) {
     }
     if (r.type == REQ_WARM) {
       for (int i = 0; i < SND_COUNT; i++)
-        if (!s_builtin[i]) s_builtin[i] = render((AudioSound)i);
+        if (!s_builtin[i] && i != SND_TIMER) s_builtin[i] = render((AudioSound)i);  // the timer on first use
       continue;
     }
     bool owned;
@@ -525,6 +533,7 @@ const char* eventFile(AudioSound s) {
     case SND_FINISHED: return audioSettings.fileFinished;
     case SND_ERROR: return audioSettings.fileError;
     case SND_COOLED: return audioSettings.fileCooled;
+    case SND_TIMER: return audioSettings.fileTimer;
     default: return "";
   }
 }
@@ -535,6 +544,7 @@ bool eventOn(AudioSound s) {
     case SND_ERROR: return audioSettings.error;
     case SND_COOLED: return audioSettings.cooled;
     case SND_CLICK: return audioSettings.click;
+    case SND_TIMER: return audioSettings.timer;
     default: return false;
   }
 }
@@ -557,6 +567,20 @@ void audioEvent(AudioSound s) {
 }
 
 void audioClick() { audioEvent(SND_CLICK); }
+
+bool audioTimer() {
+  if (!audioSettings.enabled || !audioSettings.volume || !eventOn(SND_TIMER)) return false;
+  return submit(soundReq(SND_TIMER, audioSettings.volume, eventFile(SND_TIMER)));
+}
+
+void audioStopTimer() {
+  portENTER_CRITICAL(&s_mux);
+  if (s_has && s_req.type == REQ_SOUND && s_req.sound == SND_TIMER) s_has = false;
+  if (s_busyTimer) s_stop = true;
+  portEXIT_CRITICAL(&s_mux);
+}
+
+bool audioBusy() { return s_has || s_busy; }
 
 bool audioTest(AudioSound s, uint8_t vol, const String& file, String& err) {
   if (s >= SND_COUNT) {

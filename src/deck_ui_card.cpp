@@ -85,7 +85,7 @@ bool coverPage(bool fill) {
 void onModalScrim(lv_event_t*);
 
 // The scrim for a card: transparent over the covered page, else half black.
-lv_obj_t* makeScrim(bool fill = true) {
+lv_obj_t* makeScrim(bool fill) {
   lv_obj_t* s = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s);
   lv_obj_set_size(s, logicalW(), logicalH());
@@ -484,6 +484,7 @@ void closeModal() {
       w->dragging = w->holding = false;
     }
   }
+  clockCardClosed();
   climateClose();
   coverCardClose();
   presetCardClose();
@@ -511,6 +512,7 @@ void closeModal() {
 
 // Calm: the detail card shrinks back into its tile; confirm cards just close.
 void onModalScrim(lv_event_t*) {
+  if (clockCardScrim()) return;
   if (s_confirmHold < 0) fxCardClose(s_modalCard, s_modalTile);
   else closeModal();
 }

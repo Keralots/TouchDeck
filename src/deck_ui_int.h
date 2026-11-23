@@ -124,6 +124,8 @@ struct TileRt {
   lv_obj_t* colon;
   lv_obj_t* mins;
   bool colonLit;
+  lv_obj_t* pill;          // clock tiles: the running timer
+  int16_t pillW;           // width the time leaves free for it
   lv_obj_t* cover;
   lv_obj_t* mediaButtons[3];
   lv_obj_t* mediaIcons[3];
@@ -415,6 +417,8 @@ void closePanelAnimated();
 
 // deck_ui_card.cpp
 extern lv_obj_t* s_modalCard;
+extern lv_obj_t* s_modalScrim;
+extern lv_draw_buf_t* s_modalGlass;
 extern int s_modalTile;
 extern int8_t s_confirmHold;
 bool modalShown();
@@ -433,6 +437,9 @@ bool climateAdjust(const HaEntity& e, int detents, float& low, float& high);
 bool climateSendTemperature(const String& entity, float low, float high);
 void climateCallFailed();
 void openModal(int tileIdx);
+void cleanPage();
+void coverFill();
+lv_obj_t* makeScrim(bool fill = true);
 void onConfirmOk(lv_event_t*);
 void openConfirm(int tileIdx, bool hold);
 void openPrinterErrors(const String& title, const PrinterState& s);
@@ -452,6 +459,7 @@ int textW(const char* text, const lv_font_t* f);
 void fitNameText(TileRt& r);
 void layoutRows(TileRt& r);
 void fitValue(TileRt& r);
+void fitTile(TileRt& r);
 void fitEvent(lv_event_t* e);
 void fitButton(TileRt& r, int cw, int ch);
 
@@ -505,6 +513,19 @@ void fitClockFx(TileRt& r, int cw, int ch);
 void applyClockFx(TileRt& r, const char* h, const char* m, const char* ap, const char* date);
 void clockFxTick();
 void clockFxFree(ClockFx* c);
+void makeClockContent(TileRt& r, lv_obj_t* t);
+void clockRestyle(TileRt& r);  // after its def's style changed
+bool clockStyleFits(const TileRt& r, int style);
+bool clockInk(const TileRt& r, lv_area_t& time, lv_area_t& date);
+
+// deck_ui_clockcard.cpp
+void openClockCard(int tileIdx);
+void clockTap(lv_event_t* e);
+void clockCardClosed();
+bool clockCardScrim();
+void clockTimerTick(bool systemScreen);
+void clockStyleFlush();
+void clockStyleDrop();
 void digitInk(const lv_font_t* f, int& top, int& h);
 void dateInk(const lv_font_t* f, int& top, int& h);
 void wxFree(WxRt* w);
@@ -526,6 +547,7 @@ void printerTap(TileRt& r);
 void printerEvents();
 void printerFollowTick();
 void printerToast();
+void prnWake();
 void autoNavTo(const String& id);
 void heroTick();
 

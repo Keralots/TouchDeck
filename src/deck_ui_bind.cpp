@@ -1107,6 +1107,10 @@ void requestAction(TileRt& r, bool hold) {
     if (!hold) printerTap(r);
     return;
   }
+  if (r.def->type == TILE_CLOCK) {
+    if (!hold) openClockCard((int)(&r - &s_tiles[0]));
+    return;
+  }
   const TileAction& a = hold ? r.def->hold : r.def->tap;
   if ((r.def->http.enabled && a.kind == ACT_NONE) || a.kind == ACT_NOTHING) return;
   if (needsConfirm(r, a)) openConfirm((int)(&r - &s_tiles[0]), hold);
