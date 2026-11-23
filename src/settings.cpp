@@ -254,7 +254,7 @@ void loadSettings() {
   defaultLedSettings(ledSettings);
 
   prefs.begin(NVS_NAMESPACE, false);
-  // New installs start in Glass; a stored network or old settings mean an upgrade.
+  // New installs start in Glass without the top bar; a stored network or old settings mean an upgrade.
   const bool fresh = !prefs.isKey("rot") && !prefs.isKey("disp") && !prefs.isKey("ssid");
   if (!prefs.isKey("rot")) {
     migrateFromStatNode();
@@ -264,7 +264,15 @@ void loadSettings() {
     dispSettings.powerScaleW = prefs.getUShort("pscale", dispSettings.powerScaleW);
     dispSettings.warnThresholdPct = prefs.getUChar("warnpct", dispSettings.warnThresholdPct);
   }
-  if (fresh) prefs.putUChar("theme", THEME_GLASS);  // after the migration, which removes StatNode's "theme"
+  if (fresh) {
+    prefs.putUChar("theme", THEME_GLASS);  // after the migration, which removes StatNode's "theme"
+    // No top bar either: the start page has its own clock.
+    Preferences ui;
+    if (ui.begin("deckui", false)) {
+      ui.putBool("hdr", false);
+      ui.end();
+    }
+  }
   dispSettings.theme = prefs.getUChar("theme", THEME_MIDNIGHT);
   if (dispSettings.theme > THEME_GLASS) dispSettings.theme = THEME_MIDNIGHT;
   timeSource = prefs.getUChar("tsrc", TIME_SRC_NTP) == TIME_SRC_HA ? TIME_SRC_HA : TIME_SRC_NTP;

@@ -42,7 +42,7 @@ A new deck starts with a Home page (clock, weather for London as an example plac
 - **Confirm before acting:** a tile can ask on the device before it turns something off (a printer mid-print) or before every action. Set it under the tile's "more options" button in the portal.
 - **Tile colours:** per tile, the accent, icon (off and on), text, off background and on fill colours, and in Glass its own glass and on opacity, all optional on top of the theme ("more options" in Pages & tiles).
 - **Icon style:** buttons, switches, sliders and sensors show their icon in a circle or without one (then it fills its place). A switch can show a different icon while on, and a light's icon can follow the light's own colour and brightness. The grid editor shows each tile's icon style and colour.
-- **Quick panel:** pull down from the top edge for screen and LED brightness, the speaker volume (while the speaker or the AI agent is on), link status, screen off, night mode, the top bar switch and the page editor.
+- **Quick panel:** pull down from the top edge for screen and LED brightness, the speaker volume (while the speaker or the AI agent is on), link status, screen off, night mode, the top bar switch (off on a new install) and the page editor.
 - **Edit on the device:** long press an empty spot of a page (or Edit in the quick panel) to move (swap works as in the portal), resize or remove its tiles, or add one with + (a list of Home Assistant entities by group, from the list cached with "Update from HA" in the portal); Done saves the page.
 - **System screens** for start-up, WiFi setup (with a QR code to join the setup network), connecting, and a firmware update screen with progress.
 
