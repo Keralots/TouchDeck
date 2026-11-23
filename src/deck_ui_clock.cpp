@@ -20,11 +20,10 @@ constexpr float TAIL_PART = 0.14f;  // comet tail, share of the ring
 constexpr float GLOW = 2.2f;        // head glow radius, band widths
 
 // One piece of the ring: a straight side or a quarter circle.
-// Points run on the band's centre line; drawing uses whole pixels so the
-// straight sides and the arcs meet without a step.
+// Points run on the band's centre line, in pixel centres.
 struct RingSeg {
   bool arc;
-  float x0, y0, x1, y1;  // line ends; an arc's centre is x0/y0 (a whole pixel)
+  float x0, y0, x1, y1;  // line ends; an arc's centre is x0/y0
   int16_t a0;            // arc start, degrees (0 = right, clockwise)
   float at, len;         // start along the ring, length
   uint8_t side;          // lines: 0 top, 1 right, 2 bottom, 3 left
@@ -269,37 +268,70 @@ static bool sideRect(const ClockFx& c, const RingSeg& s, float a, float b, int w
   return r.x2 >= r.x1 && r.y2 >= r.y1;
 }
 
-// Ring band of width w between d0 and d1: sides as pixel rects, corners as arcs
-// on the same grid. A band wider or narrower than lw stays centred on it.
+// Screen pixels of corner s between t0 and t1 (shares of the quarter, on one side of
+// its middle). Pieces meet on pixel edges: cut across x on the half next to the
+// horizontal side and across y on the other one.
+static lv_area_t cornerClip(const ClockFx& c, const RingSeg& s, float t0, float t1, int os, int ox, int oy) {
+  const bool right = s.a0 == 270 || s.a0 == 0, bottom = s.a0 == 0 || s.a0 == 90;
+  const int in = c.ro + c.rr;
+  // Half-open ranges, object coordinates.
+  int x0 = right ? c.w - in : os, x1 = right ? c.w - os : in;
+  int y0 = bottom ? c.h - in : os, y1 = bottom ? c.h - os : in;
+  float xa, ya, xb, yb, xm, ym;
+  ringPoint(c, s.at + s.len * t0, xa, ya);
+  ringPoint(c, s.at + s.len * t1, xb, yb);
+  ringPoint(c, s.at + s.len * 0.5f, xm, ym);
+  const bool columns = (t1 <= 0.5f) == (s.a0 == 270 || s.a0 == 90);
+  if (columns) {
+    x0 = LV_MAX(x0, (int)lroundf(LV_MIN(xa, xb)));
+    x1 = LV_MIN(x1, (int)lroundf(LV_MAX(xa, xb)));
+  } else {
+    if (right) x0 = (int)lroundf(xm);
+    else x1 = (int)lroundf(xm);
+    auto cut = [&](float t, float y) { return t == 0.5f ? (bottom ? y1 : y0) : (int)lroundf(y); };
+    const int ca = cut(t0, ya), cb = cut(t1, yb);
+    y0 = LV_MIN(ca, cb);
+    y1 = LV_MAX(ca, cb);
+  }
+  return {ox + x0, oy + y0, ox + x1 - 1, oy + y1 - 1};
+}
+
+// Ring band of width w between d0 and d1: sides as pixel rects, corners cut out of
+// the whole band drawn as a border. A band wider or narrower than lw stays centred on it.
 static void ringStroke(lv_layer_t* L, const ClockFx& c, int ox, int oy, float d0, float d1, int w, lv_color_t col,
                        lv_opa_t opa) {
   if (d1 <= d0 || opa < 2 || w <= 0) return;
-  const lv_area_t& clip = L->_clip_area;
   const int os = c.ro + (c.lw - w) / 2;  // outer edge inset of this band
+  const lv_area_t band = {ox + os, oy + os, ox + c.w - 1 - os, oy + c.h - 1 - os};
+  lv_draw_border_dsc_t bd;
+  lv_draw_border_dsc_init(&bd);
+  bd.radius = c.rr + (c.ro - os);
+  bd.width = w;
+  bd.color = col;
+  bd.opa = opa;
+  if (d0 <= 0 && d1 >= c.len) {
+    lv_draw_border(L, &bd, &band);
+    return;
+  }
   for (const RingSeg& s : c.seg) {
     const float a = LV_MAX(d0, s.at), b = LV_MIN(d1, s.at + s.len);
     if (b <= a) continue;
+    lv_area_t r;
     if (!s.arc) {
-      lv_area_t r;
       if (sideRect(c, s, a, b, w, os, ox, oy, r)) fillRect(L, r, col, 0, opa);
-    } else {
-      lv_area_t box = segBox(c, a, b, w + 1);
-      lv_area_move(&box, ox, oy);
-      if (!areaHits(box, clip)) continue;
-      const int s0 = (int)lroundf(s.a0 + 90 * (a - s.at) / s.len), s1 = (int)lroundf(s.a0 + 90 * (b - s.at) / s.len);
-      if (s1 <= s0) continue;
-      lv_draw_arc_dsc_t d;
-      lv_draw_arc_dsc_init(&d);
-      d.center.x = ox + (int32_t)s.x0;
-      d.center.y = oy + (int32_t)s.y0;
-      d.radius = c.rr + (c.ro - os);
-      d.width = w;
-      d.start_angle = s0 % 360;
-      d.end_angle = s1 % 360;
-      d.color = col;
-      d.opa = opa;
-      lv_draw_arc(L, &d);
+      continue;
     }
+    const float t0 = clampf((a - s.at) / s.len, 0, 1), t1 = clampf((b - s.at) / s.len, 0, 1);
+    const lv_area_t keep = L->_clip_area;
+    for (int half = 0; half < 2; half++) {
+      const float u0 = LV_MAX(t0, half * 0.5f), u1 = LV_MIN(t1, 0.5f + half * 0.5f);
+      if (u1 <= u0) continue;
+      r = cornerClip(c, s, u0, u1, os, ox, oy);
+      if (r.x2 < r.x1 || r.y2 < r.y1 || !intersect(&r, &r, &keep)) continue;
+      L->_clip_area = r;
+      lv_draw_border(L, &bd, &band);
+    }
+    L->_clip_area = keep;
   }
 }
 
@@ -595,9 +627,9 @@ static void buildRing(ClockFx& c, int rad) {
   c.lw = (int16_t)lw;
   c.ro = (int16_t)o;
   c.rr = (int16_t)R;
-  c.rc = R - (lw - 1) / 2.0f;
-  // Arc centres on whole pixels; the band's outer edge is R from them.
-  const float L = o + R, T = o + R, Rt = c.w - 1 - o - R, B = c.h - 1 - o - R;
+  c.rc = R - lw / 2.0f;
+  // Arc centres on pixel edges, where LVGL puts a border's.
+  const float L = o + R - 0.5f, T = L, Rt = c.w - 0.5f - o - R, B = c.h - 0.5f - o - R;
   const float e = (lw - 1) / 2.0f;  // centre line inside the band
   const float top = o + e, bot = c.h - 1 - o - e, left = o + e, right = c.w - 1 - o - e, mid = c.w / 2.0f;
   const float q = (float)M_PI / 2 * c.rc;
