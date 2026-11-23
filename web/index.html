@@ -659,8 +659,8 @@
                   <h2 class="card-title">Pictures</h2>
                   <p class="field-hint" style="margin: 0 0 14px">
                     Add pictures separately for each orientation. This browser crops them to fit and stores
-                    JPEGs on the device. Glass uses the old single picture or a built-in gradient when a
-                    gallery is empty. Show now pins a picture for the next boot. Config backups include the
+                    JPEGs on the device. While a gallery is empty, Glass shows the old single picture if there is
+                    one, else the built-in pictures. Show now pins a picture for the next boot. Config backups include the
                     settings, not the pictures.
                   </p>
                   <div class="grid-2">
@@ -671,10 +671,12 @@
                           <option value="0">My pictures</option>
                           <option value="1">Daily pictures (Windows Spotlight)</option>
                           <option value="2">Both</option>
+                          <option value="3">Built-in</option>
                         </select>
                       </div>
                       <p class="field-hint" data-tip>
-                        Daily downloads Windows Spotlight pictures once a day. Internal storage replaces the
+                        Built-in pictures are drawn by the deck and take no space; they are also shown while the
+                        chosen gallery is empty. Daily downloads Windows Spotlight pictures once a day. Internal storage replaces the
                         previous set; microSD keeps an archive. Both mixes daily and your own pictures.
                       </p>
                     </div>

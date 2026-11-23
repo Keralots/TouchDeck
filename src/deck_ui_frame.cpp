@@ -85,7 +85,7 @@ bool requestPicture() {
       if (files[i].name() > s_name) { index = i; break; }
   }
   s_nextName = files[index].name();
-  wallProtect(s_width < s_height, 3, wallSource() == 1 ? "d/" + s_nextName : s_nextName);
+  wallProtect(s_width < s_height, 3, wallSource() == 1 && wallValidName(s_nextName) ? "d/" + s_nextName : s_nextName);
   LoadJob job = {};
   strlcpy(job.path, wallGalleryPath(s_width < s_height, s_nextName).c_str(), sizeof(job.path));
   job.w = s_width;
@@ -286,7 +286,7 @@ void recordAnimation(const PanelStats& stats, bool cancelled) {
 
 void shown() {
   s_name = s_nextName;
-  wallProtect(s_width < s_height, 2, wallSource() == 1 ? "d/" + s_name : s_name);
+  wallProtect(s_width < s_height, 2, wallSource() == 1 && wallValidName(s_name) ? "d/" + s_name : s_name);
   wallProtect(s_width < s_height, 3, "");
   if (std::find(s_shown.begin(), s_shown.end(), wallId(s_name)) == s_shown.end())
     s_shown.push_back(wallId(s_name));
@@ -456,7 +456,7 @@ void frameTick() {
     }
   }
   if (s_next && (s_nextNow || now - s_changed >= presenceSettings.frameEvery * 60000UL)) {
-    if (!wallFs().exists(wallGalleryPath(s_width < s_height, s_nextName))) {
+    if (!wallExists(s_width < s_height, s_nextName)) {
       free(s_next);
       s_next = nullptr;
       return;

@@ -62,7 +62,7 @@ Recorded frame by frame from the display. Pick a set under **Display > Animation
 - **Weather:** now and the next days or hours with animated icons, from Open-Meteo without an account. [More](GUIDE.md#pages-and-tiles)
 - **HTTP buttons and sensors** for LAN devices without Home Assistant (Tasmota, Node-RED, your own projects). [Buttons](GUIDE.md#http-buttons), [sensors](GUIDE.md#http-sensors)
 - **Conditional tiles and pages:** shown only while a PC is on or off, or while an entity is in a state. [More](GUIDE.md#conditional-tiles)
-- **Themes:** Midnight, Daylight and Glass over your own pictures or daily Windows Spotlight wallpapers, per-tile colours and icon styles. [Wallpapers](GUIDE.md#wallpapers-and-microsd)
+- **Themes:** Midnight, Daylight and Glass over built-in wallpapers, your own pictures or daily Windows Spotlight ones, per-tile colours and icon styles. [Wallpapers](GUIDE.md#wallpapers-and-microsd)
 - **Screen sleep** on Home Assistant presence, night schedules for the backlight and the status LED. [More](GUIDE.md#screen-sleep)
 - **MQTT discovery:** the deck shows up in Home Assistant with its screen, page, night mode and a message toast. [More](GUIDE.md#mqtt-home-assistant-discovery)
 - **AI agent (Waveshare 7B):** tap a tile and talk to Home Assistant Assist or your own xiaozhi voice server through the deck's microphones. [More](GUIDE.md#ai-agent-waveshare-7b)

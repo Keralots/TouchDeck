@@ -24,6 +24,7 @@
 #include "deck_mqtt.h"
 #include "deck_weather.h"
 #include "deck_icons.h"
+#include "deck_art.h"
 #include "deck_wall.h"
 #include "deck_panel.h"
 #include "deck_daily.h"
@@ -319,7 +320,7 @@ static void handleApiConfig() {
   display["glassDim"] = dispSettings.glassDim;
   display["wallEvery"] = dispSettings.wallEvery;
   display["wallOrder"] = dispSettings.wallOrder;
-  display["wallDaily"] = dispSettings.wallSource != 0;
+  display["wallDaily"] = wallSourceDaily(dispSettings.wallSource);
   display["wallSource"] = dispSettings.wallSource;
   display["sdCard"] = dispSettings.sdCard;
   display["dailyMax"] = dispSettings.dailyMax;
@@ -462,7 +463,7 @@ static void handleConfigExport() {
   display["glassDim"] = dispSettings.glassDim;
   display["wallEvery"] = dispSettings.wallEvery;
   display["wallOrder"] = dispSettings.wallOrder;
-  display["wallDaily"] = dispSettings.wallSource != 0;
+  display["wallDaily"] = wallSourceDaily(dispSettings.wallSource);
   display["wallSource"] = dispSettings.wallSource;
   display["sdCard"] = dispSettings.sdCard;
   display["dailyMax"] = dispSettings.dailyMax;
@@ -731,12 +732,12 @@ static void handleConfigImport() {
   if (!display["wallEvery"].isNull()) READ_INT(display, "wallEvery", 0, 60, nextDisplay.wallEvery, uint8_t);
   if (!display["wallOrder"].isNull()) READ_INT(display, "wallOrder", 0, 1, nextDisplay.wallOrder, uint8_t);
   if (!display["wallSource"].isNull()) {
-    READ_INT(display, "wallSource", 0, 2, nextDisplay.wallSource, uint8_t);
+    READ_INT(display, "wallSource", 0, 3, nextDisplay.wallSource, uint8_t);
   } else if (!display["wallDaily"].isNull()) {
     READ_BOOL(display, "wallDaily", nextDisplay.wallDaily);
     nextDisplay.wallSource = nextDisplay.wallDaily ? 1 : 0;
   }
-  nextDisplay.wallDaily = nextDisplay.wallSource != 0;
+  nextDisplay.wallDaily = wallSourceDaily(nextDisplay.wallSource);
   if (!display["sdCard"].isNull()) READ_BOOL(display, "sdCard", nextDisplay.sdCard);
   if (!display["dailyMax"].isNull()) READ_INT(display, "dailyMax", 50, 500, nextDisplay.dailyMax, uint16_t);
   if (!validDailyMax(nextDisplay.dailyMax)) {
@@ -1707,7 +1708,7 @@ static void handleSaveWallpapers() {
     order = value.toInt();
   }
   if (server.hasArg("wallSource") && server.arg("wallSource") != "0" &&
-      server.arg("wallSource") != "1" && server.arg("wallSource") != "2") {
+      server.arg("wallSource") != "1" && server.arg("wallSource") != "2" && server.arg("wallSource") != "3") {
     sendJsonMessage(400, false, "invalid wallSource");
     return;
   }
@@ -1726,7 +1727,7 @@ static void handleSaveWallpapers() {
   const uint8_t oldSource = deck::wallSource();
   const uint32_t oldPlan = dispSettings.dailyOrient << 8 | dispSettings.dailyCount;
   if (server.hasArg("wallSource")) dispSettings.wallSource = server.arg("wallSource").toInt();
-  dispSettings.wallDaily = dispSettings.wallSource != 0;
+  dispSettings.wallDaily = wallSourceDaily(dispSettings.wallSource);
   dispSettings.dailyHour = (uint8_t)clampedArg("dailyHour", dispSettings.dailyHour, 0, 23);
   dispSettings.dailyOrient = (uint8_t)clampedArg("dailyOrient", dispSettings.dailyOrient, 0, 2);
   dispSettings.dailyCount = (uint8_t)clampedArg("dailyCount", dispSettings.dailyCount, 1, DAILY_MAX_COUNT);
@@ -2378,25 +2379,28 @@ static String wallApiRef(const String& name) {
 static void handleWallsStatus() {
   bool p;
   if (!wallOrientation(p)) return;
-  if (server.hasArg("gallery") && server.arg("gallery") != "m" && server.arg("gallery") != "d") {
+  if (server.hasArg("gallery") && server.arg("gallery") != "m" && server.arg("gallery") != "d" &&
+      server.arg("gallery") != "b") {
     sendJsonMessage(400, false, "invalid gallery");
     return;
   }
   const bool daily = wallApiDaily();
+  const bool art = server.hasArg("gallery") ? server.arg("gallery") == "b" : deck::wallSource() == 3;
   const size_t offset = std::max<long>(0, server.arg("offset").toInt());
   const size_t limit = server.hasArg("limit") ? constrain(server.arg("limit").toInt(), 1, 96) : 24;
-  auto all = deck::wallListDir(deck::wallDir(p, daily));
+  auto all = art ? deck::wallArtFiles() : deck::wallListDir(deck::wallDir(p, daily));
   JsonDocument doc(psramJson());
   JsonArray files = doc["files"].to<JsonArray>();
   for (size_t i = offset; i < all.size() && i - offset < limit; i++) {
     JsonObject item = files.add<JsonObject>();
-    item["n"] = deck::wallSource() == 2 ? String(daily ? "d/" : "m/") + all[i].name() : all[i].name();
+    if (art) item["t"] = deck::artName((int)i);
+    item["n"] = !art && deck::wallSource() == 2 ? String(daily ? "d/" : "m/") + all[i].name() : all[i].name();
     item["s"] = all[i].size;
   }
   doc["count"] = all.size();
   doc["offset"] = offset;
   doc["limit"] = limit;
-  doc["gallery"] = daily ? "d" : "m";
+  doc["gallery"] = art ? "b" : daily ? "d" : "m";
   doc["source"] = deck::wallSource();
   doc["current"] = deck::wallCurrent(p);
   doc["pinned"] = deck::wallPinned(p);
@@ -2422,12 +2426,58 @@ static void handleWallsStatus() {
   server.send(200, "application/json", out);
 }
 
+// A built-in picture as a small BMP for the portal.
+static void sendArtThumb(int index, bool portrait) {
+  struct Bmp {
+    uint8_t* px;
+    int w, h, stride;
+  } bmp;
+  const int sw = deck::screenW(portrait), sh = deck::screenH(portrait);
+  bmp.w = portrait ? 160 * sw / sh : 160;
+  bmp.h = portrait ? 160 : 160 * sh / sw;
+  bmp.stride = (bmp.w * 3 + 3) & ~3;
+  const size_t size = 54 + bmp.stride * bmp.h;
+  uint8_t* out = (uint8_t*)heap_caps_calloc(1, size, MALLOC_CAP_SPIRAM);
+  if (!out) {
+    sendJsonMessage(500, false, "out of memory");
+    return;
+  }
+  bmp.px = out + 54;
+  const auto put = [&](int at, uint32_t v) { memcpy(out + at, &v, 4); };
+  out[0] = 'B';
+  out[1] = 'M';
+  put(2, size);
+  put(10, 54);
+  put(14, 40);
+  put(18, bmp.w);
+  put(22, bmp.h);
+  out[26] = 1;
+  out[28] = 24;
+  const bool ok = deck::artDraw(index, bmp.w, bmp.h, [](void* ctx, int y, const uint8_t* rgb) {
+    const Bmp& b = *(Bmp*)ctx;
+    uint8_t* d = b.px + (b.h - 1 - y) * b.stride;
+    for (int x = 0; x < b.w; x++, d += 3, rgb += 3) {
+      d[0] = rgb[2];
+      d[1] = rgb[1];
+      d[2] = rgb[0];
+    }
+  }, &bmp);
+  server.sendHeader("Cache-Control", "public, max-age=3600");
+  if (ok) server.send_P(200, "image/bmp", (PGM_P)out, size);
+  else sendJsonMessage(500, false, "out of memory");
+  heap_caps_free(out);
+}
+
 static void handleWallsFile() {
   bool p;
   if (!wallOrientation(p)) return;
   const String name = wallApiRef(server.arg("n"));
   if (!deck::wallValidRef(name)) {
     sendJsonMessage(400, false, "invalid file name");
+    return;
+  }
+  if (deck::wallArtIndex(name) >= 0) {
+    sendArtThumb(deck::wallArtIndex(name), p);
     return;
   }
   File f = deck::wallFs().open(deck::wallGalleryPath(p, name), "r");
@@ -2522,7 +2572,7 @@ static void handleWallFinish() {
       else {
         deck::wallIndexChanged(p, true, name);
         deck::dailyTrim(p);
-        if (deck::wallSource() != 0) deck::wallGalleryChanged(p);
+        if (deck::wallDaily()) deck::wallGalleryChanged(p);
       }
     }
     wallUploadCleanup();
@@ -2554,7 +2604,8 @@ static void handleWallFinish() {
   }
   deck::wallIndexChanged(p, false, name);
   deck::wallGalleryChanged(p);
-  if (files.empty()) deck::wallRequest(p, deck::wallSource() == 2 ? "m/" + String(name) : String(name));
+  if (files.empty() && deck::wallSource() != 3)
+    deck::wallRequest(p, deck::wallSource() == 2 ? "m/" + String(name) : String(name));
   const int index = server.arg("i").toInt(), count = server.arg("c").toInt();
   if (index > 0 && count >= index) {
     char toast[48];
@@ -2569,7 +2620,7 @@ static void handleWallRemove() {
   bool p;
   if (!wallOrientation(p)) return;
   if (deck::deckFsReady()) LittleFS.remove(wallFile(p));
-  if (deck::wallFiles(p).empty()) deck::wallRequest(p, "");
+  deck::wallGalleryChanged(p);
   handleWallStatus();
 }
 
@@ -2586,7 +2637,7 @@ static void handleWallsDelete() {
     do {
       const int comma = names.indexOf(',', start);
       const String name = wallApiRef(comma < 0 ? names.substring(start) : names.substring(start, comma));
-      if (!deck::wallValidRef(name)) {
+      if (!deck::wallValidRef(name) || deck::wallArtIndex(name) >= 0) {
         sendJsonMessage(400, false, "invalid file name");
         return;
       }
@@ -2620,14 +2671,20 @@ static void handleWallsShow() {
   if (!wallOrientation(p)) return;
   String name = wallApiRef(server.arg("n"));
   if (!deck::wallValidRef(name)) { sendJsonMessage(400, false, "invalid file name"); return; }
-  if (deck::wallSource() != 2) {
+  if (deck::wallArtIndex(name) >= 0) {
+    const auto files = deck::wallFiles(p);
+    if (files.empty() || files.front().name() != deck::wallArtFiles().front().name()) {
+      sendJsonMessage(400, false, "picture is outside the selected source");
+      return;
+    }
+  } else if (deck::wallSource() != 2) {
     if ((name[0] == 'd') != (deck::wallSource() == 1)) {
       sendJsonMessage(400, false, "picture is outside the selected source");
       return;
     }
     name = name.substring(2);
   }
-  if (!deck::wallFs().exists(deck::wallGalleryPath(p, name))) {
+  if (!deck::wallExists(p, name)) {
     sendJsonMessage(404, false, "picture not found");
     return;
   }

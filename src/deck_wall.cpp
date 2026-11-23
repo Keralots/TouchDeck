@@ -1,6 +1,7 @@
 // Guition deck: Glass theme wallpaper. See deck_wall.h.
 #include "deck_wall.h"
 #include <src/misc/cache/instance/lv_image_cache.h>
+#include "deck_art.h"
 #include "deck_config.h"
 #include "deck_panel.h"
 #include <LittleFS.h>
@@ -124,8 +125,39 @@ int jpegOutput(JDEC* jd, void* pixels, JRECT* rect) {
   return 1;
 }
 
+int artIndex(const char* ref) {
+  if (strncmp(ref, "b/", 2) || strlen(ref) != 14) return -1;
+  const unsigned long i = strtoul(ref + 2, nullptr, 16);
+  return i < ART_COUNT ? (int)i : -1;
+}
+
+struct ArtOutput {
+  uint8_t *r, *g, *b;
+  uint16_t* rgb565;
+  int w, step;
+};
+
+void artRow(void* ctx, int y, const uint8_t* src) {
+  const ArtOutput& o = *(ArtOutput*)ctx;
+  for (int x = 0; x < o.w; x++, src += 3) {
+    const int i = y * o.w + x;
+    if (o.rgb565) o.rgb565[i] = wallDither565(src[0], src[1], src[2], x, y);
+    else {
+      o.r[i * o.step] = src[0];
+      o.g[i * o.step] = src[1];
+      o.b[i * o.step] = src[2];
+    }
+  }
+}
+
+// A file, or a built-in picture ("b/...") drawn at this size.
 bool jpegLoad(const char* path, int w, int h, uint8_t* r, uint8_t* g, uint8_t* b, uint16_t* rgb565 = nullptr,
               int step = 1) {
+  const int art = artIndex(path);
+  if (art >= 0) {
+    ArtOutput out = {r, g, b, rgb565, w, step};
+    return artDraw(art, w, h, artRow, &out);
+  }
   JpegInput in(path, r, g, b, w, h);
   in.rgb565 = rgb565;
   in.step = step;
@@ -145,6 +177,7 @@ bool jpegLoad(const char* path, int w, int h, uint8_t* r, uint8_t* g, uint8_t* b
 
 // Each gallery keeps its own pin.
 const char* pinKey(bool portrait) {
+  if (s_source == 3) return portrait ? "wpin_rp" : "wpin_rl";
   if (s_source == 2) return portrait ? "wpin_bp" : "wpin_bl";
   return s_source == 1 ? (portrait ? "wpin_dp" : "wpin_dl") : (portrait ? "wpin_p" : "wpin_l");
 }
@@ -170,7 +203,7 @@ void initGallery(bool portrait) {
   if (!s_current[portrait].length() && !files.empty())
     s_current[portrait] = files[dispSettings.wallOrder ? esp_random() % files.size() : 0].name();
   s_initialized[portrait] = true;
-  if (s_pin[portrait].length() && !wallFs().exists(wallGalleryPath(portrait, s_pin[portrait])))
+  if (s_pin[portrait].length() && !wallExists(portrait, s_pin[portrait]))
     wallClearPin(portrait);
 }
 
@@ -184,6 +217,9 @@ void fillDsc(lv_image_dsc_t& d, const void* px, int w, int h, lv_color_format_t 
   d.data = (const uint8_t*)px;
   d.data_size = (uint32_t)w * h * bpp;
 }
+
+// Daily names carry no prefix in their own source.
+String sourceRef(const String& name) { return s_source == 1 && wallValidName(name) ? "d/" + name : name; }
 
 uint8_t clamp8(float v) { return v <= 0 ? 0 : v >= 255 ? 255 : (uint8_t)(v + 0.5f); }
 
@@ -440,7 +476,7 @@ void installImage(WallJob& job) {
   s_dim = job.dim;
   s_loadedName = job.name;
   s_current[job.w < job.h] = job.name;
-  wallProtect(job.w < job.h, 0, wallSource() == 1 && job.name[0] ? "d/" + String(job.name) : String(job.name));
+  wallProtect(job.w < job.h, 0, sourceRef(job.name));
   wallProtect(job.w < job.h, 1, "");
   s_changedMs = millis();
   ++s_generation;
@@ -471,7 +507,7 @@ bool wallLoad(int w, int h, int blurR, int dimPct) {
   job.dim = dimPct;
   strlcpy(job.name, s_current[p].c_str(), sizeof(job.name));
   strlcpy(job.path, wallGalleryPath(p, job.name).c_str(), sizeof(job.path));
-  wallProtect(p, 1, s_source == 1 && job.name[0] ? "d/" + String(job.name) : String(job.name));
+  wallProtect(p, 1, sourceRef(job.name));
   if (!prepareImage(job)) {
     free(job.sharp);
     free(job.blurred);
@@ -509,24 +545,31 @@ bool wallValidName(const String& name) {
 
 bool wallValidRef(const String& name) {
   return wallValidName(name) || (name.length() == 14 && name[1] == '/' &&
-         (name[0] == 'm' || name[0] == 'd') && wallValidName(name.substring(2)));
+         (name[0] == 'm' || name[0] == 'd') && wallValidName(name.substring(2))) ||
+         wallArtIndex(name) >= 0;
+}
+
+int wallArtIndex(const String& name) { return artIndex(name.c_str()); }
+
+bool wallExists(bool portrait, const String& name) {
+  return wallArtIndex(name) >= 0 || wallFs().exists(wallGalleryPath(portrait, name));
 }
 
 uint64_t wallId(const String& name) {
   const bool qualified = name.length() == 14;
   return strtoul(name.c_str() + (qualified ? 2 : 0), nullptr, 16) |
-         (uint64_t)(qualified && name[0] == 'd') << 32;
+         (uint64_t)(!qualified ? 0 : name[0] == 'd' ? 1 : name[0] == 'b' ? 2 : 0) << 32;
 }
 
 String WallFile::name() const {
   char text[15];
-  if (qualified) snprintf(text, sizeof(text), "%c/%08lx.jpg", id >> 32 ? 'd' : 'm', (unsigned long)(uint32_t)id);
+  if (qualified) snprintf(text, sizeof(text), "%c/%08lx.jpg", "mdb"[(id >> 32) % 3], (unsigned long)(uint32_t)id);
   else snprintf(text, sizeof(text), "%08lx.jpg", (unsigned long)(uint32_t)id);
   return text;
 }
 
 uint8_t wallSource() { loadSource(); return s_source; }
-bool wallDaily() { return wallSource() != 0; }
+bool wallDaily() { return wallSource() == 1 || wallSource() == 2; }
 
 void wallSetSource(uint8_t source) {
   loadSource();
@@ -543,12 +586,20 @@ void wallSetSource(uint8_t source) {
 }
 
 String wallGalleryPath(bool portrait, const String& name) {
+  if (wallArtIndex(name) >= 0) return name;
   const bool qualified = name.length() == 14;
   const bool daily = qualified ? name[0] == 'd' : wallSource() == 1;
   return String(wallDir(portrait, daily)) + "/" + (qualified ? name.substring(2) : name);
 }
 
+WallFiles wallArtFiles() {
+  WallFiles files;
+  for (int i = 0; i < ART_COUNT; i++) files.push_back({(uint64_t)2 << 32 | (uint32_t)i, 0, 0, true});
+  return files;
+}
+
 WallFiles wallFiles(bool portrait) {
+  if (wallSource() == 3) return wallArtFiles();
   auto files = wallListDir(wallDir(portrait, wallSource() == 1));
   if (wallSource() == 1)
     for (auto& f : files) f.id = (uint32_t)f.id;
@@ -561,6 +612,9 @@ WallFiles wallFiles(bool portrait) {
       return (a.id >> 32) != (b.id >> 32) ? (a.id >> 32) > (b.id >> 32) : a.id < b.id;
     });
   }
+  // Nothing yet: the built-in ones, unless an old single picture is in use.
+  if (files.empty() && !(deckFsReady() && LittleFS.exists(wallPath(screenW(portrait), screenH(portrait)))))
+    return wallArtFiles();
   return files;
 }
 
@@ -570,18 +624,18 @@ String wallPinned(bool portrait) { initGallery(portrait); return s_pin[portrait]
 bool wallPin(bool portrait, const String& name) {
   if (!wallValidRef(name)) return false;
   initGallery(portrait);
-  const String ref = s_source == 1 ? "d/" + name : name;
+  const String ref = sourceRef(name);
   // Protect before checking existence, so eviction cannot race the NVS write.
   wallProtect(portrait, 7, ref);
   bool ok = false;
   Preferences prefs;
-  if (wallFs().exists(wallGalleryPath(portrait, name)) && prefs.begin(NVS_NAMESPACE, false)) {
+  if (wallExists(portrait, name) && prefs.begin(NVS_NAMESPACE, false)) {
     ok = prefs.putString(pinKey(portrait), name) > 0;
     prefs.end();
   }
   if (ok) {
     s_pin[portrait] = name;
-    wallProtect(portrait, 4 + s_source, ref);
+    if (s_source < 3) wallProtect(portrait, 4 + s_source, ref);
   }
   wallProtect(portrait, 7, "");
   return ok;
@@ -595,7 +649,7 @@ void wallClearPin(bool portrait) {
     prefs.end();
   }
   s_pin[portrait] = "";
-  wallProtect(portrait, 4 + s_source, "");
+  if (s_source < 3) wallProtect(portrait, 4 + s_source, "");
 }
 
 bool wallLoadPicture(const char* path, int w, int h, uint16_t* pixels) {
@@ -618,7 +672,7 @@ void wallRequest(bool portrait, const String& name) {
   ++s_requestId[portrait];
   s_automatic[portrait] = false;
   s_requested[portrait] = name;
-  wallProtect(portrait, 1, s_source == 1 && name.length() ? "d/" + name : name);
+  wallProtect(portrait, 1, sourceRef(name));
   s_request[portrait] = true;
   s_retryMs = 0;
   if (portrait != ((dispSettings.rotation & 1) == 0) || dispSettings.theme != THEME_GLASS)
@@ -662,7 +716,7 @@ void wallGalleryChanged(bool portrait) {
   const JobState state = s_jobState;
   portEXIT_CRITICAL(&s_jobMux);
   if (state != JOB_IDLE && (job.w < job.h) == portrait && job.name[0] &&
-      !wallFs().exists(wallGalleryPath(portrait, job.name))) ++s_requestId[portrait];
+      !wallExists(portrait, job.name)) ++s_requestId[portrait];
   auto files = wallFiles(portrait);
   const String current = s_current[portrait];
   bool found = false, pinned = false;
@@ -672,7 +726,7 @@ void wallGalleryChanged(bool portrait) {
   }
   if (!pinned && s_pin[portrait].length()) wallClearPin(portrait);
   if (s_request[portrait] && s_requested[portrait].length() &&
-      !wallFs().exists(wallGalleryPath(portrait, s_requested[portrait]))) s_request[portrait] = false;
+      !wallExists(portrait, s_requested[portrait])) s_request[portrait] = false;
   if (found || s_request[portrait]) return;
   String next;
   if (!files.empty()) {
@@ -693,7 +747,7 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch, bool rotate, void (*makeR
       discardJob();
     } else {
       if (!canSwitch || (s_job.automatic && !idle)) return false;
-      if (!s_job.name[0] || wallFs().exists(wallGalleryPath(p, s_job.name))) return true;
+      if (!s_job.name[0] || wallExists(p, s_job.name)) return true;
       discardJob();
     }
   }
