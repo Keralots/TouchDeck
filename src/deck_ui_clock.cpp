@@ -54,7 +54,6 @@ struct ClockFx {
   // Orbit.
   RingSeg seg[9];
   float len;
-  float mark[12][2];  // a mark every 5 s
   int16_t lw, ro, rr;  // band width, outer edge inset, arc outer radius
   float rc;            // centre line radius
   int16_t ext;         // how far the head's glow sticks out of the tile
@@ -352,11 +351,6 @@ static void drawRing(lv_layer_t* L, const ClockFx& c, int ox, int oy, lv_color_t
   const float tail = LV_MIN(head, c.len * TAIL_PART);
   ringStroke(L, c, ox, oy, 0, head - tail, c.lw, acc, LV_OPA_40);
   ringTail(L, c, ox, oy, head - tail, head, acc);
-  // The marks light up once passed.
-  for (int k = 0; k < 12; k++) {
-    const bool lit = c.len * k / 12 <= head;
-    dot(L, ox + c.mark[k][0], oy + c.mark[k][1], c.lw * (k % 3 ? 0.6f : 0.95f), lit ? acc : text, lit ? LV_OPA_COVER : LV_OPA_50);
-  }
   if (c.el < FLASH_MS) {
     const float e = 1 - (float)c.el / FLASH_MS;
     ringStroke(L, c, ox, oy, 0, c.len, c.lw + (int)(c.lw * 1.4f * e), acc, (lv_opa_t)(230 * e));
@@ -625,7 +619,6 @@ static void buildRing(ClockFx& c, int rad) {
   c.len = at;
   c.head = -1;
   c.ext = (int16_t)LV_MAX(0, (int)lroundf(lw * GLOW) - (int)(o + e));
-  for (int k = 0; k < 12; k++) ringPoint(c, c.len * k / 12, c.mark[k][0], c.mark[k][1]);
 }
 
 void fitClockFx(TileRt& r, int cw, int ch) {
