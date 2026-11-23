@@ -32,8 +32,8 @@ struct ClockScene {
 
 template <class T>
 ClockScene* newScene() {
-  void* p = lv_malloc_zeroed(sizeof(T));
-  return p ? new (p) T : nullptr;
+  void* p = lv_malloc(sizeof(T));
+  return p ? new (p) T() : nullptr;
 }
 ClockScene* blocksScene();
 ClockScene* breakoutScene();

@@ -17,6 +17,7 @@ constexpr uint32_t AT_REST = 100000;  // el of a clock that is not changing
 constexpr int TAIL_STEP_PX = 3;  // tail fades in steps this long
 constexpr int TAIL_STEPS = 6;     // boards without BOARD_CLOCK_SMOOTH_TAIL
 constexpr float TAIL_PART = 0.14f;  // comet tail, share of the ring
+constexpr float GLOW = 2.2f;        // head glow radius, band widths
 
 // One piece of the ring: a straight side or a quarter circle.
 // Points run on the band's centre line; drawing uses whole pixels so the
@@ -56,6 +57,7 @@ struct ClockFx {
   float mark[12][2];  // a mark every 5 s
   int16_t lw, ro, rr;  // band width, outer edge inset, arc outer radius
   float rc;            // centre line radius
+  int16_t ext;         // how far the head's glow sticks out of the tile
   int32_t head;    // px along the ring as last drawn, -1 = none yet
   int32_t minute;  // epoch minute last applied while shown
 };
@@ -232,7 +234,7 @@ static void ringInvalidate(const ClockFx& c, float d0, float d1) {
   if (d1 <= d0) return;
   lv_area_t o;
   lv_obj_get_coords(c.obj, &o);
-  const int g = c.lw * 3 + 2;  // the head's glow
+  const int g = (int)lroundf(c.lw * GLOW) + 1;  // the head's glow
   for (const RingSeg& s : c.seg) {
     const float a = LV_MAX(d0, s.at), b = LV_MIN(d1, s.at + s.len);
     if (b < a || s.len <= 0) continue;
@@ -361,7 +363,7 @@ static void drawRing(lv_layer_t* L, const ClockFx& c, int ox, int oy, lv_color_t
   }
   float x, y;
   ringPoint(c, head, x, y);
-  dot(L, ox + x, oy + y, c.lw * 2.2f, acc, LV_OPA_50);
+  dot(L, ox + x, oy + y, c.lw * GLOW, acc, LV_OPA_50);
   dot(L, ox + x, oy + y, LV_MAX(2.0f, c.lw * 1.1f), lv_color_white(), LV_OPA_COVER);
 }
 
@@ -454,6 +456,10 @@ static void clockDraw(lv_event_t* e) {
 
 // --- Tile ----------------------------------------------------------------------
 
+static void orbitExt(lv_event_t* e) {
+  lv_event_set_ext_draw_size(e, ((const ClockFx*)lv_event_get_user_data(e))->ext);
+}
+
 void makeClockFx(TileRt& r, lv_obj_t* t) {
   ClockFx* c = (ClockFx*)lv_malloc_zeroed(sizeof(ClockFx));
   if (!c) return;
@@ -478,6 +484,10 @@ void makeClockFx(TileRt& r, lv_obj_t* t) {
   c->colonLit = true;
   c->dateY = -1;
   lv_obj_add_event_cb(c->obj, clockDraw, LV_EVENT_DRAW_MAIN, c);
+  if (!c->orbit) return;
+  // The head's glow reaches into the gap round the tile.
+  lv_obj_add_flag(t, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+  for (lv_obj_t* o : {t, c->obj}) lv_obj_add_event_cb(o, orbitExt, LV_EVENT_REFR_EXT_DRAW_SIZE, c);
 }
 
 static void buildRing(ClockFx& c, int rad) {
@@ -510,6 +520,7 @@ static void buildRing(ClockFx& c, int rad) {
   }
   c.len = at;
   c.head = -1;
+  c.ext = (int16_t)LV_MAX(0, (int)lroundf(lw * GLOW) - (int)(o + e));
   for (int k = 0; k < 12; k++) ringPoint(c, c.len * k / 12, c.mark[k][0], c.mark[k][1]);
 }
 
@@ -526,6 +537,8 @@ void fitClockFx(TileRt& r, int cw, int ch) {
   c->len = 0;
   if (c->orbit) {
     buildRing(*c, lv_obj_get_style_radius(r.obj, LV_PART_MAIN));
+    lv_obj_refresh_ext_draw_size(r.obj);
+    lv_obj_refresh_ext_draw_size(c->obj);
     const int keep = c->lw * 4 + 5;  // text stays clear of the ring and its head
     aw = LV_MIN(aw, c->w - 2 * keep);
     ah = LV_MIN(ah, c->h - 2 * keep);

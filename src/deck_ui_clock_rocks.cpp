@@ -489,6 +489,7 @@ bool Rocks::tick(lv_obj_t* o, const ClockNow& n) {
   }
   if (!n.live) {
     lastMs = 0;
+    triggered = -1;  // back before :00: shoot it again
     if (phase != P_IDLE || memcmp(shown, n.cur, 5)) {
       if (phase != P_IDLE) reset();
       memcpy(shown, n.cur, 6);
