@@ -2758,13 +2758,6 @@ static void handleWeatherPreview() {
   sendJsonMessage(ok ? 200 : 409, ok, ok ? "Preview shown until the next fetch" : "No weather data yet");
 }
 
-// POST /api/deck/art-time?t=<UTC seconds> - bench hook: the built-in pictures
-// follow this time, t=0 the clock again.
-static void handleArtTime() {
-  deck::wallArtPreview(strtoul(server.arg("t").c_str(), nullptr, 10));
-  sendJsonMessage(200, true, "Picture time set");
-}
-
 static void handleFrameGet() {
   JsonDocument doc;
   deckFrameJson(doc.to<JsonObject>());
@@ -3223,7 +3216,6 @@ void initWebServer() {
   server.on("/api/debug/anim", HTTP_GET, handleDebugAnimGet);
   server.on("/api/debug/anim", HTTP_POST, handleDebugAnimPost);
   server.on("/api/deck/weather-preview", HTTP_POST, handleWeatherPreview);
-  server.on("/api/deck/art-time", HTTP_POST, handleArtTime);
   server.on("/api/deck/frame", HTTP_GET, handleFrameGet);
   server.on("/api/deck/frame", HTTP_POST, handleFramePost);
   server.on("/api/deck/prefs", HTTP_POST, handleDeckPrefs);
