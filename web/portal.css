@@ -440,6 +440,10 @@ a {
 .card > .grid-2 + .grid-2 {
   margin-top: 14px;
 }
+#mqttForm .check-row + .grid-2,
+#mqttForm .check-row + .field {
+  margin-top: 14px;
+}
 #sleepFrameFields {
   margin: 0 0 16px;
 }

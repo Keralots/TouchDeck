@@ -93,8 +93,7 @@
 <div class="grid-2"><div class="field"><label class="field-label" for="dkHaUrl">Address</label><input type="text" id="dkHaUrl" placeholder="http://192.168.0.7:8123" autocomplete="off"></div>
 <div class="field"><label class="field-label" for="dkHaToken">Long-lived access token</label><input type="password" id="dkHaToken" autocomplete="off" placeholder="paste the token"><p class="field-hint">HA profile, Security tab, Long-lived access tokens. Stored only on the device, never shown again.</p></div></div>
 <div class="dk-row"><button type="button" class="btn btn-accent" id="dkHaSave">Save and connect</button><button type="button" class="btn" id="dkHaForget">Forget</button></div>
-<div class="dk-status"><span class="dk-dot" id="dkHaDot"></span><span id="dkHaState">checking...</span></div></div>
-<div class="card"><h2 class="card-title">Also from Home Assistant</h2><p class="maintenance-copy">The deck as a device in Home Assistant (MQTT discovery): <a href="#" data-page="advanced">Advanced</a>. Taking the time from Home Assistant: <a href="#" data-page="clock">Time</a>. Presence entities that wake the screen: <a href="#" data-page="light">Brightness &amp; sleep</a>.</p></div>`;
+<div class="dk-status"><span class="dk-dot" id="dkHaDot"></span><span id="dkHaState">checking...</span></div><p class="maintenance-copy" style="margin:14px 0 0">The time can come from Home Assistant too: <a href="#" data-page="clock">Time</a>. Entities that wake the screen: <a href="#" data-page="light">Brightness &amp; sleep</a>.</p></div>`;
   document.body.insertAdjacentHTML(
     "beforeend",
     `<div class="dk-modal" id="dkPicker"><div class="dk-sheet"><div class="dk-head">

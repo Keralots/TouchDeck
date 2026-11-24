@@ -451,7 +451,56 @@
               </form>
             </section>
 
-            <section class="page" data-page="ha" id="haSection"></section>
+            <section class="page" data-page="ha">
+              <div id="haSection"></div>
+              <form
+                id="mqttForm"
+                class="portal-form"
+                data-endpoint="/save/mqtt"
+                data-save-label="Save MQTT settings"
+              >
+                <div class="card">
+                  <h2 class="card-title">MQTT (Home Assistant discovery)</h2>
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="mqttEnabled" name="mqttEnabled" /><span class="check-box"></span
+                    ><span class="check-text"><strong>Connect to an MQTT broker</strong></span></label
+                  >
+                  <div class="grid-2">
+                    <div class="field">
+                      <label class="field-label" for="mqttHost">Broker</label>
+                      <input type="text" id="mqttHost" name="mqttHost" maxlength="80"
+                        placeholder="192.168.0.7 or mqtt://host:1883" />
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="mqttPort">Port</label>
+                      <input type="number" id="mqttPort" name="mqttPort" min="1" max="65535" value="1883" required />
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="mqttUser">Username</label>
+                      <input type="text" id="mqttUser" name="mqttUser" maxlength="127" autocomplete="off" />
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="mqttPass">Password</label>
+                      <input type="password" id="mqttPass" name="mqttPass" maxlength="127" autocomplete="new-password" />
+                      <span class="field-hint">Leave blank to keep the stored password.</span>
+                    </div>
+                  </div>
+                  <label class="check-row standalone"
+                    ><input type="checkbox" id="mqttClearPass" name="mqttClearPass" /><span class="check-box"></span
+                    ><span class="check-text"><strong>Clear password</strong></span></label
+                  >
+                  <div class="field">
+                    <label class="field-label" for="mqttPrefix">Discovery prefix</label>
+                    <input type="text" id="mqttPrefix" name="mqttPrefix" maxlength="127" value="homeassistant" />
+                  </div>
+                  <p class="maintenance-copy">Status: <span id="mqttStatus">off</span></p>
+                  <p class="maintenance-copy">
+                    The deck appears in Home Assistant under Settings &gt; Devices &gt; MQTT.
+                    Needs the MQTT integration and a broker such as the Mosquitto add-on.
+                  </p>
+                </div>
+              </form>
+            </section>
 
             <section class="page" data-page="display">
               <div class="page-header">
@@ -1969,46 +2018,6 @@
                       ><span class="ct-hint">Page slides, cards and popups run at up to 60 fps instead of 30, but saving settings or files can flash the screen green for a moment. The guard against that flash halves the frame rate, so it stays the default until a fix in the display libraries arrives. Applies after a restart.</span></span
                     ></label
                   >
-                </div>
-                <div class="card">
-                  <h2 class="card-title">MQTT (Home Assistant discovery)</h2>
-                  <label class="check-row standalone"
-                    ><input type="checkbox" id="mqttEnabled" name="mqttEnabled" /><span class="check-box"></span
-                    ><span class="check-text"><strong>Connect to an MQTT broker</strong></span></label
-                  >
-                  <div class="grid-2">
-                    <div class="field">
-                      <label class="field-label" for="mqttHost">Broker</label>
-                      <input type="text" id="mqttHost" name="mqttHost" maxlength="80"
-                        placeholder="192.168.0.7 or mqtt://host:1883" />
-                    </div>
-                    <div class="field">
-                      <label class="field-label" for="mqttPort">Port</label>
-                      <input type="number" id="mqttPort" name="mqttPort" min="1" max="65535" value="1883" required />
-                    </div>
-                    <div class="field">
-                      <label class="field-label" for="mqttUser">Username</label>
-                      <input type="text" id="mqttUser" name="mqttUser" maxlength="127" autocomplete="off" />
-                    </div>
-                    <div class="field">
-                      <label class="field-label" for="mqttPass">Password</label>
-                      <input type="password" id="mqttPass" name="mqttPass" maxlength="127" autocomplete="new-password" />
-                      <span class="field-hint">Leave blank to keep the stored password.</span>
-                    </div>
-                  </div>
-                  <label class="check-row standalone"
-                    ><input type="checkbox" id="mqttClearPass" name="mqttClearPass" /><span class="check-box"></span
-                    ><span class="check-text"><strong>Clear password</strong></span></label
-                  >
-                  <div class="field">
-                    <label class="field-label" for="mqttPrefix">Discovery prefix</label>
-                    <input type="text" id="mqttPrefix" name="mqttPrefix" maxlength="127" value="homeassistant" />
-                  </div>
-                  <p class="maintenance-copy">Status: <span id="mqttStatus">off</span></p>
-                  <p class="maintenance-copy">
-                    The deck appears in Home Assistant under Settings &gt; Devices &gt; MQTT.
-                    Needs the MQTT integration and a broker such as the Mosquitto add-on.
-                  </p>
                 </div>
               </form>
             </section>

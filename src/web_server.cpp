@@ -1314,7 +1314,8 @@ static void handleSaveHardware() {
   sendJsonMessage(200, true, "Hardware settings applied.");
 }
 
-static void handleSaveAdvanced() {
+// Home Assistant page: the MQTT broker.
+static void handleSaveMqtt() {
   MqttSettings next = mqttSettings();
   next.enabled = server.hasArg("mqttEnabled");
   next.host = server.arg("mqttHost");
@@ -1339,6 +1340,10 @@ static void handleSaveAdvanced() {
     sendJsonMessage(500, false, "Could not store MQTT settings");
     return;
   }
+  sendJsonMessage(200, true, "MQTT settings applied.");
+}
+
+static void handleSaveAdvanced() {
   deckSetPrinters(server.hasArg("printers"));
   advSettings.weather60 = server.hasArg("weather60");
   advSettings.charts60 = server.hasArg("charts60");
@@ -3164,6 +3169,7 @@ void initWebServer() {
 #if BOARD_HAS_ENCODER
   server.on("/encoder/preview", HTTP_POST, handleEncoderPreview);
 #endif
+  server.on("/save/mqtt", HTTP_POST, handleSaveMqtt);
   server.on("/save/advanced", HTTP_POST, handleSaveAdvanced);
   server.on("/save/printers", HTTP_POST, handleSavePrinters);
   server.on("/led/preview", HTTP_POST, handleLedPreview);
