@@ -376,9 +376,15 @@ static void ringTail(lv_layer_t* L, const ClockFx& c, int ox, int oy, float d0, 
   }
 }
 
+// The tile has an outline of its own (baked on Glass); a second line beside it looks doubled.
+static bool outlined(const ClockFx& c) {
+  const TileRt* r = tileOf(lv_obj_get_parent(c.obj));
+  return r && !r->frameObj && (s_theme == THEME_DAYLIGHT || (s_theme == THEME_GLASS && wallBlur()));
+}
+
 static void drawRing(lv_layer_t* L, const ClockFx& c, int ox, int oy, lv_color_t text) {
   const lv_color_t acc = lv_color_hex(c.accent);
-  ringStroke(L, c, ox, oy, 0, c.len, LV_MAX(1, c.lw / 2), text, LV_OPA_20);
+  if (!outlined(c)) ringStroke(L, c, ox, oy, 0, c.len, LV_MAX(1, c.lw / 2), text, LV_OPA_20);
   const float head = c.head < 0 ? 0 : (float)c.head;
   const float tail = LV_MIN(head, c.len * TAIL_PART);
   ringStroke(L, c, ox, oy, 0, head - tail, c.lw, acc, LV_OPA_40);
@@ -621,7 +627,7 @@ bool clockStyleFits(const TileRt& r, int style) {
 }
 
 static void buildRing(ClockFx& c, int rad) {
-  const int lw = LV_CLAMP(2, LV_MIN(c.w, c.h) / 45, 4), o = 1 + lw / 2;
+  const int lw = LV_CLAMP(2, LV_MIN(c.w, c.h) / 45, 4), o = 0;  // on the tile's edge
   int R = LV_MAX(lw + 1, rad - o);
   R = LV_MIN(R, LV_MIN(c.w, c.h) / 2 - o - 1);
   c.lw = (int16_t)lw;
@@ -665,7 +671,7 @@ void fitClockFx(TileRt& r, int cw, int ch) {
   int aw = cw, ah = ch;
   c->len = 0;
   if (c->orbit) {
-    buildRing(*c, lv_obj_get_style_radius(r.obj, LV_PART_MAIN));
+    buildRing(*c, lv_obj_get_style_radius(r.obj, LV_PART_MAIN) - lv_obj_get_style_border_width(r.obj, LV_PART_MAIN));
     lv_obj_refresh_ext_draw_size(r.obj);
     lv_obj_refresh_ext_draw_size(c->obj);
     const int keep = c->lw * 4 + 5;  // text stays clear of the ring and its head
