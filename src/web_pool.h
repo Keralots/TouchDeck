@@ -6,7 +6,8 @@
 
 class PooledWebServer : public WebServer {
 public:
-  using WebServer::WebServer;
+  // Browsers open 6 connections at once; with the library's backlog of 4 the rest wait 1 s to retry.
+  explicit PooledWebServer(int port) : WebServer(port) { _server = NetworkServer(port, 6); }
 
   void handleClient() override {
     if (_currentStatus == HC_NONE) {
