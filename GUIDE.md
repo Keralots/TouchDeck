@@ -50,23 +50,24 @@ A new deck starts with a Home page (clock, weather for London as an example plac
 
 Open the device IP (or `http://<hostname>.local`) in a browser:
 
-- **Overview:** live picture of the screen, PC stream, Home Assistant link, diagnostics.
-- **Pages & tiles:** Home Assistant address and token, the icon font, pages (Duplicate copies one as a plain page), tiles, entity and icon pickers (None leaves a tile without an icon; a name of just a space leaves it without a name, `"label": ""`), columns, and a grid editor: drag tiles to move them (dropped onto another tile, that tile jumps to the dragged one's old place if it fits there), resize from the corner (half-cell steps), separately for landscape and portrait.
-- **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper, the default on a new install), the Glass look, animations, PC metric tile scales.
-- **Wallpapers:** pictures for the Glass theme and the photo frame: your own uploads, daily pictures the deck downloads from Windows Spotlight once a day, both mixed, or the built-in ones. See [Wallpapers and microSD](#wallpapers-and-microsd).
+- **Pages & tiles:** pages (Duplicate copies one as a plain page), tiles, entity and icon pickers (None leaves a tile without an icon; a name of just a space leaves it without a name, `"label": ""`), columns, and a grid editor: drag tiles to move them (dropped onto another tile, that tile jumps to the dragged one's old place if it fits there), resize from the corner (half-cell steps), separately for landscape and portrait. A tile picked in the preview comes first in the tile list; **Preview as if** shows the page with the PC off, without sound and so on. The icon font is below the editor.
+- **PC:** the live data of the companion, the scales and the warning of PC metric tiles.
+- **Home Assistant:** address and token, MQTT discovery.
+- **Appearance:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper, the default on a new install), the Glass look, animations.
+- **Wallpapers:** pictures for the Glass theme and the photo frame: your own uploads, daily pictures the deck downloads from Windows Spotlight once a day, both mixed, or the built-in ones, and how often they change behind the tiles and in the photo frame. See [Wallpapers and microSD](#wallpapers-and-microsd).
 - **Printers:** Bambu Lab printers, their errors and alerts, the energy of a print. Shown once printers are turned on under Advanced. See [Bambu Lab printers](#bambu-lab-printers).
-- **Screen:** day brightness and the night schedule, screen sleep and presence.
+- **Brightness & sleep:** day brightness and the night schedule, screen sleep and presence.
 - **Hardware:** the speaker, the status LED and its Home Assistant entity, the vibration motor, rotary encoders (Waveshare 7B, see [Rotary encoders](#rotary-encoders-waveshare-7b)).
 - **AI Agent:** the voice assistant, on a board with microphones (the Waveshare 7B). See [AI agent](#ai-agent-waveshare-7b).
 - **Time:** 12/24 h clock, timezone, and where the time comes from: network time (pool.ntp.org, the default) or Home Assistant, for a deck on a network that reaches only Home Assistant. With Home Assistant the deck reads its clock over the WebSocket on every connection and then hourly; the timezone is still the deck's own. A new deck runs in UTC until the first browser opens the portal, which sets its own timezone (a place with irregular clock changes gets its present offset only).
-- **Network:** WiFi, hostname / mDNS, static IP.
-- **Advanced:** optional features, off by default: Bambu Lab printers and MQTT. On the Waveshare 7B also **Animation**:
+- **Network:** WiFi, hostname / mDNS, static IP. A new deck is `touchdeck.local`, or `touchdeck-<mac>.local` when another deck on the network already has that name.
+- **Advanced:** optional features, off by default: Bambu Lab printers. On the Waveshare 7B also **Animation**:
   - **Weather icons**, **Charts and printer effects** and **Clock animations at 60 fps:** animate on every screen refresh instead of every second one. Smoother, uses more CPU time.
-- **Maintenance:** microSD card, configuration backup (pages and settings; WiFi and the Home Assistant token are never included), firmware update, factory reset.
+- **Maintenance:** microSD card, configuration backup (pages and settings; WiFi and the Home Assistant token are never included), firmware update, screenshot, factory reset.
 
 ## Home Assistant
 
-In **Pages & tiles**, enter the Home Assistant address (for example `http://192.168.0.7:8123`) and a long-lived access token (HA profile, Security tab). The token is stored only on the device. Install the icon font, click "Update from HA" to cache the entity list, then add tiles from the entity picker.
+On the **Home Assistant** page, enter the Home Assistant address (for example `http://192.168.0.7:8123`) and a long-lived access token (HA profile, Security tab). The token is stored only on the device. Install the icon font, click "Update from HA" to cache the entity list, then add tiles from the entity picker.
 
 ## Brand icons
 
@@ -102,7 +103,7 @@ A page that goes away while it is shown always hands over to another page first;
 
 ## Screen sleep
 
-On the **Screen** page, the Sleep card sets the time without touch and without presence after which the screen fades out or dims (the night level still applies when it is lower), and what counts as presence:
+On the **Brightness & sleep** page, the Sleep card sets the time without touch and without presence after which the screen fades out or dims (the night level still applies when it is lower), and what counts as presence:
 
 - Up to four Home Assistant entities (motion, occupancy, a person); one counts as present while its state is `on` or `home`. Optionally any PC sending metrics, and any printer preparing, printing or paused. Presence starting wakes the screen, also after Off in the quick panel.
 - A touch always wakes it; that first touch does nothing else. With a night brightness of 0 a touch lights the screen at 10% until a minute after the last touch.
@@ -131,7 +132,7 @@ Or copy the folders straight onto the card under `/touchdeck/wall/` and restart 
 
 ## MQTT (Home Assistant discovery)
 
-Under **Advanced**, enable **Connect to an MQTT broker**, enter its host and port (plain TCP, default 1883), and optional username/password. Broker accepts `host`, `host:port` or `mqtt://host:port`. Leave the discovery prefix as `homeassistant` unless your MQTT integration uses another one. Save the form; its status line shows the connection. The deck appears under **Settings > Devices > MQTT** with the configured hostname. Home Assistant needs its MQTT integration and a broker such as the Mosquitto add-on.
+On the **Home Assistant** page, enable **Connect to an MQTT broker**, enter its host and port (plain TCP, default 1883), and optional username/password. Broker accepts `host`, `host:port` or `mqtt://host:port`. Leave the discovery prefix as `homeassistant` unless your MQTT integration uses another one. Save the form; its status line shows the connection. The deck appears under **Settings > Devices > MQTT** with the configured hostname. Home Assistant needs its MQTT integration and a broker such as the Mosquitto add-on.
 
 - **Screen (light):** wake or turn off the display, and set the current day/night brightness.
 - **Page (select):** choose a currently visible page; duplicate names get numbered suffixes.

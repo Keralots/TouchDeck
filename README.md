@@ -42,7 +42,7 @@ Captured from the device (`/screen.bmp`), Glass theme unless noted.
 
 ## Animations
 
-Recorded frame by frame from the display. Pick a set under **Display > Animations** (Classic, Calm, Water, Glass, Heavy, or Custom to choose each effect).
+Recorded frame by frame from the display. Pick a set under **Appearance > Animations** (Classic, Calm, Water, Glass, Heavy, or Custom to choose each effect).
 
 | | |
 |:---:|:---:|
