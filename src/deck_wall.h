@@ -44,8 +44,6 @@ String wallGalleryPath(bool portrait, const String& name = "");
 // The pictures of the source; the built-in ones while it has none.
 WallFiles wallFiles(bool portrait);
 WallFiles wallArtFiles();
-// Bench hook: built-in pictures follow this time (UTC seconds) instead of the clock, 0 = the clock.
-void wallArtPreview(uint32_t utc);
 WallFiles wallListDir(const char* path);
 String wallCurrent(bool portrait);
 String wallPinned(bool portrait);

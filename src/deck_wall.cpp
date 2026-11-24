@@ -48,7 +48,6 @@ struct WallJob {
 };
 WallJob s_job = {};
 ArtTime s_loadedArt = {};
-volatile uint32_t s_artPreview = 0;
 
 uint64_t settingsKey() {
   return (uint64_t)dispSettings.rotation | (uint64_t)dispSettings.theme << 8 |
@@ -141,7 +140,7 @@ int artIndex(const char* ref) {
 // The light to draw this picture in; {} = as designed, or not a built-in one.
 ArtTime artTime(const char* ref) {
   ArtTime at = {};
-  const uint32_t now = s_artPreview ? s_artPreview : (uint32_t)time(nullptr);
+  const uint32_t now = (uint32_t)time(nullptr);
   if (!dispSettings.wallFollow || now < 1609459200 || !artFollows(artIndex(ref))) return at;
   at.utc = now;
   at.place = weatherPlace(at.lat, at.lon);
@@ -954,8 +953,6 @@ void wallCommit() {
   discardJob();
   Serial.printf("Deck: wallpaper swap %lu ms\n", (unsigned long)(millis() - start));
 }
-
-void wallArtPreview(uint32_t utc) { s_artPreview = utc; }
 
 void wallRestartTimer() { s_changedMs = millis(); }
 
