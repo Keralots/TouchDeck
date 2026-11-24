@@ -2,6 +2,7 @@
 #include "deck_config.h"
 #include "deck_bambu.h"
 #include "config.h"
+#include "settings.h"
 #include "psram_json.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
@@ -650,6 +651,13 @@ bool deckFsWipe(const char* keep) {
   return mountFs() && wipeDirectory("/", keep);
 }
 
+// The start page names the deck's own address.
+static String defaultDeck() {
+  String text = FPSTR(kDefaultDeck);
+  text.replace("touchdeck.local", String(netSettings.hostname) + ".local");
+  return text;
+}
+
 void deckConfigText(String& out) {
   if (mountFs() && LittleFS.exists(CONFIG_PATH)) {
     File f = LittleFS.open(CONFIG_PATH, "r");
@@ -663,7 +671,7 @@ void deckConfigText(String& out) {
       if (!deserializeJson(doc, out) && doc["pages"].is<JsonArrayConst>()) return;
     }
   }
-  out = FPSTR(kDefaultDeck);
+  out = defaultDeck();
 }
 
 bool deckConfigStore(const String& text, DeckConfig& out, String& err) {
@@ -712,7 +720,8 @@ bool deckConfigLoad(DeckConfig& out, String* source, String* err) {
     }
   }
   if (source) *source = "built-in";
-  return deckConfigParse(kDefaultDeck, strlen_P(kDefaultDeck), out, nullptr);
+  const String text = defaultDeck();
+  return deckConfigParse(text.c_str(), text.length(), out, nullptr);
 }
 
 }  // namespace deck

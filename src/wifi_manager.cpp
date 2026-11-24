@@ -6,8 +6,11 @@
 #include <WiFi.h>
 #include <DNSServer.h>
 #include <ESPmDNS.h>
+#include <mdns.h>
 #include <esp_sntp.h>
 #include "deck_ha.h"
+#include "deck_ui.h"
+#include <Preferences.h>
 
 static bool apMode = false;
 static DNSServer* dnsServer = nullptr;
@@ -129,12 +132,45 @@ static void applyStaticNetworkConfig() {
   }
 }
 
+String mdnsHostname() {
+  char name[MDNS_NAME_BUF_LEN] = "";
+  if (!netSettings.mdnsEnabled || mdns_hostname_get(name) != ESP_OK || !name[0]) return netSettings.hostname;
+  return name;
+}
+
+// New install: when another deck already has the default name, this one takes
+// touchdeck-<mac> before it announces itself.
+static void claimHostname() {
+  Preferences ui;
+  if (!ui.begin("deckui", false)) return;
+  const bool claim = ui.getBool("claim", false);
+  if (claim) ui.remove("claim");
+  ui.end();
+  if (!claim || strcmp(netSettings.hostname, "touchdeck") != 0) return;
+
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  char own[32];
+  snprintf(own, sizeof(own), "touchdeck-%02x%02x", mac[4], mac[5]);
+  if (!MDNS.begin(own)) return;
+  IPAddress other;
+  for (int i = 0; i < 2 && other == IPAddress(); i++) other = MDNS.queryHost("touchdeck", 1000);
+  MDNS.end();
+  if (other == IPAddress() || other == WiFi.localIP()) return;
+  Serial.printf("mDNS: touchdeck.local is %s, using %s\n", other.toString().c_str(), own);
+  strlcpy(netSettings.hostname, own, sizeof(netSettings.hostname));
+  saveSettings();
+  deckHostnameChanged();
+}
+
 // Start (or restart) the mDNS responder so the device is reachable at
 // <hostname>.local. No-op unless the user enabled it. Safe to call repeatedly:
 // MDNS.end() first lets us re-announce after a WiFi drop/reconnect, which the
 // ESP32 responder does not always recover on its own.
 static void startMDNS() {
   if (!netSettings.mdnsEnabled || netSettings.hostname[0] == '\0') return;
+
+  claimHostname();
 
   // The web UI validates too, but never trust stored input.
   char host[32];

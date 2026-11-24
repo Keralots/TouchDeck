@@ -270,6 +270,7 @@ void loadSettings() {
     Preferences ui;
     if (ui.begin("deckui", false)) {
       ui.putBool("hdr", false);
+      ui.putBool("claim", true);  // the first connection checks that the hostname is free
       ui.end();
     }
   }

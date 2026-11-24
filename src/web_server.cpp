@@ -33,7 +33,7 @@
 #include "crash_log.h"
 #include "coproc_update.h"
 #include <LittleFS.h>
-#include <WebServer.h>
+#include "web_pool.h"
 #include <ArduinoJson.h>
 #include <Update.h>
 #include <esp_task_wdt.h>
@@ -44,7 +44,7 @@
 #include <time.h>
 #include <algorithm>
 
-static WebServer server(80);
+static PooledWebServer server(80);
 
 // Deferred restart (so the HTTP response flushes before reboot).
 static unsigned long restartAt = 0;
@@ -1992,7 +1992,7 @@ static void handleApiStatus() {
   doc["wifi_last_disc_reason"] = wifiLastDisconnectReason();
   doc["metric_count"] = pc0 ? pc0->data.count : 0;
   doc["timestamp"] = pc0 ? pc0->data.timestamp : "";
-  doc["hostname"] = netSettings.hostname;
+  doc["hostname"] = mdnsHostname();
   doc["rssi"] = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
   doc["uptime_seconds"] = millis() / 1000UL;
   doc["ap_mode"] = isAPMode();
