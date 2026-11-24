@@ -43,7 +43,7 @@ struct WallJob {
   uint16_t* sharp;
   uint8_t* blurred;
   bool ok, automatic;
-  bool redraw;  // the picture on screen again, in its new light
+  bool redraw;  // the picture on screen again, in its new light: into the loaded buffers
   ArtTime art;
 };
 WallJob s_job = {};
@@ -390,6 +390,80 @@ void blurChannel(uint8_t* p, int step, int w, int h, int r, uint8_t* scratch) {
   if (esp_task_wdt_status(nullptr) == ESP_OK) esp_task_wdt_reset();
 }
 
+// blurChannel for a picture that comes as rows of 3 channels, top to bottom:
+// keeps only the rows under the box instead of the whole picture.
+struct RowBlur {
+  int w3, r, n;
+  void (*out)(void* ctx, int y, const uint8_t* row);
+  void* ctx;
+  int fed[3] = {};
+  uint8_t *ring[3] = {}, *line = nullptr;  // line: one output row per pass, then two for the rows
+  uint32_t *sum = nullptr, inv;
+
+  RowBlur(int w, int radius, void (*o)(void*, int, const uint8_t*), void* c)
+      : w3(w * 3), r(radius), n(2 * radius + 1), out(o), ctx(c), inv(0xFFFFFFFFu / n + 1) {}
+  RowBlur(const RowBlur&) = delete;
+  ~RowBlur() {
+    for (uint8_t* p : ring) heap_caps_free(p);
+    heap_caps_free(line);
+    heap_caps_free(sum);
+  }
+  bool begin() {
+    bool ok = true;
+    for (uint8_t*& p : ring) ok &= (p = (uint8_t*)heap_caps_malloc(n * w3, MALLOC_CAP_SPIRAM)) != nullptr;
+    line = (uint8_t*)heap_caps_malloc(5 * w3, MALLOC_CAP_SPIRAM);
+    sum = (uint32_t*)heap_caps_malloc(3 * w3 * sizeof(uint32_t), MALLOC_CAP_SPIRAM);
+    return ok && line && sum;
+  }
+  uint8_t avg(uint32_t s) const { return (uint8_t)(((uint64_t)s * inv) >> 32); }
+
+  void across(const uint8_t* s, uint8_t* d) const {
+    for (int c = 0; c < 3; c++) {
+      const int last = w3 - 3 + c;
+      uint32_t acc = n / 2 + (r + 1) * s[c];
+      for (int i = 1; i <= r; i++) acc += s[std::min(c + i * 3, last)];
+      for (int i = c; i <= last; i += 3) {
+        d[i] = avg(acc);
+        acc += s[std::min(i + (r + 1) * 3, last)] - s[std::max(i - r * 3, c)];
+      }
+    }
+  }
+  // One row into a vertical pass; its output row goes into the next one.
+  void down(int pass, const uint8_t* row) {
+    uint32_t* acc = sum + pass * w3;
+    const int k = fed[pass]++;
+    if (k == 0) {
+      for (int i = 0; i < w3; i++) acc[i] = n / 2 + (r + 1) * row[i];
+    } else if (k <= r) {
+      for (int i = 0; i < w3; i++) acc[i] += row[i];
+    } else {
+      const uint8_t* old = ring[pass] + (k <= n ? 0 : k % n) * w3;
+      for (int i = 0; i < w3; i++) acc[i] += row[i] - old[i];
+    }
+    memcpy(ring[pass] + (k % n) * w3, row, w3);
+    if (k < r) return;
+    uint8_t* d = line + pass * w3;
+    for (int i = 0; i < w3; i++) d[i] = avg(acc[i]);
+    if (pass < 2) down(pass + 1, d);
+    else out(ctx, k - r, d);
+  }
+  void row(const uint8_t* src) {
+    uint8_t *a = line + 3 * w3, *b = a + w3;
+    across(src, a);
+    across(a, b);
+    across(b, a);
+    down(0, a);
+  }
+  // The rows still under the boxes: the last one repeats past the edge.
+  void end() {
+    uint8_t* last = line + 3 * w3;
+    for (int pass = 0; pass < 3; pass++) {
+      memcpy(last, ring[pass] + ((fed[pass] - 1) % n) * w3, w3);
+      for (int i = 0; i < r; i++) down(pass, last);
+    }
+  }
+};
+
 }  // namespace
 
 void wallBlurPlane(uint8_t* p, uint8_t* tmp, int w, int h, int r) { blurPlane(p, tmp, w, h, r); }
@@ -438,11 +512,44 @@ bool prepareImage(WallJob& job) {
   return true;
 }
 
+// The loaded picture in new light. Row by row into its own buffers: printer pages
+// leave no PSRAM for a second picture. Nothing is written when memory is short.
+bool redrawImage(const WallJob& job) {
+  struct Output {
+    int w, keep;
+    RowBlur blur;
+  };
+  Output out = {job.w, (100 - job.dim) * 256 / 100,
+                RowBlur(job.w, job.blur, [](void*, int y, const uint8_t* row) {
+                  uint8_t* d = s_blur + (size_t)y * s_w * 3;
+                  for (int i = 0; i < s_w * 3; i += 3) {
+                    d[i] = row[i + 2];
+                    d[i + 1] = row[i + 1];
+                    d[i + 2] = row[i];
+                  }
+                }, nullptr)};
+  const uint32_t start = millis();
+  if (!out.blur.begin()) {
+    Serial.println("Deck: wallpaper PSRAM allocation failed");
+    return false;
+  }
+  const bool ok = artDraw(artIndex(job.name), job.w, job.h, job.art, [](void* ctx, int y, const uint8_t* row) {
+    Output& o = *(Output*)ctx;
+    uint16_t* d = s_sharp + (size_t)y * o.w;
+    for (int x = 0; x < o.w; x++)
+      d[x] = wallDither565(row[x * 3] * o.keep >> 8, row[x * 3 + 1] * o.keep >> 8, row[x * 3 + 2] * o.keep >> 8, x, y);
+    o.blur.row(row);
+  }, &out);
+  if (ok) out.blur.end();
+  Serial.printf("Deck: wallpaper redraw %lu ms\n", (unsigned long)(millis() - start));
+  return ok;
+}
+
 void wallJob() {
   portENTER_CRITICAL(&s_jobMux);
   WallJob job = s_job;
   portEXIT_CRITICAL(&s_jobMux);
-  job.ok = prepareImage(job);
+  job.ok = job.redraw ? redrawImage(job) : prepareImage(job);
   portENTER_CRITICAL(&s_jobMux);
   s_job = job;
   s_jobState = JOB_READY;
@@ -498,7 +605,7 @@ void installImage(WallJob& job) {
   wallProtect(job.w < job.h, 0, sourceRef(job.name));
   wallProtect(job.w < job.h, 1, "");
   s_loadedArt = job.art;
-  if (!job.redraw) s_changedMs = millis();
+  s_changedMs = millis();
   ++s_generation;
   fillDsc(s_sharpDsc, s_sharp, s_w, s_h, LV_COLOR_FORMAT_RGB565, 2);
   fillDsc(s_blurDsc, s_blur, s_w, s_h, LV_COLOR_FORMAT_RGB888, 3);
@@ -540,6 +647,10 @@ bool wallLoad(int w, int h, int blurR, int dimPct) {
 
 void wallFree() {
   wallInvalidateJobs();
+  if (jobState() != JOB_IDLE && s_job.redraw) {  // it draws into the buffers freed here
+    while (jobState() == JOB_RUNNING) delay(1);
+    discardJob();
+  }
   lv_image_cache_drop(&s_sharpDsc);
   lv_image_cache_drop(&s_blurDsc);
   s_generation++;  // also covers reloads that reuse the same allocation addresses
@@ -761,6 +872,12 @@ void wallGalleryChanged(bool portrait) {
 bool wallPoll(int w, int h, bool idle, bool canSwitch, bool rotate, void (*makeRoom)()) {
   const bool p = w < h;
   const uint32_t now = millis();
+  if (jobState() == JOB_READY && s_job.redraw) {
+    // The buffers hold the new light already, whatever changed meanwhile.
+    if (s_job.ok) return canSwitch && (idle || !s_job.automatic || s_request[p]);
+    s_retryMs = now;
+    discardJob();
+  }
   if (jobState() == JOB_READY) {
     if (s_job.epoch != s_epoch || s_job.requestId != s_requestId[p] || s_job.settings != settingsKey() ||
         s_job.w != w || s_job.h != h || !s_job.ok || (s_job.automatic && !rotate)) {
@@ -777,32 +894,36 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch, bool rotate, void (*makeR
   initGallery(p);
   if (s_request[p] && s_automatic[p] && !rotate) s_request[p] = false;
   if (s_request[p] && s_automatic[p] && !idle) return false;
-  bool redraw = false;
+  bool redraw = false, late = false;
+  ArtTime art = {};
   if (!s_request[p]) {
-    if (!rotate || !idle || now - s_scanMs < 1000) return false;
+    if (now - s_scanMs < 1000) return false;
     s_scanMs = now;
-    if (dispSettings.wallEvery && now - s_changedMs >= (uint32_t)dispSettings.wallEvery * 60000 &&
+    if (rotate && idle && dispSettings.wallEvery && now - s_changedMs >= (uint32_t)dispSettings.wallEvery * 60000 &&
         wallFiles(p).size() > 1) {
       wallNext(p);
       s_automatic[p] = true;
     } else {
-      redraw = s_sharp && s_w == w && s_h == h && !(artTime(s_loadedName.c_str()) == s_loadedArt);
-      if (!redraw) return false;
+      art = artTime(s_loadedName.c_str());
+      redraw = s_sharp && s_w == w && s_h == h && !(art == s_loadedArt);
+      // Far off (drawn at boot before the clock was set, or before a long sleep): at once.
+      late = art.utc - s_loadedArt.utc > 900;
+      if (!redraw || !(idle || late)) return false;
     }
   }
   if (makeRoom) makeRoom();
   WallJob job = {};
   job.w = w;
   job.h = h;
-  job.blur = dispSettings.glassBlur;
-  job.dim = dispSettings.glassDim;
+  job.blur = redraw ? s_blurR : dispSettings.glassBlur;
+  job.dim = redraw ? s_dim : dispSettings.glassDim;
   job.settings = settingsKey();
   job.epoch = s_epoch;
   job.requestId = s_requestId[p];
-  job.automatic = redraw || s_automatic[p];
+  job.automatic = redraw ? !late : s_automatic[p];
   job.redraw = redraw;
   strlcpy(job.name, redraw ? s_loadedName.c_str() : s_requested[p].c_str(), sizeof(job.name));
-  job.art = artTime(job.name);
+  job.art = redraw ? art : artTime(job.name);
   strlcpy(job.path, wallGalleryPath(p, job.name).c_str(), sizeof(job.path));
   portENTER_CRITICAL(&s_jobMux);
   s_job = job;
@@ -822,7 +943,14 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch, bool rotate, void (*makeR
 void wallCommit() {
   if (jobState() != JOB_READY) return;
   const uint32_t start = millis();
-  installImage(s_job);
+  if (s_job.redraw) {
+    lv_image_cache_drop(&s_sharpDsc);
+    lv_image_cache_drop(&s_blurDsc);
+    s_loadedArt = s_job.art;
+    ++s_generation;
+  } else {
+    installImage(s_job);
+  }
   discardJob();
   Serial.printf("Deck: wallpaper swap %lu ms\n", (unsigned long)(millis() - start));
 }

@@ -63,7 +63,8 @@ bool wallNext(bool portrait);
 void wallGalleryChanged(bool portrait);
 void wallInvalidateJobs();
 // Poll/start work, then commit only after the UI has stopped gestures.
-// rotate false: no automatic change starts and a finished one is dropped.
+// rotate false: no automatic change starts and a finished one is dropped;
+// the picture on screen still follows the time of day.
 // makeRoom: called before a job starts, to free PSRAM the UI can rebuild.
 bool wallPoll(int w, int h, bool idle, bool canSwitch, bool rotate, void (*makeRoom)() = nullptr);
 void wallCommit();
