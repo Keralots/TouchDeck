@@ -172,7 +172,8 @@
     more = -1;
   /* Tiles selected together on the current page (the group bar), kept as objects so a reorder keeps them. */
   const msel = new Set();
-  /* The tile picked in the preview: its row stands first, apart from the list (a view only, the order stays). */
+  /* The tile picked in the preview: while it is the selected one, its row stands first, apart from the list
+   (a view only, the order stays). */
   let picked = null,
     showPicked = false;
   /* After the portal has folded the new hints into tips, which moves the rows. */
@@ -3092,7 +3093,7 @@
     const p = ps[cur];
     for (const t of msel) if (!p.tiles.includes(t) || hidT(t)) msel.delete(t);
     const top = msel.size ? -1 : p.tiles.indexOf(picked);
-    if (top < 0 || hidT(picked)) picked = null;
+    if (top < 0 || top !== sel || hidT(picked)) picked = null;
     const [c, r] = grid(p),
       land = ori === "landscape",
       pick = (scr.pick || { landscape: [6, 4], portrait: [4, 6] })[ori],
@@ -3295,7 +3296,7 @@
       '</div><div class="dk-right">' +
       (msel.size ? groupBar(p, ps, at) : "") +
       (picked
-        ? '<div class="dk-picked"><span class="dk-sec">Picked tile</span>' + rows.splice(top, 1)[0] + "</div>"
+        ? '<div class="dk-picked"><span class="dk-sec">Selected tile</span>' + rows.splice(top, 1)[0] + "</div>"
         : "") +
       '<div class="dk-tiles" id="dkTiles">' +
       rows.join("") +
@@ -3328,7 +3329,16 @@
           if (k === sel || e.target.closest("input,select,button,textarea,a,label,.dk-more")) return;
           msel.clear();
           sel = k;
+          picked = null;
+          /* The block above goes away: scroll so the clicked row stays where it was, also once the hints fold. */
+          const y = row.getBoundingClientRect().top,
+            hold = () => {
+              const x = document.querySelector('#dkTiles [data-x="' + k + '"]');
+              if (x) window.scrollBy({ top: x.closest(".dk-tile").getBoundingClientRect().top - y, behavior: "instant" });
+            };
           renderPage();
+          hold();
+          setTimeout(hold, 60);
         };
     });
     $("dkPName").oninput = (e) => {
@@ -3629,7 +3639,7 @@
           if (i < 1) return;
           const t = p.tiles.splice(i, 1)[0];
           p.tiles.splice(i - 1, 0, t);
-          sel = -1;
+          sel = p.tiles.indexOf(picked);
           more = -1;
           setDirty(true);
           renderPage();
@@ -3640,7 +3650,7 @@
         (x.onclick = () => {
           p.tiles.splice(+x.dataset.x, 1);
           pruneFrames(p);
-          sel = -1;
+          sel = p.tiles.indexOf(picked);
           more = -1;
           setDirty(true);
           renderPage();
