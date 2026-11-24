@@ -77,7 +77,7 @@
 <div class="dk-save"><span class="dk-msg" id="dkPrnMsg">No changes</span><button type="button" class="btn btn-accent" id="dkPrnSave">Save to device</button></div></div>
 <div class="card" id="dkPagesCard"><div class="card-head"><h2 class="card-title">Editor</h2></div>
 <label class="check-row standalone" style="margin-bottom:14px"><input type="checkbox" id="dkHeader"><span class="check-box"></span><span class="check-text"><strong>Show the top bar</strong><span class="ct-hint">Page name, WiFi and clock above the tiles. Also switchable in the quick panel on the device.</span></span></label>
-<div class="dk-tabs" id="dkTabs"></div><div id="dkPage"></div>
+<div class="dk-tabs" id="dkTabs"></div><div id="dkPage"><p class="dk-empty">Loading, please wait...</p></div>
 <div class="dk-save"><span class="dk-msg" id="dkMsg">No changes</span><button type="button" class="btn btn-accent" id="dkSave">Save to device</button></div></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Icons</h2><span class="tag" id="dkIcTag">-</span></div>
 <p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; "Install" downloads it in this browser and sends it to the device. Without it the deck shows a few built-in symbols.</p>
@@ -4415,9 +4415,7 @@
     try {
       setList(await api("/api/ha/entities" + (refresh ? "?refresh=1" : "")));
       entsErr = "";
-      if (deck) {
-        renderPage();
-      }
+      lateRender();
     } catch (e) {
       entsErr = e.message;
       $("dkEnts").innerHTML =
@@ -4648,6 +4646,21 @@
     iconCp(t.icon) || iconCp((entMap[t.entity] || {}).icon) || (t.type === "agent" ? iconCp("mdi:robot-outline") : 0);
   // PC metrics and chart sensors show an icon only when one is picked, never the entity's.
   const iconOptional = (t) => t.type === "metric" || (t.type === "sensor" && t.style === "chart" && !(t.rows || []).length);
+  /* Names or icons arrived: draw again, but not under somebody's typing or dragging. */
+  function lateRender() {
+    if (!deck) return;
+    const a = document.activeElement,
+      band = $("dkBand");
+    if (
+      ($("dkPage").contains(a) && a.matches("input:not([type=checkbox]),select,textarea")) ||
+      document.querySelector(".dk-gt.drag") ||
+      (band && !band.hidden)
+    ) {
+      setTimeout(lateRender, 400);
+      return;
+    }
+    renderPage();
+  }
   async function loadMdi(size) {
     try {
       const r = await fetch("/mdi.ttf?v=" + size);
@@ -4658,7 +4671,7 @@
       const f = new FontFace("dkmdi", buf);
       await f.load();
       document.fonts.add(f);
-      if (deck) renderPage();
+      lateRender();
     } catch (e) {
       mdi = null;
       $("dkIcState").textContent = "font on the device, but the portal could not read it: " + e.message;
@@ -4955,7 +4968,7 @@
     cbiNames = lines;
     cbiFace = face;
     document.fonts.add(face);
-    if (deck) renderPage();
+    lateRender();
   }
   async function brRefresh() {
     brBusy = true;
@@ -5161,8 +5174,6 @@
     const host = document.getElementById("prnListHost");
     if (host) host.appendChild($("dkPrnCard"));
     haStatus();
-    icRefresh();
-    brRefresh();
     printersStatus();
     setInterval(() => {
       if (visible()) {
@@ -5170,10 +5181,10 @@
         printersStatus();
       }
     }, 3000);
-    await loadPc();
-    ori = ori || "landscape";
+    /* The pages first: the deck sends one file at a time, and the icon fonts are 1-2 MB each. */
     try {
-      const r = await api("/api/deck");
+      const [r] = await Promise.all([api("/api/deck"), loadPc()]);
+      ori = ori || "landscape";
       deck = r.deck;
       deck.pages = deck.pages.filter((p) => p.type !== "metrics");
       $("dkHeader").checked = r.header !== false;
@@ -5184,5 +5195,7 @@
     try {
       await loadEnts();
     } catch (e) {}
+    icRefresh();
+    brRefresh();
   })();
 })();
