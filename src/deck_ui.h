@@ -61,6 +61,8 @@ void deckPerfJson(String& out, uint32_t minUs);
 extern uint32_t deckPerfWebUs, deckPerfPcUs;  // set by loop() before deckTick
 // Portal save: validate, store /deck.json and rebuild the pages in place.
 bool deckApplyConfig(const String& text, String& err);
+// The hostname was chosen after the start page was built: build it again.
+void deckHostnameChanged();
 // Portal upload: load the MDI font stored at uploaded, keep it as the icon
 // font and rebuild the pages with it. A bad file is deleted, the old font stays.
 bool deckInstallIcons(const char* uploaded, String& err);

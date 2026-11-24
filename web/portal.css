@@ -401,6 +401,56 @@ a {
   text-shadow: 0 0 6px var(--crt-glow);
   word-break: break-word;
 }
+.sidebar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+}
+.sr-more {
+  position: relative;
+  z-index: 1;
+  margin-top: 9px;
+}
+.sr-more summary {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--crt-dim);
+  cursor: pointer;
+}
+.sr-more .sr-rows {
+  margin-top: 7px;
+}
+.wall-when {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+.wall-when .subcard {
+  margin: 0;
+}
+.wall-when .field-hint {
+  margin: 0 0 12px;
+}
+.wall-when .check-row {
+  margin-top: 10px;
+}
+.portal-form > .card > .card-title {
+  margin-bottom: 14px;
+}
+.card > .grid-2 + .grid-2 {
+  margin-top: 14px;
+}
+#mqttForm .check-row + .grid-2,
+#mqttForm .check-row + .field {
+  margin-top: 14px;
+}
+#sleepFrameFields {
+  margin: 0 0 16px;
+}
+.wall-when h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
 .about {
   font: 11px var(--mono);
   color: var(--faint);
@@ -463,14 +513,6 @@ a {
 .card-head .card-title {
   margin-right: auto;
 }
-.overview-grid {
-  display: grid;
-  grid-template-columns: minmax(300px, 1.05fr) minmax(280px, 0.95fr);
-  gap: 18px;
-}
-.preview-card {
-  min-width: 0;
-}
 .screen-shell {
   width: min(100%, 420px);
   aspect-ratio: var(--shell-ar, 1);
@@ -490,13 +532,6 @@ a {
   position: relative;
   z-index: 1;
   border-radius: 4px;
-}
-.preview-controls {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  justify-content: space-between;
-  margin-top: 16px;
 }
 .field {
   margin-bottom: 18px;
@@ -1110,9 +1145,6 @@ input[type="range"]::-webkit-slider-thumb {
   .save-meta .txt {
     display: none;
   }
-  .overview-grid {
-    grid-template-columns: 1fr;
-  }
   .facts-4 {
     grid-template-columns: 1fr 1fr;
   }
@@ -1150,9 +1182,6 @@ input[type="range"]::-webkit-slider-thumb {
   }
   .color-grid {
     grid-template-columns: 1fr 1fr;
-  }
-  .preview-controls {
-    align-items: flex-start;
   }
   .save-bar-inner {
     gap: 8px;

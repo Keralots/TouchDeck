@@ -33,7 +33,7 @@
 #include "crash_log.h"
 #include "coproc_update.h"
 #include <LittleFS.h>
-#include <WebServer.h>
+#include "web_pool.h"
 #include <ArduinoJson.h>
 #include <Update.h>
 #include <esp_task_wdt.h>
@@ -44,7 +44,7 @@
 #include <time.h>
 #include <algorithm>
 
-static WebServer server(80);
+static PooledWebServer server(80);
 
 // Deferred restart (so the HTTP response flushes before reboot).
 static unsigned long restartAt = 0;
@@ -1103,6 +1103,10 @@ static void handleConfigImport() {
 // Screen page: brightness, night schedule, sleep.
 static void handleSaveLight() {
   PresenceSettings nextPresence;
+  // The photo frame's own settings are on the Wallpapers page.
+  nextPresence.frameEvery = presenceSettings.frameEvery;
+  nextPresence.frameClock = presenceSettings.frameClock;
+  nextPresence.frameAnim = presenceSettings.frameAnim;
   nextPresence.sleepMin = (uint16_t)clampedArg("sleepMin", presenceSettings.sleepMin, 0, 1440);
   nextPresence.dimPct = server.arg("sleepMode") == "dim" ? (uint8_t)clampedArg("sleepDim", 10, 1, 100) : 0;
   nextPresence.pc = server.hasArg("presencePc");
@@ -1111,14 +1115,6 @@ static void handleSaveLight() {
   nextPresence.nightWakeLevel =
     (uint8_t)clampedArg("nightWakeLevel", presenceSettings.nightWakeLevel, 1, 255);
   nextPresence.frame = server.arg("sleepMode") == "frame";
-  const int frameEvery = clampedArg("frameEvery", 5, 1, 30);
-  if (!validFrameEvery(frameEvery)) {
-    sendJsonMessage(400, false, "Invalid frame interval.");
-    return;
-  }
-  nextPresence.frameEvery = frameEvery;
-  nextPresence.frameClock = server.hasArg("frameClock");
-  nextPresence.frameAnim = server.hasArg("frameAnim");
   size_t n = 0;
   for (size_t i = 0; i < MAX_PRESENCE_ENTITIES; i++) {
     String id = server.arg("presence" + String(i));
@@ -1143,7 +1139,7 @@ static void handleSaveLight() {
   saveSettings();
   refreshBacklightControl();  // re-evaluates both night intervals
   deckPresenceApply();
-  sendJsonMessage(200, true, "Screen settings applied.");
+  sendJsonMessage(200, true, "Brightness and sleep settings applied.");
 }
 
 // Hardware page: status LED, vibration motor, speaker.
@@ -1318,7 +1314,8 @@ static void handleSaveHardware() {
   sendJsonMessage(200, true, "Hardware settings applied.");
 }
 
-static void handleSaveAdvanced() {
+// Home Assistant page: the MQTT broker.
+static void handleSaveMqtt() {
   MqttSettings next = mqttSettings();
   next.enabled = server.hasArg("mqttEnabled");
   next.host = server.arg("mqttHost");
@@ -1343,6 +1340,10 @@ static void handleSaveAdvanced() {
     sendJsonMessage(500, false, "Could not store MQTT settings");
     return;
   }
+  sendJsonMessage(200, true, "MQTT settings applied.");
+}
+
+static void handleSaveAdvanced() {
   deckSetPrinters(server.hasArg("printers"));
   advSettings.weather60 = server.hasArg("weather60");
   advSettings.charts60 = server.hasArg("charts60");
@@ -1724,6 +1725,16 @@ static void handleSaveWallpapers() {
       return;
     }
   }
+  if (server.hasArg("frameEvery")) {
+    const int frameEvery = clampedArg("frameEvery", 5, 1, 30);
+    if (!validFrameEvery(frameEvery)) {
+      sendJsonMessage(400, false, "Invalid frame interval.");
+      return;
+    }
+    presenceSettings.frameEvery = frameEvery;
+    presenceSettings.frameClock = server.hasArg("frameClock");
+    presenceSettings.frameAnim = server.hasArg("frameAnim");
+  }
   dispSettings.dailyMax = dailyMax;
   deck::wallInvalidateJobs();
   dispSettings.wallEvery = every;
@@ -1747,6 +1758,7 @@ static void handleSaveWallpapers() {
     }
   // A new plan fetches again today instead of waiting for the hour.
   if (oldPlan != (uint32_t)(dispSettings.dailyOrient << 8 | dispSettings.dailyCount)) deck::dailyReplan();
+  deckPresenceApply();
   sendJsonMessage(200, true, "Wallpaper settings applied.");
 }
 
@@ -1767,11 +1779,6 @@ static void handleSaveDisplay() {
                             oldGlass != (uint32_t)(dispSettings.glassOn << 24 | dispSettings.glassTint << 16 |
                                                    dispSettings.glassBlur << 8 | dispSettings.glassDim);
   dispSettings.rotation = (uint8_t)clampedArg("rotation", dispSettings.rotation, 0, 3);
-  dispSettings.tempScaleMax = (uint16_t)clampedArg("tempScale", dispSettings.tempScaleMax, 1, 500);
-  dispSettings.powerScaleW = (uint16_t)clampedArg("powerScale", dispSettings.powerScaleW, 1, 65535);
-  dispSettings.warnThresholdPct =
-    (uint8_t)clampedArg("warnThreshold", dispSettings.warnThresholdPct, 0, 100);
-  dispSettings.smoothCharts = server.hasArg("smoothCharts");
   dispSettings.printerFx = server.hasArg("printerFx");
   dispSettings.tileFx = (uint8_t)clampedArg("tileFx", dispSettings.tileFx, 0, 5);
   dispSettings.fxTouch = (uint8_t)clampedArg("fxTouch", dispSettings.fxTouch, 0, 4);
@@ -1782,7 +1789,18 @@ static void handleSaveDisplay() {
   saveSettings();
   if (dispSettings.rotation != oldRotation || dispSettings.theme != oldTheme) applyDisplaySettings();
   else if (glassChanged) deckReloadWallpaper(false);
-  sendJsonMessage(200, true, "Display settings applied.");
+  sendJsonMessage(200, true, "Appearance settings applied.");
+}
+
+// PC page: the scales, warning and motion of the metric tiles.
+static void handleSavePc() {
+  dispSettings.tempScaleMax = (uint16_t)clampedArg("tempScale", dispSettings.tempScaleMax, 1, 500);
+  dispSettings.powerScaleW = (uint16_t)clampedArg("powerScale", dispSettings.powerScaleW, 1, 65535);
+  dispSettings.warnThresholdPct =
+    (uint8_t)clampedArg("warnThreshold", dispSettings.warnThresholdPct, 0, 100);
+  dispSettings.smoothCharts = server.hasArg("smoothCharts");
+  saveSettings();
+  sendJsonMessage(200, true, "PC settings applied.");
 }
 
 static void handleSaveClock() {
@@ -1979,7 +1997,7 @@ static void handleApiStatus() {
   doc["wifi_last_disc_reason"] = wifiLastDisconnectReason();
   doc["metric_count"] = pc0 ? pc0->data.count : 0;
   doc["timestamp"] = pc0 ? pc0->data.timestamp : "";
-  doc["hostname"] = netSettings.hostname;
+  doc["hostname"] = mdnsHostname();
   doc["rssi"] = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
   doc["uptime_seconds"] = millis() / 1000UL;
   doc["ap_mode"] = isAPMode();
@@ -3142,6 +3160,7 @@ void initWebServer() {
   server.on("/portal.js", HTTP_GET, handlePortalJs);
   server.on("/save/wifi", HTTP_POST, handleSaveWifiLegacy);
   server.on("/save/display", HTTP_POST, handleSaveDisplay);
+  server.on("/save/pc", HTTP_POST, handleSavePc);
   server.on("/save/sd", HTTP_POST, handleSaveSd);
   server.on("/api/sd/format", HTTP_POST, handleSdFormat);
   server.on("/save/wallpapers", HTTP_POST, handleSaveWallpapers);
@@ -3150,6 +3169,7 @@ void initWebServer() {
 #if BOARD_HAS_ENCODER
   server.on("/encoder/preview", HTTP_POST, handleEncoderPreview);
 #endif
+  server.on("/save/mqtt", HTTP_POST, handleSaveMqtt);
   server.on("/save/advanced", HTTP_POST, handleSaveAdvanced);
   server.on("/save/printers", HTTP_POST, handleSavePrinters);
   server.on("/led/preview", HTTP_POST, handleLedPreview);

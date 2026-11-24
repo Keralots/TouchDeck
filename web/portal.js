@@ -98,6 +98,7 @@
     qa(".page").forEach((p) => p.classList.toggle("active", p.dataset.page === name));
     if (name === "hardware" && encoderStatusVisible()) scheduleStatus(0);
     else if (current === "hardware") scheduleStatus(2000);
+    if (name === "pc") refreshMetrics();
     qa(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
     const button = document.querySelector('.nav-item[data-nav="' + name + '"]');
     $("crumb").textContent = button ? button.textContent.replace(/\s+/g, " ").trim() : "TouchDeck";
@@ -215,7 +216,10 @@
   $("nightEnabled").addEventListener("change", updateNightFields);
   function updateSleepFields() {
     $("sleepDimField").classList.toggle("hidden", $("sleepMode").value !== "dim");
-    $("sleepFrameFields").classList.toggle("hidden", $("sleepMode").value !== "frame");
+    const frame = $("sleepMode").value === "frame";
+    $("sleepFrameFields").classList.toggle("hidden", !frame);
+    $("frameOnHint").classList.toggle("hidden", !frame);
+    $("frameOffHint").classList.toggle("hidden", frame);
   }
   $("sleepMode").addEventListener("change", updateSleepFields);
   function updateNightWakeFields() {
@@ -605,6 +609,14 @@
       )
       .join("");
   }
+  /* The PC page's values, every 3 s while it is open. */
+  async function refreshMetrics() {
+    if (document.hidden || document.querySelector(".page.active")?.dataset.page !== "pc") return;
+    try {
+      renderChips("pcMetrics", (await getJson("/api/config")).metrics);
+    } catch (e) {}
+  }
+  setInterval(refreshMetrics, 3000);
   function metricById(id) {
     return (config.metrics || []).find((m) => Number(m.id) === Number(id));
   }
@@ -618,7 +630,6 @@
     $("maintVersion").textContent = c.version;
     $("maintBoard").textContent = c.board;
     $("maintIp").textContent = c.ip || "--";
-    $("diagBoard").textContent = c.board;
     setVal("rotation", c.display.rotation);
     setVal("theme", c.display.theme || 0);
     setVal("tileFx", c.display.tileFx || 0);
@@ -652,8 +663,6 @@
     setCheck("smoothCharts", c.display.smoothCharts !== false);
     setCheck("printerFx", c.display.printerFx !== false);
     {
-      const nd = $("navDeck");
-      if (nd) nd.classList.toggle("hidden", !c.deck);
       if (c.deck && !window.snDeck) {
         window.snDeck = 1;
         const s = document.createElement("script");
@@ -784,7 +793,7 @@
     setVal("subnet", c.network.subnet || "");
     setVal("dns", c.network.dns || "");
     $("staticFields").classList.toggle("hidden", c.network.dhcp);
-    renderChips("overviewMetrics", c.metrics);
+    renderChips("pcMetrics", c.metrics);
     updateRangeLabels();
     populating = false;
     dirty = false;
@@ -897,7 +906,6 @@
         setTimeout(() => location.reload(), 5000);
       } else {
         await loadConfig();
-        setTimeout(refreshPreview, 350);
       }
       return true;
     } catch (e) {
@@ -946,13 +954,17 @@
       $("srTitle").textContent = s.ap_mode ? "setup access point" : "device online";
       $("srIp").textContent = s.ip || "--";
       $("srHost").textContent = (s.hostname || "touchdeck") + ".local";
-      $("srPc").textContent = s.pc_online ? "online" : "offline";
-      $("srMetrics").textContent = s.metric_count;
+      $("srPc").textContent = s.pc_online ? "online, " + s.metric_count + " metrics" : "offline";
+      $("srHa").textContent = s.ha_link || "--";
       $("pcStateTag").textContent = s.pc_online ? "online" : "offline";
+      $("pcOffNote").classList.toggle("hidden", !!s.pc_online);
+      $("pcFacts").classList.toggle("hidden", !s.pc_online);
+      $("pcMetrics").classList.toggle("hidden", !s.pc_online);
+      $("pcOffAddr").textContent = (s.hostname || "touchdeck") + ".local" + (s.ip ? " or " + s.ip : "");
+      $("factPcs").textContent = s.pcs_online ?? "--";
       $("factPcStatus").textContent = pcStatusText(s.pc_status);
       $("factTimestamp").textContent = s.timestamp || "--";
       $("factMetricCount").textContent = s.metric_count;
-      $("factHa").textContent = s.ha_link || "--";
       const mqtt = s.mqtt || {};
       $("mqttStatus").textContent = (mqtt.state || "off") + (mqtt.error ? " - " + mqtt.error : "");
       $("diagHeap").textContent = fmtBytes(s.free_heap);
@@ -1013,30 +1025,30 @@
     }
   }
 
-  function refreshPreview() {
+  /* Sending the frame stops the deck for a second or two, so only on request. */
+  async function refreshPreview() {
     if (previewBusy) return;
     previewBusy = true;
-    const img = new Image();
-    img.onload = () => {
-      const target = $("screenPreview"),
-        size = $("previewSize");
-      target.src = img.src;
-      const sh = target.closest(".screen-shell");
-      if (sh && img.naturalWidth && img.naturalHeight)
-        sh.style.setProperty("--shell-ar", img.naturalWidth + "/" + img.naturalHeight);
-      if (img.naturalWidth) size.textContent = img.naturalWidth + " x " + img.naturalHeight;
+    $("previewNow").disabled = true;
+    try {
+      const r = await fetch("/screen_live.bmp?t=" + Date.now());
+      if (!r.ok) throw new Error("Screenshot failed: " + r.status);
+      const img = $("screenPreview"),
+        old = img.src;
+      img.src = $("previewSave").href = URL.createObjectURL(await r.blob());
+      if (old) URL.revokeObjectURL(old);
+      await img.decode();
+      $("previewShell").style.setProperty("--shell-ar", img.naturalWidth + "/" + img.naturalHeight);
+      $("previewSize").textContent = img.naturalWidth + " x " + img.naturalHeight;
+      ["previewShell", "previewSave"].forEach((id) => $(id).classList.remove("hidden"));
+    } catch (e) {
+      showToast(e.message, true);
+    } finally {
       previewBusy = false;
-    };
-    img.onerror = () => {
-      previewBusy = false;
-    };
-    img.src = "/screen_live.bmp?t=" + Date.now();
+      $("previewNow").disabled = false;
+    }
   }
   $("previewNow").addEventListener("click", refreshPreview);
-  setInterval(() => {
-    if ($("previewAuto").checked && document.querySelector(".page.active")?.dataset.page === "overview")
-      refreshPreview();
-  }, 5000);
 
   function uploadFirmware(file) {
     if (!file || !file.name.toLowerCase().endsWith(".bin")) {
@@ -1634,24 +1646,24 @@
     if (dailyRunning || ++dailyTick % 5 === 0) dailyStatus();
   }, 2000);
 
-  let initial = "overview";
+  let initial = "deck";
   try {
-    initial = localStorage.getItem("sn_page") || "overview";
+    initial = localStorage.getItem("sn_page") || "deck";
   } catch (e) {}
-  if (!document.querySelector('[data-nav="' + initial + '"]')) initial = "overview";
+  if (!document.querySelector('[data-nav="' + initial + '"]')) initial = "deck";
+  try {
+    $("srMore").open = localStorage.getItem("sn_diag") === "1";
+  } catch (e) {}
+  $("srMore").addEventListener("toggle", () => {
+    try {
+      localStorage.setItem("sn_diag", $("srMore").open ? "1" : "0");
+    } catch (e) {}
+  });
   initHelpTips();
-  // The deck editor (deck.js) renders late and re-renders on every edit.
-  let tipsQueued = false;
-  new MutationObserver(() => {
-    if (tipsQueued) return;
-    tipsQueued = true;
-    setTimeout(() => {
-      tipsQueued = false;
-      initHelpTips();
-    });
-  }).observe(document.body, { childList: true, subtree: true });
+  // The deck editor (deck.js) re-renders on every edit; fold before the paint, else the page jumps for a frame.
+  window.snFoldTips = initHelpTips;
+  new MutationObserver(initHelpTips).observe(document.body, { childList: true, subtree: true });
   showPage(initial);
   loadConfig();
   pollStatus();
-  refreshPreview();
 })();

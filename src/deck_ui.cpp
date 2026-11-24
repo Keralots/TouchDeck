@@ -1661,6 +1661,20 @@ bool deckApplyConfig(const String& text, String& err) {
   return true;
 }
 
+void deckHostnameChanged() {
+  if (!s_disp) return;
+  DeckConfig next;
+  String source;
+  if (!deckConfigLoad(next, &source, nullptr) || source != "built-in") return;
+  stopGestures();
+  destroyPages(true);
+  s_cfg = next;
+  wxSync();
+  buildPages();
+  s_gen++;
+  lv_obj_invalidate(lv_screen_active());
+}
+
 String deckLedEntity() { return s_cfg.ledEntity; }
 
 bool deckSetLedEntity(const String& id, String& err) {

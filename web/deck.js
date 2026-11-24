@@ -8,6 +8,7 @@
 .dk-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .dk-status{display:flex;align-items:center;gap:8px;font:13px var(--mono);color:var(--mute);margin-top:12px}
 .dk-dot{width:9px;height:9px;border-radius:50%;background:var(--faint)}.dk-dot.ok{background:var(--ok)}.dk-dot.err{background:var(--err)}.dk-dot.busy{background:var(--warn)}
+.dk-pvg{display:inline-flex;gap:6px;align-items:center}.dk-pvg.off{opacity:.4}
 .dk-tabs{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}
 .dk-tiles{display:flex;flex-direction:column;gap:8px}
 .dk-tile{display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--card-2)}
@@ -17,7 +18,8 @@
 .dk-tact{display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.dk-tact select{width:auto;padding:6px 8px;font-size:12px}.dk-tact .btn{padding:6px 9px}
 .dk-phead .btn{padding:6px 9px}.dk-phead .dk-row{gap:6px}@media (min-width:561px){.dk-phead{grid-template-columns:minmax(160px,1fr) auto}}
 .dk-cap{font:12px var(--mono);color:var(--dim);margin:10px 0 0}.dk-cap.over{color:var(--err)}
-.dk-tile.sel{border-color:var(--accent)}
+.dk-tile.sel{border-color:var(--accent)}.dk-tile{scroll-margin:calc(var(--topbar-h) + 34px) 0 80px}
+.dk-picked{display:flex;flex-direction:column;gap:8px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--line)}.dk-picked>.dk-tile.sel{box-shadow:0 0 0 1px var(--accent)}
 .dk-more{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px 12px;padding-top:10px;border-top:1px solid var(--line)}
 .dk-more .field{margin:0}.dk-sec,.dk-grp.flat>.field::before{font:600 11px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}.dk-sec{grid-column:1/-1}.dk-grp.flat{display:contents}.dk-grp.flat>.field::before{content:"\\a0";display:block;margin-bottom:8px}.dk-grp.flat>.field:first-child::before{content:var(--t)}.dk-grp.wide{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px 12px;min-width:0}.dk-more .field-label{display:flex;align-items:center;min-height:17px;margin-bottom:6px}.dk-more .field-label .tip-btn{width:15px;height:15px;margin-left:6px;font-size:10px}.dk-warn{margin-left:8px;color:var(--warn);font-weight:600;text-transform:none;letter-spacing:0}.dk-more .field-hint.tip{margin:0 0 6px}.dk-oib i{font:18px dkmdi, dkcbi;font-style:normal;line-height:1;margin-right:6px;vertical-align:-3px}.dk-more .wide{grid-column:1/-1}.dk-more select,.dk-more input,.dk-more textarea{max-width:none;padding:7px 10px;font-size:13px}
 .dk-sw{gap:6px;flex-wrap:wrap}.dk-sw input[type=color]{width:40px;height:30px;padding:2px;border:1px solid var(--line-2);border-radius:8px;background:var(--card);cursor:pointer}
@@ -55,7 +57,7 @@
 .dk-ibtn i{font:28px dkmdi, dkcbi;font-style:normal;line-height:1}.dk-ibtn small{font:10px var(--mono);color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dk-tile.sel{cursor:default}.dk-tiles>.dk-tile:not(.sel){cursor:pointer}
 @media(min-width:1600px){.content-inner:has(>#deckSection.active){max-width:1560px}
-#deckSection.page.active{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px}#deckSection>.page-header,#deckSection>#dkPagesCard{grid-column:1/-1}#dkPage>:not(.dk-split):not(.dk-pset){max-width:872px}
+#deckSection.page.active{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px}#deckSection>*{grid-column:1/-1}#dkPage>:not(.dk-split):not(.dk-pset){max-width:872px}
 .dk-pset{display:grid;grid-template-columns:minmax(0,760px) minmax(0,1fr);gap:0 24px;align-items:start}
 .dk-split{display:grid;grid-template-columns:minmax(0,760px) minmax(0,1fr);gap:24px;align-items:start;margin-top:12px}
 .dk-left{position:sticky;top:calc(var(--topbar-h) + 12px)}.dk-left .dk-grid{margin-top:0;max-width:760px}}
@@ -66,12 +68,17 @@
   document.head.appendChild(st);
   const sec = document.getElementById("deckSection");
   if (!sec) return;
-  sec.innerHTML = `<div class="page-header"><h1 class="page-h1">Deck</h1><p class="page-lede">Home Assistant connection and the pages and tiles of the touch deck. Changes apply on Save without a restart.</p></div>
-<div class="card"><div class="card-head"><h2 class="card-title">Home Assistant</h2><span class="tag" id="dkHaVer">-</span></div>
-<div class="grid-2"><div class="field"><label class="field-label" for="dkHaUrl">Address</label><input type="text" id="dkHaUrl" placeholder="http://192.168.0.7:8123" autocomplete="off"></div>
-<div class="field"><label class="field-label" for="dkHaToken">Long-lived access token</label><input type="password" id="dkHaToken" autocomplete="off" placeholder="paste the token"><p class="field-hint">HA profile, Security tab, Long-lived access tokens. Stored only on the device, never shown again.</p></div></div>
-<div class="dk-row"><button type="button" class="btn btn-accent" id="dkHaSave">Save and connect</button><button type="button" class="btn" id="dkHaForget">Forget</button></div>
-<div class="dk-status"><span class="dk-dot" id="dkHaDot"></span><span id="dkHaState">checking...</span></div></div>
+  sec.innerHTML = `<div class="page-header"><h1 class="page-h1">Pages &amp; tiles</h1><p class="page-lede">What the deck shows. Changes apply on Save without a restart.</p></div>
+<div class="note hidden" id="dkHaNote"><span class="note-k">Setup</span><span>Home Assistant is not connected. <a href="#" data-page="ha">Set it up</a> to add its lights, switches and sensors.</span></div>
+<div class="card" id="dkPrnCard"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag" id="dkPrnTag">Bambu Lab</span></div>
+<p class="field-hint">Source Printer LAN talks to the printer directly: it must be in LAN mode or have LAN access on, and its serial and access code are stored only on the device. Source Home Assistant reads a printer already added to the Bambu Lab integration (ha-bambulab) - nothing else to enter. With a plug (an HA switch), the printer's pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
+<div id="dkPrnBody">
+<div id="dkPrn"></div><div class="dk-row"><button type="button" class="btn" id="dkPrnAdd">+ Add printer</button></div></div>
+<div class="dk-save"><span class="dk-msg" id="dkPrnMsg">No changes</span><button type="button" class="btn btn-accent" id="dkPrnSave">Save to device</button></div></div>
+<div class="card" id="dkPagesCard"><div class="card-head"><h2 class="card-title">Editor</h2></div>
+<label class="check-row standalone" style="margin-bottom:14px"><input type="checkbox" id="dkHeader"><span class="check-box"></span><span class="check-text"><strong>Show the top bar</strong><span class="ct-hint">Page name, WiFi and clock above the tiles. Also switchable in the quick panel on the device.</span></span></label>
+<div class="dk-tabs" id="dkTabs"></div><div id="dkPage"><p class="dk-empty">Loading, please wait...</p></div>
+<div class="dk-save"><span class="dk-msg" id="dkMsg">No changes</span><button type="button" class="btn btn-accent" id="dkSave">Save to device</button></div></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Icons</h2><span class="tag" id="dkIcTag">-</span></div>
 <p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; "Install" downloads it in this browser and sends it to the device. Without it the deck shows a few built-in symbols.</p>
 <div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
@@ -79,16 +86,15 @@
 <h3 class="card-title" style="margin-top:18px">Brand icons</h3>
 <p class="field-hint">Custom Brand Icons (phu:) by elax46, installed from <a href="https://github.com/elax46/custom-brand-icons" target="_blank" rel="noopener">their GitHub</a>, not bundled. Needs a mounted microSD card. Enable it in <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>. You can also upload a .js subset from the upstream Icon Finder.</p>
 <div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkBrNet" disabled>Install latest from GitHub</button><button type="button" class="btn" id="dkBrFile" disabled>Upload .js files</button><button type="button" class="btn" id="dkBrRemove" disabled>Remove</button><input type="file" id="dkBrInput" accept=".js" multiple hidden></div>
-<div class="dk-status"><span class="dk-dot" id="dkBrDot"></span><span id="dkBrState">checking...</span></div></div>
-<div class="card" id="dkPrnCard"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag" id="dkPrnTag">Bambu Lab</span></div>
-<p class="field-hint">Source Printer LAN talks to the printer directly: it must be in LAN mode or have LAN access on, and its serial and access code are stored only on the device. Source Home Assistant reads a printer already added to the Bambu Lab integration (ha-bambulab) - nothing else to enter. With a plug (an HA switch), the printer's pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
-<div id="dkPrnBody">
-<div id="dkPrn"></div><div class="dk-row"><button type="button" class="btn" id="dkPrnAdd">+ Add printer</button></div></div>
-<div class="dk-save"><span class="dk-msg" id="dkPrnMsg">No changes</span><button type="button" class="btn btn-accent" id="dkPrnSave">Save to device</button></div></div>
-<div class="card" id="dkPagesCard"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
-<label class="check-row standalone" style="margin-bottom:14px"><input type="checkbox" id="dkHeader"><span class="check-box"></span><span class="check-text"><strong>Show the top bar</strong><span class="ct-hint">Page name, WiFi and clock above the tiles. Also switchable in the quick panel on the device.</span></span></label>
-<div class="dk-tabs" id="dkTabs"></div><div id="dkPage"></div>
-<div class="dk-save"><span class="dk-msg" id="dkMsg">No changes</span><button type="button" class="btn btn-accent" id="dkSave">Save to device</button></div></div>`;
+<div class="dk-status"><span class="dk-dot" id="dkBrDot"></span><span id="dkBrState">checking...</span></div></div>`;
+  const haSec = document.getElementById("haSection");
+  if (haSec)
+    haSec.innerHTML = `<div class="page-header"><h1 class="page-h1">Home Assistant</h1><p class="page-lede">The connection the entity tiles, scenes and printers use.</p></div>
+<div class="card"><div class="card-head"><h2 class="card-title">Connection</h2><span class="tag" id="dkHaVer">-</span></div>
+<div class="grid-2"><div class="field"><label class="field-label" for="dkHaUrl">Address</label><input type="text" id="dkHaUrl" placeholder="http://192.168.0.7:8123" autocomplete="off"></div>
+<div class="field"><label class="field-label" for="dkHaToken">Long-lived access token</label><input type="password" id="dkHaToken" autocomplete="off" placeholder="paste the token"><p class="field-hint">HA profile, Security tab, Long-lived access tokens. Stored only on the device, never shown again.</p></div></div>
+<div class="dk-row"><button type="button" class="btn btn-accent" id="dkHaSave">Save and connect</button><button type="button" class="btn" id="dkHaForget">Forget</button></div>
+<div class="dk-status"><span class="dk-dot" id="dkHaDot"></span><span id="dkHaState">checking...</span></div><p class="maintenance-copy" style="margin:14px 0 0">The time can come from Home Assistant too: <a href="#" data-page="clock">Time</a>. Entities that wake the screen: <a href="#" data-page="light">Brightness &amp; sleep</a>.</p></div>`;
   document.body.insertAdjacentHTML(
     "beforeend",
     `<div class="dk-modal" id="dkPicker"><div class="dk-sheet"><div class="dk-head">
@@ -166,6 +172,21 @@
     more = -1;
   /* Tiles selected together on the current page (the group bar), kept as objects so a reorder keeps them. */
   const msel = new Set();
+  /* The tile picked in the preview: while it is the selected one, its row stands first, apart from the list
+   (a view only, the order stays). */
+  let picked = null,
+    showPicked = false;
+  const scrollToRow = (s) => {
+    const row = document.querySelector(s);
+    if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
+  function addTile(p, t) {
+    p.tiles.push(t);
+    picked = t;
+    showPicked = true;
+    sel = p.tiles.length - 1;
+    msel.clear();
+  }
   const PAL = ["#3987E5", "#00A35C", "#D55181", "#C98500", "#199E70", "#D95926", "#9085E9", "#E66767"];
   /* The device's landscape screen and grid limits (older firmware: the 3.5" deck). */
   let scr = { w: 480, h: 320, gridMax: 6, grid: { landscape: [4, 3], portrait: [3, 4] } };
@@ -1970,14 +1991,19 @@
     return !!c && (pv[c.k] !== false) === c.neg;
   };
   function whenBar(p) {
-    const ks = [];
-    p.tiles.forEach((t) => {
-      const c = whenOf(t);
-      if (c && !offT(t) && !ks.includes(c.k)) ks.push(c.k);
-    });
+    const ks = [],
+      here = new Set();
+    pages().forEach((q) =>
+      q.tiles.forEach((t) => {
+        const c = whenOf(t);
+        if (!c || offT(t)) return;
+        if (!ks.includes(c.k)) ks.push(c.k);
+        if (q === p) here.add(c.k);
+      }),
+    );
     if (!ks.length) return "";
     return (
-      '<div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Preview</span>' +
+      '<div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Preview as if</span>' +
       ks
         .map((k) => {
           let nm;
@@ -1992,8 +2018,11 @@
           } else nm = k.slice(2).replace("=", " is ");
           const on = pv[k] !== false,
             yes = k.startsWith("pc:") ? ["On", "Off"] : ["Yes", "No"];
+          const off = here.has(k) ? "" : ' disabled title="No tile on this page depends on it"';
           return (
-            '<span class="dk-tsub" style="margin:0 0 0 8px">' +
+            '<span class="dk-pvg' +
+            (off ? " off" : "") +
+            '"><span class="dk-tsub" style="margin:0">' +
             esc(nm) +
             "</span>" +
             [
@@ -2004,7 +2033,9 @@
                 (o) =>
                   '<button type="button" class="chip page-tab' +
                   (on === !!o[0] ? " on" : "") +
-                  '" data-pv="' +
+                  '"' +
+                  off +
+                  ' data-pv="' +
                   esc(k) +
                   '" data-pvv="' +
                   o[0] +
@@ -2012,7 +2043,8 @@
                   o[1] +
                   "</button>",
               )
-              .join("")
+              .join("") +
+            "</span>"
           );
         })
         .join("") +
@@ -2083,7 +2115,7 @@
   window.dkPrnSync = () => {
     if (deck) render();
   };
-  const visible = () => ["deck", "printers"].includes(document.querySelector(".page.active")?.dataset.page);
+  const visible = () => ["deck", "printers", "ha"].includes(document.querySelector(".page.active")?.dataset.page);
 
   /* Home Assistant */
   async function haStatus() {
@@ -2103,6 +2135,7 @@
               : "busy");
       $("dkHaState").textContent = l + (s.error ? " - " + s.error : "");
       $("dkHaVer").textContent = s.version ? "HA " + s.version : "-";
+      $("dkHaNote").classList.toggle("hidden", l === "connected");
     } catch (e) {
       $("dkHaState").textContent = "status unavailable";
     }
@@ -2458,9 +2491,9 @@
       return;
     }
     sel = k;
+    picked = t;
     renderPage();
-    const row = document.querySelector(".dk-tile.sel");
-    if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    scrollToRow(".dk-tile.sel");
   }
   /* Touch and pen: holding a tile still this long selects it. */
   const LONG_MS = 450;
@@ -2562,9 +2595,10 @@
       bd.hidden = true;
       if (ev.type !== "pointerup") return;
       if (!box) {
-        if (!add && (msel.size || sel >= 0)) {
+        if (!add && (msel.size || sel >= 0 || picked)) {
           msel.clear();
           sel = -1;
+          picked = null;
           renderPage();
         }
         return;
@@ -2677,6 +2711,7 @@
         if (tgt.j >= 0) setPos(p.tiles[tgt.j], cell(tgt.to.x, tgt.to.y, tgt.to.w, tgt.to.h));
         setPos(p.tiles[k], cell(tgt.x, tgt.y, tgt.w, tgt.h));
         sel = k;
+        picked = p.tiles[k];
         setDirty(true);
       }
       renderPage();
@@ -3055,6 +3090,8 @@
     }
     const p = ps[cur];
     for (const t of msel) if (!p.tiles.includes(t) || hidT(t)) msel.delete(t);
+    const top = msel.size ? -1 : p.tiles.indexOf(picked);
+    if (top < 0 || top !== sel || hidT(picked)) picked = null;
     const [c, r] = grid(p),
       land = ori === "landscape",
       pick = (scr.pick || { landscape: [6, 4], portrait: [4, 6] })[ori],
@@ -3164,17 +3201,13 @@
         lost.map((k) => gtile(p.tiles[k], k, null)).join("") +
         "</div>";
     h +=
-      '<p class="field-hint">Drag a tile to move it, or onto another tile, which then moves to where the dragged one was; the corner handle resizes. Both go in half-cell steps. Tap a tile to find it in the list. To select several, Ctrl+click or long-press them, or drag across them from an empty cell: they then move together and share one set of settings.</p>';
+      '<p class="field-hint">Drag a tile to move it, or onto another tile, which then moves to where the dragged one was; the corner handle resizes. Both go in half-cell steps. Tap a tile to put its settings first in the list. To select several, Ctrl+click or long-press them, or drag across them from an empty cell: they then move together and share one set of settings.</p>';
     if (sel >= 0 && p.tiles[sel] && ps.length > 1)
       h +=
         '<div class="dk-row"><span class="dk-tsub" style="margin:0">Move the selected tile to</span><select id="dkMvPg" style="width:auto">' +
         ps.map((q, i) => (i === cur ? "" : opt(String(i), q.name || q.id, false))).join("") +
         '</select><button type="button" class="btn" id="dkMv">Move</button></div>';
-    h +=
-      '</div><div class="dk-right">' +
-      (msel.size ? groupBar(p, ps, at) : "") +
-      '<div class="dk-tiles" id="dkTiles">' +
-      p.tiles
+    const rows = p.tiles
         .map((t, i) => {
           if (t.type === "metric") return metricRow(t, i);
           if (t.type === "clock") return clockRow(t, i);
@@ -3256,8 +3289,15 @@
             (i === more ? moreRow(t, i) : "") +
             "</div>"
           );
-        })
-        .join("") +
+        });
+    h +=
+      '</div><div class="dk-right">' +
+      (msel.size ? groupBar(p, ps, at) : "") +
+      (picked
+        ? '<div class="dk-picked"><span class="dk-sec">Selected tile</span>' + rows.splice(top, 1)[0] + "</div>"
+        : "") +
+      '<div class="dk-tiles" id="dkTiles">' +
+      rows.join("") +
       "</div>";
     h +=
       '<p class="dk-cap">' +
@@ -3274,6 +3314,12 @@
       pcList() +
       '<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a 2x0.5 one fits them in a row between the name and the number, a narrower one shows the number), so picking one makes a 1x1 tile 2x1.</p></div></div>';
     el.innerHTML = h;
+    /* Folded hints first: the rows must be in their place before anything scrolls to them. */
+    if (window.snFoldTips) window.snFoldTips();
+    if (showPicked) {
+      showPicked = false;
+      scrollToRow(".dk-picked .dk-tile");
+    }
     /* A click on a row's free area selects its tile in the preview. */
     el.querySelectorAll("#dkTiles > .dk-tile").forEach((row) => {
       const x = row.querySelector("[data-x]");
@@ -3283,7 +3329,12 @@
           if (k === sel || e.target.closest("input,select,button,textarea,a,label,.dk-more")) return;
           msel.clear();
           sel = k;
+          picked = null;
+          /* The block above goes away: scroll so the clicked row stays where it was. */
+          const y = row.getBoundingClientRect().top;
           renderPage();
+          const del = document.querySelector('#dkTiles [data-x="' + k + '"]');
+          if (del) window.scrollBy({ top: del.closest(".dk-tile").getBoundingClientRect().top - y, behavior: "instant" });
         };
     });
     $("dkPName").oninput = (e) => {
@@ -3328,7 +3379,7 @@
           show: "hero",
         };
         setSize(t, "2x1");
-        p.tiles.push(t);
+        addTile(p, t);
         setDirty(true);
         renderPage();
       };
@@ -3584,7 +3635,7 @@
           if (i < 1) return;
           const t = p.tiles.splice(i, 1)[0];
           p.tiles.splice(i - 1, 0, t);
-          sel = -1;
+          sel = p.tiles.indexOf(picked);
           more = -1;
           setDirty(true);
           renderPage();
@@ -3595,7 +3646,7 @@
         (x.onclick = () => {
           p.tiles.splice(+x.dataset.x, 1);
           pruneFrames(p);
-          sel = -1;
+          sel = p.tiles.indexOf(picked);
           more = -1;
           setDirty(true);
           renderPage();
@@ -3883,7 +3934,7 @@
     );
     $("dkAddTile").onclick = () => openPicker(-1);
     $("dkAddHttpSensor").onclick = () => {
-      p.tiles.push({
+      addTile(p, {
         id: "s" + Date.now().toString(36),
         type: "sensor",
         http: { url: "", path: "", poll: 30 },
@@ -3960,7 +4011,7 @@
     $("dkAddMedia").onclick = () => {
       const t = { id: "np" + Date.now().toString(36), type: "media" };
       setSize(t, "2x2");
-      p.tiles.push(t);
+      addTile(p, t);
       setDirty(true);
       renderPage();
     };
@@ -3968,14 +4019,14 @@
       $("dkAddAgent").onclick = () => {
         const t = { id: "ai" + Date.now().toString(36), type: "agent" };
         setSize(t, "1x1");
-        p.tiles.push(t);
+        addTile(p, t);
         setDirty(true);
         renderPage();
       };
     $("dkAddViz").onclick = () => {
       const t = { id: "z" + Date.now().toString(36), type: "viz" };
       setSize(t, "2x1");
-      p.tiles.push(t);
+      addTile(p, t);
       setDirty(true);
       renderPage();
     };
@@ -4015,7 +4066,7 @@
     $("dkAddWeather").onclick = () => {
       const t = { id: "w" + Date.now().toString(36), type: "weather" };
       setSize(t, "2x2");
-      p.tiles.push(t);
+      addTile(p, t);
       /* A deck without a place: open the new tile's options on the place fields. */
       if (!deck.weather || (!deck.weather.lat && !deck.weather.lon)) more = p.tiles.length - 1;
       setDirty(true);
@@ -4078,14 +4129,14 @@
     $("dkAddClock").onclick = () => {
       const t = { id: "k" + Date.now().toString(36), type: "clock" };
       setSize(t, "2x1");
-      p.tiles.push(t);
+      addTile(p, t);
       setDirty(true);
       renderPage();
     };
     $("dkAddPcCmd").onclick = () => {
       const t = { id: "c" + Date.now().toString(36), type: "action" };
       pcCmdSet(t, "media_play_pause");
-      p.tiles.push(t);
+      addTile(p, t);
       more = p.tiles.length - 1;
       setDirty(true);
       renderPage();
@@ -4099,7 +4150,7 @@
         icon: "mdi:volume-high",
       };
       setSize(t, "2x1");
-      p.tiles.push(t);
+      addTile(p, t);
       setDirty(true);
       renderPage();
     };
@@ -4148,7 +4199,7 @@
         setDirty(true);
       };
     $("dkAddHttp").onclick = () => {
-      p.tiles.push({
+      addTile(p, {
         id: "h" + Date.now().toString(36),
         type: "action",
         label: "HTTP",
@@ -4272,7 +4323,7 @@
         .filter((t) => t.type === "metric" && (t.pc || pcs[0].id) === pc.id)
         .map((t) => t.metric);
       const m = metrics.find((x) => !usedIds.includes(x.id)) || metrics[0];
-      p.tiles.push(
+      addTile(p, 
         Object.assign(
           { id: "m" + Date.now().toString(36), type: "metric", metric: m.id, style: "number" },
           pcs.length > 1 ? { pc: pc.id } : {},
@@ -4360,9 +4411,7 @@
     try {
       setList(await api("/api/ha/entities" + (refresh ? "?refresh=1" : "")));
       entsErr = "";
-      if (deck) {
-        renderPage();
-      }
+      lateRender();
     } catch (e) {
       entsErr = e.message;
       $("dkEnts").innerHTML =
@@ -4506,7 +4555,7 @@
   function pick(id) {
     const p = pages()[cur];
     const type = autoType(domainOf(id));
-    if (pickFor < 0) p.tiles.push({ id: "t" + Date.now().toString(36), type: type, entity: id });
+    if (pickFor < 0) addTile(p, { id: "t" + Date.now().toString(36), type: type, entity: id });
     else if (p.tiles[pickFor].type === "media") {
       if (domainOf(id) !== "media_player") {
         alert("Now playing needs a media player (media_player.*).");
@@ -4593,6 +4642,21 @@
     iconCp(t.icon) || iconCp((entMap[t.entity] || {}).icon) || (t.type === "agent" ? iconCp("mdi:robot-outline") : 0);
   // PC metrics and chart sensors show an icon only when one is picked, never the entity's.
   const iconOptional = (t) => t.type === "metric" || (t.type === "sensor" && t.style === "chart" && !(t.rows || []).length);
+  /* Names or icons arrived: draw again, but not under somebody's typing or dragging. */
+  function lateRender() {
+    if (!deck) return;
+    const a = document.activeElement,
+      band = $("dkBand");
+    if (
+      ($("dkPage").contains(a) && a.matches("input:not([type=checkbox]),select,textarea")) ||
+      document.querySelector(".dk-gt.drag") ||
+      (band && !band.hidden)
+    ) {
+      setTimeout(lateRender, 400);
+      return;
+    }
+    renderPage();
+  }
   async function loadMdi(size) {
     try {
       const r = await fetch("/mdi.ttf?v=" + size);
@@ -4603,7 +4667,7 @@
       const f = new FontFace("dkmdi", buf);
       await f.load();
       document.fonts.add(f);
-      if (deck) renderPage();
+      lateRender();
     } catch (e) {
       mdi = null;
       $("dkIcState").textContent = "font on the device, but the portal could not read it: " + e.message;
@@ -4900,7 +4964,7 @@
     cbiNames = lines;
     cbiFace = face;
     document.fonts.add(face);
-    if (deck) renderPage();
+    lateRender();
   }
   async function brRefresh() {
     brBusy = true;
@@ -5106,8 +5170,6 @@
     const host = document.getElementById("prnListHost");
     if (host) host.appendChild($("dkPrnCard"));
     haStatus();
-    icRefresh();
-    brRefresh();
     printersStatus();
     setInterval(() => {
       if (visible()) {
@@ -5115,10 +5177,10 @@
         printersStatus();
       }
     }, 3000);
-    await loadPc();
-    ori = ori || "landscape";
+    /* The pages first: the deck sends one file at a time, and the icon fonts are 1-2 MB each. */
     try {
-      const r = await api("/api/deck");
+      const [r] = await Promise.all([api("/api/deck"), loadPc()]);
+      ori = ori || "landscape";
       deck = r.deck;
       deck.pages = deck.pages.filter((p) => p.type !== "metrics");
       $("dkHeader").checked = r.header !== false;
@@ -5129,5 +5191,7 @@
     try {
       await loadEnts();
     } catch (e) {}
+    icRefresh();
+    brRefresh();
   })();
 })();
