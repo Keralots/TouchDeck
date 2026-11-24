@@ -8,6 +8,7 @@
 .dk-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .dk-status{display:flex;align-items:center;gap:8px;font:13px var(--mono);color:var(--mute);margin-top:12px}
 .dk-dot{width:9px;height:9px;border-radius:50%;background:var(--faint)}.dk-dot.ok{background:var(--ok)}.dk-dot.err{background:var(--err)}.dk-dot.busy{background:var(--warn)}
+.dk-pvg{display:inline-flex;gap:6px;align-items:center}.dk-pvg.off{opacity:.4}
 .dk-tabs{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}
 .dk-tiles{display:flex;flex-direction:column;gap:8px}
 .dk-tile{display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--card-2)}
@@ -55,7 +56,7 @@
 .dk-ibtn i{font:28px dkmdi, dkcbi;font-style:normal;line-height:1}.dk-ibtn small{font:10px var(--mono);color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dk-tile.sel{cursor:default}.dk-tiles>.dk-tile:not(.sel){cursor:pointer}
 @media(min-width:1600px){.content-inner:has(>#deckSection.active){max-width:1560px}
-#deckSection.page.active{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px}#deckSection>.page-header,#deckSection>#dkPagesCard{grid-column:1/-1}#dkPage>:not(.dk-split):not(.dk-pset){max-width:872px}
+#deckSection.page.active{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px}#deckSection>*{grid-column:1/-1}#dkPage>:not(.dk-split):not(.dk-pset){max-width:872px}
 .dk-pset{display:grid;grid-template-columns:minmax(0,760px) minmax(0,1fr);gap:0 24px;align-items:start}
 .dk-split{display:grid;grid-template-columns:minmax(0,760px) minmax(0,1fr);gap:24px;align-items:start;margin-top:12px}
 .dk-left{position:sticky;top:calc(var(--topbar-h) + 12px)}.dk-left .dk-grid{margin-top:0;max-width:760px}}
@@ -66,12 +67,17 @@
   document.head.appendChild(st);
   const sec = document.getElementById("deckSection");
   if (!sec) return;
-  sec.innerHTML = `<div class="page-header"><h1 class="page-h1">Deck</h1><p class="page-lede">Home Assistant connection and the pages and tiles of the touch deck. Changes apply on Save without a restart.</p></div>
-<div class="card"><div class="card-head"><h2 class="card-title">Home Assistant</h2><span class="tag" id="dkHaVer">-</span></div>
-<div class="grid-2"><div class="field"><label class="field-label" for="dkHaUrl">Address</label><input type="text" id="dkHaUrl" placeholder="http://192.168.0.7:8123" autocomplete="off"></div>
-<div class="field"><label class="field-label" for="dkHaToken">Long-lived access token</label><input type="password" id="dkHaToken" autocomplete="off" placeholder="paste the token"><p class="field-hint">HA profile, Security tab, Long-lived access tokens. Stored only on the device, never shown again.</p></div></div>
-<div class="dk-row"><button type="button" class="btn btn-accent" id="dkHaSave">Save and connect</button><button type="button" class="btn" id="dkHaForget">Forget</button></div>
-<div class="dk-status"><span class="dk-dot" id="dkHaDot"></span><span id="dkHaState">checking...</span></div></div>
+  sec.innerHTML = `<div class="page-header"><h1 class="page-h1">Pages &amp; tiles</h1><p class="page-lede">What the deck shows. Changes apply on Save without a restart.</p></div>
+<div class="note hidden" id="dkHaNote"><span class="note-k">Setup</span><span>Home Assistant is not connected. <a href="#" data-page="ha">Set it up</a> to add its lights, switches and sensors.</span></div>
+<div class="card" id="dkPrnCard"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag" id="dkPrnTag">Bambu Lab</span></div>
+<p class="field-hint">Source Printer LAN talks to the printer directly: it must be in LAN mode or have LAN access on, and its serial and access code are stored only on the device. Source Home Assistant reads a printer already added to the Bambu Lab integration (ha-bambulab) - nothing else to enter. With a plug (an HA switch), the printer's pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
+<div id="dkPrnBody">
+<div id="dkPrn"></div><div class="dk-row"><button type="button" class="btn" id="dkPrnAdd">+ Add printer</button></div></div>
+<div class="dk-save"><span class="dk-msg" id="dkPrnMsg">No changes</span><button type="button" class="btn btn-accent" id="dkPrnSave">Save to device</button></div></div>
+<div class="card" id="dkPagesCard"><div class="card-head"><h2 class="card-title">Editor</h2></div>
+<label class="check-row standalone" style="margin-bottom:14px"><input type="checkbox" id="dkHeader"><span class="check-box"></span><span class="check-text"><strong>Show the top bar</strong><span class="ct-hint">Page name, WiFi and clock above the tiles. Also switchable in the quick panel on the device.</span></span></label>
+<div class="dk-tabs" id="dkTabs"></div><div id="dkPage"></div>
+<div class="dk-save"><span class="dk-msg" id="dkMsg">No changes</span><button type="button" class="btn btn-accent" id="dkSave">Save to device</button></div></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Icons</h2><span class="tag" id="dkIcTag">-</span></div>
 <p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; "Install" downloads it in this browser and sends it to the device. Without it the deck shows a few built-in symbols.</p>
 <div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
@@ -79,16 +85,16 @@
 <h3 class="card-title" style="margin-top:18px">Brand icons</h3>
 <p class="field-hint">Custom Brand Icons (phu:) by elax46, installed from <a href="https://github.com/elax46/custom-brand-icons" target="_blank" rel="noopener">their GitHub</a>, not bundled. Needs a mounted microSD card. Enable it in <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>. You can also upload a .js subset from the upstream Icon Finder.</p>
 <div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkBrNet" disabled>Install latest from GitHub</button><button type="button" class="btn" id="dkBrFile" disabled>Upload .js files</button><button type="button" class="btn" id="dkBrRemove" disabled>Remove</button><input type="file" id="dkBrInput" accept=".js" multiple hidden></div>
-<div class="dk-status"><span class="dk-dot" id="dkBrDot"></span><span id="dkBrState">checking...</span></div></div>
-<div class="card" id="dkPrnCard"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag" id="dkPrnTag">Bambu Lab</span></div>
-<p class="field-hint">Source Printer LAN talks to the printer directly: it must be in LAN mode or have LAN access on, and its serial and access code are stored only on the device. Source Home Assistant reads a printer already added to the Bambu Lab integration (ha-bambulab) - nothing else to enter. With a plug (an HA switch), the printer's pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
-<div id="dkPrnBody">
-<div id="dkPrn"></div><div class="dk-row"><button type="button" class="btn" id="dkPrnAdd">+ Add printer</button></div></div>
-<div class="dk-save"><span class="dk-msg" id="dkPrnMsg">No changes</span><button type="button" class="btn btn-accent" id="dkPrnSave">Save to device</button></div></div>
-<div class="card" id="dkPagesCard"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
-<label class="check-row standalone" style="margin-bottom:14px"><input type="checkbox" id="dkHeader"><span class="check-box"></span><span class="check-text"><strong>Show the top bar</strong><span class="ct-hint">Page name, WiFi and clock above the tiles. Also switchable in the quick panel on the device.</span></span></label>
-<div class="dk-tabs" id="dkTabs"></div><div id="dkPage"></div>
-<div class="dk-save"><span class="dk-msg" id="dkMsg">No changes</span><button type="button" class="btn btn-accent" id="dkSave">Save to device</button></div></div>`;
+<div class="dk-status"><span class="dk-dot" id="dkBrDot"></span><span id="dkBrState">checking...</span></div></div>`;
+  const haSec = document.getElementById("haSection");
+  if (haSec)
+    haSec.innerHTML = `<div class="page-header"><h1 class="page-h1">Home Assistant</h1><p class="page-lede">The connection the entity tiles, scenes and printers use.</p></div>
+<div class="card"><div class="card-head"><h2 class="card-title">Connection</h2><span class="tag" id="dkHaVer">-</span></div>
+<div class="grid-2"><div class="field"><label class="field-label" for="dkHaUrl">Address</label><input type="text" id="dkHaUrl" placeholder="http://192.168.0.7:8123" autocomplete="off"></div>
+<div class="field"><label class="field-label" for="dkHaToken">Long-lived access token</label><input type="password" id="dkHaToken" autocomplete="off" placeholder="paste the token"><p class="field-hint">HA profile, Security tab, Long-lived access tokens. Stored only on the device, never shown again.</p></div></div>
+<div class="dk-row"><button type="button" class="btn btn-accent" id="dkHaSave">Save and connect</button><button type="button" class="btn" id="dkHaForget">Forget</button></div>
+<div class="dk-status"><span class="dk-dot" id="dkHaDot"></span><span id="dkHaState">checking...</span></div></div>
+<div class="card"><h2 class="card-title">Also from Home Assistant</h2><p class="maintenance-copy">The deck as a device in Home Assistant (MQTT discovery): <a href="#" data-page="advanced">Advanced</a>. Taking the time from Home Assistant: <a href="#" data-page="clock">Time</a>. Presence entities that wake the screen: <a href="#" data-page="light">Brightness &amp; sleep</a>.</p></div>`;
   document.body.insertAdjacentHTML(
     "beforeend",
     `<div class="dk-modal" id="dkPicker"><div class="dk-sheet"><div class="dk-head">
@@ -1970,14 +1976,19 @@
     return !!c && (pv[c.k] !== false) === c.neg;
   };
   function whenBar(p) {
-    const ks = [];
-    p.tiles.forEach((t) => {
-      const c = whenOf(t);
-      if (c && !offT(t) && !ks.includes(c.k)) ks.push(c.k);
-    });
+    const ks = [],
+      here = new Set();
+    pages().forEach((q) =>
+      q.tiles.forEach((t) => {
+        const c = whenOf(t);
+        if (!c || offT(t)) return;
+        if (!ks.includes(c.k)) ks.push(c.k);
+        if (q === p) here.add(c.k);
+      }),
+    );
     if (!ks.length) return "";
     return (
-      '<div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Preview</span>' +
+      '<div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Preview as if</span>' +
       ks
         .map((k) => {
           let nm;
@@ -1992,8 +2003,11 @@
           } else nm = k.slice(2).replace("=", " is ");
           const on = pv[k] !== false,
             yes = k.startsWith("pc:") ? ["On", "Off"] : ["Yes", "No"];
+          const off = here.has(k) ? "" : ' disabled title="No tile on this page depends on it"';
           return (
-            '<span class="dk-tsub" style="margin:0 0 0 8px">' +
+            '<span class="dk-pvg' +
+            (off ? " off" : "") +
+            '"><span class="dk-tsub" style="margin:0">' +
             esc(nm) +
             "</span>" +
             [
@@ -2004,7 +2018,9 @@
                 (o) =>
                   '<button type="button" class="chip page-tab' +
                   (on === !!o[0] ? " on" : "") +
-                  '" data-pv="' +
+                  '"' +
+                  off +
+                  ' data-pv="' +
                   esc(k) +
                   '" data-pvv="' +
                   o[0] +
@@ -2012,7 +2028,8 @@
                   o[1] +
                   "</button>",
               )
-              .join("")
+              .join("") +
+            "</span>"
           );
         })
         .join("") +
@@ -2083,7 +2100,7 @@
   window.dkPrnSync = () => {
     if (deck) render();
   };
-  const visible = () => ["deck", "printers"].includes(document.querySelector(".page.active")?.dataset.page);
+  const visible = () => ["deck", "printers", "ha"].includes(document.querySelector(".page.active")?.dataset.page);
 
   /* Home Assistant */
   async function haStatus() {
@@ -2103,6 +2120,7 @@
               : "busy");
       $("dkHaState").textContent = l + (s.error ? " - " + s.error : "");
       $("dkHaVer").textContent = s.version ? "HA " + s.version : "-";
+      $("dkHaNote").classList.toggle("hidden", l === "connected");
     } catch (e) {
       $("dkHaState").textContent = "status unavailable";
     }
