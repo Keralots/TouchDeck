@@ -1660,16 +1660,9 @@
     } catch (e) {}
   });
   initHelpTips();
-  // The deck editor (deck.js) renders late and re-renders on every edit.
-  let tipsQueued = false;
-  new MutationObserver(() => {
-    if (tipsQueued) return;
-    tipsQueued = true;
-    setTimeout(() => {
-      tipsQueued = false;
-      initHelpTips();
-    });
-  }).observe(document.body, { childList: true, subtree: true });
+  // The deck editor (deck.js) re-renders on every edit; fold before the paint, else the page jumps for a frame.
+  window.snFoldTips = initHelpTips;
+  new MutationObserver(initHelpTips).observe(document.body, { childList: true, subtree: true });
   showPage(initial);
   loadConfig();
   pollStatus();

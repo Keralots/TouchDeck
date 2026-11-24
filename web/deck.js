@@ -176,12 +176,10 @@
    (a view only, the order stays). */
   let picked = null,
     showPicked = false;
-  /* After the portal has folded the new hints into tips, which moves the rows. */
-  const scrollToRow = (s) =>
-    setTimeout(() => {
-      const row = document.querySelector(s);
-      if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    }, 60);
+  const scrollToRow = (s) => {
+    const row = document.querySelector(s);
+    if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
   function addTile(p, t) {
     p.tiles.push(t);
     picked = t;
@@ -3316,6 +3314,8 @@
       pcList() +
       '<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a 2x0.5 one fits them in a row between the name and the number, a narrower one shows the number), so picking one makes a 1x1 tile 2x1.</p></div></div>';
     el.innerHTML = h;
+    /* Folded hints first: the rows must be in their place before anything scrolls to them. */
+    if (window.snFoldTips) window.snFoldTips();
     if (showPicked) {
       showPicked = false;
       scrollToRow(".dk-picked .dk-tile");
@@ -3330,15 +3330,11 @@
           msel.clear();
           sel = k;
           picked = null;
-          /* The block above goes away: scroll so the clicked row stays where it was, also once the hints fold. */
-          const y = row.getBoundingClientRect().top,
-            hold = () => {
-              const x = document.querySelector('#dkTiles [data-x="' + k + '"]');
-              if (x) window.scrollBy({ top: x.closest(".dk-tile").getBoundingClientRect().top - y, behavior: "instant" });
-            };
+          /* The block above goes away: scroll so the clicked row stays where it was. */
+          const y = row.getBoundingClientRect().top;
           renderPage();
-          hold();
-          setTimeout(hold, 60);
+          const del = document.querySelector('#dkTiles [data-x="' + k + '"]');
+          if (del) window.scrollBy({ top: del.closest(".dk-tile").getBoundingClientRect().top - y, behavior: "instant" });
         };
     });
     $("dkPName").oninput = (e) => {
