@@ -18,7 +18,8 @@
 .dk-tact{display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.dk-tact select{width:auto;padding:6px 8px;font-size:12px}.dk-tact .btn{padding:6px 9px}
 .dk-phead .btn{padding:6px 9px}.dk-phead .dk-row{gap:6px}@media (min-width:561px){.dk-phead{grid-template-columns:minmax(160px,1fr) auto}}
 .dk-cap{font:12px var(--mono);color:var(--dim);margin:10px 0 0}.dk-cap.over{color:var(--err)}
-.dk-tile.sel{border-color:var(--accent)}
+.dk-tile.sel{border-color:var(--accent)}.dk-tile{scroll-margin:calc(var(--topbar-h) + 34px) 0 80px}
+.dk-picked{display:flex;flex-direction:column;gap:8px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--line)}.dk-picked>.dk-tile.sel{box-shadow:0 0 0 1px var(--accent)}
 .dk-more{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px 12px;padding-top:10px;border-top:1px solid var(--line)}
 .dk-more .field{margin:0}.dk-sec,.dk-grp.flat>.field::before{font:600 11px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}.dk-sec{grid-column:1/-1}.dk-grp.flat{display:contents}.dk-grp.flat>.field::before{content:"\\a0";display:block;margin-bottom:8px}.dk-grp.flat>.field:first-child::before{content:var(--t)}.dk-grp.wide{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px 12px;min-width:0}.dk-more .field-label{display:flex;align-items:center;min-height:17px;margin-bottom:6px}.dk-more .field-label .tip-btn{width:15px;height:15px;margin-left:6px;font-size:10px}.dk-warn{margin-left:8px;color:var(--warn);font-weight:600;text-transform:none;letter-spacing:0}.dk-more .field-hint.tip{margin:0 0 6px}.dk-oib i{font:18px dkmdi, dkcbi;font-style:normal;line-height:1;margin-right:6px;vertical-align:-3px}.dk-more .wide{grid-column:1/-1}.dk-more select,.dk-more input,.dk-more textarea{max-width:none;padding:7px 10px;font-size:13px}
 .dk-sw{gap:6px;flex-wrap:wrap}.dk-sw input[type=color]{width:40px;height:30px;padding:2px;border:1px solid var(--line-2);border-radius:8px;background:var(--card);cursor:pointer}
@@ -171,6 +172,22 @@
     more = -1;
   /* Tiles selected together on the current page (the group bar), kept as objects so a reorder keeps them. */
   const msel = new Set();
+  /* The tile picked in the preview: its row stands first, apart from the list (a view only, the order stays). */
+  let picked = null,
+    showPicked = false;
+  /* After the portal has folded the new hints into tips, which moves the rows. */
+  const scrollToRow = (s) =>
+    setTimeout(() => {
+      const row = document.querySelector(s);
+      if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }, 60);
+  function addTile(p, t) {
+    p.tiles.push(t);
+    picked = t;
+    showPicked = true;
+    sel = p.tiles.length - 1;
+    msel.clear();
+  }
   const PAL = ["#3987E5", "#00A35C", "#D55181", "#C98500", "#199E70", "#D95926", "#9085E9", "#E66767"];
   /* The device's landscape screen and grid limits (older firmware: the 3.5" deck). */
   let scr = { w: 480, h: 320, gridMax: 6, grid: { landscape: [4, 3], portrait: [3, 4] } };
@@ -2475,9 +2492,9 @@
       return;
     }
     sel = k;
+    picked = t;
     renderPage();
-    const row = document.querySelector(".dk-tile.sel");
-    if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    scrollToRow(".dk-tile.sel");
   }
   /* Touch and pen: holding a tile still this long selects it. */
   const LONG_MS = 450;
@@ -2579,9 +2596,10 @@
       bd.hidden = true;
       if (ev.type !== "pointerup") return;
       if (!box) {
-        if (!add && (msel.size || sel >= 0)) {
+        if (!add && (msel.size || sel >= 0 || picked)) {
           msel.clear();
           sel = -1;
+          picked = null;
           renderPage();
         }
         return;
@@ -2694,6 +2712,7 @@
         if (tgt.j >= 0) setPos(p.tiles[tgt.j], cell(tgt.to.x, tgt.to.y, tgt.to.w, tgt.to.h));
         setPos(p.tiles[k], cell(tgt.x, tgt.y, tgt.w, tgt.h));
         sel = k;
+        picked = p.tiles[k];
         setDirty(true);
       }
       renderPage();
@@ -3072,6 +3091,8 @@
     }
     const p = ps[cur];
     for (const t of msel) if (!p.tiles.includes(t) || hidT(t)) msel.delete(t);
+    const top = msel.size ? -1 : p.tiles.indexOf(picked);
+    if (top < 0 || hidT(picked)) picked = null;
     const [c, r] = grid(p),
       land = ori === "landscape",
       pick = (scr.pick || { landscape: [6, 4], portrait: [4, 6] })[ori],
@@ -3181,17 +3202,13 @@
         lost.map((k) => gtile(p.tiles[k], k, null)).join("") +
         "</div>";
     h +=
-      '<p class="field-hint">Drag a tile to move it, or onto another tile, which then moves to where the dragged one was; the corner handle resizes. Both go in half-cell steps. Tap a tile to find it in the list. To select several, Ctrl+click or long-press them, or drag across them from an empty cell: they then move together and share one set of settings.</p>';
+      '<p class="field-hint">Drag a tile to move it, or onto another tile, which then moves to where the dragged one was; the corner handle resizes. Both go in half-cell steps. Tap a tile to put its settings first in the list. To select several, Ctrl+click or long-press them, or drag across them from an empty cell: they then move together and share one set of settings.</p>';
     if (sel >= 0 && p.tiles[sel] && ps.length > 1)
       h +=
         '<div class="dk-row"><span class="dk-tsub" style="margin:0">Move the selected tile to</span><select id="dkMvPg" style="width:auto">' +
         ps.map((q, i) => (i === cur ? "" : opt(String(i), q.name || q.id, false))).join("") +
         '</select><button type="button" class="btn" id="dkMv">Move</button></div>';
-    h +=
-      '</div><div class="dk-right">' +
-      (msel.size ? groupBar(p, ps, at) : "") +
-      '<div class="dk-tiles" id="dkTiles">' +
-      p.tiles
+    const rows = p.tiles
         .map((t, i) => {
           if (t.type === "metric") return metricRow(t, i);
           if (t.type === "clock") return clockRow(t, i);
@@ -3273,8 +3290,15 @@
             (i === more ? moreRow(t, i) : "") +
             "</div>"
           );
-        })
-        .join("") +
+        });
+    h +=
+      '</div><div class="dk-right">' +
+      (msel.size ? groupBar(p, ps, at) : "") +
+      (picked
+        ? '<div class="dk-picked"><span class="dk-sec">Picked tile</span>' + rows.splice(top, 1)[0] + "</div>"
+        : "") +
+      '<div class="dk-tiles" id="dkTiles">' +
+      rows.join("") +
       "</div>";
     h +=
       '<p class="dk-cap">' +
@@ -3291,6 +3315,10 @@
       pcList() +
       '<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a 2x0.5 one fits them in a row between the name and the number, a narrower one shows the number), so picking one makes a 1x1 tile 2x1.</p></div></div>';
     el.innerHTML = h;
+    if (showPicked) {
+      showPicked = false;
+      scrollToRow(".dk-picked .dk-tile");
+    }
     /* A click on a row's free area selects its tile in the preview. */
     el.querySelectorAll("#dkTiles > .dk-tile").forEach((row) => {
       const x = row.querySelector("[data-x]");
@@ -3345,7 +3373,7 @@
           show: "hero",
         };
         setSize(t, "2x1");
-        p.tiles.push(t);
+        addTile(p, t);
         setDirty(true);
         renderPage();
       };
@@ -3900,7 +3928,7 @@
     );
     $("dkAddTile").onclick = () => openPicker(-1);
     $("dkAddHttpSensor").onclick = () => {
-      p.tiles.push({
+      addTile(p, {
         id: "s" + Date.now().toString(36),
         type: "sensor",
         http: { url: "", path: "", poll: 30 },
@@ -3977,7 +4005,7 @@
     $("dkAddMedia").onclick = () => {
       const t = { id: "np" + Date.now().toString(36), type: "media" };
       setSize(t, "2x2");
-      p.tiles.push(t);
+      addTile(p, t);
       setDirty(true);
       renderPage();
     };
@@ -3985,14 +4013,14 @@
       $("dkAddAgent").onclick = () => {
         const t = { id: "ai" + Date.now().toString(36), type: "agent" };
         setSize(t, "1x1");
-        p.tiles.push(t);
+        addTile(p, t);
         setDirty(true);
         renderPage();
       };
     $("dkAddViz").onclick = () => {
       const t = { id: "z" + Date.now().toString(36), type: "viz" };
       setSize(t, "2x1");
-      p.tiles.push(t);
+      addTile(p, t);
       setDirty(true);
       renderPage();
     };
@@ -4032,7 +4060,7 @@
     $("dkAddWeather").onclick = () => {
       const t = { id: "w" + Date.now().toString(36), type: "weather" };
       setSize(t, "2x2");
-      p.tiles.push(t);
+      addTile(p, t);
       /* A deck without a place: open the new tile's options on the place fields. */
       if (!deck.weather || (!deck.weather.lat && !deck.weather.lon)) more = p.tiles.length - 1;
       setDirty(true);
@@ -4095,14 +4123,14 @@
     $("dkAddClock").onclick = () => {
       const t = { id: "k" + Date.now().toString(36), type: "clock" };
       setSize(t, "2x1");
-      p.tiles.push(t);
+      addTile(p, t);
       setDirty(true);
       renderPage();
     };
     $("dkAddPcCmd").onclick = () => {
       const t = { id: "c" + Date.now().toString(36), type: "action" };
       pcCmdSet(t, "media_play_pause");
-      p.tiles.push(t);
+      addTile(p, t);
       more = p.tiles.length - 1;
       setDirty(true);
       renderPage();
@@ -4116,7 +4144,7 @@
         icon: "mdi:volume-high",
       };
       setSize(t, "2x1");
-      p.tiles.push(t);
+      addTile(p, t);
       setDirty(true);
       renderPage();
     };
@@ -4165,7 +4193,7 @@
         setDirty(true);
       };
     $("dkAddHttp").onclick = () => {
-      p.tiles.push({
+      addTile(p, {
         id: "h" + Date.now().toString(36),
         type: "action",
         label: "HTTP",
@@ -4289,7 +4317,7 @@
         .filter((t) => t.type === "metric" && (t.pc || pcs[0].id) === pc.id)
         .map((t) => t.metric);
       const m = metrics.find((x) => !usedIds.includes(x.id)) || metrics[0];
-      p.tiles.push(
+      addTile(p, 
         Object.assign(
           { id: "m" + Date.now().toString(36), type: "metric", metric: m.id, style: "number" },
           pcs.length > 1 ? { pc: pc.id } : {},
@@ -4523,7 +4551,7 @@
   function pick(id) {
     const p = pages()[cur];
     const type = autoType(domainOf(id));
-    if (pickFor < 0) p.tiles.push({ id: "t" + Date.now().toString(36), type: type, entity: id });
+    if (pickFor < 0) addTile(p, { id: "t" + Date.now().toString(36), type: type, entity: id });
     else if (p.tiles[pickFor].type === "media") {
       if (domainOf(id) !== "media_player") {
         alert("Now playing needs a media player (media_player.*).");
