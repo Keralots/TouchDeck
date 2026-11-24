@@ -33,7 +33,7 @@
 #include "crash_log.h"
 #include "coproc_update.h"
 #include <LittleFS.h>
-#include <WebServer.h>
+#include "web_pool.h"
 #include <ArduinoJson.h>
 #include <Update.h>
 #include <esp_task_wdt.h>
@@ -44,7 +44,7 @@
 #include <time.h>
 #include <algorithm>
 
-static WebServer server(80);
+static PooledWebServer server(80);
 
 // Deferred restart (so the HTTP response flushes before reboot).
 static unsigned long restartAt = 0;
