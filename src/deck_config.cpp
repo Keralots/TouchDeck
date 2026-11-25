@@ -579,6 +579,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       const char* cf = tv["confirm"] | "";
       if (!strcmp(cf, "off")) t.confirm = CONFIRM_OFF;
       else if (!strcmp(cf, "always")) t.confirm = CONFIRM_ALWAYS;
+      else if (!strcmp(cf, "pin")) t.confirm = CONFIRM_PIN;
       else if (*cf) {
         if (err) *err = where + ": unknown confirm '" + cf + "'";
         return false;

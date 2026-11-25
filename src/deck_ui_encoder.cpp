@@ -1068,6 +1068,27 @@ const Target& knobTarget(const Knob& k, const EncoderSettings& s) {
   return s.mode == ENCODER_FOLLOW ? s_focus : k.fixed;
 }
 
+// A followed tile that needs the PIN again; using an open one keeps it open.
+bool targetLocked(const Target& target) {
+  bool locked = false;
+  for (TileRt& t : s_tiles) {
+    const TileDef& d = *t.def;
+    if (!tilePinned(d)) continue;
+    const bool pcMedia = d.type == TILE_MEDIA && !t.mediaHa;
+    const bool match = target.kind == TargetKind::Ha         ? d.entity == target.id
+                       : target.kind == TargetKind::PcVolume ? d.pcVolume && tilePcId(d) == target.id
+                       : target.kind == TargetKind::PcMedia  ? pcMedia && tilePcId(d) == target.id
+                                                             : false;
+    if (!match) continue;
+    if (tileOpen(t)) {
+      tileGuard(t, nullptr);
+      return false;
+    }
+    locked = true;
+  }
+  return locked;
+}
+
 void knobAction(Knob& k, const EncoderSettings& s, const EncoderInput& in, bool click, uint32_t now) {
   switch (s.mode) {
     case ENCODER_TILES:
@@ -1110,6 +1131,10 @@ void knobAction(Knob& k, const EncoderSettings& s, const EncoderInput& in, bool 
     }
   }
   const Target& target = knobTarget(k, s);
+  if (s.mode == ENCODER_FOLLOW && targetLocked(target)) {
+    popupShow(k.popup, s.popupY, s.edge, now, "Locked", "");
+    return;
+  }
   if (target.kind == TargetKind::None) {
     popupShow(k.popup, s.popupY, s.edge, now, "Tap a tile", "");
     return;
@@ -1145,6 +1170,7 @@ void encoderClearTiles(bool rebuild) {
 
 void encoderFocus(const TileRt& r) {
   const TileDef& d = *r.def;
+  if (!tileOpen(r)) return;  // a knob would act past the PIN
   TargetKind kind;
   const String* id;
   if (d.pcVolume || (d.type == TILE_MEDIA && !r.mediaHa)) {

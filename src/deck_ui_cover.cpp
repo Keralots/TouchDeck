@@ -90,7 +90,8 @@ void coverEvent(lv_event_t* e) {
   if (idx >= s_tiles.size()) return;
   hapticTap();
   audioClick();
-  coverCommand(s_tiles[idx].def->entity, tag % 4);
+  const int button = tag % 4;
+  tileGuard(s_tiles[idx], [button](TileRt& r) { coverCommand(r.def->entity, button); });
 }
 
 static void coverGlyphs(lv_obj_t* const btns[3], int px) {

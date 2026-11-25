@@ -1071,6 +1071,7 @@ bool needsConfirm(const TileRt& r, const TileAction& a) {
   if (a.kind == ACT_PAGE || a.kind == ACT_MORE_INFO || a.kind == ACT_NOTHING) return false;
   switch (r.def->confirm) {
     case CONFIRM_ALWAYS: return true;
+    case CONFIRM_PIN: return !tilePinned(*r.def);  // the PIN was the question
     case CONFIRM_OFF:
       return (a.kind == ACT_TOGGLE && r.on) || (a.kind == ACT_CALL_SERVICE && a.service == "turn_off");
     default: return false;
@@ -1102,7 +1103,7 @@ const char* actionVerb(const TileRt& r, const TileAction& a) {
   return "Run";
 }
 
-void requestAction(TileRt& r, bool hold) {
+static void startAction(TileRt& r, bool hold) {
   if (r.def->type == TILE_PRINTER) {
     if (!hold) printerTap(r);
     return;
@@ -1115,6 +1116,13 @@ void requestAction(TileRt& r, bool hold) {
   if ((r.def->http.enabled && a.kind == ACT_NONE) || a.kind == ACT_NOTHING) return;
   if (needsConfirm(r, a)) openConfirm((int)(&r - &s_tiles[0]), hold);
   else runAction(r, a);
+}
+
+void requestAction(TileRt& r, bool hold) {
+  const TileAction& a = hold ? r.def->hold : r.def->tap;
+  const bool own = r.def->type == TILE_PRINTER || r.def->type == TILE_CLOCK;
+  if (own ? hold : (r.def->http.enabled && a.kind == ACT_NONE) || a.kind == ACT_NOTHING) return;
+  tileGuard(r, [hold](TileRt& t) { startAction(t, hold); });
 }
 
 void tileEvent(lv_event_t* e) {
@@ -1196,7 +1204,7 @@ static int sliderSlop(const TileRt& r) { return uiSideEdge(r.slX0) ? 24 : 8; }
 void pcVolumeDrag(TileRt& r, lv_event_code_t code, const lv_point_t& p) {
   if (code == LV_EVENT_PRESSING) {
     if (!r.sliding) {
-      if (!pcIsOnline(tilePcId(*r.def)) || modalShown() || abs(p.x - r.slX0) < sliderSlop(r)) return;
+      if (!tileOpen(r) || !pcIsOnline(tilePcId(*r.def)) || modalShown() || abs(p.x - r.slX0) < sliderSlop(r)) return;
       r.sliding = true;
       r.slX0 = p.x;
       r.slFrac0 = r.slValue = r.frac;
@@ -1237,6 +1245,12 @@ void sliderEvent(lv_event_t* e) {
     r.slX0 = p.x;
     return;
   }
+  if (code == LV_EVENT_PRESSING && !r.sliding && !tileOpen(r) && !modalShown() &&
+      abs(p.x - r.slX0) >= sliderSlop(r)) {
+    lv_indev_wait_release(lv_indev_active());  // the release must not tap the tile
+    tileGuard(r, nullptr);
+    return;
+  }
   if (r.def->pcVolume) {
     pcVolumeDrag(r, code, p);
     return;
@@ -1244,7 +1258,7 @@ void sliderEvent(lv_event_t* e) {
   const bool canSlide = r.def->entity.length() && haLink() == HA_CONNECTED && !modalShown();
   if (code == LV_EVENT_PRESSING) {
     if (!r.sliding) {
-      if (!canSlide || abs(p.x - r.slX0) < sliderSlop(r)) return;
+      if (!tileOpen(r) || !canSlide || abs(p.x - r.slX0) < sliderSlop(r)) return;
       r.sliding = true;
       r.slX0 = p.x;
       r.slFrac0 = r.slValue = r.frac;

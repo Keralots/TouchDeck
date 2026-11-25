@@ -231,6 +231,10 @@ void mediaVolEvent(lv_event_t* e) {
     mediaVolEnd(r);
     return;
   }
+  if (!r.sliding && !tileOpen(r)) {
+    if (code == LV_EVENT_SHORT_CLICKED) tileGuard(r, nullptr);
+    return;
+  }
   lv_point_t p;
   lv_indev_get_point(lv_indev_active(), &p);
   lv_area_t a;
@@ -343,6 +347,7 @@ void mediaEvent(lv_event_t* e) {
   if (button == 3 && r.mediaFull) return;
   hapticTap();
   audioClick();
+  if (!tileOpen(r)) return tileGuard(r, nullptr);
   if (r.mediaHa) {
     static const char* const services[] = {"media_previous_track", "media_play_pause", "media_next_track",
                                            "media_play_pause"};

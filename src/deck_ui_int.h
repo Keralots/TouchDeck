@@ -644,6 +644,9 @@ void pinPadClosed();
 void pinTick();
 bool editAllowed();
 void editGuard(std::function<void()> then);  // runs it now, after the PIN, or not at all
+bool tilePinned(const TileDef& d);  // "confirm": "pin" while a PIN is set
+bool tileOpen(const TileRt& r);     // it may act now
+void tileGuard(TileRt& r, std::function<void(TileRt&)> then);  // runs it now or after the PIN
 bool deckTestPinKeys(const String& keys);
 void edOpen(int page);
 void edClose();

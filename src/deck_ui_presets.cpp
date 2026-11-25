@@ -165,7 +165,8 @@ static void presetEvent(lv_event_t* e) {
   if (idx >= s_tiles.size()) return;
   hapticTap();
   audioClick();
-  presetPress(*s_tiles[idx].def, (int)(tag % MAX_LIGHT_PRESETS));
+  const int preset = (int)(tag % MAX_LIGHT_PRESETS);
+  tileGuard(s_tiles[idx], [preset](TileRt& r) { presetPress(*r.def, preset); });
 }
 
 void makePresetButtons(TileRt& r, size_t idx) {

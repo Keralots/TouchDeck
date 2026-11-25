@@ -1690,7 +1690,10 @@
     const cf = t.confirm || "";
     h +=
       '<div class="field">' +
-      lbl("Confirm on the device") +
+      lbl(
+        "Confirm on the device",
+        "With the PIN (Security page) nothing on the tile works without it, its card and slider included; once entered the tile stays open for 30 s after its last use. While no PIN is set it asks before every action. Another tile with the same entity is not locked.",
+      ) +
       '<select data-cf="' +
       i +
       '">' +
@@ -1698,6 +1701,7 @@
         ["", "No"],
         ["off", "Before turning off"],
         ["always", "Before every action"],
+        ["pin", "With the PIN"],
       ]
         .map((o) => opt(o[0], o[1], cf === o[0]))
         .join("") +

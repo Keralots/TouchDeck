@@ -17,6 +17,15 @@ lv_obj_t* s_keys[12];
 uint32_t s_openMs = 0;
 uint32_t s_lockSecs = 0, s_lockMs = 0;  // the pad shows this many seconds from then
 bool s_unlocked = false;
+constexpr uint32_t TILE_OPEN_MS = 30000;
+String s_openTile;  // the tile opened with the PIN, as tileKey
+uint32_t s_openTileMs = 0;  // when it was last used
+
+// Index in s_tiles changes with a rebuild, this does not.
+String tileKey(const TileRt& r) {
+  const PageDef* p = s_pages[r.page].def;
+  return p ? p->id + "/" + String((int)(r.def - &p->tiles[0])) : String();
+}
 
 uint32_t padIdleMs() { return millis() - touchLastActivity(); }
 
@@ -39,6 +48,7 @@ void submit() {
     // The pad's own button is running this event.
     lv_async_call([](void*) {
       closeModal();
+      lv_refr_now(s_disp);  // a card opened next takes its background from the last frame
       const auto go = std::move(then);
       then = nullptr;
       if (go) go();
@@ -78,9 +88,11 @@ void pinPadClosed() {
 }
 
 void pinPadAsk(const char* title, std::function<void()> then) {
+  const bool covered = s_modalCard || s_qp.open;
   hidePanelNow();
   closeModal();
   cleanPage();
+  if (covered) lv_refr_now(s_disp);  // the pad's background is the last frame
   s_then = std::move(then);
   s_openMs = millis();
   const int w = logicalW(), h = logicalH();
@@ -148,6 +160,43 @@ void editGuard(std::function<void()> then) {
   });
 }
 
+// --- Tiles with "confirm": "pin" -------------------------------------------------
+
+bool tilePinned(const TileDef& d) { return d.confirm == CONFIRM_PIN && pinIsSet(); }
+
+bool tileOpen(const TileRt& r) { return !tilePinned(*r.def) || (s_openTile.length() && s_openTile == tileKey(r)); }
+
+void tileGuard(TileRt& r, std::function<void(TileRt&)> then) {
+  if (tileOpen(r)) {
+    if (tilePinned(*r.def)) s_openTileMs = millis();
+    if (then) then(r);
+    return;
+  }
+  const String key = tileKey(r);
+  if (!key.length()) return;
+  pinPadAsk(tileLabel(*r.def).c_str(), [key, then]() {
+    s_openTile = key;
+    s_openTileMs = millis();
+    for (TileRt& t : s_tiles) {
+      if (tileKey(t) != key) continue;
+#if BOARD_HAS_ENCODER
+      encoderFocus(t);  // the tap that asked came before the PIN
+#endif
+      if (then && !t.off) then(t);
+      return;
+    }
+  });
+}
+
+static void tileRelock(uint32_t now, bool dark) {
+  const bool card = s_modalCard && s_modalTile >= 0 && s_modalTile < (int)s_tiles.size() &&
+                    tileKey(s_tiles[s_modalTile]) == s_openTile;
+  if (card && padIdleMs() < TILE_OPEN_MS) s_openTileMs = now;
+  if (!dark && !frameActive() && now - s_openTileMs < TILE_OPEN_MS) return;
+  s_openTile = "";
+  if (card) closeModal();
+}
+
 void pinTick() {
   const uint32_t now = millis();
   const bool dark = manualDisplayOff() || !currentBacklightLevel();
@@ -164,6 +213,7 @@ void pinTick() {
     }
     if (dark || (now - s_openMs >= PAD_IDLE_MS && padIdleMs() >= PAD_IDLE_MS)) closeModal();
   }
+  if (s_openTile.length()) tileRelock(now, dark);
   if (s_unlocked && (dark || frameActive() || padIdleMs() >= UNLOCK_IDLE_MS || !pinIsSet())) {
     s_unlocked = false;
     // An editor left open would stay usable for the next person.
