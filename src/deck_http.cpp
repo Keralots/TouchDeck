@@ -360,7 +360,29 @@ uint8_t* decodeArt(ArtStream& jpeg, int size, int px) {
     if (img.px && dec->decode(0, 0, div == 1 ? 0 : div) &&
         (out = (uint16_t*)heap_caps_malloc(px * px * 2, MALLOC_CAP_SPIRAM))) {
       const int side = min(img.w, img.h), ox = (img.w - side) / 2, oy = (img.h - side) / 2;
-      for (int y = 0; y < px; y++) {
+      // A cover smaller than asked (YouTube Music gives 180 px) is upscaled
+      // bilinearly, else box-averaged down.
+      if (side < px) {
+        auto ch = [](uint16_t c, int k) { return k == 0 ? c >> 11 : k == 1 ? (c >> 5) & 63 : c & 31; };
+        for (int y = 0; y < px; y++) {
+          const int fy = max(0, (2 * y + 1) * side * 128 / (2 * px) - 64);  // source y in 1/128
+          const int y0 = min(side - 1, fy >> 7), y1 = min(side - 1, y0 + 1), wy = fy & 127;
+          for (int x = 0; x < px; x++) {
+            const int fx = max(0, (2 * x + 1) * side * 128 / (2 * px) - 64);
+            const int x0 = min(side - 1, fx >> 7), x1 = min(side - 1, x0 + 1), wx = fx & 127;
+            const uint16_t* r0 = img.px + (oy + y0) * img.w + ox;
+            const uint16_t* r1 = img.px + (oy + y1) * img.w + ox;
+            uint16_t v[3];
+            for (int k = 0; k < 3; k++) {
+              const int top = ch(r0[x0], k) * (128 - wx) + ch(r0[x1], k) * wx;
+              const int bot = ch(r1[x0], k) * (128 - wx) + ch(r1[x1], k) * wx;
+              v[k] = (uint16_t)((top * (128 - wy) + bot * wy + 8192) >> 14);
+            }
+            out[y * px + x] = (uint16_t)(v[0] << 11 | v[1] << 5 | v[2]);
+          }
+        }
+      }
+      for (int y = 0; y < px && side >= px; y++) {
         const int y0 = oy + y * side / px, y1 = max(y0 + 1, oy + (y + 1) * side / px);
         for (int x = 0; x < px; x++) {
           const int x0 = ox + x * side / px, x1 = max(x0 + 1, ox + (x + 1) * side / px);
