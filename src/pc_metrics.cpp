@@ -5,6 +5,7 @@
 // WiFiUDP (not AsyncUDP) on purpose: AsyncUDP froze on ESP32 in the sibling
 // projects. The socket is polled from loop() via pcMetricsHandle().
 #include "pc_metrics.h"
+#include "pin_lock.h"
 #include <WiFiUdp.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
@@ -401,6 +402,10 @@ static void serialTask(void*) {
       if (!ours) continue;
       if (!strncmp(line + 4, "{\"hello\":", 9)) {
         Serial.printf("\n@TD {\"hello\":\"%s\",\"fw\":\"%s\"}\n", PRODUCT_NAME, FW_VERSION);
+        continue;
+      }
+      if (!strcmp(line + 4, "{\"pin\":\"clear\"}")) {  // forgotten PIN; the loop answers
+        pinRequestClear();
         continue;
       }
       char* copy = (char*)heap_caps_malloc(n + 1, MALLOC_CAP_SPIRAM);

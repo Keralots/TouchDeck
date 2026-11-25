@@ -4,6 +4,7 @@ Full reference for the deck's features. For installing and first-time setup, see
 
 - [Pages and tiles](#pages-and-tiles)
 - [Web portal](#web-portal)
+- [PIN](#pin)
 - [Home Assistant](#home-assistant)
 - [Brand icons](#brand-icons)
 - [Conditional tiles](#conditional-tiles)
@@ -39,7 +40,7 @@ A new deck starts with a Home page (clock, weather for London as an example plac
 - **Now playing size:** the tile grows with its size. From 2x2 the buttons get bigger with play in a circle; a taller tile (2x3) puts a big cover over the title with an upright volume bar beside it, a wider one (3x2, 4x2) puts the volume bar beside the buttons. Drag along the bar to set the level, tap its + or - half for a 5 % step, or hold a half to keep going. Smaller tiles show the track and tap to play or pause. Volume works for both sources; a slider tile for the same player is the other way.
 - **Now playing auto source:** "Auto: PC ... or HA player" shows whichever of the two plays and sends the buttons there; when both play, the PC wins. A Home Assistant player playing one of its own inputs (optical, HDMI: often the PC itself) does not count as playing. With nothing playing the tile stays on the last source.
 - **Tap and hold:** under a tile's "more options", "On tap" and "On hold" pick what a tap or a long press does: Toggle, Open its card, Go to page or Nothing; Default keeps the tile type's own behaviour. In deck.json: `"tap": { "action": "more-info" }`, `"hold": { "action": "page", "page": "lights" }`, `"action": "none"` for nothing. A switch whose tap opens its card or a page still turns on and off from the card's button. "Icon style" there also has No icon.
-- **Confirm before acting:** a tile can ask on the device before it turns something off (a printer mid-print) or before every action. Set it under the tile's "more options" button in the portal.
+- **Confirm before acting:** a tile can ask on the device before it turns something off (a printer mid-print) or before every action, or only with the [PIN](#pin). Set it under the tile's "more options" button in the portal.
 - **Tile colours:** per tile, the accent, icon (off and on), text, off background and on fill colours, and in Glass its own glass and on opacity, all optional on top of the theme ("more options" in Pages & tiles).
 - **Icon style:** buttons, switches, sliders and sensors show their icon in a circle or without one (then it fills its place). A switch can show a different icon while on, and a light's icon can follow the light's own colour and brightness. The grid editor shows each tile's icon style and colour.
 - **Quick panel:** pull down from the top edge for screen and LED brightness, the speaker volume (while the speaker or the AI agent is on), link status, screen off, night mode, the top bar switch (off on a new install) and the page editor.
@@ -64,6 +65,20 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 - **Advanced:** optional features, off by default: Bambu Lab printers. On the Waveshare 7B also **Animation**:
   - **Weather icons**, **Charts and printer effects** and **Clock animations at 60 fps:** animate on every screen refresh instead of every second one. Smoother, uses more CPU time.
 - **Maintenance:** microSD card, configuration backup (pages and settings; WiFi and the Home Assistant token are never included), firmware update, screenshot, factory reset.
+
+## PIN
+
+The **Security** page sets a PIN of 4 to 8 digits; there is none by default. With a PIN the portal asks for it, in setup mode too, and everything that changes the device or shows its settings, pictures or screen needs a sign-in. State that controls nothing, such as `/api/status`, stays readable without it. A browser can stay signed in until it closes, for 7 or for 30 days; changing the PIN signs all the others out. Five wrong tries lock the sign-in for a minute, each further one for twice as long, up to 32 minutes.
+
+Scripts send the PIN as the password of HTTP Basic, with any user name: `curl -u x:1234 http://<device-ip>/api/config`. The companion has a field for it on its Connection page: the screen preview and the wallpapers need it, sensor readings and PC control do not.
+
+**Editing on the device** decides what the touch screen may change while a PIN is set: ask for the PIN (the default), allowed, or off. It covers the page editor, the top bar switch and the clock style; brightness, volume, night, screen off and the timer stay free. Unlocked with the PIN, the screen locks again when it sleeps or after 2 minutes without a touch, and an open editor closes without saving. Unless editing is allowed, pairing a PC needs the PIN in the companion as well.
+
+**A tile with the PIN** ("Confirm on the device: With the PIN" in its "more options", `"confirm": "pin"`) does nothing without it: tap, hold, slider and buttons first ask. Once entered, that tile stays open for 30 s after its last use, as long as the screen is on. A rotary encoder that follows the tapped tile works on it only while it is open; an encoder bound to its entity on the Hardware page still works, and so does another tile with the same entity. While no PIN is set the tile asks before every action.
+
+The PIN is not part of a backup, and a factory reset removes it. **Forgotten:** close the companion, open the device's USB serial port in a terminal at 115200 baud and send the line `@TD {"pin":"clear"}`. The device answers `@TD {"pin":"cleared"}` and keeps all other settings.
+
+It keeps guests and children from changing things. It does not stop someone who records the traffic of your network (the portal is plain HTTP) or holds the device and a USB cable.
 
 ## Home Assistant
 

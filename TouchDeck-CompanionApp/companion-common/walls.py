@@ -27,6 +27,9 @@ LOG_LINES = 40
 _DIRECT = urllib_request.build_opener(urllib_request.ProxyHandler({}))
 
 
+PIN_NEEDED = "The TouchDeck asks for its PIN: enter it on the Connection page."
+
+
 class DeckError(Exception):
     pass
 
@@ -46,16 +49,18 @@ def fetch(url):
 
 
 class Deck:
-    def __init__(self, address, ua):
+    def __init__(self, address, ua, auth=None):
         self.base = "http://%s" % address
-        self.ua = ua
+        self.headers = dict(auth or {}, **{"User-Agent": ua})
 
     def _open(self, path, data=None, headers=None, timeout=10):
-        req = urllib_request.Request(self.base + path, data=data, headers=dict(headers or {}, **{"User-Agent": self.ua}))
+        req = urllib_request.Request(self.base + path, data=data, headers=dict(headers or {}, **self.headers))
         try:
             with _DIRECT.open(req, timeout=timeout) as response:
                 return response.read()
         except urllib_error.HTTPError as exc:
+            if exc.code == 401:
+                raise DeckError(PIN_NEEDED) from None
             try:
                 message = json.loads(exc.read() or b"{}").get("message")
             except ValueError:

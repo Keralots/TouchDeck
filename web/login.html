@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en" data-mode="dark" data-accent="green">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>TouchDeck - Sign in</title>
+    <script>
+      (function () {
+        try {
+          document.documentElement.dataset.mode = localStorage.getItem("sn_mode") || "dark";
+          document.documentElement.dataset.accent = localStorage.getItem("sn_accent") || "green";
+        } catch (e) {}
+      })();
+    </script>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 9'><rect width='4' height='4' rx='1.2' fill='%23F6C56B'/><rect x='5' width='4' height='4' rx='1.2' fill='%235CC9A7'/><rect y='5' width='4' height='4' rx='1.2' fill='%23B3A6FF'/><rect x='5' y='5' width='4' height='4' rx='1.2' fill='%237DB5FF'/></svg>"
+    />
+    <link rel="stylesheet" href="/portal.css?v={{v:portal.css}}" />
+    <style>
+      body {
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        padding: 12vh 16px 16px;
+      }
+      form {
+        width: 100%;
+        max-width: 380px;
+      }
+      .card-title {
+        margin-bottom: 14px;
+      }
+      #msg {
+        min-height: 1.4em;
+        margin: 14px 0 0;
+        font-size: 13px;
+        color: var(--err);
+      }
+      .forgot {
+        margin: 4px 0 0;
+        font-size: 12px;
+        color: var(--mute);
+      }
+    </style>
+  </head>
+  <body>
+    <form class="card" id="form">
+      <h1 class="card-title">TouchDeck</h1>
+      <div class="field">
+        <label class="field-label" for="pin">PIN</label
+        ><input type="password" id="pin" inputmode="numeric" maxlength="8" autocomplete="current-password" autofocus />
+      </div>
+      <div class="field">
+        <label class="field-label" for="remember">Stay signed in</label>
+        <div class="select-wrap">
+          <select id="remember">
+            <option value="0">Until the browser closes</option>
+            <option value="7">7 days</option>
+            <option value="30" selected>30 days</option>
+          </select>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-accent" id="go">Sign in</button>
+      <p id="msg" role="status" aria-live="polite"></p>
+      <p class="forgot">Forgot the PIN? It can be removed over the USB cable, see "PIN" in the TouchDeck guide.</p>
+    </form>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      $("form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const pin = $("pin").value.trim();
+        if (!pin) return;
+        $("go").disabled = true;
+        $("msg").textContent = "";
+        try {
+          const r = await fetch("/auth/login", {
+            method: "POST",
+            body: new URLSearchParams({ pin, remember: $("remember").value }),
+          });
+          if (r.ok) return location.replace("/");
+          $("msg").textContent = (await r.json().catch(() => ({}))).message || "Sign-in failed: " + r.status;
+        } catch (err) {
+          $("msg").textContent = "The device does not answer.";
+        }
+        $("go").disabled = false;
+        $("pin").select();
+      });
+    </script>
+  </body>
+</html>

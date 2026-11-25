@@ -258,7 +258,7 @@ void placeTiles(const PageDef& def, int orient, std::vector<Cell>& out) {
 
 void onGridHold(lv_event_t* e) {
   const int a = sh.active;  // pages change index when one comes or goes
-  if (a < s_count && s_pages[a].grid == lv_event_get_current_target(e)) edOpen(a);
+  if (a < s_count && s_pages[a].grid == lv_event_get_current_target(e)) editGuard([]() { edOpen(sh.active); });
 }
 
 // parked: a "when" page that is not shown now, built so it can show at once.
@@ -1470,6 +1470,7 @@ void deckTick() {
   lap(PP_WHEN);
   pcCmdSync();
   pairSync();
+  pinTick();
   pcSync(false);
   lap(PP_PCSYNC);
   mediaArtTick();
@@ -1872,12 +1873,18 @@ bool deckTestConfirm(bool ok) {
   return true;
 }
 
+bool deckTestPin(const String& keys) { return deckTestPinKeys(keys); }
+
 bool deckTestEdit(const String& op, int tile, int x, int y, int w, int h) {
   if (frameActive()) return false;
   if (!s_disp) return false;
   if (op == "open") {
     edOpen(sh.active);
     return s_ed.root != nullptr;
+  }
+  if (op == "touch") {  // as a finger would: asks for the PIN when the screen is locked
+    editGuard([]() { edOpen(sh.active); });
+    return true;
   }
   if (!s_ed.root) return false;
   if (op == "done" || op == "cancel") {

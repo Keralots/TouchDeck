@@ -9,6 +9,7 @@
 #include "display_ui.h"
 #include "deck_ui.h"
 #include "settings.h"
+#include "pin_lock.h"
 #include "wifi_manager.h"
 #include "web_server.h"
 #include "pc_metrics.h"
@@ -43,6 +44,7 @@ void setup() {
   heap_caps_malloc_extmem_enable(128);
 
   loadSettings();
+  pinInit();
   deck::wallStorageBegin();
   setScreenState(SCREEN_SPLASH);
   initDisplay();

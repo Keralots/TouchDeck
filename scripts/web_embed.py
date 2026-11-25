@@ -2,7 +2,7 @@
 
 Runs before every build (extra_scripts = pre:...), or standalone:
   python scripts/web_embed.py
-In web/index.html, {{v:<file>}} becomes a short hash of that file, so the
+In the HTML pages, {{v:<file>}} becomes a short hash of that file, so the
 immutable-cached portal.css / portal.js URLs change whenever the file does.
 """
 
@@ -13,6 +13,7 @@ import re
 
 ASSETS = [  # (file in web/, C name)
     ("index.html", "WEB_INDEX_HTML"),
+    ("login.html", "WEB_LOGIN_HTML"),
     ("portal.css", "WEB_PORTAL_CSS"),
     ("portal-layout.css", "WEB_PORTAL_LAYOUT_CSS"),
     ("portal.js", "WEB_PORTAL_JS"),
@@ -38,7 +39,7 @@ def build(root):
     ]
     for name, cname in ASSETS:
         data = read(root, name)
-        if name == "index.html":
+        if name.endswith(".html"):
             data = re.sub(rb"\{\{v:([\w.-]+)\}\}", lambda m: version(root, m.group(1).decode()).encode(), data)
         gz = gzip.compress(data, compresslevel=9, mtime=0)
         out.append("// %s: %d bytes, %d gzipped" % (name, len(data), len(gz)))

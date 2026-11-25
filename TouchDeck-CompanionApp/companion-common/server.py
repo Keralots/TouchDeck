@@ -1,6 +1,7 @@
 """Local HTTP server for the TouchDeck desktop companion."""
 
 import copy
+import base64
 import json
 import os
 import socket
@@ -16,6 +17,7 @@ from config_model import (
     CONFIG_VERSION,
     MAX_STREAM_LABEL,
     MAX_PANELS,
+    clean_deck_pin,
     clean_device_address,
     clean_pair_key,
     clean_pc_name,
@@ -129,10 +131,16 @@ def _device_url(address, path):
     return "http://%s%s" % (_device_address(address), path)
 
 
-def _fetch_device(address, path, timeout=2.0):
+def _device_auth(config):
+    """The header that signs in to the configured device, if its PIN is stored."""
+    pin = clean_deck_pin(config.get("deck_pin"))
+    return {"Authorization": "Basic " + base64.b64encode(("companion:" + pin).encode()).decode()} if pin else {}
+
+
+def _fetch_device(address, path, timeout=2.0, auth=None):
     req = urllib_request.Request(
         _device_url(address, path),
-        headers={"User-Agent": "TouchDeck-Companion/%s" % CONFIG_VERSION},
+        headers=dict(auth or {}, **{"User-Agent": "TouchDeck-Companion/%s" % CONFIG_VERSION}),
     )
     with _DIRECT_HTTP.open(req, timeout=timeout) as response:
         return response.read(), response.headers.get("Content-Type", "application/octet-stream")
@@ -267,6 +275,14 @@ def apply_connection(core, state, form):
         except ValueError as exc:
             return {"success": False, "message": str(exc)}
 
+        # A stored PIN belongs to one device: a new address drops it.
+        pin = field("deck_pin", "").strip()
+        if pin and not clean_deck_pin(pin):
+            return {"success": False, "message": "The PIN is 4 to 8 digits."}
+        if pin:
+            config["deck_pin"] = pin
+        elif address != config.get("esp32_ip", "") or field("deck_pin_clear", ""):
+            config["deck_pin"] = ""
         config["esp32_ip"] = address
         config["udp_port"] = port
         config["update_interval"] = interval
@@ -287,7 +303,8 @@ def apply_connection(core, state, form):
             except Exception as exc:
                 print("source switch failed: %s" % exc)
         result = {"success": True, "esp32_ip": address, "udp_port": port,
-                  "update_interval": interval, "serial_port": config["serial_port"]}
+                  "update_interval": interval, "serial_port": config["serial_port"],
+                  "pin_saved": bool(config["deck_pin"])}
         if resolved:
             result.update({"sensor_source": source, "resolved_source": resolved})
         return result
@@ -317,12 +334,12 @@ def do_test(state, form):
     return device_status(state, address=address, timeout=2.5)
 
 
-def _post_device(address, path, params, timeout=4.0):
+def _post_device(address, path, params, timeout=4.0, auth=None):
     """POST to the device's API; returns (status, json body)."""
     from urllib.parse import urlencode
     req = urllib_request.Request(
         _device_url(address, path + "?" + urlencode(params)), data=b"", method="POST",
-        headers={"User-Agent": "TouchDeck-Companion/%s" % CONFIG_VERSION},
+        headers=dict(auth or {}, **{"User-Agent": "TouchDeck-Companion/%s" % CONFIG_VERSION}),
     )
     try:
         with _DIRECT_HTTP.open(req, timeout=timeout) as response:
@@ -389,9 +406,11 @@ def pair_start(core, state, auto=False):
         if _TAP["state"] == "waiting":
             return {"success": True, "tap": True, "message": "Tap Allow on the TouchDeck."}
     try:
-        code, body = _post_device(address, "/api/pc/pair", {"id": pc_id, "mode": "tap"})
+        code, body = _post_device(address, "/api/pc/pair", {"id": pc_id, "mode": "tap"}, auth=_device_auth(config))
     except Exception as exc:
         return {"success": False, "message": "Could not reach the device: %s" % exc}
+    if code == 401:
+        return {"success": False, "tap": False, "message": walls.PIN_NEEDED}
     token = str(body.get("token") or "")
     if code != 200 or not token:
         return {"success": code == 200, "tap": False, "message": body.get("message", "HTTP %d" % code)}
@@ -556,8 +575,9 @@ _WALL_JOB = walls.WallJob()
 
 
 def _wall_deck(state):
-    address = _device_address(state.get_config().get("esp32_ip", ""))
-    return walls.Deck(address, "TouchDeck-Companion/%s" % CONFIG_VERSION)
+    config = state.get_config()
+    address = _device_address(config.get("esp32_ip", ""))
+    return walls.Deck(address, "TouchDeck-Companion/%s" % CONFIG_VERSION, _device_auth(config))
 
 
 def wall_summary(state):
@@ -645,7 +665,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _device_screen(self):
         config = self.STATE.get_config()
         try:
-            body, content_type = _fetch_device(config.get("esp32_ip", ""), "/screen.bmp", 4.0)
+            body, content_type = _fetch_device(config.get("esp32_ip", ""), "/screen.bmp", 4.0, _device_auth(config))
             self.send_response(200)
             self.send_header("Content-Type", content_type or "image/bmp")
             self.send_header("Cache-Control", "no-store")
@@ -653,7 +673,8 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         except Exception as exc:
-            self._json({"success": False, "message": str(exc)}, 502)
+            needs_pin = isinstance(exc, urllib_error.HTTPError) and exc.code == 401
+            self._json({"success": False, "message": walls.PIN_NEEDED if needs_pin else str(exc)}, 502)
 
     def do_GET(self):
         core, state = self.CORE, self.STATE
@@ -693,6 +714,7 @@ class _Handler(BaseHTTPRequestHandler):
                     "update_interval": config.get("update_interval", 3),
                     "pc_name": config.get("pc_name", ""),
                     "paired": bool(config.get("pc_key")),
+                    "pin_saved": bool(config.get("deck_pin")),
                     "cmd_port": config.get("cmd_port", 4211),
                     "source_select": bool(getattr(core, "SUPPORTS_SOURCE_SELECT", False)),
                     "sensor_source": config.get("sensor_source", "auto"),
@@ -709,7 +731,9 @@ class _Handler(BaseHTTPRequestHandler):
                     "source": source_text(core),
                 })
             if path == "/api/export":
-                return self._json(normalize_config(state.get_config()))
+                exported = normalize_config(state.get_config())
+                del exported["deck_pin"]
+                return self._json(exported)
             if path == "/api/walls/deck":
                 return self._json(wall_summary(state))
             if path == "/api/walls/job":

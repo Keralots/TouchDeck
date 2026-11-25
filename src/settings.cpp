@@ -519,8 +519,8 @@ void saveSettings() {
 }
 
 bool factoryResetSettings() {
-  // Every NVS namespace the firmware writes: settings, PCs, HA link, deck UI, printers, MQTT.
-  static const char* const kSpaces[] = {NVS_NAMESPACE, "deckpc", "deckha", "deckui", "printers", "deckmqtt"};
+  // Every NVS namespace the firmware writes: settings, PCs, HA link, deck UI, printers, MQTT, PIN.
+  static const char* const kSpaces[] = {NVS_NAMESPACE, "deckpc", "deckha", "deckui", "printers", "deckmqtt", PIN_NAMESPACE};
   bool ok = true;
   for (const char* ns : kSpaces) {
     if (!prefs.begin(ns, false)) {

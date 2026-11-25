@@ -102,8 +102,9 @@
 // { "type": "slider", "control": "pc-volume", "pc": "<pc_id>" (optional) }:
 // the PC's master volume through the companion; a tap mutes.
 //
-// "confirm": "off" | "always" (optional, tap and hold actions): ask on the
-// device before turning the tile off, or before any action it runs.
+// "confirm": "off" | "always" | "pin" (optional): ask on the device before
+// turning the tile off, or before any action it runs (tap and hold). "pin":
+// nothing on the tile works without the PIN; like "always" while none is set.
 //
 // "when" (optional, any tile): the tile shows only while a condition holds
 // and leaves its cell free otherwise, so two tiles can share a cell.
@@ -171,7 +172,7 @@ enum ActionKind : uint8_t {
   ACT_NOTHING,       // "action": "none" set on purpose (ACT_NONE runs the entity's default)
   ACT_AGENT,         // start or end an AI agent conversation
 };
-enum ConfirmMode : uint8_t { CONFIRM_NONE = 0, CONFIRM_OFF, CONFIRM_ALWAYS };
+enum ConfirmMode : uint8_t { CONFIRM_NONE = 0, CONFIRM_OFF, CONFIRM_ALWAYS, CONFIRM_PIN };
 enum WhenKind : uint8_t {
   WHEN_ALWAYS = 0, WHEN_PC_ON, WHEN_PC_OFF, WHEN_ENTITY, WHEN_SOUND_ON, WHEN_SOUND_OFF, WHEN_PRINTER
 };

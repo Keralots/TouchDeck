@@ -61,11 +61,12 @@ class TapPairing(unittest.TestCase):
 
     def test_start_answers_tap_and_waits_until_allowed(self):
         replies = [(200, {"success": True, "token": "t" * 32})]
-        with mock.patch.object(server, "_post_device", side_effect=lambda *a: replies.pop(0)) as post, \
+        with mock.patch.object(server, "_post_device", side_effect=lambda *a, **k: replies.pop(0)) as post, \
                 mock.patch.object(server.threading, "Thread") as thread:
             result = server.pair_start(self.core, self.state)
         self.assertTrue(result["tap"])
-        post.assert_called_once_with("deck.local", "/api/pc/pair", {"id": "0123456789ab", "mode": "tap"})
+        post.assert_called_once_with("deck.local", "/api/pc/pair", {"id": "0123456789ab", "mode": "tap"},
+                                     auth={})
         thread.assert_called_once()
         self.assertEqual("waiting", server.pair_status()["state"])
         # A second start while waiting does not ask the device again.
@@ -324,6 +325,39 @@ class CompanionServerModel(unittest.TestCase):
         self.assertEqual("", self.state.get_config()["pc_key"])
         self.assertEqual("", self.core.saved["pc_key"])
         self.assertEqual("touchdeck.local", self.state.get_config()["esp32_ip"])
+
+    def test_device_pin_is_kept_dropped_and_never_exported(self):
+        def save(**form):
+            return server.apply_connection(self.core, self.state, {k: [v] for k, v in form.items()})
+
+        self.assertTrue(save(esp32_ip="deck.local", deck_pin="4821")["pin_saved"])
+        self.assertTrue(save(esp32_ip="deck.local", deck_pin="")["pin_saved"])
+        self.assertEqual("4821", self.core.saved["deck_pin"])
+        self.assertFalse(save(esp32_ip="deck.local", deck_pin="12ab")["success"])
+        self.assertEqual("4821", self.state.get_config()["deck_pin"])
+        self.assertFalse(save(esp32_ip="other.local")["pin_saved"])
+        save(esp32_ip="deck.local", deck_pin="4821")
+        self.assertFalse(save(esp32_ip="deck.local", deck_pin_clear="on")["pin_saved"])
+        self.assertEqual({}, server._device_auth(self.state.get_config()))
+
+    def test_device_pin_goes_only_to_the_gated_requests(self):
+        seen = []
+
+        class Opener:
+            def open(self, req, timeout=0):
+                seen.append((req.full_url.split("/", 3)[3], req.get_header("Authorization")))
+                raise server.urllib_error.HTTPError(req.full_url, 401, "", {}, None)
+
+        config = self.state.get_config()
+        config.update(esp32_ip="deck.local", deck_pin="4821")
+        self.state.set_config(config)
+        with mock.patch.object(server, "_DIRECT_HTTP", Opener()), mock.patch.object(server.walls, "_DIRECT", Opener()):
+            server.device_status(self.state, address="stranger.local")
+            self.assertEqual(server.walls.PIN_NEEDED, server.pair_start(self.core, self.state)["message"])
+            reply = server.wall_summary(self.state)
+        pin = "Basic Y29tcGFuaW9uOjQ4MjE="
+        self.assertEqual([None, pin, pin], [auth for _path, auth in seen])
+        self.assertEqual(server.walls.PIN_NEEDED, reply["message"])
 
 
 if __name__ == "__main__":
