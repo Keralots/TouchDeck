@@ -566,6 +566,37 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
       lv_obj_add_event_cb(button, mediaEvent, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)(idx * 8 + i));
 #endif
     }
+    if (def.bluos.length()) {
+      for (int i = 0; i < 3; i++) {
+        lv_obj_t* b = r.actBtns[i] = lv_obj_create(t);
+        lv_obj_remove_style_all(b);
+        lv_obj_remove_flag(b, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_EVENT_BUBBLE));
+        lv_obj_set_style_radius(b, 8, 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(b, LV_OPA_50, LV_STATE_PRESSED);
+        r.actIcons[i] = lv_label_create(b);
+        lv_obj_center(r.actIcons[i]);
+        lv_obj_add_event_cb(b, mediaActEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 4 + i));
+        showObj(b, false);
+      }
+      r.nextRow = lv_obj_create(t);
+      lv_obj_remove_style_all(r.nextRow);
+      lv_obj_remove_flag(r.nextRow, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_EVENT_BUBBLE));
+      lv_obj_set_style_radius(r.nextRow, 10, 0);
+      lv_obj_set_style_bg_color(r.nextRow, lv_color_hex(C_TRACK), 0);
+      lv_obj_set_style_bg_opa(r.nextRow, LV_OPA_60, 0);
+      lv_obj_set_style_bg_color(r.nextRow, lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
+      lv_obj_set_style_pad_hor(r.nextRow, 12, 0);
+      r.nextLabel = lv_label_create(r.nextRow);
+      lv_label_set_long_mode(r.nextLabel, LV_LABEL_LONG_MODE_DOTS);
+      lv_obj_set_width(r.nextLabel, lv_pct(100));
+      lv_obj_align(r.nextLabel, LV_ALIGN_LEFT_MID, 0, 0);
+      setFont(r.nextLabel, &deck_font_14);
+      lv_label_set_text(r.nextLabel, "");
+      showObj(r.nextLabel, false);
+      lv_obj_set_size(r.nextRow, 0, 0);
+      lv_obj_add_event_cb(r.nextRow, mediaSrcEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
+    }
     r.volBar = lv_bar_create(t);
     lv_obj_remove_style_all(r.volBar);
     lv_obj_add_flag(r.volBar, LV_OBJ_FLAG_CLICKABLE);

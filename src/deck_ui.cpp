@@ -1185,6 +1185,7 @@ void frameCatchUp() {
   whenSync();
   pcSync(false);
   mediaArtTick();
+  playerTick();
   s_frameSync = false;
 }
 
@@ -1474,6 +1475,7 @@ void deckTick() {
   pcSync(false);
   lap(PP_PCSYNC);
   mediaArtTick();
+  playerTick();
   pcVolumeTick();
   weatherTick();
   lap(PP_MEDIA);

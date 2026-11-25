@@ -489,6 +489,7 @@ void closeModal() {
   climateClose();
   coverCardClose();
   presetCardClose();
+  playerCardClose();
   if (s_modalCard) lv_obj_delete(s_modalCard);
   if (s_modalScrim) lv_obj_delete(s_modalScrim);
   if (s_modalUnder) lv_obj_delete(s_modalUnder);

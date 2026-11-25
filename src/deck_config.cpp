@@ -510,6 +510,17 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
             if (err) *err = where + ": now playing needs a media_player entity";
             return false;
           }
+          // "bluos": the player's address for its queue, shuffle, repeat and love.
+          t.bluos = (const char*)(tv["bluos"] | "");
+          for (size_t c = 0; c < t.bluos.length(); c++) {
+            const char ch = t.bluos[c];
+            if (!isalnum((unsigned char)ch) && ch != '.' && ch != '-' && ch != ':') {
+              if (err) *err = where + ": bluos must be a host or host:port";
+              return false;
+            }
+          }
+          if (!t.entity.length()) t.bluos = "";
+          t.knobTracks = t.bluos.length() && !strcmp(tv["knob"] | "", "tracks");
         }
         if (t.type == TILE_VIZ) t.vizScope = !strcmp(tv["style"] | "bars", "scope");
         if (t.type == TILE_CLOCK) {

@@ -1385,6 +1385,36 @@
         : "")
     );
   }
+  /* A BluOS player (Bluesound, NAD) behind the HA player: its queue, shuffle,
+     repeat and love/ban come straight from it. */
+  function bluosField(t, i) {
+    if (!t.entity) return "";
+    let h =
+      '<div class="field">' +
+      lbl(
+        "BluOS player",
+        "Address of a Bluesound or other BluOS player, for example 192.168.0.64. The cover opens the player card; with this address it also shows the play queue, shuffle, repeat and love/ban.",
+      ) +
+      '<input type="text" data-bl="' +
+      i +
+      '" value="' +
+      esc(t.bluos || "") +
+      '" placeholder="192.168.0.64" spellcheck="false"></div>';
+    if (t.bluos)
+      h +=
+        '<div class="field">' +
+        lbl(
+          "Knob on this tile",
+          "Browse the queue: turning a knob that follows this tile opens the player card and moves through the queue, a press plays the track. While the card is open the first knob browses and the second sets the volume.",
+        ) +
+        '<select data-bk="' +
+        i +
+        '">' +
+        opt("", "Volume", t.knob !== "tracks") +
+        opt("tracks", "Browse the queue", t.knob === "tracks") +
+        "</select></div>";
+    return grp("BluOS", h);
+  }
   function mediaRow(t, i) {
     return (
       '<div class="dk-tile' +
@@ -1412,7 +1442,7 @@
       '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
       i +
       '" title="Remove">&#215;</button></div>' +
-      (i === more ? '<div class="dk-more">' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
+      (i === more ? '<div class="dk-more">' + colorField(t, i) + bluosField(t, i) + whenField(t, i) + "</div>" : "") +
       "</div>"
     );
   }
@@ -4039,6 +4069,29 @@
           else delete t.pc;
           setDirty(true);
           renderPage();
+        }),
+    );
+    el.querySelectorAll("[data-bl]").forEach(
+      (x) =>
+        (x.onchange = () => {
+          const t = p.tiles[+x.dataset.bl],
+            v = x.value.trim();
+          if (v) t.bluos = v;
+          else {
+            delete t.bluos;
+            delete t.knob;
+          }
+          setDirty(true);
+          renderPage();
+        }),
+    );
+    el.querySelectorAll("[data-bk]").forEach(
+      (x) =>
+        (x.onchange = () => {
+          const t = p.tiles[+x.dataset.bk];
+          if (x.value) t.knob = x.value;
+          else delete t.knob;
+          setDirty(true);
         }),
     );
     $("dkAddMedia").onclick = () => {
