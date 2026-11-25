@@ -8,6 +8,7 @@
 static constexpr uint8_t FREE_TRIES = 5;
 
 static bool s_set = false;
+static EditLock s_edit = EDIT_ASK;
 static uint8_t s_salt[16];
 static uint8_t s_hash[32];
 static struct {
@@ -32,6 +33,8 @@ void pinInit() {
   if (!p.begin(PIN_NAMESPACE, true)) return;  // never set
   s_set = p.getBytes("salt", s_salt, sizeof(s_salt)) == sizeof(s_salt) &&
           p.getBytes("hash", s_hash, sizeof(s_hash)) == sizeof(s_hash);
+  const uint8_t edit = p.getUChar("edit", EDIT_ASK);
+  s_edit = edit <= EDIT_OFF ? (EditLock)edit : EDIT_ASK;
   p.end();
 }
 
@@ -65,8 +68,23 @@ bool pinRemove() {
   if (!p.begin(PIN_NAMESPACE, false)) return false;
   const bool ok = p.clear();
   p.end();
-  if (ok) s_set = false;
+  if (ok) {
+    s_set = false;
+    s_edit = EDIT_ASK;
+  }
   memset(s_try, 0, sizeof(s_try));
+  return ok;
+}
+
+EditLock pinEditLock() { return s_edit; }
+
+bool pinSetEditLock(EditLock lock) {
+  if (lock == s_edit) return true;
+  Preferences p;
+  if (!p.begin(PIN_NAMESPACE, false)) return false;
+  const bool ok = p.putUChar("edit", lock) == 1;
+  p.end();
+  if (ok) s_edit = lock;
   return ok;
 }
 

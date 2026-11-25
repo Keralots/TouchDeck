@@ -796,10 +796,11 @@
     setVal("timezonePreset", tz ? tz.value : "");
     const pin = !!c.security?.pin;
     $("pinState").textContent = pin
-      ? "A PIN is set. Enter it to change or remove it; other browsers then have to sign in again."
+      ? "A PIN is set. Enter it to save a change here. Changing the PIN signs the other browsers out."
       : "No PIN is set: everyone on the network can open this portal.";
     ["pinCurrent", "pinNew", "pinRepeat"].forEach((id) => setVal(id, ""));
     setCheck("pinRemove", false);
+    setVal("editLock", c.security?.edit || "ask");
     ["pinCurrentField", "pinRemoveRow", "signOutRow"].forEach((id) => $(id).classList.toggle("hidden", !pin));
     $("pinNewFields").classList.remove("hidden");
     setVal("wifiSsid", c.network.ssid || "");

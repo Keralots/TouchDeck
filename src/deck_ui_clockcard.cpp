@@ -572,6 +572,16 @@ bool clockCardScrim() {
 
 static void act(int a) {
   TileRt* r = cardTile();
+  const bool style = a == A_STYLE || a == A_GLIDE || a == A_TICK || a >= A_PICK;
+  if (style && r && !editAllowed()) {
+    const int tile = (int)(r - &s_tiles[0]);
+    editGuard([tile]() {
+      openClockCard(tile);
+      if (s_card != CK_CLOCK) return;
+      s_tabStyle = s_rebuild = true;
+    });
+    return;
+  }
   if (a >= A_PICK) {
     if (r && a - A_PICK < 6) styleSet(a - A_PICK, r->def->clockTick);
     s_rebuild = true;
@@ -625,7 +635,7 @@ void clockTap(lv_event_t* e) {
   if (idx >= s_tiles.size() || s_ed.root) return;
   // A hold opens the page editor, as on an empty part of the page.
   if (lv_event_get_code(e) == LV_EVENT_LONG_PRESSED) {
-    if (s_tiles[idx].page == sh.active) edOpen(sh.active);
+    if (s_tiles[idx].page == sh.active) editGuard([]() { edOpen(sh.active); });
     return;
   }
   hapticTap();

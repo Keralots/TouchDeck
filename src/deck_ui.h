@@ -98,6 +98,7 @@ bool deckTestTap(const String& tileId, bool hold);
 // preset = 0-based light preset key of that tile (its tap on the tile).
 bool deckTestPreset(const String& tileId, int preset);
 bool deckTestConfirm(bool ok);
+bool deckTestPin(const String& keys);
 // Bench hook (/api/deck/slide): a slider tile drag ending at pct.
 bool deckTestSlide(const String& tileId, int pct);
 // Bench hook (/api/deck/panel): open or close the quick panel with its slide.

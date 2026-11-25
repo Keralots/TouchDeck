@@ -334,12 +334,12 @@ def do_test(state, form):
     return device_status(state, address=address, timeout=2.5)
 
 
-def _post_device(address, path, params, timeout=4.0):
+def _post_device(address, path, params, timeout=4.0, auth=None):
     """POST to the device's API; returns (status, json body)."""
     from urllib.parse import urlencode
     req = urllib_request.Request(
         _device_url(address, path + "?" + urlencode(params)), data=b"", method="POST",
-        headers={"User-Agent": "TouchDeck-Companion/%s" % CONFIG_VERSION},
+        headers=dict(auth or {}, **{"User-Agent": "TouchDeck-Companion/%s" % CONFIG_VERSION}),
     )
     try:
         with _DIRECT_HTTP.open(req, timeout=timeout) as response:
@@ -406,9 +406,11 @@ def pair_start(core, state, auto=False):
         if _TAP["state"] == "waiting":
             return {"success": True, "tap": True, "message": "Tap Allow on the TouchDeck."}
     try:
-        code, body = _post_device(address, "/api/pc/pair", {"id": pc_id, "mode": "tap"})
+        code, body = _post_device(address, "/api/pc/pair", {"id": pc_id, "mode": "tap"}, auth=_device_auth(config))
     except Exception as exc:
         return {"success": False, "message": "Could not reach the device: %s" % exc}
+    if code == 401:
+        return {"success": False, "tap": False, "message": walls.PIN_NEEDED}
     token = str(body.get("token") or "")
     if code != 200 or not token:
         return {"success": code == 200, "tap": False, "message": body.get("message", "HTTP %d" % code)}

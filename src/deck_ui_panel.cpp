@@ -190,8 +190,13 @@ void onNight(lv_event_t*) {
 
 void onScrim(lv_event_t*) { closePanelAnimated(); }
 
-void onHeaderBtn(lv_event_t*) { setHeader(lv_obj_has_state(s_qp.headerBtn, LV_STATE_CHECKED)); }
-void onEditBtn(lv_event_t*) { edOpen(sh.active); }
+void onHeaderBtn(lv_event_t*) {
+  const bool on = lv_obj_has_state(s_qp.headerBtn, LV_STATE_CHECKED);
+  if (!editAllowed()) lv_obj_set_state(s_qp.headerBtn, LV_STATE_CHECKED, !on);  // not yet
+  editGuard([on]() { setHeader(on); });
+}
+
+void onEditBtn(lv_event_t*) { editGuard([]() { edOpen(sh.active); }); }
 
 lv_obj_t* qpButton(lv_obj_t* parent, int x, int y, int w, const char* text, bool checkable) {
   lv_obj_t* b = lv_button_create(parent);

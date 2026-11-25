@@ -133,12 +133,14 @@ static bool openRequest(HTTPMethod method, const String& uri) {
     "/api/deck/perf",
   };
   static const char* const kPost[] = {
-    "/auth/login", "/auth/logout", "/api/pc/pair", "/api/pc/pair/confirm", "/api/pc/pair/cancel",
+    "/auth/login", "/auth/logout", "/api/pc/pair/confirm", "/api/pc/pair/cancel",
   };
   if (method == HTTP_GET) {
     for (const char* o : kGet)
       if (uri == o) return true;
   } else if (method == HTTP_POST) {
+    // Pairing is answered on the screen, so a locked screen needs the PIN before it.
+    if (uri == "/api/pc/pair") return pinEditLock() == EDIT_ALLOWED;
     for (const char* o : kPost)
       if (uri == o) return true;
   }
@@ -224,12 +226,15 @@ static void handleLogout() {
   sendMessage(200, true, "Signed out.");
 }
 
-// POST /save/security (pinCurrent, pinNew, pinRepeat, pinRemove). A set PIN is
-// asked for again, so a browser left signed in cannot take it off.
+// POST /save/security (pinCurrent, pinNew, pinRepeat, pinRemove, editLock). A set
+// PIN is asked for again, so a browser left signed in cannot take it off.
 static void handleSaveSecurity() {
   const String pin = s_srv->arg("pinNew");
   const bool remove = s_srv->hasArg("pinRemove");
-  if (!remove) {
+  const String lock = s_srv->arg("editLock");
+  const EditLock edit = lock == "allow" ? EDIT_ALLOWED : lock == "off" ? EDIT_OFF : lock == "ask" ? EDIT_ASK : pinEditLock();
+  const bool keepPin = pinIsSet() && !pin.length();
+  if (!remove && !keepPin) {
     if (!pin.length()) return sendMessage(400, false, "Enter a new PIN.");
     if (!pinValid(pin)) return sendMessage(400, false, "The PIN must be 4 to 8 digits.");
     if (pin != s_srv->arg("pinRepeat")) return sendMessage(400, false, "The two PINs differ.");
@@ -240,10 +245,15 @@ static void handleSaveSecurity() {
     clearSessions();
     return sendMessage(200, true, "PIN removed.");
   }
+  if (keepPin) {
+    if (!pinSetEditLock(edit)) return sendMessage(500, false, "Could not store the setting.");
+    return sendMessage(200, true, "Security settings saved.");
+  }
   if (!pinStore(pin)) return sendMessage(500, false, "Could not store the PIN. No PIN is set now.");
   // Every other browser has to sign in with the new PIN; this one stays in.
   clearSessions();
   startSession(30);
+  if (!pinSetEditLock(edit)) return sendMessage(500, false, "The PIN is saved, the other setting is not.");
   sendMessage(200, true, "PIN saved.");
 }
 

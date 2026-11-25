@@ -27,6 +27,7 @@
 #include <lvgl.h>
 #include <time.h>
 #include <algorithm>
+#include <functional>
 #include <esp_heap_caps.h>
 #include <new>
 #include <vector>
@@ -637,6 +638,13 @@ bool edAdd(const String& entity, const String& name);
 void pickClose();
 void pickFill(int dom, size_t first);
 void pickOpen(int dom);
+bool pinPadOpen();
+void pinPadAsk(const char* title, std::function<void()> then);
+void pinPadClosed();
+void pinTick();
+bool editAllowed();
+void editGuard(std::function<void()> then);  // runs it now, after the PIN, or not at all
+bool deckTestPinKeys(const String& keys);
 void edOpen(int page);
 void edClose();
 void edFinish();

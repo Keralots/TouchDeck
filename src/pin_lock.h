@@ -13,6 +13,11 @@ bool pinValid(const String& pin);  // 4 to 8 digits
 bool pinStore(const String& pin);
 bool pinRemove();
 
+// Changing the interface on the device itself, while a PIN is set.
+enum EditLock : uint8_t { EDIT_ALLOWED = 0, EDIT_ASK, EDIT_OFF };
+EditLock pinEditLock();
+bool pinSetEditLock(EditLock lock);
+
 // Counts a wrong try. lockedSecs = how long this channel stays locked, else 0.
 PinResult pinTry(PinChannel ch, const char* pin, uint32_t& lockedSecs);
 

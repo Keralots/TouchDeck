@@ -297,6 +297,8 @@ static void handleApiConfig() {
   doc["ip"] = WiFi.localIP().toString();
   doc["deck"] = true;
   doc["security"]["pin"] = pinIsSet();
+  const EditLock edit = pinEditLock();
+  doc["security"]["edit"] = edit == EDIT_ALLOWED ? "allow" : edit == EDIT_OFF ? "off" : "ask";
   // Screen and grid facts for the portal's page editor and picture uploads.
   JsonObject screen = doc["screen"].to<JsonObject>();
   screen["w"] = deck::screenW(false);
@@ -2977,7 +2979,13 @@ static void handleDeckConfirm() {
   sendJsonMessage(ok ? 200 : 409, ok, ok ? "OK" : "No confirm card open");
 }
 
-// POST /api/deck/edit?op=open|move|remove|done|cancel[&tile=<index>&x=&y=&w=&h=]
+// POST /api/deck/pin?keys=<0-9, < back, k OK> - bench hook, types on the open PIN pad.
+static void handleDeckPin() {
+  const bool ok = deckTestPin(server.arg("keys"));
+  sendJsonMessage(ok ? 200 : 409, ok, ok ? "OK" : "No PIN pad open");
+}
+
+// POST /api/deck/edit?op=open|touch|move|remove|done|cancel[&tile=<index>&x=&y=&w=&h=]
 // - bench hook, drives the on-device edit mode. x, y, w, h in half cells.
 static void handleDeckEdit() {
   const bool ok = deckTestEdit(server.arg("op"), server.arg("tile").toInt(), server.arg("x").toInt(),
@@ -3220,6 +3228,7 @@ void initWebServer() {
   server.on("/api/deck/confirm", HTTP_POST, handleDeckConfirm);
   server.on("/api/deck/slide", HTTP_POST, handleDeckSlide);
   server.on("/api/deck/edit", HTTP_POST, handleDeckEdit);
+  server.on("/api/deck/pin", HTTP_POST, handleDeckPin);
   server.on("/api/deck/screen", HTTP_POST, handleDeckScreen);
   server.on("/deck", HTTP_GET, handleDeckPage);
   server.on("/deck.js", HTTP_GET, handleDeckJs);

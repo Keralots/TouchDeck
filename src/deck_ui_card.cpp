@@ -485,6 +485,7 @@ void closeModal() {
     }
   }
   clockCardClosed();
+  pinPadClosed();
   climateClose();
   coverCardClose();
   presetCardClose();

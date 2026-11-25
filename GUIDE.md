@@ -72,6 +72,8 @@ The **Security** page sets a PIN of 4 to 8 digits; there is none by default. Wit
 
 Scripts send the PIN as the password of HTTP Basic, with any user name: `curl -u x:1234 http://<device-ip>/api/config`. The companion has a field for it on its Connection page: the screen preview and the wallpapers need it, sensor readings and PC control do not.
 
+**Editing on the device** decides what the touch screen may change while a PIN is set: ask for the PIN (the default), allowed, or off. It covers the page editor, the top bar switch and the clock style; brightness, volume, night, screen off and the timer stay free. Unlocked with the PIN, the screen locks again when it sleeps or after 2 minutes without a touch, and an open editor closes without saving. Unless editing is allowed, pairing a PC needs the PIN in the companion as well.
+
 The PIN is not part of a backup, and a factory reset removes it. **Forgotten:** close the companion, open the device's USB serial port in a terminal at 115200 baud and send the line `@TD {"pin":"clear"}`. The device answers `@TD {"pin":"cleared"}` and keeps all other settings.
 
 It keeps guests and children from changing things. It does not stop someone who records the traffic of your network (the portal is plain HTTP) or holds the device and a USB cable.

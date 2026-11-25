@@ -1972,7 +1972,7 @@
                 id="securityForm"
                 class="portal-form"
                 data-endpoint="/save/security"
-                data-save-label="Save PIN"
+                data-save-label="Save security"
               >
                 <div class="card">
                   <h2 class="card-title">PIN</h2>
@@ -2012,6 +2012,21 @@
                         autocomplete="new-password"
                       />
                     </div>
+                  </div>
+                  <div class="field">
+                    <label class="field-label" for="editLock">Editing on the device</label>
+                    <div class="select-wrap">
+                      <select id="editLock" name="editLock">
+                        <option value="ask">Ask for the PIN</option>
+                        <option value="allow">Allowed without the PIN</option>
+                        <option value="off">Off, only in this portal</option>
+                      </select>
+                    </div>
+                    <p class="field-hint">
+                      The page editor, the top bar switch and the clock style on the touch screen. Unlocked with the
+                      PIN, it locks again when the screen sleeps or after 2 minutes without a touch. Unless allowed,
+                      pairing a PC needs the PIN in the companion too.
+                    </p>
                   </div>
                   <label class="check-row standalone hidden" id="pinRemoveRow"
                     ><input type="checkbox" id="pinRemove" name="pinRemove" /><span class="check-box"></span
