@@ -29,6 +29,7 @@
 // =============================================================================
 #define WIFI_AP_PREFIX      "TouchDeck-"
 #define WIFI_AP_PASSWORD    "touchdeck1234"
+#define PIN_NAMESPACE       "deckpin"  // NVS: PIN hash and browser sessions
 #define WIFI_CONNECT_TIMEOUT 15000  // 15s STA connect timeout
 #define WIFI_RECONNECT_TIMEOUT 60000 // 60s before re-entering AP mode
 #define WIFI_BACKOFF_PHASE1_MS    10000   // 10s between attempts in phase 1

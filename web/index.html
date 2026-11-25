@@ -178,6 +178,7 @@
               ><button type="button" class="nav-item hidden" data-nav="agent" id="navAgent">AI Agent</button
               ><button type="button" class="nav-item" data-nav="clock">Time</button
               ><button type="button" class="nav-item" data-nav="network">Network</button
+              ><button type="button" class="nav-item" data-nav="security">Security</button
               ><button type="button" class="nav-item" data-nav="advanced">Advanced</button
               ><button type="button" class="nav-item" data-nav="maintenance">Maintenance</button>
             </div>
@@ -1955,6 +1956,80 @@
                         />
                       </div>
                     </div>
+                  </div>
+                </div>
+              </form>
+            </section>
+
+            <section class="page" data-page="security">
+              <div class="page-header">
+                <h1 class="page-h1">Security</h1>
+                <p class="page-lede">
+                  A PIN keeps other people on your network from changing this device.
+                </p>
+              </div>
+              <form
+                id="securityForm"
+                class="portal-form"
+                data-endpoint="/save/security"
+                data-save-label="Save PIN"
+              >
+                <div class="card">
+                  <h2 class="card-title">PIN</h2>
+                  <p class="maintenance-copy" id="pinState"></p>
+                  <div class="field hidden" id="pinCurrentField">
+                    <label class="field-label" for="pinCurrent">Current PIN</label
+                    ><input
+                      type="password"
+                      id="pinCurrent"
+                      name="pinCurrent"
+                      inputmode="numeric"
+                      maxlength="8"
+                      autocomplete="current-password"
+                    />
+                  </div>
+                  <div class="grid-2" id="pinNewFields">
+                    <div class="field">
+                      <label class="field-label" for="pinNew">New PIN</label
+                      ><input
+                        type="password"
+                        id="pinNew"
+                        name="pinNew"
+                        inputmode="numeric"
+                        maxlength="8"
+                        placeholder="4 to 8 digits"
+                        autocomplete="new-password"
+                      />
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="pinRepeat">Repeat the new PIN</label
+                      ><input
+                        type="password"
+                        id="pinRepeat"
+                        name="pinRepeat"
+                        inputmode="numeric"
+                        maxlength="8"
+                        autocomplete="new-password"
+                      />
+                    </div>
+                  </div>
+                  <label class="check-row standalone hidden" id="pinRemoveRow"
+                    ><input type="checkbox" id="pinRemove" name="pinRemove" /><span class="check-box"></span
+                    ><span class="check-text"
+                      ><strong>Remove the PIN</strong
+                      ><span class="ct-hint">Opens the portal to everyone on the network again.</span></span
+                    ></label
+                  >
+                  <div class="maintenance-actions hidden" id="signOutRow" style="margin-top: 14px">
+                    <button type="button" class="btn" id="signOut">Sign out this browser</button>
+                  </div>
+                  <div class="note">
+                    <span class="note-k">Info</span
+                    ><span
+                      >The portal then asks for the PIN, in setup mode too. Not part of a backup. A forgotten PIN
+                      can be removed over the USB cable. The portal runs over plain HTTP, so this stops
+                      curious people, not someone who records your network traffic or has the device in hand.</span
+                    >
                   </div>
                 </div>
               </form>

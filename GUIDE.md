@@ -4,6 +4,7 @@ Full reference for the deck's features. For installing and first-time setup, see
 
 - [Pages and tiles](#pages-and-tiles)
 - [Web portal](#web-portal)
+- [PIN](#pin)
 - [Home Assistant](#home-assistant)
 - [Brand icons](#brand-icons)
 - [Conditional tiles](#conditional-tiles)
@@ -64,6 +65,16 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 - **Advanced:** optional features, off by default: Bambu Lab printers. On the Waveshare 7B also **Animation**:
   - **Weather icons**, **Charts and printer effects** and **Clock animations at 60 fps:** animate on every screen refresh instead of every second one. Smoother, uses more CPU time.
 - **Maintenance:** microSD card, configuration backup (pages and settings; WiFi and the Home Assistant token are never included), firmware update, screenshot, factory reset.
+
+## PIN
+
+The **Security** page sets a PIN of 4 to 8 digits; there is none by default. With a PIN the portal asks for it, in setup mode too, and everything that changes the device or shows its settings, pictures or screen needs a sign-in. State that controls nothing, such as `/api/status`, stays readable without it. A browser can stay signed in until it closes, for 7 or for 30 days; changing the PIN signs all the others out. Five wrong tries lock the sign-in for a minute, each further one for twice as long, up to 32 minutes.
+
+Scripts send the PIN as the password of HTTP Basic, with any user name: `curl -u x:1234 http://<device-ip>/api/config`. The companion has a field for it on its Connection page: the screen preview and the wallpapers need it, sensor readings and PC control do not.
+
+The PIN is not part of a backup, and a factory reset removes it. **Forgotten:** close the companion, open the device's USB serial port in a terminal at 115200 baud and send the line `@TD {"pin":"clear"}`. The device answers `@TD {"pin":"cleared"}` and keeps all other settings.
+
+It keeps guests and children from changing things. It does not stop someone who records the traffic of your network (the portal is plain HTTP) or holds the device and a USB cable.
 
 ## Home Assistant
 

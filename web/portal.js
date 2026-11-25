@@ -34,6 +34,18 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => (t.className = "toast"), 4200);
   }
+  /* Signed out (PIN changed, session over): show the sign-in page. With unsaved
+     changes the browser asks first, and a sign-in in another tab lets them be saved. */
+  const plainFetch = window.fetch.bind(window);
+  let signedOut = false;
+  window.fetch = async (url, options) => {
+    const r = await plainFetch(url, options);
+    if (r.status === 401 && new URL(r.url).origin === location.origin && !signedOut) {
+      signedOut = true;
+      location.reload();
+    } else if (r.ok) signedOut = false;
+    return r;
+  };
   async function getJson(url, options) {
     const r = await fetch(url, options);
     let data = {};
@@ -782,6 +794,14 @@
     setVal("timezone", c.clock.timezone || "");
     const tz = qa("#timezonePreset option").find((o) => o.value === (c.clock.timezone || ""));
     setVal("timezonePreset", tz ? tz.value : "");
+    const pin = !!c.security?.pin;
+    $("pinState").textContent = pin
+      ? "A PIN is set. Enter it to change or remove it; other browsers then have to sign in again."
+      : "No PIN is set: everyone on the network can open this portal.";
+    ["pinCurrent", "pinNew", "pinRepeat"].forEach((id) => setVal(id, ""));
+    setCheck("pinRemove", false);
+    ["pinCurrentField", "pinRemoveRow", "signOutRow"].forEach((id) => $(id).classList.toggle("hidden", !pin));
+    $("pinNewFields").classList.remove("hidden");
     setVal("wifiSsid", c.network.ssid || "");
     setVal("wifiPass", "");
     setVal("hostname", c.network.hostname || "touchdeck");
@@ -917,6 +937,15 @@
   }
   $("saveBtn").addEventListener("click", saveActive);
   $("revertBtn").addEventListener("click", loadConfig);
+  $("pinRemove").addEventListener("change", (e) => $("pinNewFields").classList.toggle("hidden", e.target.checked));
+  $("signOut").addEventListener("click", async () => {
+    try {
+      await getJson("/auth/logout", { method: "POST" });
+      location.reload();
+    } catch (e) {
+      showToast(e.message, true);
+    }
+  });
 
   function pcStatusText(code) {
     return (

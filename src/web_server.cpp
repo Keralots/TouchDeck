@@ -2,6 +2,8 @@
 // captive-portal redirects. Static UI assets are streamed from PROGMEM in
 // bounded chunks so the full page is never assembled in heap.
 #include "web_server.h"
+#include "pin_lock.h"
+#include "portal_auth.h"
 #include "debug_anim.h"
 #include "settings.h"
 #include "wifi_manager.h"
@@ -107,6 +109,11 @@ static void streamAsset(const void* data, size_t len, const char* contentType,
 }
 
 static void handleRoot() {
+  if (!portalAuthOk()) {
+    streamAsset(WEB_LOGIN_HTML, sizeof(WEB_LOGIN_HTML), "text/html",
+                "no-cache, no-store, must-revalidate", true);
+    return;
+  }
   streamAsset(WEB_INDEX_HTML, sizeof(WEB_INDEX_HTML), "text/html",
               "no-cache, no-store, must-revalidate", true);
 }
@@ -289,6 +296,7 @@ static void handleApiConfig() {
   doc["board"] = BOARD_VARIANT;
   doc["ip"] = WiFi.localIP().toString();
   doc["deck"] = true;
+  doc["security"]["pin"] = pinIsSet();
   // Screen and grid facts for the portal's page editor and picture uploads.
   JsonObject screen = doc["screen"].to<JsonObject>();
   screen["w"] = deck::screenW(false);
@@ -3184,7 +3192,7 @@ void initWebServer() {
   server.on("/api/agent/mictest", HTTP_POST, handleAgentMicTest);
   server.on("/api/agent/gain", HTTP_POST, handleAgentGain);
   server.on("/api/agent/record.wav", HTTP_GET, handleAgentRecord);
-  server.on("/api/audio/upload", HTTP_POST, handleAudioUploadFinish, handleAudioUpload);
+  server.on("/api/audio/upload", HTTP_POST, handleAudioUploadFinish, portalAuthUpload(handleAudioUpload));
   server.on("/api/audio/delete", HTTP_POST, handleAudioDelete);
   server.on("/save/clock", HTTP_POST, handleSaveClock);
   server.on("/save/network", HTTP_POST, handleSaveNetwork);
@@ -3217,14 +3225,14 @@ void initWebServer() {
   server.on("/deck.js", HTTP_GET, handleDeckJs);
   server.on("/api/deck/icons", HTTP_GET, handleIconsStatus);
   server.on("/api/deck/brand", HTTP_GET, handleBrandStatus);
-  server.on("/api/deck/brand", HTTP_POST, handleBrandFinish, handleBrandUpload);
+  server.on("/api/deck/brand", HTTP_POST, handleBrandFinish, portalAuthUpload(handleBrandUpload));
   server.on("/api/deck/brand/remove", HTTP_POST, handleBrandRemove);
   server.on("/cbi.otf", HTTP_GET, []() { handleBrandFile(true); });
   server.on("/cbi.names", HTTP_GET, []() { handleBrandFile(false); });
   server.on("/api/deck/wallpaper", HTTP_GET, handleWallStatus);
   server.on("/api/deck/walls", HTTP_GET, handleWallsStatus);
   server.on("/api/deck/walls/file", HTTP_GET, handleWallsFile);
-  server.on("/api/deck/walls", HTTP_POST, handleWallFinish, handleWallUpload);
+  server.on("/api/deck/walls", HTTP_POST, handleWallFinish, portalAuthUpload(handleWallUpload));
   server.on("/api/deck/walls/delete", HTTP_POST, handleWallsDelete);
   server.on("/api/deck/walls/show", HTTP_POST, handleWallsShow);
   server.on("/api/deck/walls/next", HTTP_POST, handleWallsNext);
@@ -3239,7 +3247,7 @@ void initWebServer() {
   server.on("/api/deck/frame", HTTP_GET, handleFrameGet);
   server.on("/api/deck/frame", HTTP_POST, handleFramePost);
   server.on("/api/deck/prefs", HTTP_POST, handleDeckPrefs);
-  server.on("/api/deck/icons", HTTP_POST, handleIconsFinish, handleIconsUpload);
+  server.on("/api/deck/icons", HTTP_POST, handleIconsFinish, portalAuthUpload(handleIconsUpload));
   server.on("/mdi.ttf", HTTP_GET, handleIconsFont);
   server.on("/api/deck", HTTP_GET, handleDeckGet);
   server.on("/api/deck", HTTP_POST, handleDeckPost);
@@ -3250,10 +3258,11 @@ void initWebServer() {
   server.on("/api/ha/config", HTTP_POST, handleHaConfig);
   server.on("/api/ha/forget", HTTP_POST, handleHaForget);
   server.on("/api/ha/entities", HTTP_GET, handleHaEntities);
-  server.on("/ota/upload", HTTP_POST, handleOtaFinish, handleOtaUpload);
+  server.on("/ota/upload", HTTP_POST, handleOtaFinish, portalAuthUpload(handleOtaUpload));
 
-  const char* headers[] = { "X-MD5", "Content-Type" };
-  server.collectHeaders(headers, 2);
+  portalAuthBegin(server);
+  const char* headers[] = { "X-MD5", "Content-Type", "Cookie" };
+  server.collectHeaders(headers, 3);
 
   server.onNotFound(handleNotFound);
   server.begin();
@@ -3261,6 +3270,7 @@ void initWebServer() {
 }
 
 void handleWebServer() {
+  portalAuthTick();
   server.handleClient();
   // Parsing can fail after a file ends without calling the finish handler.
   if (wallParts) {
