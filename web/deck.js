@@ -388,7 +388,7 @@
       "</div>"
     );
   }
-  /* "when" on a printer: key = tile index or "p" for the page. */
+  /* "when" on a printer: key = tile index, "p" for the page or "g" for the selected tiles. */
   const whenKind = (w) => (!w ? "" : typeof w === "string" ? w : w.printer !== undefined ? "printer" : "entity");
   const prnWhenHtml = (w, key) =>
     '<div class="field">' +
@@ -414,6 +414,34 @@
         '" style="width:80px"><span class="dk-tsub" style="margin:0 0 0 6px">min after</span>'
       : "") +
     "</div></div>";
+  /* "when" on an entity: key = tile index or "g" for the selected tiles. */
+  const entWhenHtml = (w, key) => {
+    const s = String(w.state || ""),
+      n = s[0] === "!";
+    return (
+      '<div class="field">' +
+      lbl("Entity") +
+      '<input type="text" data-we="' +
+      key +
+      '" value="' +
+      esc(w.entity || "") +
+      '" placeholder="switch.pc_power" spellcheck="false"></div>' +
+      '<div class="field">' +
+      lbl("State") +
+      '<div class="dk-row"><select data-wn="' +
+      key +
+      '" style="width:auto">' +
+      opt("", "is", !n) +
+      opt("!", "is not", n) +
+      '</select><input type="text" data-ws="' +
+      key +
+      '" value="' +
+      esc(n ? s.slice(1) : s) +
+      '" placeholder="on" spellcheck="false"></div></div>'
+    );
+  };
+  /* Equal for equal conditions, whatever the order of their keys. */
+  const whenKey = (w) => (w && typeof w === "object" ? JSON.stringify(w, Object.keys(w).sort()) : w || "");
   const prnWhenNew = (id) => ({ printer: id || ((deck.printers || [])[0] || {}).id || "", state: "printing", idle: 30 });
   /* A page can follow a condition too; "auto" slides to it when it appears. */
   function pageWhenField(p) {
@@ -2084,30 +2112,7 @@
         .join("") +
       "</select></div>";
     if (k === "printer") h += prnWhenHtml(w, i);
-    if (k === "entity") {
-      const s = String(w.state || ""),
-        n = s[0] === "!";
-      h +=
-        '<div class="field">' +
-        lbl("Entity") +
-        '<input type="text" data-we="' +
-        i +
-        '" value="' +
-        esc(w.entity || "") +
-        '" placeholder="switch.pc_power" spellcheck="false"></div>' +
-        '<div class="field">' +
-        lbl("State") +
-        '<div class="dk-row"><select data-wn="' +
-        i +
-        '" style="width:auto">' +
-        opt("", "is", !n) +
-        opt("!", "is not", n) +
-        '</select><input type="text" data-ws="' +
-        i +
-        '" value="' +
-        esc(n ? s.slice(1) : s) +
-        '" placeholder="on" spellcheck="false"></div></div>';
-    }
+    if (k === "entity") h += entWhenHtml(w, i);
     return grp("Visibility", h);
   }
   const pages = () => deck.pages.filter((p) => p.type !== "metrics" && (prnOn() || !p.printer));
@@ -2856,9 +2861,15 @@
       if (!mixed(k) && ts[0][k] !== undefined) f[k] = ts[0][k];
     });
     const mx = (k) => (mixed(k) ? "Mixed" : ""),
-      wk = (t) => (typeof t.when === "string" ? t.when : t.when ? "?" : ""),
-      w0 = wk(ts[0]),
-      wsame = w0 !== "?" && ts.every((t) => wk(t) === w0);
+      w0 = ts[0].when,
+      k0 = whenKind(w0),
+      wsame = ts.every((t) => whenKey(t.when) === whenKey(w0)),
+      whens = SIMPLE_WHEN.filter(
+        (o) => !/^(pc|sound)-/.test(o[0]) || (wsame && o[0] === k0) || ts.some((t) => t.type !== "printer"),
+      );
+    whens.push(["entity", "Only while an entity is in a state"]);
+    if ((prnOn() && (deck.printers || []).length) || (wsame && k0 === "printer"))
+      whens.push(["printer", "Only while a printer is on or printing"]);
     let h =
       '<div class="dk-tile sel dk-gbar"><div class="dk-tmain"><b>' +
       ts.length +
@@ -2988,12 +2999,14 @@
       '<div class="field">' +
         lbl(
           "Show",
-          "Sets the same condition on every selected tile (printer tiles skip the PC and sound ones). A condition on an entity or a printer is set per tile.",
+          "Sets the same condition on every selected tile (printer tiles skip the PC and sound ones).",
         ) +
         '<select id="dkGWhen">' +
         (wsame ? "" : '<option value="?" selected disabled>Mixed</option>') +
-        SIMPLE_WHEN.map((o) => opt(o[0], o[1], wsame && o[0] === w0)).join("") +
-        "</select></div>",
+        whens.map((o) => opt(o[0], o[1], wsame && o[0] === k0)).join("") +
+        "</select></div>" +
+        (wsame && k0 === "printer" ? prnWhenHtml(w0, "g") : "") +
+        (wsame && k0 === "entity" ? entWhenHtml(w0, "g") : ""),
     );
     if (ps.length > 1)
       h += grp(
@@ -3506,10 +3519,16 @@
         };
       /* A newly hidden tile would drop out of the selection: the preview switches to show it. */
       $("dkGWhen").onchange = (e) => {
-        const v = e.target.value;
+        const v = e.target.value,
+          ids = new Set([...msel].filter((t) => t.type === "printer").map((t) => t.printer)),
+          prn = ids.size === 1 ? [...ids][0] : "",
+          ents = new Set([...msel].map((t) => t.entity)),
+          ent = ents.size === 1 && domainOf([...ents][0]) ? [...ents][0] : "";
         msel.forEach((t) => {
           if (t.type === "printer" && /^(pc|sound)-/.test(v)) return;
-          if (v) t.when = v;
+          if (v === "printer") t.when = prnWhenNew(prn);
+          else if (v === "entity") t.when = { entity: ent, state: "on" };
+          else if (v) t.when = v;
           else delete t.when;
           const w = whenOf(t);
           if (w) pv[w.k] = !w.neg;
@@ -3681,56 +3700,56 @@
           renderPage();
         }),
     );
-    const whenObj = (key) => (key === "p" ? p : p.tiles[+key]).when;
+    /* Change the condition behind key; a selection stays shown in the preview, as in dkGWhen. */
+    const whenEdit = (key, fn) => {
+      const ts = key === "g" ? [...msel] : [key === "p" ? p : p.tiles[+key]];
+      ts.forEach((t) => {
+        fn(t.when);
+        const c = whenOf(t);
+        if (key === "g") pv[c.k] = !c.neg;
+      });
+      setDirty(true);
+    };
     el.querySelectorAll("[data-wpr]").forEach(
       (x) =>
         (x.onchange = (e) => {
-          whenObj(x.dataset.wpr).printer = e.target.value;
-          setDirty(true);
+          whenEdit(x.dataset.wpr, (w) => (w.printer = e.target.value));
           renderPage();
         }),
     );
     el.querySelectorAll("[data-wpst]").forEach(
       (x) =>
         (x.onchange = (e) => {
-          const w = whenObj(x.dataset.wpst);
-          w.state = e.target.value;
-          if (w.state === "printing") w.idle = w.idle === undefined ? 30 : w.idle;
-          else delete w.idle;
-          setDirty(true);
+          whenEdit(x.dataset.wpst, (w) => {
+            w.state = e.target.value;
+            if (w.state === "printing") w.idle = w.idle === undefined ? 30 : w.idle;
+            else delete w.idle;
+          });
           renderPage();
         }),
     );
     el.querySelectorAll("[data-wpi]").forEach((x) => {
       x.oninput = (e) => {
-        whenObj(x.dataset.wpi).idle = Math.max(0, Math.min(1440, parseInt(e.target.value, 10) || 0));
-        setDirty(true);
+        whenEdit(x.dataset.wpi, (w) => (w.idle = Math.max(0, Math.min(1440, parseInt(e.target.value, 10) || 0))));
       };
     });
     el.querySelectorAll("[data-we]").forEach((x) => {
       x.oninput = (e) => {
-        p.tiles[+x.dataset.we].when.entity = e.target.value.trim();
-        setDirty(true);
+        whenEdit(x.dataset.we, (w) => (w.entity = e.target.value.trim()));
       };
       x.onchange = () => renderPage();
     });
-    const wst = (t, neg, v) => {
-      t.when.state = (neg ? "!" : "") + v;
-      setDirty(true);
-    };
+    const isNot = (w) => String(w.state || "")[0] === "!";
     el.querySelectorAll("[data-wn]").forEach(
       (x) =>
         (x.onchange = (e) => {
-          const t = p.tiles[+x.dataset.wn],
-            s = String(t.when.state || "");
-          wst(t, e.target.value === "!", s[0] === "!" ? s.slice(1) : s);
+          whenEdit(x.dataset.wn, (w) => (w.state = e.target.value + String(w.state || "").slice(isNot(w) ? 1 : 0)));
           renderPage();
         }),
     );
     el.querySelectorAll("[data-ws]").forEach((x) => {
       x.oninput = (e) => {
-        const t = p.tiles[+x.dataset.ws];
-        wst(t, String(t.when.state || "")[0] === "!", e.target.value.trim());
+        whenEdit(x.dataset.ws, (w) => (w.state = (isNot(w) ? "!" : "") + e.target.value.trim()));
       };
       x.onchange = () => renderPage();
     });
