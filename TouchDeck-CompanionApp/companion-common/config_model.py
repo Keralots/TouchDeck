@@ -39,6 +39,12 @@ def device_host(address):
     return clean_device_address(address).split(":", 1)[0]
 
 
+def clean_deck_pin(value):
+    """The device's portal PIN: 4 to 8 digits, else empty."""
+    pin = str(value or "").strip()
+    return pin if re.fullmatch(r"[0-9]{4,8}", pin) else ""
+
+
 def clean_pair_key(value):
     key = str(value or "")
     return key if len(key) == 64 and all(c in "0123456789abcdef" for c in key) else ""
@@ -128,6 +134,7 @@ def normalize_config(config):
     out["pc_name"] = clean_pc_name(out.get("pc_name")) or clean_pc_name(socket.gethostname()) or "PC"
     # Control from the device: the key comes from pairing, the port is ours.
     out["pc_key"] = clean_pair_key(out.get("pc_key"))
+    out["deck_pin"] = clean_deck_pin(out.get("deck_pin"))
     panels = []
     seen = set()
     for panel in out.get("panels", []) if isinstance(out.get("panels"), list) else []:
