@@ -455,6 +455,8 @@
         ["pc-off", "Only while the PC is off"],
         ["sound-on", "Only while the PC plays sound"],
         ["sound-off", "Only while the PC is silent"],
+        ["music-on", "Only while music plays"],
+        ["music-off", "Only while no music plays"],
         ["entity", "Only while an entity is in a state"],
         ["printer", "Only while a printer is on or printing"],
       ]
@@ -2008,6 +2010,7 @@
     if (w === "pc-on" || w === "pc-off")
       return { k: "pc:" + ((isPcCmd(t) ? t.tap.pc : t.pc) || (pcs[0] || {}).id || ""), neg: w === "pc-off" };
     if (w === "sound-on" || w === "sound-off") return { k: "sound", neg: w === "sound-off" };
+    if (w === "music-on" || w === "music-off") return { k: "music", neg: w === "music-off" };
     if (w && typeof w === "object" && w.printer !== undefined)
       return { k: "p:" + w.printer + (w.state === "printing" ? ":printing" : ""), neg: false };
     if (w && typeof w === "object") {
@@ -2043,6 +2046,7 @@
             const pc = pcs.find((x) => x.id === k.slice(3)) || (k === "pc:" && pcs[0]);
             nm = pc ? pc.name : "PC";
           } else if (k === "sound") nm = "PC sound";
+          else if (k === "music") nm = "Music";
           else if (k.startsWith("p:")) {
             const [id, st] = k.slice(2).split(":"),
               pr = (deck.printers || []).find((x) => x.id === id);
@@ -2094,6 +2098,8 @@
             ? "On = the printer is powered and reports. Prints = a job runs, and for the minutes after it ends (0 = only during the job)."
             : k.startsWith("sound")
             ? "Needs the companion's Audio visualizer switch. Sound counts after 2 s, silence after 30 s."
+            : k.startsWith("music")
+            ? "Music = the PC plays sound (companion Audio visualizer switch) or a Home Assistant player of a Now playing tile plays a stream (not one of its inputs). Silence counts after 30 s."
             : "The PC counts as off about a minute after its companion goes quiet.") +
         " Its cell is free otherwise: another tile with the opposite condition can take it. Switch the Preview above the grid to place it.";
     let h =
@@ -2108,10 +2114,12 @@
         ["pc-off", "Only while the PC is off"],
         ["sound-on", "Only while the PC plays sound"],
         ["sound-off", "Only while the PC is silent"],
+        ["music-on", "Only while music plays"],
+        ["music-off", "Only while no music plays"],
         ["entity", "Only while an entity is in a state"],
         ["printer", "Only while a printer is on or printing"],
       ]
-        .filter((o) => t.type !== "printer" || !/^(pc|sound)-/.test(o[0]) || o[0] === k)
+        .filter((o) => t.type !== "printer" || !/^(pc|sound|music)-/.test(o[0]) || o[0] === k)
         .map((o) => opt(o[0], o[1], k === o[0]))
         .join("") +
       "</select></div>";
@@ -2831,6 +2839,8 @@
     ["pc-off", "Only while the PC is off"],
     ["sound-on", "Only while the PC plays sound"],
     ["sound-off", "Only while the PC is silent"],
+    ["music-on", "Only while music plays"],
+    ["music-off", "Only while no music plays"],
   ];
   /* The frame the selected tiles make up exactly (the group bar edits its look), else null. */
   let gframe = null;
@@ -2869,7 +2879,7 @@
       k0 = whenKind(w0),
       wsame = ts.every((t) => whenKey(t.when) === whenKey(w0)),
       whens = SIMPLE_WHEN.filter(
-        (o) => !/^(pc|sound)-/.test(o[0]) || (wsame && o[0] === k0) || ts.some((t) => t.type !== "printer"),
+        (o) => !/^(pc|sound|music)-/.test(o[0]) || (wsame && o[0] === k0) || ts.some((t) => t.type !== "printer"),
       );
     whens.push(["entity", "Only while an entity is in a state"]);
     if ((prnOn() && (deck.printers || []).length) || (wsame && k0 === "printer"))
@@ -3003,7 +3013,7 @@
       '<div class="field">' +
         lbl(
           "Show",
-          "Sets the same condition on every selected tile (printer tiles skip the PC and sound ones).",
+          "Sets the same condition on every selected tile (printer tiles skip the PC, sound and music ones).",
         ) +
         '<select id="dkGWhen">' +
         (wsame ? "" : '<option value="?" selected disabled>Mixed</option>') +
@@ -3529,7 +3539,7 @@
           ents = new Set([...msel].map((t) => t.entity)),
           ent = ents.size === 1 && domainOf([...ents][0]) ? [...ents][0] : "";
         msel.forEach((t) => {
-          if (t.type === "printer" && /^(pc|sound)-/.test(v)) return;
+          if (t.type === "printer" && /^(pc|sound|music)-/.test(v)) return;
           if (v === "printer") t.when = prnWhenNew(prn);
           else if (v === "entity") t.when = { entity: ent, state: "on" };
           else if (v) t.when = v;

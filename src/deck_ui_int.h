@@ -492,6 +492,7 @@ void refreshPcMediaVolume(TileRt& r);
 void mediaArtTick();
 void mediaEvent(lv_event_t* e);
 void mediaVolEvent(lv_event_t* e);
+bool haPlaysInput(const HaEntity& e);
 extern bool s_zonesDirty;
 void fitMedia(TileRt& r, int cw, int ch);
 void fitClock(TileRt& r, int cw, int ch);

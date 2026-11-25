@@ -50,8 +50,12 @@ MediaNow haNow(const TileDef& d) {
   m.picture = e.mediaPicture.length() ? e.mediaPicture : e.mediaPictureRemote;
   if (m.picture.length()) m.art = pictureId(m.picture);
   m.vol = e.level;
-  m.fromInput = e.mediaSource.length() && e.mediaInputs.indexOf("\n" + e.mediaSource + "\n") >= 0;
+  m.fromInput = haPlaysInput(e);
   return m;
+}
+
+bool haPlaysInput(const HaEntity& e) {
+  return e.mediaSource.length() && e.mediaInputs.indexOf("\n" + e.mediaSource + "\n") >= 0;
 }
 
 MediaNow pcNow(const TileDef& d) {
