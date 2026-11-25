@@ -45,6 +45,8 @@ void presenceTick() {
   setNightWakePresence(present || (s_presentMs && p.sleepMin && now - s_presentMs < p.sleepMin * 60000UL));
   const uint32_t touch = touchLastActivity();
   if (touch && (int32_t)(touch - s_activeMs) > 0) s_activeMs = touch;
+  // An open player card is a now-playing screen: it holds the sleep timer.
+  if (playerCardOpen()) s_activeMs = now;
   const bool sleep = p.sleepMin && getScreenState() == SCREEN_DECK && now - s_activeMs >= p.sleepMin * 60000UL;
   if (!frameSleep(sleep)) setIdleSleep(sleep, (uint8_t)((p.dimPct * 255 + 50) / 100));
 }
