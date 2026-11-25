@@ -515,6 +515,15 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     r.icon = lv_label_create(r.chip);
     mediaGlyph(r.icon, "music", "M", 32);
     lv_obj_center(r.icon);
+    r.srcBadge = lv_label_create(r.chip);
+    lv_obj_set_style_bg_color(r.srcBadge, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(r.srcBadge, LV_OPA_60, 0);
+    lv_obj_set_style_radius(r.srcBadge, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_pad_all(r.srcBadge, 5, 0);
+    lv_obj_set_style_text_color(r.srcBadge, lv_color_white(), 0);
+    lv_obj_align(r.srcBadge, LV_ALIGN_BOTTOM_RIGHT, -5, -5);
+    showObj(r.srcBadge, false);
+    lv_obj_add_event_cb(r.chip, mediaSrcEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)s_tiles.size());
     r.name = lv_label_create(t);
     r.sub = lv_label_create(t);
     lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);

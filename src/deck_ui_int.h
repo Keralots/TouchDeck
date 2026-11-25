@@ -140,6 +140,8 @@ struct TileRt {
   bool mediaHa;           // the HA player is the source (auto tiles switch it)
   uint8_t mediaPx;        // transport icon size
   lv_obj_t* mediaDisc;    // accent disc behind play on bigger tiles
+  lv_obj_t* srcBadge;     // HA player with inputs: the cover opens the source card
+  const char* srcGlyph;   // icon on the badge now
   lv_obj_t* volBar;       // volume pill: bar, drag and tap target in one
   lv_obj_t* volIcons[2];  // minus and plus on it
   bool volHeld;           // a drag or a held half is moving the level
@@ -492,6 +494,7 @@ void refreshPcMediaVolume(TileRt& r);
 void mediaArtTick();
 void mediaEvent(lv_event_t* e);
 void mediaVolEvent(lv_event_t* e);
+void mediaSrcEvent(lv_event_t* e);
 bool haPlaysInput(const HaEntity& e);
 extern bool s_zonesDirty;
 void fitMedia(TileRt& r, int cw, int ch);

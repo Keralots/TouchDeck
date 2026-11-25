@@ -15,6 +15,8 @@ struct MediaNow {
   time_t t0 = 0;              // track start while playing, 0 = unknown
   int32_t pos = 0, dur = 0;   // seconds; pos is used while paused
   int vol = -1;               // 0..100, -1 = unknown
+  bool inputs = false;        // HA player with a source_list (inputs, presets)
+  String source;              // HA source now
 };
 
 // The proxy token in entity_picture rotates; the cover id must not.
@@ -51,6 +53,8 @@ MediaNow haNow(const TileDef& d) {
   if (m.picture.length()) m.art = pictureId(m.picture);
   m.vol = e.level;
   m.fromInput = haPlaysInput(e);
+  m.inputs = e.mediaInputs.length() > 0;
+  m.source = e.mediaSource;
   return m;
 }
 
@@ -286,6 +290,35 @@ void mediaVolEvent(lv_event_t* e) {
   if (want != base) mediaVolSet(r, want, !tap);
 }
 
+// Source icon: the input's kind when one plays, else a plain "pick a source".
+const char* sourceGlyph(const String& source, bool input) {
+  if (!input) return "import";
+  String s = source;
+  s.toLowerCase();
+  if (s.indexOf("hdmi") >= 0 || s.indexOf("arc") >= 0 || s.indexOf("tv") >= 0) return "video-input-hdmi";
+  if (s.indexOf("optical") >= 0 || s.indexOf("spdif") >= 0 || s.indexOf("toslink") >= 0) return "toslink";
+  if (s.indexOf("bluetooth") >= 0) return "bluetooth";
+  if (s.indexOf("analog") >= 0 || s.indexOf("line") >= 0 || s.indexOf("aux") >= 0 || s.indexOf("phono") >= 0)
+    return "audio-input-rca";
+  return "import";
+}
+
+// The cover of a big enough HA tile opens the source card; the badge says so.
+bool mediaBadge(TileRt& r, const MediaNow& m) {
+  const bool on = r.mediaHa && m.available && m.inputs && r.coverPx >= 72;
+  const bool was = !lv_obj_has_flag(r.srcBadge, LV_OBJ_FLAG_HIDDEN);
+  if (on) lv_obj_add_flag(r.chip, LV_OBJ_FLAG_CLICKABLE);
+  else lv_obj_remove_flag(r.chip, LV_OBJ_FLAG_CLICKABLE);
+  showObj(r.srcBadge, on);
+  const char* glyph = on ? sourceGlyph(m.source, m.fromInput) : nullptr;
+  if (glyph && glyph != r.srcGlyph) {
+    mediaGlyph(r.srcBadge, glyph, "IN", r.coverPx >= 120 ? 20 : 16);
+    r.srcGlyph = glyph;
+    return true;
+  }
+  return on != was;
+}
+
 void applyMedia(TileRt& r) {
   if (mediaChoose(r)) r.iconCp = 2;
   const MediaNow m = mediaNow(r);
@@ -308,6 +341,7 @@ void applyMedia(TileRt& r) {
   mediaCover(r, m);
   mediaProgress(r, m);
   mediaVolume(r, m);
+  if (mediaBadge(r, m)) changed = true;
   if (changed) markPageStale(r.page);
 }
 
@@ -364,6 +398,101 @@ void mediaEvent(lv_event_t* e) {
   if (!pcSendCommand(r.def->pc, cmds[button], err)) deckToastShow(err.c_str(), 2200);
 }
 
+// The source card: the HA player's source_list, the current one lit. A pick
+// goes to media_player.select_source and closes the card.
+std::vector<String> s_srcNames;
+String s_srcEntity;
+
+void onSourcePick(lv_event_t* e) {
+  const size_t i = (size_t)(uintptr_t)lv_event_get_user_data(e);
+  if (i < s_srcNames.size()) {
+    hapticTap();
+    audioClick();
+    JsonDocument doc;
+    doc["source"] = s_srcNames[i];
+    String data;
+    serializeJson(doc, data);
+    if (!haCallService("media_player", "select_source", s_srcEntity, data))
+      deckToastShow("Home Assistant is not connected", 2200);
+  }
+  closeModal();
+}
+
+void openMediaSources(TileRt& r) {
+  HaEntity e;
+  if (!haGetEntity(r.def->entity, e) || !e.mediaInputs.length()) return;
+  closeModal();
+  cleanPage();
+  s_srcEntity = r.def->entity;
+  s_srcNames.clear();
+  for (int from = 1, end; (end = e.mediaInputs.indexOf('\n', from)) > from; from = end + 1)
+    s_srcNames.push_back(e.mediaInputs.substring(from, end));
+  const int w = logicalW(), h = logicalH();
+  constexpr int ROW = 52, GAP = 8, PAD = 16, TITLE = 28;
+  const int cw = min(w - 32, 360);
+  const int ch = min(h - 40, PAD * 2 + TITLE + (int)s_srcNames.size() * (ROW + GAP));
+  s_modalScrim = makeScrim();
+  lv_obj_t* c = lv_obj_create(lv_layer_top());
+  s_modalCard = c;
+  lv_obj_remove_style_all(c);
+  lv_obj_set_size(c, cw, ch);
+  lv_obj_center(c);
+  lv_obj_set_style_bg_color(c, lv_color_hex(C_PANEL), 0);
+  lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(c, 22, 0);
+  if (s_theme == THEME_GLASS && (s_modalGlass = frostedCopy((w - cw) / 2, (h - ch) / 2, cw, ch, 22)))
+    frostStyle(c, s_modalGlass);
+  lv_obj_set_style_text_color(c, lv_color_hex(C_TEXT), 0);
+  lv_obj_set_style_pad_all(c, PAD, 0);
+  lv_obj_set_style_pad_row(c, GAP, 0);
+  lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_scroll_dir(c, LV_DIR_VER);
+  lv_obj_add_flag(c, LV_OBJ_FLAG_CLICKABLE);  // a tap beside the rows does not reach the scrim
+
+  lv_obj_t* title = lv_label_create(c);
+  lv_label_set_text(title, "Source");
+  lv_obj_set_style_text_font(title, &deck_font_20, 0);
+  lv_obj_set_height(title, TITLE - GAP);
+
+  const uint32_t accent = tileAccent(*r.def);
+  for (size_t i = 0; i < s_srcNames.size(); i++) {
+    const bool cur = s_srcNames[i] == e.mediaSource;
+    lv_obj_t* row = lv_obj_create(c);
+    lv_obj_remove_style_all(row);
+    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(row, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+    lv_obj_set_size(row, lv_pct(100), ROW);
+    lv_obj_set_style_radius(row, 14, 0);
+    lv_obj_set_style_bg_color(row, lv_color_hex(cur ? accent : C_TRACK), 0);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(row, lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
+    lv_obj_set_style_text_color(row, lv_color_hex(cur ? C_TEXT_ON : C_TEXT), 0);
+    lv_obj_set_style_pad_hor(row, 14, 0);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(row, 12, 0);
+    lv_obj_t* icon = lv_label_create(row);
+    mediaGlyph(icon, sourceGlyph(s_srcNames[i], true), "", 24);
+    lv_obj_t* name = lv_label_create(row);
+    lv_label_set_text(name, s_srcNames[i].c_str());
+    lv_obj_set_style_text_font(name, &deck_font_20, 0);
+    lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_flex_grow(name, 1);
+    lv_obj_add_event_cb(row, onSourcePick, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)i);
+  }
+  setModalOpen(true);
+}
+
+void mediaSrcEvent(lv_event_t* e) {
+  const size_t idx = (size_t)(uintptr_t)lv_event_get_user_data(e);
+  if (idx >= s_tiles.size()) return;
+  TileRt& r = s_tiles[idx];
+  if (!r.mediaHa) return;
+  hapticTap();
+  audioClick();
+  tileGuard(r, [](TileRt& t) { openMediaSources(t); });
+}
+
 // Bigger tiles get bigger transport buttons and, with room, a volume row (#6):
 // under the transport on tall tiles, beside it on wide ones.
 void fitMedia(TileRt& r, int cw, int ch) {
@@ -385,6 +514,7 @@ void fitMedia(TileRt& r, int cw, int ch) {
     mediaSetArt(r, {});
     r.coverPx = cover;
     r.artAttempt = 0;
+    r.srcGlyph = nullptr;  // the badge icon follows the cover size
   }
   showObj(r.chip, cover > 0);
   const lv_font_t* font = stack ? &deck_font_20 : cw >= 150 ? &deck_font_14 : &deck_font_12;
