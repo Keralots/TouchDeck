@@ -7,6 +7,7 @@
 #include "deck_sd.h"
 #include "board.h"
 #include "deck_blue_noise.h"
+#include "deck_art.h"
 
 namespace deck {
 
@@ -78,6 +79,9 @@ bool wallLoad(int w, int h, int blurR, int dimPct);
 void wallFree();
 // Changes whenever the images are freed or reloaded, including failed loads.
 uint32_t wallGeneration();
+// The built-in scene on screen and the light and dim it was drawn with;
+// -1 for a photo, or while the scene is being redrawn in place.
+int wallLiveScene(ArtTime& at, int& dimPct);
 // The picture (RGB565, dimmed for the text on it) and its blurred copy
 // (RGB888, so the glass keeps its precision until wallDither565);
 // nullptr when not loaded.

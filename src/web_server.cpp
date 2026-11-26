@@ -2841,6 +2841,22 @@ static void handleTimerGet() {
   server.send(200, "application/json", out);
 }
 
+// GET /api/deck/live - bench hook: the moving wallpaper details and their cost.
+// POST ?fx=0..7&every=ms&min=s&max=s sets them (RAM only).
+static void handleLiveGet() {
+  JsonDocument doc;
+  deckLiveJson(doc.to<JsonObject>());
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+static void handleLivePost() {
+  const auto num = [](const char* k) { return server.hasArg(k) ? server.arg(k).toInt() : -1; };
+  deckLiveSet(num("fx"), num("every"), num("min"), num("max"));
+  handleLiveGet();
+}
+
 static void handleTimerPost() {
   if (!deckTimerCommand(server.arg("op"), server.arg("v").toInt())) {
     sendJsonMessage(409, false, "Not possible now");
@@ -3217,6 +3233,8 @@ void initWebServer() {
   server.on("/api/deck/swipe", HTTP_POST, handleDeckSwipe);
   server.on("/api/deck/panel", HTTP_POST, handleDeckPanel);
   server.on("/api/deck/card", HTTP_POST, handleDeckCard);
+  server.on("/api/deck/live", HTTP_GET, handleLiveGet);
+  server.on("/api/deck/live", HTTP_POST, handleLivePost);
   server.on("/api/deck/tap", HTTP_POST, handleDeckTap);
   server.on("/api/deck/timer", HTTP_GET, handleTimerGet);
   server.on("/api/deck/timer", HTTP_POST, handleTimerPost);

@@ -667,6 +667,13 @@ const lv_image_dsc_t* wallSharp() { return s_sharp ? &s_sharpDsc : nullptr; }
 const lv_image_dsc_t* wallBlur() { return s_blur ? &s_blurDsc : nullptr; }
 uint32_t wallGeneration() { return s_generation; }
 
+int wallLiveScene(ArtTime& at, int& dimPct) {
+  if (!s_sharp || (jobState() != JOB_IDLE && s_job.redraw)) return -1;
+  at = s_loadedArt;
+  dimPct = s_dim;
+  return artIndex(s_loadedName.c_str());
+}
+
 bool wallValidName(const String& name) {
   if (name.length() != 12 || !name.endsWith(".jpg")) return false;
   for (int i = 0; i < 8; i++)

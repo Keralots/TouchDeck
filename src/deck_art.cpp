@@ -459,4 +459,17 @@ bool artDraw(int index, int w, int h, const ArtTime& at, void (*row)(void* ctx, 
   return ok;
 }
 
+bool artLive(int index, int w, int h, const ArtTime& at, ArtLive& out) {
+  if (index < 0 || index >= ART_COUNT) return false;
+  const Scene& s = SCENES[index];
+  const Light l = at.utc && artFollows(index) ? lightAt(index, at) : lightOwn(index);
+  out = {};
+  out.night = l.stars > 0 ? l.night : 0;
+  out.skyEnd = (int)(h * .7f);
+  out.horizon = s.fx == FX_LAKE ? (int)(HORIZON * h) : -1;
+  for (const Body& b : l.body)
+    if (b.path > 0 && b.glowAmt > 0) out.body[out.bodies++] = {b.x * w, b.y * h, b.path};
+  return true;
+}
+
 }  // namespace deck

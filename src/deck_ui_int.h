@@ -558,6 +558,9 @@ void fitWeather(TileRt& r, int cw, int ch);
 void wxDrawEvent(lv_event_t* e);
 void wxTap(lv_event_t* e);
 void wxTick();
+
+// deck_ui_live.cpp
+void liveTick();
 void wxSync();
 
 // deck_ui_printer.cpp

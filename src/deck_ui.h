@@ -90,6 +90,10 @@ bool deckTestCard(const String& tileId, bool player = false);
 // act (a button of the open clock card); the timer's state.
 bool deckTimerCommand(const String& op, int value);
 void deckTimerJson(JsonObject o);
+// Bench hook (/api/deck/live): the moving wallpaper details, counters since the last read.
+void deckLiveJson(JsonObject o);
+// fx bits 1 water, 2 stars, 4 shooting star; -1 / 0 keep a value.
+void deckLiveSet(int fx, int everyMs, int meteorMin, int meteorMax);
 // A clock style picked on the deck goes to the stored deck.json now.
 void deckClockStyleFlush();
 // Bench hooks (/api/deck/tap, /api/deck/confirm): tap or hold a tile, answer
