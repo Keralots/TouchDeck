@@ -147,10 +147,12 @@ int artIndex(const char* ref) {
 ArtTime artTime(const char* ref, bool night = false) {
   ArtTime at = {};
   const uint32_t now = (uint32_t)time(nullptr);
-  if (night || !dispSettings.wallFollow || now < 1609459200 || !artFollows(artIndex(ref))) return at;
+  if ((!night && !dispSettings.wallFollow) || now < 1609459200 || !artFollows(artIndex(ref))) return at;
   at.utc = now;
   at.place = weatherPlace(at.lat, at.lon);
   if (!at.place) at.lat = at.lon = 0;
+  // The night picture follows the clock too, but never in daylight (set hours before sunset).
+  if (night && artSunHeight(at) > -0.833f) return {};
   at.utc = artStep(at);
   return at;
 }
