@@ -47,7 +47,7 @@ struct Live {
 };
 Live L;
 
-uint8_t s_fx = FX_WATER | FX_STARS | FX_METEOR;
+uint8_t s_fx = FX_STARS | FX_METEOR;  // water off: about 5 ms a frame on the 7B
 uint8_t s_bench = 0;  // 1: no pixel writes, 2: no redraw requests
 uint16_t s_meteorMin = 7, s_meteorMax = 18, s_everyMs = 33;
 // Bench counters for GET /api/deck/live, since the last read.
