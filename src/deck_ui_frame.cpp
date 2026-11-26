@@ -314,6 +314,9 @@ bool enter() {
   if (s_state != FRAME_OFF || !s_disp || !s_count || getScreenState() != SCREEN_DECK ||
       s_qp.open || s_modalCard || s_ed.root || sh.owned || compMode() != COMP_NONE ||
       touchIsDown() || manualDisplayOff() || nightScreenOff()) return false;
+  // No card is open: its two kept screen buffers make room for ours.
+  cardUnderFree();
+  fxCardPicFree();
   stopGestures();
   s_width = logicalW();
   s_height = logicalH();
