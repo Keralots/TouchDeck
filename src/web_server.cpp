@@ -333,6 +333,10 @@ static void handleApiConfig() {
   display["wallDaily"] = wallSourceDaily(dispSettings.wallSource);
   display["wallSource"] = dispSettings.wallSource;
   display["wallFollow"] = dispSettings.wallFollow;
+  display["nightWall"] = dispSettings.nightWall;
+  display["nightBy"] = dispSettings.nightBy;
+  display["nightFromMinute"] = dispSettings.nightFromMin;
+  display["nightToMinute"] = dispSettings.nightToMin;
   display["sdCard"] = dispSettings.sdCard;
   display["dailyMax"] = dispSettings.dailyMax;
   display["dailyHour"] = dispSettings.dailyHour;
@@ -477,6 +481,10 @@ static void handleConfigExport() {
   display["wallDaily"] = wallSourceDaily(dispSettings.wallSource);
   display["wallSource"] = dispSettings.wallSource;
   display["wallFollow"] = dispSettings.wallFollow;
+  display["nightWall"] = dispSettings.nightWall;
+  display["nightBy"] = dispSettings.nightBy;
+  display["nightFromMinute"] = dispSettings.nightFromMin;
+  display["nightToMinute"] = dispSettings.nightToMin;
   display["sdCard"] = dispSettings.sdCard;
   display["dailyMax"] = dispSettings.dailyMax;
   display["dailyHour"] = dispSettings.dailyHour;
@@ -725,6 +733,10 @@ static void handleConfigImport() {
   nextDisplay.wallDaily = displayDefaults.wallDaily;
   nextDisplay.wallSource = 0;
   nextDisplay.wallFollow = displayDefaults.wallFollow;
+  nextDisplay.nightWall = displayDefaults.nightWall;
+  nextDisplay.nightBy = displayDefaults.nightBy;
+  nextDisplay.nightFromMin = displayDefaults.nightFromMin;
+  nextDisplay.nightToMin = displayDefaults.nightToMin;
   nextDisplay.sdCard = false;
   nextDisplay.dailyMax = 100;
   nextDisplay.dailyHour = displayDefaults.dailyHour;
@@ -752,6 +764,11 @@ static void handleConfigImport() {
   }
   nextDisplay.wallDaily = wallSourceDaily(nextDisplay.wallSource);
   if (!display["wallFollow"].isNull()) READ_BOOL(display, "wallFollow", nextDisplay.wallFollow);
+  if (!display["nightWall"].isNull()) READ_INT(display, "nightWall", 0, 6, nextDisplay.nightWall, uint8_t);
+  if (!display["nightBy"].isNull()) READ_INT(display, "nightBy", 0, 1, nextDisplay.nightBy, uint8_t);
+  if (!display["nightFromMinute"].isNull())
+    READ_INT(display, "nightFromMinute", 0, 1439, nextDisplay.nightFromMin, uint16_t);
+  if (!display["nightToMinute"].isNull()) READ_INT(display, "nightToMinute", 0, 1439, nextDisplay.nightToMin, uint16_t);
   if (!display["sdCard"].isNull()) READ_BOOL(display, "sdCard", nextDisplay.sdCard);
   if (!display["dailyMax"].isNull()) READ_INT(display, "dailyMax", 50, 500, nextDisplay.dailyMax, uint16_t);
   if (!validDailyMax(nextDisplay.dailyMax)) {
@@ -1755,6 +1772,12 @@ static void handleSaveWallpapers() {
   dispSettings.wallDaily = wallSourceDaily(dispSettings.wallSource);
   const bool oldFollow = dispSettings.wallFollow;
   if (server.hasArg("wallFollow")) dispSettings.wallFollow = server.arg("wallFollow") == "1";
+  const uint32_t oldNight = dispSettings.nightWall | dispSettings.nightBy << 8 |
+                            (uint32_t)dispSettings.nightFromMin << 9 | (uint32_t)dispSettings.nightToMin << 20;
+  dispSettings.nightWall = (uint8_t)clampedArg("nightWall", dispSettings.nightWall, 0, 6);
+  dispSettings.nightBy = (uint8_t)clampedArg("nightBy", dispSettings.nightBy, 0, 1);
+  dispSettings.nightFromMin = minuteOfDayArg("nightFrom", dispSettings.nightFromMin);
+  dispSettings.nightToMin = minuteOfDayArg("nightTo", dispSettings.nightToMin);
   dispSettings.dailyHour = (uint8_t)clampedArg("dailyHour", dispSettings.dailyHour, 0, 23);
   dispSettings.dailyOrient = (uint8_t)clampedArg("dailyOrient", dispSettings.dailyOrient, 0, 2);
   dispSettings.dailyCount = (uint8_t)clampedArg("dailyCount", dispSettings.dailyCount, 1, DAILY_MAX_COUNT);
@@ -1766,6 +1789,9 @@ static void handleSaveWallpapers() {
       const String name = deck::wallCurrent(p);
       if (deck::wallArtIndex(name) >= 0) deck::wallRequest(p, name);
     }
+  if (oldNight != (dispSettings.nightWall | dispSettings.nightBy << 8 | (uint32_t)dispSettings.nightFromMin << 9 |
+                   (uint32_t)dispSettings.nightToMin << 20))
+    deck::wallNightChanged();
   // A new plan fetches again today instead of waiting for the hour.
   if (oldPlan != (uint32_t)(dispSettings.dailyOrient << 8 | dispSettings.dailyCount)) deck::dailyReplan();
   deckPresenceApply();
@@ -2733,6 +2759,7 @@ static void handleWallsShow() {
     return;
   }
   if (!deck::wallPin(p, name)) { sendJsonMessage(500, false, "could not save pin"); return; }
+  deck::wallNightSkip(p);
   deck::wallRequest(p, name);
   sendJsonMessage(200, true, "Wallpaper queued.");
 }
@@ -2752,6 +2779,7 @@ static void handleDailyStatus() {
 }
 
 static void handleWallsNext() {
+  deck::wallNightSkip((dispSettings.rotation & 1) == 0);
   if (!deck::wallNext((dispSettings.rotation & 1) == 0)) {
     sendJsonMessage(404, false, "gallery is empty");
     return;

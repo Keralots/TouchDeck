@@ -459,6 +459,8 @@ bool artDraw(int index, int w, int h, const ArtTime& at, void (*row)(void* ctx, 
   return ok;
 }
 
+float artSunHeight(const ArtTime& at) { return sunPos(at).el; }
+
 bool artLive(int index, int w, int h, const ArtTime& at, ArtLive& out) {
   if (index < 0 || index >= ART_COUNT) return false;
   const Scene& s = SCENES[index];

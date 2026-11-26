@@ -69,6 +69,11 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch, bool rotate, void (*makeR
 void wallCommit();
 // The automatic change interval starts again (the photo frame covered the wallpaper).
 void wallRestartTimer();
+// Night picture: a hand-picked picture stays until the next sunset or sunrise;
+// the setting changed; the night picture is on screen.
+void wallNightSkip(bool portrait);
+void wallNightChanged();
+bool wallNightShown();
 
 // Where the wallpaper for a w x h screen lives on LittleFS.
 const char* wallPath(int w, int h);

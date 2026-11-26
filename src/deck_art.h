@@ -36,6 +36,8 @@ struct ArtLive {
   int bodies;
   struct { float x, y, path; } body[2];  // path: strength of its glitter on the water
 };
+// Height of the sun in degrees (without a place: up from 7 to 19 local time).
+float artSunHeight(const ArtTime& at);
 bool artLive(int index, int w, int h, const ArtTime& at, ArtLive& out);
 
 }  // namespace deck

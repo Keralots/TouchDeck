@@ -745,6 +745,49 @@
                       </p>
                     </div>
                   </div>
+                  <div class="grid-2">
+                    <div class="field">
+                      <label class="field-label" for="nightWall">Night picture</label>
+                      <div class="select-wrap">
+                        <select id="nightWall" name="nightWall">
+                          <option value="0">Off</option>
+                          <option value="1">Sunset hills</option>
+                          <option value="2">Misty ridges</option>
+                          <option value="3">Aurora</option>
+                          <option value="4">Dunes</option>
+                          <option value="5">Moonlit lake</option>
+                          <option value="6">Ribbons</option>
+                        </select>
+                      </div>
+                      <p class="field-hint" data-tip>
+                        A built-in picture in its night light for the night, whatever the source. In the morning
+                        the day picture comes back. Changes once nobody has touched the screen for 30 seconds; a
+                        picture you pick at night stays until the morning.
+                      </p>
+                    </div>
+                    <div id="nightByField" class="field">
+                      <label class="field-label" for="nightBy">Night is</label>
+                      <div class="select-wrap">
+                        <select id="nightBy" name="nightBy">
+                          <option value="0">From sunset to sunrise</option>
+                          <option value="1">Between set hours</option>
+                        </select>
+                      </div>
+                      <p class="field-hint" data-tip>
+                        Sunset and sunrise for the place of the weather tile; without a place 19:00 to 7:00.
+                      </p>
+                    </div>
+                  </div>
+                  <div id="nightHourFields" class="grid-2 hidden">
+                    <div class="field">
+                      <label class="field-label" for="nightFrom">Night picture from</label
+                      ><input type="time" id="nightFrom" name="nightFrom" step="60" />
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="nightTo">Night picture until</label
+                      ><input type="time" id="nightTo" name="nightTo" step="60" />
+                    </div>
+                  </div>
                   <p id="sdWallState" class="field-hint" role="status"></p>
                   <div id="dailyFields" class="hidden" style="margin-top: 14px">
                     <div class="grid-2">
