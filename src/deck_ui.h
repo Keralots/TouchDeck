@@ -85,7 +85,7 @@ bool deckHeaderVisible();
 // flung it. False when that page is not reachable right now.
 bool deckTestSwipe(int dir, bool vertical);
 // Bench hook (/api/deck/card): open the detail card of the tile with this id.
-bool deckTestCard(const String& tileId);
+bool deckTestCard(const String& tileId, bool player = false);
 // Bench hook (/api/deck/timer): start (seconds), add, pause, resume, cancel,
 // act (a button of the open clock card); the timer's state.
 bool deckTimerCommand(const String& op, int value);

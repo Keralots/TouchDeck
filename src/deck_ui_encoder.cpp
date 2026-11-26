@@ -1089,7 +1089,27 @@ bool targetLocked(const Target& target) {
   return locked;
 }
 
+// A media tile with "knob": "tracks" for this player, else null.
+TileRt* tracksTile(const String& id) {
+  for (TileRt& t : s_tiles)
+    if (t.def->type == TILE_MEDIA && t.def->knobTracks && t.mediaHa && t.def->entity == id) return &t;
+  return nullptr;
+}
+
 void knobAction(Knob& k, const EncoderSettings& s, const EncoderInput& in, bool click, uint32_t now) {
+  // Music mode while the player card is open: the first knob browses the
+  // queue, the others set the player's volume.
+  if (playerCardOpen()) {
+    if (&k == &s_knobs[0]) {
+      popupHide(k.popup);
+      playerCardKnob(in.turnWithKey ? 0 : in.detents, click);
+      return;
+    }
+    const String id = playerCardEntity();
+    HaEntity e;
+    if (haAvailable(id, e)) haMediaAction(k.popup, s, in, click, now, id, e, e.name.length() ? e.name.c_str() : "Volume");
+    return;
+  }
   switch (s.mode) {
     case ENCODER_TILES:
       if (in.detents && in.turnWithKey) turnPage(k, in.detents);
@@ -1152,7 +1172,16 @@ void knobAction(Knob& k, const EncoderSettings& s, const EncoderInput& in, bool 
     if (id.startsWith("climate.") && e.known && e.state.length()) climateWord(e.state.c_str(), value, sizeof(value));
     popupShow(k.popup, s.popupY, s.edge, now, value, name);
   } else if (id.startsWith("light.")) lightAction(k.popup, s, in, click, now, id, e, name);
-  else if (id.startsWith("media_player.")) haMediaAction(k.popup, s, in, click, now, id, e, name);
+  else if (id.startsWith("media_player.")) {
+    TileRt* tracks = in.detents && !in.turnWithKey ? tracksTile(id) : nullptr;
+    if (tracks && !modalShown()) {
+      popupHide(k.popup);
+      openPlayerCard(*tracks, true);
+      playerCardKnob(in.detents, false);
+    } else {
+      haMediaAction(k.popup, s, in, click, now, id, e, name);
+    }
+  }
   else climateAction(k, s, in, now, id, e, name);
 }
 

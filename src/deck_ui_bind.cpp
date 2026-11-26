@@ -733,6 +733,15 @@ struct WhenPc {
 std::vector<WhenPc> s_whenPcs;
 std::vector<std::pair<String, String>> s_whenStates;  // entity, last state HA reported
 
+// "music-on": PC sound, or an HA player of a Now playing tile playing a stream
+// (an input is fed by the PC or a TV). Off 30 s after the last play, like sound-off.
+constexpr uint32_t MUSIC_OFF_MS = 30000;
+bool s_haMusic = false;
+uint32_t s_haMusicMs = 0;
+std::vector<String> s_musicPlayers;
+
+bool isMusicPlayer(const TileDef& t) { return t.type == TILE_MEDIA && t.entity.startsWith("media_player."); }
+
 const String& tilePcId(const TileDef& d) { return d.tap.kind == ACT_PC ? d.tap.pc : d.pc; }
 
 bool pcIsOnline(const String& id) {
@@ -749,6 +758,8 @@ bool whenWanted(const WhenDef& w, const String& pcId) {
     return on == (w.kind == WHEN_PC_ON);
   }
   if (w.kind == WHEN_SOUND_ON || w.kind == WHEN_SOUND_OFF) return vizSoundOn() == (w.kind == WHEN_SOUND_ON);
+  if (w.kind == WHEN_MUSIC_ON || w.kind == WHEN_MUSIC_OFF)
+    return (vizSoundOn() || s_haMusic) == (w.kind == WHEN_MUSIC_ON);
   if (w.kind == WHEN_PRINTER) return printerWhenWanted(w);
   if (w.kind == WHEN_ENTITY) {
     for (const auto& s : s_whenStates)
@@ -788,10 +799,28 @@ void whenWatch(const WhenDef& w, const String& pcId, std::vector<WhenPc>& pcs,
 void whenCollect() {
   std::vector<WhenPc> pcs;
   std::vector<std::pair<String, String>> states;
+  bool music = false;
+  auto isMusic = [](const WhenDef& w) { return w.kind == WHEN_MUSIC_ON || w.kind == WHEN_MUSIC_OFF; };
   for (const PageDef& pd : s_cfg.pages) {
     whenWatch(pd.when, String(), pcs, states);
-    for (const TileDef& t : pd.tiles) whenWatch(t.when, tilePcId(t), pcs, states);
+    music = music || isMusic(pd.when);
+    for (const TileDef& t : pd.tiles) {
+      whenWatch(t.when, tilePcId(t), pcs, states);
+      music = music || isMusic(t.when);
+    }
   }
+  // Followed as conditions too: a player whose tile is hidden still has to be heard.
+  std::vector<String> players;
+  for (const PageDef& pd : s_cfg.pages)
+    for (const TileDef& t : pd.tiles)
+      if (music && isMusicPlayer(t) && std::find(players.begin(), players.end(), t.entity) == players.end()) {
+        players.push_back(t.entity);
+        WhenDef w;
+        w.kind = WHEN_ENTITY;
+        w.entity = t.entity;
+        whenWatch(w, String(), pcs, states);
+      }
+  s_musicPlayers.swap(players);
   s_whenPcs.swap(pcs);
   s_whenStates.swap(states);
 }
@@ -812,6 +841,17 @@ void whenTrack() {
   for (auto& s : s_whenStates) {
     HaEntity e;
     if (haGetEntity(s.first, e) && e.known) s.second = e.state;
+  }
+  bool playing = false;
+  for (const String& id : s_musicPlayers) {
+    HaEntity e;
+    playing = playing || (haGetEntity(id, e) && e.known && e.state == "playing" && !haPlaysInput(e));
+  }
+  if (playing) {
+    s_haMusic = true;
+    s_haMusicMs = now;
+  } else if (s_haMusic && now - s_haMusicMs >= MUSIC_OFF_MS) {
+    s_haMusic = false;
   }
 }
 

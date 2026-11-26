@@ -140,6 +140,14 @@ struct TileRt {
   bool mediaHa;           // the HA player is the source (auto tiles switch it)
   uint8_t mediaPx;        // transport icon size
   lv_obj_t* mediaDisc;    // accent disc behind play on bigger tiles
+  lv_obj_t* srcBadge;     // HA player with inputs: the cover opens the player card
+  const char* srcGlyph;   // icon on the badge now
+  lv_obj_t* actBtns[3];   // BluOS: love, shuffle, repeat (by the title or in the transport row)
+  lv_obj_t* actIcons[3];
+  uint32_t actShown;      // glyph state bits last set
+  lv_obj_t* nextRow;      // tall BluOS tiles: "Next" track, opens the card
+  lv_obj_t* nextLabel;
+  bool actRow;            // shuffle and repeat sit in the transport row
   lv_obj_t* volBar;       // volume pill: bar, drag and tap target in one
   lv_obj_t* volIcons[2];  // minus and plus on it
   bool volHeld;           // a drag or a held half is moving the level
@@ -492,6 +500,21 @@ void refreshPcMediaVolume(TileRt& r);
 void mediaArtTick();
 void mediaEvent(lv_event_t* e);
 void mediaVolEvent(lv_event_t* e);
+void mediaSrcEvent(lv_event_t* e);
+void mediaActEvent(lv_event_t* e);
+bool haPlaysInput(const HaEntity& e);
+const char* sourceGlyph(const String& source, bool input);
+String pictureId(const String& picture);
+
+// deck_ui_player.cpp
+bool playerCardOpen();
+const String& playerCardEntity();
+void openPlayerCard(TileRt& r, bool byKnob);
+void playerCardClose();
+void playerCardKnob(int detents, bool click);
+void playerTick();
+void playerArtTake(const std::shared_ptr<MediaArt>& art);
+void playerCardHaChanged(const TileRt& r);
 extern bool s_zonesDirty;
 void fitMedia(TileRt& r, int cw, int ch);
 void fitClock(TileRt& r, int cw, int ch);

@@ -174,7 +174,8 @@ enum ActionKind : uint8_t {
 };
 enum ConfirmMode : uint8_t { CONFIRM_NONE = 0, CONFIRM_OFF, CONFIRM_ALWAYS, CONFIRM_PIN };
 enum WhenKind : uint8_t {
-  WHEN_ALWAYS = 0, WHEN_PC_ON, WHEN_PC_OFF, WHEN_ENTITY, WHEN_SOUND_ON, WHEN_SOUND_OFF, WHEN_PRINTER
+  WHEN_ALWAYS = 0, WHEN_PC_ON, WHEN_PC_OFF, WHEN_ENTITY, WHEN_SOUND_ON, WHEN_SOUND_OFF, WHEN_PRINTER,
+  WHEN_MUSIC_ON, WHEN_MUSIC_OFF
 };
 
 struct WhenDef {
@@ -260,6 +261,8 @@ struct TileDef {
   uint8_t amsUnit = 1;    // PS_AMS: 1-based position in the reported units
   bool pcVolume = false;  // TILE_SLIDER: "control": "pc-volume"
   bool mediaAuto = false;  // TILE_MEDIA: "auto": the PC or the HA player, whichever plays
+  String bluos;            // TILE_MEDIA: BluOS player host for queue, shuffle, repeat, love
+  bool knobTracks = false;  // TILE_MEDIA "knob": "tracks": a knob on it browses the queue
   bool vizScope = false;   // TILE_VIZ: "style": "scope" (waveform) instead of bars
   bool clockDate = false;  // TILE_CLOCK: "date": "always" (default: only when it fits)
   uint8_t clockStyle = 0;  // TILE_CLOCK: CLOCK_*

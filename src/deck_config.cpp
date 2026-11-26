@@ -204,6 +204,8 @@ bool parseWhen(JsonVariantConst v, WhenDef& w, String* err, const String& where)
     else if (!strcmp(s, "pc-off")) w.kind = WHEN_PC_OFF;
     else if (!strcmp(s, "sound-on")) w.kind = WHEN_SOUND_ON;
     else if (!strcmp(s, "sound-off")) w.kind = WHEN_SOUND_OFF;
+    else if (!strcmp(s, "music-on")) w.kind = WHEN_MUSIC_ON;
+    else if (!strcmp(s, "music-off")) w.kind = WHEN_MUSIC_OFF;
     else {
       if (err) *err = where + ": unknown when '" + s + "'";
       return false;
@@ -508,6 +510,17 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
             if (err) *err = where + ": now playing needs a media_player entity";
             return false;
           }
+          // "bluos": the player's address for its queue, shuffle, repeat and love.
+          t.bluos = (const char*)(tv["bluos"] | "");
+          for (size_t c = 0; c < t.bluos.length(); c++) {
+            const char ch = t.bluos[c];
+            if (!isalnum((unsigned char)ch) && ch != '.' && ch != '-' && ch != ':') {
+              if (err) *err = where + ": bluos must be a host or host:port";
+              return false;
+            }
+          }
+          if (!t.entity.length()) t.bluos = "";
+          t.knobTracks = t.bluos.length() && !strcmp(tv["knob"] | "", "tracks");
         }
         if (t.type == TILE_VIZ) t.vizScope = !strcmp(tv["style"] | "bars", "scope");
         if (t.type == TILE_CLOCK) {

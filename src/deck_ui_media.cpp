@@ -1,5 +1,6 @@
 // Deck UI: the Now playing and clock tiles.
 #include "deck_ui_clock.h"
+#include "deck_bluos.h"
 
 namespace deckui {
 
@@ -15,6 +16,8 @@ struct MediaNow {
   time_t t0 = 0;              // track start while playing, 0 = unknown
   int32_t pos = 0, dur = 0;   // seconds; pos is used while paused
   int vol = -1;               // 0..100, -1 = unknown
+  bool inputs = false;        // HA player with a source_list (inputs, presets)
+  String source;              // HA source now
 };
 
 // The proxy token in entity_picture rotates; the cover id must not.
@@ -45,13 +48,26 @@ MediaNow haNow(const TileDef& d) {
   m.dur = e.mediaDuration;
   m.pos = e.mediaPosition;
   if (m.playing && e.mediaPosAt) m.t0 = e.mediaPosAt - e.mediaPosition;
+  // A BluOS player's own position is steadier than the one HA passes on.
+  deck::BluosStatus bs;
+  if (d.bluos.length() && deck::bluosHost() == d.bluos && deck::bluosStatus(bs) && bs.totlen > 0) {
+    m.dur = bs.totlen;
+    m.pos = bs.secs;
+    if (m.playing) m.t0 = time(nullptr) - bs.secs - (time_t)((millis() - bs.secsAt) / 1000);
+  }
   // A remotely accessible image puts its own URL in entity_picture and the
   // HA proxy path in entity_picture_local.
   m.picture = e.mediaPicture.length() ? e.mediaPicture : e.mediaPictureRemote;
   if (m.picture.length()) m.art = pictureId(m.picture);
   m.vol = e.level;
-  m.fromInput = e.mediaSource.length() && e.mediaInputs.indexOf("\n" + e.mediaSource + "\n") >= 0;
+  m.fromInput = haPlaysInput(e);
+  m.inputs = e.mediaInputs.length() > 0;
+  m.source = e.mediaSource;
   return m;
+}
+
+bool haPlaysInput(const HaEntity& e) {
+  return e.mediaSource.length() && e.mediaInputs.indexOf("\n" + e.mediaSource + "\n") >= 0;
 }
 
 MediaNow pcNow(const TileDef& d) {
@@ -282,6 +298,37 @@ void mediaVolEvent(lv_event_t* e) {
   if (want != base) mediaVolSet(r, want, !tap);
 }
 
+// Source icon: the input's kind when one plays, else a plain "pick a source".
+const char* sourceGlyph(const String& source, bool input) {
+  if (!input) return "import";
+  String s = source;
+  s.toLowerCase();
+  if (s.indexOf("hdmi") >= 0 || s.indexOf("arc") >= 0 || s.indexOf("tv") >= 0) return "video-input-hdmi";
+  if (s.indexOf("optical") >= 0 || s.indexOf("spdif") >= 0 || s.indexOf("toslink") >= 0) return "toslink";
+  if (s.indexOf("bluetooth") >= 0) return "bluetooth";
+  if (s.indexOf("analog") >= 0 || s.indexOf("line") >= 0 || s.indexOf("aux") >= 0 || s.indexOf("phono") >= 0)
+    return "audio-input-rca";
+  return "import";
+}
+
+// The cover of a big enough HA tile opens the player card; the badge says so.
+bool mediaBluos(TileRt& r);
+
+bool mediaBadge(TileRt& r, const MediaNow& m) {
+  const bool on = r.mediaHa && m.available && (m.inputs || r.def->bluos.length()) && r.coverPx >= 72;
+  const bool was = !lv_obj_has_flag(r.srcBadge, LV_OBJ_FLAG_HIDDEN);
+  if (on) lv_obj_add_flag(r.chip, LV_OBJ_FLAG_CLICKABLE);
+  else lv_obj_remove_flag(r.chip, LV_OBJ_FLAG_CLICKABLE);
+  showObj(r.srcBadge, on);
+  const char* glyph = on ? sourceGlyph(m.source, m.fromInput) : nullptr;
+  if (glyph && glyph != r.srcGlyph) {
+    mediaGlyph(r.srcBadge, glyph, "IN", r.coverPx >= 120 ? 20 : 16);
+    r.srcGlyph = glyph;
+    return true;
+  }
+  return on != was;
+}
+
 void applyMedia(TileRt& r) {
   if (mediaChoose(r)) r.iconCp = 2;
   const MediaNow m = mediaNow(r);
@@ -304,6 +351,9 @@ void applyMedia(TileRt& r) {
   mediaCover(r, m);
   mediaProgress(r, m);
   mediaVolume(r, m);
+  if (mediaBadge(r, m)) changed = true;
+  if (mediaBluos(r)) changed = true;
+  playerCardHaChanged(r);
   if (changed) markPageStale(r.page);
 }
 
@@ -325,6 +375,7 @@ void mediaArtTick() {
     art->dsc.data_size = px * px * 2;
     art->dsc.data = pixels;
   }
+  playerArtTake(art);
   for (TileRt& r : s_tiles) {
     if (r.def->type != TILE_MEDIA || r.coverPx != px) continue;
     if (mediaNow(r).art != id) continue;
@@ -360,13 +411,90 @@ void mediaEvent(lv_event_t* e) {
   if (!pcSendCommand(r.def->pc, cmds[button], err)) deckToastShow(err.c_str(), 2200);
 }
 
+// The cover (and the Next row) of an HA tile opens the player card.
+void mediaSrcEvent(lv_event_t* e) {
+  const size_t idx = (size_t)(uintptr_t)lv_event_get_user_data(e);
+  if (idx >= s_tiles.size()) return;
+  TileRt& r = s_tiles[idx];
+  if (!r.mediaHa) return;
+  hapticTap();
+  audioClick();
+  tileGuard(r, [](TileRt& t) { openPlayerCard(t, false); });
+}
+
+// BluOS buttons on the tile: love, shuffle, repeat.
+void mediaActEvent(lv_event_t* e) {
+  const size_t tag = (size_t)(uintptr_t)lv_event_get_user_data(e), idx = tag / 4;
+  if (idx >= s_tiles.size()) return;
+  TileRt& r = s_tiles[idx];
+  hapticTap();
+  audioClick();
+  if (!tileOpen(r)) return tileGuard(r, nullptr);
+  deck::BluosStatus st;
+  if (deck::bluosHost() != r.def->bluos || !deck::bluosStatus(st)) return;
+  if (tag % 4 == 0 && st.loveUrl.length()) {
+    if (deck::bluosCommand(st.loveUrl)) deckToastShow("Loved", 1200);
+  } else if (tag % 4 == 1) {
+    deck::bluosCommand(String("/Shuffle?state=") + (st.shuffle ? "0" : "1"));
+  } else if (tag % 4 == 2) {
+    deck::bluosCommand("/Repeat?state=" + String(st.repeat == 2 ? 0 : st.repeat == 0 ? 1 : 2));
+  }
+}
+
+// The BluOS part of a tile: love by the title, shuffle and repeat in the row,
+// the next track on tall tiles.
+bool mediaBluos(TileRt& r) {
+  if (!r.actBtns[0]) return false;
+  deck::BluosStatus st;
+  const bool ok = r.mediaHa && r.def->bluos.length() && deck::bluosHost() == r.def->bluos && deck::bluosStatus(st);
+  const bool love = ok && r.mediaFull && st.loveUrl.length();
+  const bool queue = ok && st.queue && r.actRow;
+  deck::BluosTrack next;
+  const bool peek = r.nextRow && ok && st.queue && r.mediaFull && deck::bluosNext(next) &&
+                    lv_obj_get_height(r.nextRow) > 0;
+  const uint32_t accent = tileAccent(*r.def);
+  const uint32_t bits = (love ? 1 : 0) | (queue ? 2 : 0) | (peek ? 4 : 0) | (st.love == 1 ? 8 : 0) |
+                        (st.shuffle ? 16 : 0) | (st.repeat << 5) | 128;
+  bool changed = false;
+  if (bits != r.actShown) {
+    r.actShown = bits;
+    changed = true;
+    showObj(r.actBtns[0], love);
+    showObj(r.actBtns[1], queue);
+    showObj(r.actBtns[2], queue);
+    mediaGlyph(r.actIcons[0], st.love == 1 ? "heart" : "heart-outline", "<3", 24);
+    lv_obj_set_style_text_color(r.actIcons[0], lv_color_hex(0xFF7A9A), 0);
+    mediaGlyph(r.actIcons[1], st.shuffle ? "shuffle-variant" : "shuffle-disabled", "S", 24);
+    const char* rep = st.repeat == 0 ? "repeat" : st.repeat == 1 ? "repeat-once" : "repeat-off";
+    mediaGlyph(r.actIcons[2], rep, "R", 24);
+    for (int i = 1; i < 3; i++) {
+      const bool on = i == 1 ? st.shuffle : st.repeat != 2;
+      if (on) lv_obj_set_style_text_color(r.actIcons[i], lv_color_hex(accent), 0);
+      else lv_obj_remove_local_style_prop(r.actIcons[i], LV_STYLE_TEXT_COLOR, 0);
+      lv_obj_set_style_text_opa(r.actIcons[i], on ? LV_OPA_COVER : LV_OPA_60, 0);
+    }
+  }
+  if (r.nextRow) {
+    if (peek != !lv_obj_has_flag(r.nextLabel, LV_OBJ_FLAG_HIDDEN)) changed = true;
+    showObj(r.nextLabel, peek);
+    if (peek && setText(r.nextLabel, ("Next: " + next.title + (next.artist.length() ? " \xC2\xB7 " + next.artist : "")).c_str()))
+      changed = true;
+  }
+  return changed;
+}
+
 // Bigger tiles get bigger transport buttons and, with room, a volume row (#6):
 // under the transport on tall tiles, beside it on wide ones.
 void fitMedia(TileRt& r, int cw, int ch) {
   r.mediaFull = cw >= 150 && ch >= 112;
   const int rowH = r.mediaFull ? constrain(ch * 3 / 10, 34, 52) : 0;
   const bool wide = r.mediaFull && cw >= 300;
-  const int rowY = ch - rowH;
+  // BluOS: shuffle and repeat join a full-width row, tall tiles show the next track.
+  const bool bl = r.actBtns[0] != nullptr;
+  r.actRow = bl && r.mediaFull && !wide;
+  const int nextH = r.actRow && ch >= 300 ? 46 : 0;
+  const int heart = bl && r.mediaFull ? 40 : 0;
+  const int rowY = ch - rowH - nextH;
   const int topH = r.mediaFull ? rowY - 14 : ch;
   // Tall room: a big cover with the volume beside it, over a one-line title
   // and artist. Else the cover beside the text.
@@ -381,6 +509,7 @@ void fitMedia(TileRt& r, int cw, int ch) {
     mediaSetArt(r, {});
     r.coverPx = cover;
     r.artAttempt = 0;
+    r.srcGlyph = nullptr;  // the badge icon follows the cover size
   }
   showObj(r.chip, cover > 0);
   const lv_font_t* font = stack ? &deck_font_20 : cw >= 150 ? &deck_font_14 : &deck_font_12;
@@ -399,8 +528,9 @@ void fitMedia(TileRt& r, int cw, int ch) {
     lv_obj_set_size(r.volBar, PILL, cover);
     lv_obj_align(r.volIcons[0], LV_ALIGN_BOTTOM_MID, 0, -10);
     lv_obj_align(r.volIcons[1], LV_ALIGN_TOP_MID, 0, 10);
-    lv_obj_set_pos(r.name, 0, y + cover + 8);
-    lv_obj_set_size(r.name, cw, lineH(font));
+    lv_obj_set_pos(r.name, heart, y + cover + 8);
+    lv_obj_set_size(r.name, cw - 2 * heart, lineH(font));
+    if (heart) lv_obj_set_pos(r.actBtns[0], cw - heart, y + cover + 8 + (lineH(font) - heart) / 2);
     lv_obj_set_pos(r.sub, 0, y + cover + 8 + lineH(font) + 4);
     lv_obj_set_size(r.sub, cw, lineH(&deck_font_12));
     showObj(r.sub, true);
@@ -409,7 +539,7 @@ void fitMedia(TileRt& r, int cw, int ch) {
       lv_obj_set_size(r.chip, cover, cover);
       lv_obj_set_pos(r.chip, 0, (topH - cover) / 2);
     }
-    const int left = cover ? cover + 10 : 0, width = max(1, cw - left);
+    const int left = cover ? cover + 10 : 0, width = max(1, cw - left - heart);
     const int titleH = min(topH, textH(font, 2));
     const bool artist = cover && topH >= titleH + lineH(&deck_font_12) + 4;
     const int blockH = titleH + (artist ? lineH(&deck_font_12) + 4 : 0);
@@ -418,6 +548,13 @@ void fitMedia(TileRt& r, int cw, int ch) {
     lv_obj_set_pos(r.sub, left, max(0, (topH - blockH) / 2) + titleH + 4);
     lv_obj_set_size(r.sub, width, lineH(&deck_font_12));
     showObj(r.sub, artist);
+    if (heart) lv_obj_set_pos(r.actBtns[0], cw - heart, max(0, (topH - blockH) / 2 - 8));
+  }
+  if (bl) {
+    for (int i = 0; i < 3; i++) lv_obj_set_size(r.actBtns[i], heart ? heart : 1, heart ? heart : 1);
+    lv_obj_set_pos(r.nextRow, 0, ch - nextH + 6);
+    lv_obj_set_size(r.nextRow, nextH ? cw : 0, nextH ? nextH - 6 : 0);
+    r.actShown = 0;  // mediaBluos shows what fits now
   }
   lv_obj_set_pos(r.viz, 0, rowY - 10);
   lv_obj_set_size(r.viz, cw, 4);
@@ -426,15 +563,22 @@ void fitMedia(TileRt& r, int cw, int ch) {
   const bool disc = rowH >= 44;
   static const char* const icons[] = {"skip-previous", "skip-next"};
   static const char* const fallback[] = {"|<", ">|"};
+  const int slots = r.actRow ? 5 : 3, first = r.actRow ? 1 : 0;
   for (int i = 0; i < 3; i++) {
+    const int k = i + first;
     showObj(r.mediaButtons[i], r.mediaFull);
-    lv_obj_set_pos(r.mediaButtons[i], i * tw / 3, rowY);
-    lv_obj_set_size(r.mediaButtons[i], (i + 1) * tw / 3 - i * tw / 3, rowH);
+    lv_obj_set_pos(r.mediaButtons[i], k * tw / slots, rowY);
+    lv_obj_set_size(r.mediaButtons[i], (k + 1) * tw / slots - k * tw / slots, rowH);
     if (i != 1 && px != r.mediaPx) mediaGlyph(r.mediaIcons[i], icons[i / 2], fallback[i / 2], px);
   }
   if (px != r.mediaPx) {
     r.mediaPx = px;
     r.iconCp = 2;  // applyMedia sets the play glyph at the new size
+  }
+  if (r.actRow) {
+    lv_obj_set_pos(r.actBtns[1], 0, rowY);
+    lv_obj_set_pos(r.actBtns[2], 4 * tw / 5, rowY);
+    for (int i = 1; i < 3; i++) lv_obj_set_size(r.actBtns[i], tw / 5, rowH);
   }
   showObj(r.mediaDisc, disc);
   if (disc) {

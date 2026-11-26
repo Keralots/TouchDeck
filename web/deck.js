@@ -455,6 +455,8 @@
         ["pc-off", "Only while the PC is off"],
         ["sound-on", "Only while the PC plays sound"],
         ["sound-off", "Only while the PC is silent"],
+        ["music-on", "Only while music plays"],
+        ["music-off", "Only while no music plays"],
         ["entity", "Only while an entity is in a state"],
         ["printer", "Only while a printer is on or printing"],
       ]
@@ -1383,6 +1385,36 @@
         : "")
     );
   }
+  /* A BluOS player (Bluesound, NAD) behind the HA player: its queue, shuffle,
+     repeat and love/ban come straight from it. */
+  function bluosField(t, i) {
+    if (!t.entity) return "";
+    let h =
+      '<div class="field">' +
+      lbl(
+        "BluOS player",
+        "Address of a Bluesound or other BluOS player, for example 192.168.0.64. The cover opens the player card; with this address it also shows the play queue, shuffle, repeat and love/ban.",
+      ) +
+      '<input type="text" data-bl="' +
+      i +
+      '" value="' +
+      esc(t.bluos || "") +
+      '" placeholder="192.168.0.64" spellcheck="false"></div>';
+    if (t.bluos)
+      h +=
+        '<div class="field">' +
+        lbl(
+          "Knob on this tile",
+          "Browse the queue: turning a knob that follows this tile opens the player card and moves through the queue, a press plays the track. While the card is open the first knob browses and the second sets the volume.",
+        ) +
+        '<select data-bk="' +
+        i +
+        '">' +
+        opt("", "Volume", t.knob !== "tracks") +
+        opt("tracks", "Browse the queue", t.knob === "tracks") +
+        "</select></div>";
+    return grp("BluOS", h);
+  }
   function mediaRow(t, i) {
     return (
       '<div class="dk-tile' +
@@ -1410,7 +1442,7 @@
       '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
       i +
       '" title="Remove">&#215;</button></div>' +
-      (i === more ? '<div class="dk-more">' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
+      (i === more ? '<div class="dk-more">' + colorField(t, i) + bluosField(t, i) + whenField(t, i) + "</div>" : "") +
       "</div>"
     );
   }
@@ -2008,6 +2040,7 @@
     if (w === "pc-on" || w === "pc-off")
       return { k: "pc:" + ((isPcCmd(t) ? t.tap.pc : t.pc) || (pcs[0] || {}).id || ""), neg: w === "pc-off" };
     if (w === "sound-on" || w === "sound-off") return { k: "sound", neg: w === "sound-off" };
+    if (w === "music-on" || w === "music-off") return { k: "music", neg: w === "music-off" };
     if (w && typeof w === "object" && w.printer !== undefined)
       return { k: "p:" + w.printer + (w.state === "printing" ? ":printing" : ""), neg: false };
     if (w && typeof w === "object") {
@@ -2043,6 +2076,7 @@
             const pc = pcs.find((x) => x.id === k.slice(3)) || (k === "pc:" && pcs[0]);
             nm = pc ? pc.name : "PC";
           } else if (k === "sound") nm = "PC sound";
+          else if (k === "music") nm = "Music";
           else if (k.startsWith("p:")) {
             const [id, st] = k.slice(2).split(":"),
               pr = (deck.printers || []).find((x) => x.id === id);
@@ -2094,6 +2128,8 @@
             ? "On = the printer is powered and reports. Prints = a job runs, and for the minutes after it ends (0 = only during the job)."
             : k.startsWith("sound")
             ? "Needs the companion's Audio visualizer switch. Sound counts after 2 s, silence after 30 s."
+            : k.startsWith("music")
+            ? "Music = the PC plays sound (companion Audio visualizer switch) or a Home Assistant player of a Now playing tile plays a stream (not one of its inputs). Silence counts after 30 s."
             : "The PC counts as off about a minute after its companion goes quiet.") +
         " Its cell is free otherwise: another tile with the opposite condition can take it. Switch the Preview above the grid to place it.";
     let h =
@@ -2108,10 +2144,12 @@
         ["pc-off", "Only while the PC is off"],
         ["sound-on", "Only while the PC plays sound"],
         ["sound-off", "Only while the PC is silent"],
+        ["music-on", "Only while music plays"],
+        ["music-off", "Only while no music plays"],
         ["entity", "Only while an entity is in a state"],
         ["printer", "Only while a printer is on or printing"],
       ]
-        .filter((o) => t.type !== "printer" || !/^(pc|sound)-/.test(o[0]) || o[0] === k)
+        .filter((o) => t.type !== "printer" || !/^(pc|sound|music)-/.test(o[0]) || o[0] === k)
         .map((o) => opt(o[0], o[1], k === o[0]))
         .join("") +
       "</select></div>";
@@ -2831,6 +2869,8 @@
     ["pc-off", "Only while the PC is off"],
     ["sound-on", "Only while the PC plays sound"],
     ["sound-off", "Only while the PC is silent"],
+    ["music-on", "Only while music plays"],
+    ["music-off", "Only while no music plays"],
   ];
   /* The frame the selected tiles make up exactly (the group bar edits its look), else null. */
   let gframe = null;
@@ -2869,7 +2909,7 @@
       k0 = whenKind(w0),
       wsame = ts.every((t) => whenKey(t.when) === whenKey(w0)),
       whens = SIMPLE_WHEN.filter(
-        (o) => !/^(pc|sound)-/.test(o[0]) || (wsame && o[0] === k0) || ts.some((t) => t.type !== "printer"),
+        (o) => !/^(pc|sound|music)-/.test(o[0]) || (wsame && o[0] === k0) || ts.some((t) => t.type !== "printer"),
       );
     whens.push(["entity", "Only while an entity is in a state"]);
     if ((prnOn() && (deck.printers || []).length) || (wsame && k0 === "printer"))
@@ -3003,7 +3043,7 @@
       '<div class="field">' +
         lbl(
           "Show",
-          "Sets the same condition on every selected tile (printer tiles skip the PC and sound ones).",
+          "Sets the same condition on every selected tile (printer tiles skip the PC, sound and music ones).",
         ) +
         '<select id="dkGWhen">' +
         (wsame ? "" : '<option value="?" selected disabled>Mixed</option>') +
@@ -3529,7 +3569,7 @@
           ents = new Set([...msel].map((t) => t.entity)),
           ent = ents.size === 1 && domainOf([...ents][0]) ? [...ents][0] : "";
         msel.forEach((t) => {
-          if (t.type === "printer" && /^(pc|sound)-/.test(v)) return;
+          if (t.type === "printer" && /^(pc|sound|music)-/.test(v)) return;
           if (v === "printer") t.when = prnWhenNew(prn);
           else if (v === "entity") t.when = { entity: ent, state: "on" };
           else if (v) t.when = v;
@@ -4029,6 +4069,29 @@
           else delete t.pc;
           setDirty(true);
           renderPage();
+        }),
+    );
+    el.querySelectorAll("[data-bl]").forEach(
+      (x) =>
+        (x.onchange = () => {
+          const t = p.tiles[+x.dataset.bl],
+            v = x.value.trim();
+          if (v) t.bluos = v;
+          else {
+            delete t.bluos;
+            delete t.knob;
+          }
+          setDirty(true);
+          renderPage();
+        }),
+    );
+    el.querySelectorAll("[data-bk]").forEach(
+      (x) =>
+        (x.onchange = () => {
+          const t = p.tiles[+x.dataset.bk];
+          if (x.value) t.knob = x.value;
+          else delete t.knob;
+          setDirty(true);
         }),
     );
     $("dkAddMedia").onclick = () => {
