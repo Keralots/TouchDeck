@@ -2001,6 +2001,7 @@ static void handleApiStatus() {
   doc["max_block"]    = ESP.getMaxAllocHeap();
   doc["internal_free"] = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
   doc["psram_free"]   = ESP.getFreePsram();
+  doc["psram_block"]  = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
   doc["reset_reason"] = resetReasonName();
   doc["last_crash"] = lastCrash();
   doc["wifi_disconnects"]     = wifiDisconnectCount();
@@ -2823,9 +2824,10 @@ static void handleDeckPrefs() {
   sendJsonMessage(200, true, "Saved");
 }
 
-// POST /api/deck/card?tile=<id> - bench hook, open a tile's detail card.
+// POST /api/deck/card?tile=<id>[&player=1] - bench hook, open a tile's detail card
+// (player=1: the player card an HA media tile's cover opens).
 static void handleDeckCard() {
-  const bool ok = deckTestCard(server.arg("tile"));
+  const bool ok = deckTestCard(server.arg("tile"), server.arg("player") == "1");
   sendJsonMessage(ok ? 200 : 404, ok, ok ? "Card open" : "No such tile");
 }
 

@@ -1820,13 +1820,15 @@ void deckSetPrinters(bool on) {
   lv_obj_invalidate(lv_screen_active());
 }
 
-bool deckTestCard(const String& tileId) {
+bool deckTestCard(const String& tileId, bool player) {
   if (frameActive()) return false;
   if (s_ed.root) return false;  // the editor blocks gestures until it closes
   for (size_t i = 0; i < s_tiles.size(); i++) {
     if (s_tiles[i].def->id != tileId || s_tiles[i].off) continue;
     if (s_tiles[i].def->type == TILE_PRINTER) return false;  // touch never opens a card there
     if (s_tiles[i].def->type == TILE_CLOCK) openClockCard((int)i);
+    else if (player && s_tiles[i].mediaHa) openPlayerCard(s_tiles[i], false);
+    else if (player) return false;
     else openModal((int)i);
     return true;
   }
