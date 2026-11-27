@@ -220,6 +220,7 @@
   for (let h = 0; h < 24; h++) $("dailyHour").add(new Option(String(h).padStart(2, "0") + ":00", h));
   function updateDailyFields() {
     $("dailyFields").classList.toggle("hidden", !["1", "2"].includes($("wallSource").value));
+    $("wallFollowField").classList.toggle("hidden", $("wallSource").value !== "3");
   }
   $("wallSource").addEventListener("change", updateDailyFields);
   function updateNightWallFields() {
