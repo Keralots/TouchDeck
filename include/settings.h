@@ -48,6 +48,10 @@ struct DisplaySettings {
   bool     wallDaily;         // Daily downloads enabled
   uint8_t  wallSource;        // 0 = own, 1 = daily, 2 = both, 3 = built-in
   bool     wallFollow;        // built-in pictures follow the time of day
+  uint8_t  nightWall;         // night picture: 0 = off, else built-in scene + 1
+  uint8_t  nightBy;           // 0 = sunset to sunrise, 1 = nightFromMin to nightToMin
+  uint16_t nightFromMin;      // local minute of the day
+  uint16_t nightToMin;
   bool     sdCard;
   uint16_t dailyMax;          // SD archive per orientation: 50, 100, 200 or 500
   uint8_t  dailyHour;         // Daily fetch hour, local time 0..23

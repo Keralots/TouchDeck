@@ -200,6 +200,10 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.wallDaily        = false;
   ds.wallSource       = 0;
   ds.wallFollow       = true;
+  ds.nightWall        = 0;
+  ds.nightBy          = 0;
+  ds.nightFromMin     = 19 * 60;
+  ds.nightToMin       = 7 * 60;
   ds.sdCard           = false;
   ds.dailyMax         = 100;
   ds.dailyHour        = 3;
@@ -288,6 +292,10 @@ void loadSettings() {
                                                : prefs.getBool("wdaily", false) ? 1 : 0;
   dispSettings.wallDaily = wallSourceDaily(dispSettings.wallSource);
   dispSettings.wallFollow = prefs.getBool("wfollow", true);
+  dispSettings.nightWall = min<uint8_t>(prefs.getUChar("wnight", 0), 6);
+  dispSettings.nightBy = min<uint8_t>(prefs.getUChar("wnby", 0), 1);
+  dispSettings.nightFromMin = min<uint16_t>(prefs.getUShort("wnfrom", 19 * 60), 1439);
+  dispSettings.nightToMin = min<uint16_t>(prefs.getUShort("wnto", 7 * 60), 1439);
   dispSettings.sdCard = prefs.getBool("sdon", false);
   dispSettings.dailyMax = prefs.getUShort("dmax", 100);
   if (!validDailyMax(dispSettings.dailyMax)) dispSettings.dailyMax = 100;
@@ -437,6 +445,10 @@ void saveSettings() {
   prefs.putBool("wdaily", wallSourceDaily(dispSettings.wallSource));
   prefs.putUChar("wsrc", dispSettings.wallSource);
   prefs.putBool("wfollow", dispSettings.wallFollow);
+  prefs.putUChar("wnight", dispSettings.nightWall);
+  prefs.putUChar("wnby", dispSettings.nightBy);
+  prefs.putUShort("wnfrom", dispSettings.nightFromMin);
+  prefs.putUShort("wnto", dispSettings.nightToMin);
   prefs.putBool("sdon", dispSettings.sdCard);
   prefs.putUShort("dmax", dispSettings.dailyMax);
   prefs.putUChar("dhour", dispSettings.dailyHour);

@@ -28,6 +28,18 @@ uint32_t artStep(const ArtTime& now);
 // False when memory is short. May take over a second: not on a busy loop.
 bool artDraw(int index, int w, int h, const ArtTime& at, void (*row)(void* ctx, int y, const uint8_t* rgb), void* ctx);
 
+// What the moving details need of a drawn scene, in pixels.
+struct ArtLive {
+  float night;  // 0..1, how much the stars show
+  int skyEnd;   // stars only above this row
+  int horizon;  // water line, -1 = no water
+  int bodies;
+  struct { float x, y, path; } body[2];  // path: strength of its glitter on the water
+};
+// Height of the sun in degrees (without a place: up from 7 to 19 local time).
+float artSunHeight(const ArtTime& at);
+bool artLive(int index, int w, int h, const ArtTime& at, ArtLive& out);
+
 }  // namespace deck
 
 #endif  // DECK_ART_H

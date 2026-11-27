@@ -220,8 +220,16 @@
   for (let h = 0; h < 24; h++) $("dailyHour").add(new Option(String(h).padStart(2, "0") + ":00", h));
   function updateDailyFields() {
     $("dailyFields").classList.toggle("hidden", !["1", "2"].includes($("wallSource").value));
+    $("wallFollowField").classList.toggle("hidden", $("wallSource").value !== "3");
   }
   $("wallSource").addEventListener("change", updateDailyFields);
+  function updateNightWallFields() {
+    const on = $("nightWall").value !== "0";
+    $("nightByField").classList.toggle("hidden", !on);
+    $("nightHourFields").classList.toggle("hidden", !on || $("nightBy").value !== "1");
+  }
+  $("nightWall").addEventListener("change", updateNightWallFields);
+  $("nightBy").addEventListener("change", updateNightWallFields);
   function updateNightFields() {
     $("nightScheduleFields").classList.toggle("hidden", !$("nightEnabled").checked);
   }
@@ -656,6 +664,12 @@
     setVal("wallOrder", c.display.wallOrder ?? 0);
     setVal("wallSource", c.display.wallSource ?? (c.display.wallDaily ? 1 : 0));
     setVal("wallFollow", (c.display.wallFollow ?? true) ? 1 : 0);
+    const hm = (m) => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+    setVal("nightWall", c.display.nightWall ?? 0);
+    setVal("nightBy", c.display.nightBy ?? 0);
+    setVal("nightFrom", hm(c.display.nightFromMinute ?? 1140));
+    setVal("nightTo", hm(c.display.nightToMinute ?? 420));
+    updateNightWallFields();
     setCheck("sdCard", c.display.sdCard ?? false);
     $("sdSave").disabled = true;
     setVal("dailyMax", c.display.dailyMax ?? 100);

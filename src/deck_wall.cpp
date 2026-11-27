@@ -44,10 +44,16 @@ struct WallJob {
   uint8_t* blurred;
   bool ok, automatic;
   bool redraw;  // the picture on screen again, in its new light: into the loaded buffers
+  bool night;   // the night picture: the day one stays current
   ArtTime art;
 };
 WallJob s_job = {};
 ArtTime s_loadedArt = {};
+bool s_loadedNight = false;
+// Night picture: a built-in scene from sunset (or a set hour) to sunrise.
+// nightOn: wanted on screen now; a picture picked by hand clears it until the next change.
+bool s_nightNow = false, s_nightOn[2] = {};
+uint32_t s_nightCheckMs = 0;
 
 uint64_t settingsKey() {
   return (uint64_t)dispSettings.rotation | (uint64_t)dispSettings.theme << 8 |
@@ -138,16 +144,53 @@ int artIndex(const char* ref) {
 }
 
 // The light to draw this picture in; {} = as designed, or not a built-in one.
-ArtTime artTime(const char* ref) {
+ArtTime artTime(const char* ref, bool night = false) {
   ArtTime at = {};
   const uint32_t now = (uint32_t)time(nullptr);
-  if (!dispSettings.wallFollow || now < 1609459200 || !artFollows(artIndex(ref))) return at;
+  if ((!night && !dispSettings.wallFollow) || now < 1609459200 || !artFollows(artIndex(ref))) return at;
   at.utc = now;
   at.place = weatherPlace(at.lat, at.lon);
   if (!at.place) at.lat = at.lon = 0;
+  // The night picture follows the clock too, but never in daylight (set hours before sunset).
+  if (night && artSunHeight(at) > -0.833f) return {};
   at.utc = artStep(at);
   return at;
 }
+
+String nightRef() {
+  char ref[15];
+  snprintf(ref, sizeof(ref), "b/%08x.jpg", dispSettings.nightWall - 1);
+  return ref;
+}
+
+bool nightByClock() {
+  if (!dispSettings.nightWall || dispSettings.nightWall > ART_COUNT) return false;
+  const time_t now = time(nullptr);
+  if (now < 1609459200) return false;
+  if (dispSettings.nightBy == 1) {
+    struct tm lt;
+    localtime_r(&now, &lt);
+    const int m = lt.tm_hour * 60 + lt.tm_min, a = dispSettings.nightFromMin, b = dispSettings.nightToMin;
+    return a == b ? false : a < b ? m >= a && m < b : m >= a || m < b;
+  }
+  ArtTime at = {};
+  at.utc = (uint32_t)now;
+  at.place = weatherPlace(at.lat, at.lon);
+  if (!at.place) at.lat = at.lon = 0;
+  return artSunHeight(at) < -0.833f;  // the sun's upper edge is below the horizon
+}
+
+// Every 10 s; on a change both orientations follow, a hand-picked picture too.
+void nightTick(bool force) {
+  if (!force && s_nightCheckMs && millis() - s_nightCheckMs < 10000) return;
+  s_nightCheckMs = millis();
+  const bool night = nightByClock();
+  if (night == s_nightNow && !force) return;
+  s_nightNow = night;
+  s_nightOn[0] = s_nightOn[1] = night;
+}
+
+String wantedName(bool portrait) { return s_nightOn[portrait] ? nightRef() : s_current[portrait]; }
 
 struct ArtOutput {
   uint8_t *r, *g, *b;
@@ -600,8 +643,11 @@ void installImage(WallJob& job) {
   s_blurR = job.blur;
   s_dim = job.dim;
   s_loadedName = job.name;
-  s_current[job.w < job.h] = job.name;
-  wallProtect(job.w < job.h, 0, sourceRef(job.name));
+  s_loadedNight = job.night;
+  if (!job.night) {
+    s_current[job.w < job.h] = job.name;
+    wallProtect(job.w < job.h, 0, sourceRef(job.name));
+  }
   wallProtect(job.w < job.h, 1, "");
   s_loadedArt = job.art;
   s_changedMs = millis();
@@ -615,12 +661,14 @@ void installImage(WallJob& job) {
 bool wallLoad(int w, int h, int blurR, int dimPct) {
   const bool p = w < h;
   initGallery(p);
+  nightTick(false);
   if (s_request[p]) {
     s_current[p] = s_requested[p];
     s_request[p] = false;
   }
+  const String wanted = wantedName(p);
   if (s_sharp && s_w == w && s_h == h && s_blurR == blurR && s_dim == dimPct &&
-      s_loadedName == s_current[p]) return true;
+      s_loadedName == wanted) return true;
   wallInvalidateJobs();
   // Settings rebuilds are synchronous; avoid a second pending PSRAM allocation.
   while (jobState() == JOB_RUNNING) delay(1);
@@ -631,9 +679,10 @@ bool wallLoad(int w, int h, int blurR, int dimPct) {
   job.h = h;
   job.blur = blurR;
   job.dim = dimPct;
-  strlcpy(job.name, s_current[p].c_str(), sizeof(job.name));
+  job.night = s_nightOn[p];
+  strlcpy(job.name, wanted.c_str(), sizeof(job.name));
   strlcpy(job.path, wallGalleryPath(p, job.name).c_str(), sizeof(job.path));
-  job.art = artTime(job.name);
+  job.art = artTime(job.name, job.night);
   wallProtect(p, 1, sourceRef(job.name));
   if (!prepareImage(job)) {
     free(job.sharp);
@@ -666,6 +715,13 @@ void wallFree() {
 const lv_image_dsc_t* wallSharp() { return s_sharp ? &s_sharpDsc : nullptr; }
 const lv_image_dsc_t* wallBlur() { return s_blur ? &s_blurDsc : nullptr; }
 uint32_t wallGeneration() { return s_generation; }
+
+int wallLiveScene(ArtTime& at, int& dimPct) {
+  if (!s_sharp || (jobState() != JOB_IDLE && s_job.redraw)) return -1;
+  at = s_loadedArt;
+  dimPct = s_dim;
+  return artIndex(s_loadedName.c_str());
+}
 
 bool wallValidName(const String& name) {
   if (name.length() != 12 || !name.endsWith(".jpg")) return false;
@@ -808,7 +864,19 @@ void wallRequest(bool portrait, const String& name) {
   s_retryMs = 0;
   if (portrait != ((dispSettings.rotation & 1) == 0) || dispSettings.theme != THEME_GLASS)
     s_current[portrait] = name;
+  if (s_nightOn[portrait]) {  // the morning brings it
+    s_current[portrait] = name;
+    s_request[portrait] = false;
+    wallProtect(portrait, 0, sourceRef(name));
+    wallProtect(portrait, 1, "");
+  }
 }
+
+void wallNightSkip(bool portrait) { s_nightOn[portrait] = false; }
+
+void wallNightChanged() { nightTick(true); }
+
+bool wallNightShown() { return s_loadedNight; }
 
 bool wallNext(bool portrait) {
   initGallery(portrait);
@@ -879,7 +947,7 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch, bool rotate, void (*makeR
   }
   if (jobState() == JOB_READY) {
     if (s_job.epoch != s_epoch || s_job.requestId != s_requestId[p] || s_job.settings != settingsKey() ||
-        s_job.w != w || s_job.h != h || !s_job.ok || (s_job.automatic && !rotate)) {
+        s_job.w != w || s_job.h != h || !s_job.ok || (s_job.automatic && !rotate) || s_job.night != s_nightOn[p]) {
       if (!s_job.ok) s_retryMs = now;
       discardJob();
     } else {
@@ -893,17 +961,24 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch, bool rotate, void (*makeR
   initGallery(p);
   if (s_request[p] && s_automatic[p] && !rotate) s_request[p] = false;
   if (s_request[p] && s_automatic[p] && !idle) return false;
-  bool redraw = false, late = false;
+  bool redraw = false, late = false, change = false;
   ArtTime art = {};
+  String wanted;
   if (!s_request[p]) {
     if (now - s_scanMs < 1000) return false;
     s_scanMs = now;
-    if (rotate && idle && dispSettings.wallEvery && now - s_changedMs >= (uint32_t)dispSettings.wallEvery * 60000 &&
-        wallFiles(p).size() > 1) {
+    nightTick(false);
+    wanted = wantedName(p);
+    if ((s_nightOn[p] || s_loadedNight) && s_loadedName != wanted && wallExists(p, wanted)) {
+      // Night picture in or out, like an automatic change.
+      if (!rotate || !idle) return false;
+      change = true;
+    } else if (!s_nightOn[p] && rotate && idle && dispSettings.wallEvery &&
+               now - s_changedMs >= (uint32_t)dispSettings.wallEvery * 60000 && wallFiles(p).size() > 1) {
       wallNext(p);
       s_automatic[p] = true;
     } else {
-      art = artTime(s_loadedName.c_str());
+      art = artTime(s_loadedName.c_str(), s_loadedNight);
       redraw = s_sharp && s_w == w && s_h == h && !(art == s_loadedArt);
       // Far off (drawn at boot before the clock was set, or before a long sleep): at once.
       late = art.utc - s_loadedArt.utc > 900;
@@ -919,10 +994,11 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch, bool rotate, void (*makeR
   job.settings = settingsKey();
   job.epoch = s_epoch;
   job.requestId = s_requestId[p];
-  job.automatic = redraw ? !late : s_automatic[p];
+  job.automatic = redraw ? !late : change || s_automatic[p];
   job.redraw = redraw;
-  strlcpy(job.name, redraw ? s_loadedName.c_str() : s_requested[p].c_str(), sizeof(job.name));
-  job.art = redraw ? art : artTime(job.name);
+  job.night = redraw ? s_loadedNight : s_nightOn[p];
+  strlcpy(job.name, redraw ? s_loadedName.c_str() : change ? wanted.c_str() : s_requested[p].c_str(), sizeof(job.name));
+  job.art = redraw ? art : artTime(job.name, job.night);
   strlcpy(job.path, wallGalleryPath(p, job.name).c_str(), sizeof(job.path));
   portENTER_CRITICAL(&s_jobMux);
   s_job = job;

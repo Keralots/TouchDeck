@@ -1486,6 +1486,7 @@ void deckTick() {
     heroTick();
     vizTick();
     wxTick();
+    liveTick();
     clockFxTick();
     agentTileSync();
 #if BOARD_HAS_ENCODER
