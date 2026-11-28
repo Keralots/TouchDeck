@@ -307,7 +307,7 @@ void loadSettings() {
   dispSettings.printerFx = prefs.getBool("prnfx", true);
   dispSettings.tileFx = min<uint8_t>(prefs.getUChar("tilefx", 0), 5);
   dispSettings.fxTouch = min<uint8_t>(prefs.getUChar("fxtouch", 0), 4);
-  dispSettings.fxToggle = min<uint8_t>(prefs.getUChar("fxtoggle", 0), 4);
+  dispSettings.fxToggle = min<uint8_t>(prefs.getUChar("fxtoggle", 0), 5);
   dispSettings.fxPage = min<uint8_t>(prefs.getUChar("fxpage", 0), 4);
   dispSettings.fxCard = min<uint8_t>(prefs.getUChar("fxcard", 0), 3);
   advSettings.printers = prefs.getBool("prn", false);
