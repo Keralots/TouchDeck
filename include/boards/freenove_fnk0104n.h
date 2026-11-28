@@ -4,8 +4,8 @@
 //
 // Pins from Freenove's own examples (Freenove_ESP32_S3_Display,
 // Tutorial_With_Touch/Sketches/Sketch_18.1_Lvgl_Multifunctionality/public.h,
-// Libraries/FNK0104N/TFT_eSPI_v2.5.43/ST77922.h). The display runs at 80 MHz
-// there; the QSPI transport starts at 40 MHz and can be raised.
+// Libraries/FNK0104N/TFT_eSPI_v2.5.43/ST77922.h). The QSPI transport runs the
+// panel at 80 MHz, as the vendor does.
 #ifndef BOARDS_FREENOVE_FNK0104N_H
 #define BOARDS_FREENOVE_FNK0104N_H
 
