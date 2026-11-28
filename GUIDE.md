@@ -387,7 +387,7 @@ If the board keeps connecting and disconnecting, hold **BOOT** while plugging in
 
 ## Building from source
 
-Built with [PlatformIO](https://platformio.org/), one environment:
+Built with [PlatformIO](https://platformio.org/). The default environment is the Guition (`jc3248w535`); pick another board with `-e <env>`:
 
 ```sh
 pio run                       # build
@@ -395,3 +395,24 @@ pio run -t upload             # flash over USB
 curl -F "firmware=@.pio/build/jc3248w535/firmware.bin" http://<device-ip>/ota/upload
 python create_firmware.py     # full and OTA images in release/<version>/
 ```
+
+## Community boards
+
+Ports written and tested by other users. I do not own these boards, so they are not tested before a release, not in the web flasher and have no release files: build them from source.
+
+### Freenove FNK0104N
+
+Freenove ESP32-S3 3.5" Display: ESP32-S3 N16R8, 320x480 ST77922 panel over QSPI with its touch on I2C, ES8311 speaker, microSD. Ported by Samartcev166 (#11).
+
+The Guition release files do not run on it (black screen). Build and flash the full image once, then update over **Maintenance > Firmware update** with `firmware.bin`, which keeps the settings:
+
+```sh
+pio run -e freenove_fnk0104n
+esptool.py --chip esp32s3 --port COM3 --baud 921600 write_flash 0x0 .pio/build/freenove_fnk0104n/firmware.factory.bin
+```
+
+- **Tested on the board:** boot, WiFi, taps, page and quick panel swipes, landscape rotation, speaker (test tone, timer bell).
+- **Not tested yet:** the other three rotations, microSD (4-bit mode).
+- **Not available:** AI agent (no ES7210 microphones), the on-board RGB LED, battery level.
+- **No TE line:** frames follow a 60 Hz timer instead of the panel scan, so fast motion can tear.
+- **Image corrupted:** lower `SPI_HZ` for the ST77922 in `src/deck_panel_qspi.cpp` from 80 to 40 MHz.

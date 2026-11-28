@@ -24,6 +24,15 @@ constexpr int64_t PANEL_SYNC_PERIOD_US = 16390;
 constexpr int64_t PANEL_SYNC_LEAD_US = 6000;
 constexpr int64_t PANEL_ANIM_LEAD_US = 8000;
 constexpr bool PANEL_BIG_ENDIAN = true;
+#elif defined(BOARD_DISPLAY_ST77922_QSPI)
+// Same chunking and pacing as the AXS panel: 48 native rows per transaction,
+// ~60 Hz nominal refresh. The panel has no TE line on this board, so the
+// transport generates the sync edge on a timer at this period.
+constexpr int PANEL_ROWS = 48;
+constexpr int64_t PANEL_SYNC_PERIOD_US = 16390;
+constexpr int64_t PANEL_SYNC_LEAD_US = 6000;
+constexpr int64_t PANEL_ANIM_LEAD_US = 8000;
+constexpr bool PANEL_BIG_ENDIAN = true;
 #elif defined(BOARD_DISPLAY_MIPI_DSI)
 // One chunk = the whole frame, built straight into the back framebuffer.
 constexpr int PANEL_ROWS = NATIVE_H;

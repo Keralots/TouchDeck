@@ -1,15 +1,25 @@
 // ES8311 codec on the shared I2C bus plus an amplifier enable pin (Waveshare
-// P4 7B). The codec is clocked from MCLK = 256 x rate.
+// P4 7B, Freenove FNK0104N; -1 when the codec feeds the speaker directly). The
+// codec is clocked from MCLK = 256 x rate.
 #include "board.h"
 #if defined(BOARD_AUDIO_ES8311)
 #include "audio_hw.h"
 #include <Wire.h>
 #include "es8311.h"
 
+#ifndef BOARD_AMP_EN
+#define BOARD_AMP_EN -1
+#endif
+#ifndef BOARD_AMP_EN_ACTIVE_LOW
+#define BOARD_AMP_EN_ACTIVE_LOW 0
+#endif
+
 namespace {
 
 // The vendor demo's codec level; loudness is set digitally in audio.cpp.
 constexpr int CODEC_VOLUME = 90;
+constexpr int AMP_ON = BOARD_AMP_EN_ACTIVE_LOW ? LOW : HIGH;
+constexpr int AMP_OFF = BOARD_AMP_EN_ACTIVE_LOW ? HIGH : LOW;
 
 es8311_handle_t s_codec = nullptr;
 
@@ -34,13 +44,15 @@ bool audioHwStart(uint32_t rate) {
     Serial.printf("Audio: ES8311 has no clock setting for %u Hz\n", (unsigned)rate);
     return false;
   }
-  pinMode(BOARD_AMP_EN, OUTPUT);
-  digitalWrite(BOARD_AMP_EN, HIGH);
+  if (BOARD_AMP_EN >= 0) {
+    pinMode(BOARD_AMP_EN, OUTPUT);
+    digitalWrite(BOARD_AMP_EN, AMP_ON);
+  }
   return true;
 }
 
 void audioHwStop() {
-  if (BOARD_AMP_EN >= 0) digitalWrite(BOARD_AMP_EN, LOW);
+  if (BOARD_AMP_EN >= 0) digitalWrite(BOARD_AMP_EN, AMP_OFF);
 }
 
 #endif  // BOARD_AUDIO_ES8311

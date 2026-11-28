@@ -23,6 +23,12 @@ Two boards are supported. Nothing to wire on either.
 
 Optional: a single-colour status LED on a free GPIO ([wiring](GUIDE.md#wiring-the-led)), a [vibration motor](GUIDE.md#vibration-motor) for tile taps and a microSD card for wallpapers and brand icons.
 
+### Community boards
+
+Ported and tested by other users. I do not own these boards, so I cannot test them: they are not in the web flasher or the releases and are built from source.
+
+- **Freenove FNK0104N:** 3.5" 320x480 ESP32-S3 board with an ST77922 panel, ES8311 speaker and microSD. Ported by Samartcev166. Build, flash and known limits: [GUIDE](GUIDE.md#freenove-fnk0104n).
+
 ## Screenshots
 
 Short video of the deck in use: [YouTube](https://youtube.com/shorts/eh1_8pJR3-M).
