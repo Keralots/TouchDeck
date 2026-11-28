@@ -6,6 +6,7 @@
 #include <new>
 
 #include "deck_ui_int.h"
+#include "deck_ui_ring.h"
 
 namespace deckui {
 
