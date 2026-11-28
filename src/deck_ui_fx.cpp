@@ -6,13 +6,14 @@
 // a sheen, pages in depth, the card rising as a sheet. Page changes and
 // cards are drawn by the compositor (deck_panel.cpp).
 #include "deck_ui_int.h"
+#include "deck_ui_ring.h"
 
 namespace deckui {
 
 namespace {
 
 enum FxTouch : uint8_t { TOUCH_NONE, TOUCH_RING, TOUCH_DROP, TOUCH_PRESS, TOUCH_DISTORT };
-enum FxToggle : uint8_t { TOGGLE_NONE, TOGGLE_BLOOM, TOGGLE_LIQUID, TOGGLE_SHEEN, TOGGLE_AURORA };
+enum FxToggle : uint8_t { TOGGLE_NONE, TOGGLE_BLOOM, TOGGLE_LIQUID, TOGGLE_SHEEN, TOGGLE_AURORA, TOGGLE_ORBIT };
 enum FxCard : uint8_t { CARD_NONE, CARD_MORPH, CARD_REVEAL, CARD_SHEET };
 struct FxSet {
   FxTouch touch;
@@ -32,7 +33,7 @@ constexpr FxSet kSets[] = {
 FxSet fx() {
   const DisplaySettings& d = dispSettings;
   if (d.tileFx < sizeof(kSets) / sizeof(kSets[0])) return kSets[d.tileFx];
-  return {(FxTouch)LV_MIN(d.fxTouch, TOUCH_DISTORT), (FxToggle)LV_MIN(d.fxToggle, TOGGLE_AURORA),
+  return {(FxTouch)LV_MIN(d.fxTouch, TOUCH_DISTORT), (FxToggle)LV_MIN(d.fxToggle, TOGGLE_ORBIT),
           (PageFx)LV_MIN(d.fxPage, PAGE_CASCADE), (FxCard)LV_MIN(d.fxCard, CARD_SHEET)};
 }
 
@@ -629,6 +630,129 @@ void startAurora(TileRt& r, bool on) {
   startAnim(box, auroraStep, AURORA_MS, lv_anim_path_linear, sheenDone);
 }
 
+// --- On/off: Orbit -------------------------------------------------------------------------
+// The Orbit clock's comet runs once round the tile's edge, slow, fast, slow,
+// then the ring flashes. Off runs it back the other way, fainter, no flash.
+constexpr uint32_t LAP_MS = 900, LAP_FLASH_MS = 650, LAP_FADE_MS = 160;
+
+struct Lap : Ring {
+  lv_obj_t *tile, *box;
+  bool on, hadOverflow;
+  lv_color_t col, core;
+  uint32_t ms;  // into the effect
+};
+
+float lapEase(float t) { return t < .5f ? 4 * t * t * t : 1 - 4 * (1 - t) * (1 - t) * (1 - t); }
+float lapSpeed(float t) { return t < .5f ? 4 * t * t : 4 * (1 - t) * (1 - t); }  // against its peak
+
+// Head and the tail's far end along the ring; fade: the head going out after the lap.
+void lapSpan(const Lap& q, float& head, float& end, float& fade) {
+  const float t = clamp01((float)q.ms / LAP_MS), pos = lapEase(t) * q.len;
+  fade = clamp01(((float)q.ms - LAP_MS) / LAP_FADE_MS);
+  const float tail = LV_MIN(pos, q.len * (.05f + .28f * lapSpeed(t))) * (1 - fade);  // longer when fast
+  head = q.on ? pos : q.len - pos;
+  end = q.on ? head - tail : head + tail;
+}
+
+float lapFlash(const Lap& q) {
+  return q.on && q.ms >= LAP_MS ? 1 - clamp01((float)(q.ms - LAP_MS) / LAP_FLASH_MS) : 0;
+}
+
+void lapDraw(lv_event_t* e) {
+  const Lap& q = *(const Lap*)lv_event_get_user_data(e);
+  lv_layer_t* L = lv_event_get_layer(e);
+  lv_area_t a;
+  lv_obj_get_coords(lv_event_get_target_obj(e), &a);
+  float head, end, fade;
+  lapSpan(q, head, end, fade);
+  const lv_opa_t hi = q.on ? LV_OPA_COVER : LV_OPA_60;
+  ringTail(L, q, a.x1, a.y1, LV_MIN(head, end), LV_MAX(head, end), q.col, 0, hi, !q.on, 12);
+  ringHead(L, q, a.x1, a.y1, head, q.col, q.core, (lv_opa_t)(hi * (1 - fade)));
+  const float f = lapFlash(q);
+  if (f > 0) ringStroke(L, q, a.x1, a.y1, 0, q.len, q.lw + (int)(q.lw * 1.4f * f), q.col, (lv_opa_t)(230 * f));
+}
+
+void lapExt(lv_event_t* e) { lv_event_set_ext_draw_size(e, ((const Lap*)lv_event_get_user_data(e))->ext); }
+
+void lapStep(void* var, int32_t v) {
+  Lap& q = *(Lap*)var;
+  float h0, e0, f0, h1, e1, f1;
+  lapSpan(q, h0, e0, f0);
+  const bool flashed = lapFlash(q) > 0;
+  q.ms = (uint32_t)v;
+  lapSpan(q, h1, e1, f1);
+  if (flashed || lapFlash(q) > 0) ringInvalidate(q.box, q, 0, q.len);
+  else ringInvalidate(q.box, q, LV_MIN(LV_MIN(h0, e0), LV_MIN(h1, e1)) - 2, LV_MAX(LV_MAX(h0, e0), LV_MAX(h1, e1)) + 2);
+}
+
+void lapDone(lv_anim_t* a) {
+  Lap* q = (Lap*)a->var;
+  TileRt* r = tileOf(q->tile);
+  if (r && r->halo == q->box) onOffStop(*r);
+  else lv_obj_delete(q->box);
+}
+
+// Also when the tile goes: its own DELETE came first, the tile is still there.
+void lapFree(lv_event_t* e) {
+  Lap* q = (Lap*)lv_event_get_user_data(e);
+  lv_anim_delete(q, lapStep);
+  lv_obj_remove_event_cb_with_user_data(q->tile, lapExt, q);
+  if (!q->hadOverflow) lv_obj_remove_flag(q->tile, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+  lv_obj_refresh_ext_draw_size(q->tile);
+  lv_free(q);
+}
+
+// On: the on colour's opposite hue, bright, so the comet stands out on the new fill.
+lv_color_t lapColor(const TileRt& r, bool on) {
+  if (!on) return lv_obj_get_style_text_color(r.obj, LV_PART_MAIN);
+  lv_color_hsv_t h = lv_color_to_hsv(lv_color_hex(tileOnFill(*r.def)));
+  if (h.s < 20) return lv_color_hex(C_OK);  // grey has no opposite
+  return lv_color_hsv_to_rgb((h.h + 180) % 360, LV_MAX(h.s, 70), 100);
+}
+
+void startLap(TileRt& r, bool on) {
+  onOffStop(r);
+  Lap* q = (Lap*)lv_malloc_zeroed(sizeof(Lap));
+  if (!q) return;
+  // Inside the border, like the Orbit clock's ring.
+  const int bw = lv_obj_get_style_border_width(r.obj, LV_PART_MAIN);
+  lv_area_t tc, cc;
+  lv_obj_get_coords(r.obj, &tc);
+  lv_obj_get_content_coords(r.obj, &cc);
+  q->w = (int16_t)(lv_area_get_width(&tc) - 2 * bw);
+  q->h = (int16_t)(lv_area_get_height(&tc) - 2 * bw);
+  ringBuild(*q, lv_obj_get_style_radius(r.obj, LV_PART_MAIN) - bw);
+  if (q->len <= 0) {
+    lv_free(q);
+    return;
+  }
+  q->tile = r.obj;
+  q->on = on;
+  q->col = lapColor(r, on);
+  q->core = on ? lv_color_white() : q->col;
+  lv_obj_t* box = q->box = r.halo = overlay(r.obj);
+  lv_obj_set_pos(box, tc.x1 + bw - cc.x1, tc.y1 + bw - cc.y1);
+  lv_obj_set_size(box, q->w, q->h);
+  lv_obj_add_event_cb(box, lapDraw, LV_EVENT_DRAW_MAIN, q);
+  lv_obj_add_event_cb(box, lapExt, LV_EVENT_REFR_EXT_DRAW_SIZE, q);
+  lv_obj_add_event_cb(box, lapFree, LV_EVENT_DELETE, q);
+  // The head's glow reaches into the gap round the tile.
+  q->hadOverflow = lv_obj_has_flag(r.obj, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+  lv_obj_add_flag(r.obj, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+  lv_obj_add_event_cb(r.obj, lapExt, LV_EVENT_REFR_EXT_DRAW_SIZE, q);
+  lv_obj_refresh_ext_draw_size(r.obj);
+  lv_obj_refresh_ext_draw_size(box);
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, q);
+  lv_anim_set_exec_cb(&a, lapStep);
+  const uint32_t ms = LAP_MS + (on ? LAP_FLASH_MS : LAP_FADE_MS);
+  lv_anim_set_values(&a, 0, (int32_t)ms);
+  lv_anim_set_duration(&a, ms);
+  lv_anim_set_completed_cb(&a, lapDone);
+  lv_anim_start(&a);
+}
+
 // --- Touch: water distortion (Heavy) ------------------------------------------------------
 // The tile as last shown (wallpaper and glass included) bends in rings from
 // the finger and settles. Per pixel: the distance and direction from the
@@ -873,7 +997,14 @@ void fxTileOn(TileRt& r, bool wasOn) {
     lv_obj_add_flag(r.fx, LV_OBJ_FLAG_HIDDEN);
     ((Distort*)lv_obj_get_user_data(r.fx))->retake = 2;
   }
-  if (fx().toggle == TOGGLE_BLOOM && wasOn != on && live(r)) toggleBloom(r, on);
+  if (wasOn == on || !live(r)) return;
+  if (fx().toggle == TOGGLE_BLOOM) toggleBloom(r, on);
+  else if (fx().toggle == TOGGLE_ORBIT) startLap(r, on);
+}
+
+// Slider tiles have no CHECKED fill to animate: only Orbit, which draws on the edge.
+void fxLevelOn(TileRt& r, bool on) {
+  if (fx().toggle == TOGGLE_ORBIT && live(r)) startLap(r, on);
 }
 
 // Calm: the compositor flies the card picture out of the tile over the

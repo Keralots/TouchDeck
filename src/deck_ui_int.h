@@ -636,6 +636,7 @@ void fxRipple(TileRt& r, lv_point_t p);  // the touch effect, p in screen coords
 bool fxCancelRipples();  // true when one was running
 void fxBeforeTileOn(TileRt& r, bool on);  // before the CHECKED state changes
 void fxTileOn(TileRt& r, bool wasOn);
+void fxLevelOn(TileRt& r, bool on);  // a slider tile went on or off
 void fxCardOpenBegin(int tileIdx, deck::FrameRect to, int r1);
 void fxCardOpen(lv_obj_t* card, int tileIdx);
 void fxCardClose(lv_obj_t* card, int tileIdx);

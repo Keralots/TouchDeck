@@ -789,7 +789,7 @@ static void handleConfigImport() {
   if (!display["printerFx"].isNull()) READ_BOOL(display, "printerFx", nextDisplay.printerFx);
   if (!display["tileFx"].isNull()) READ_INT(display, "tileFx", 0, 5, nextDisplay.tileFx, uint8_t);
   if (!display["fxTouch"].isNull()) READ_INT(display, "fxTouch", 0, 4, nextDisplay.fxTouch, uint8_t);
-  if (!display["fxToggle"].isNull()) READ_INT(display, "fxToggle", 0, 4, nextDisplay.fxToggle, uint8_t);
+  if (!display["fxToggle"].isNull()) READ_INT(display, "fxToggle", 0, 5, nextDisplay.fxToggle, uint8_t);
   if (!display["fxPage"].isNull()) READ_INT(display, "fxPage", 0, 4, nextDisplay.fxPage, uint8_t);
   if (!display["fxCard"].isNull()) READ_INT(display, "fxCard", 0, 3, nextDisplay.fxCard, uint8_t);
 
@@ -1818,7 +1818,7 @@ static void handleSaveDisplay() {
   dispSettings.printerFx = server.hasArg("printerFx");
   dispSettings.tileFx = (uint8_t)clampedArg("tileFx", dispSettings.tileFx, 0, 5);
   dispSettings.fxTouch = (uint8_t)clampedArg("fxTouch", dispSettings.fxTouch, 0, 4);
-  dispSettings.fxToggle = (uint8_t)clampedArg("fxToggle", dispSettings.fxToggle, 0, 4);
+  dispSettings.fxToggle = (uint8_t)clampedArg("fxToggle", dispSettings.fxToggle, 0, 5);
   dispSettings.fxPage = (uint8_t)clampedArg("fxPage", dispSettings.fxPage, 0, 4);
   dispSettings.fxCard = (uint8_t)clampedArg("fxCard", dispSettings.fxCard, 0, 3);
 

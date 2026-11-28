@@ -568,6 +568,7 @@ void applyHaToTile(TileRt& r, bool force) {
   }
   if (e.version != r.haVersion)
     if (Wish* w = findWish(d.entity)) rememberLevel(*w, e);
+  const bool seen = r.haVersion != 0, wasOn = r.on;  // a first state is no switch
   r.haVersion = e.version;
   const String domain = entityDomain(d.entity);
   const bool avail = e.known && e.state != "unavailable" && e.state != "unknown";
@@ -575,6 +576,7 @@ void applyHaToTile(TileRt& r, bool force) {
   const bool on = control ? wishOn(d.entity, e) : avail && haStateOn(domain, e.state);
   if (control) r.on = on;
   if (d.type == TILE_TOGGLE) setTileOn(r, on, &e);
+  if (d.type == TILE_SLIDER && seen && wasOn != on) fxLevelOn(r, on);
   if (r.icon) r.iconCp = showIcon(r.icon, d, &e, on, r.iconPx, r.iconCp);
   if (d.lightIcon && d.type != TILE_TOGGLE) tileIconColor(r, &e);
   lv_obj_set_style_opa(r.obj, avail ? LV_OPA_COVER : LV_OPA_50, 0);
