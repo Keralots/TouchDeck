@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>TouchDeck Web Flasher</title>
-  <meta name="description" content="Flash TouchDeck to your Guition JC3248W535 or, in beta, a Waveshare ESP32-P4 7B from your browser, then connect WiFi, Home Assistant and your PC. No cloud, no accounts.">
+  <meta name="description" content="Flash TouchDeck to your Guition JC3248W535 or Waveshare ESP32-P4 7B from your browser, then connect WiFi, Home Assistant and your PC. No cloud, no accounts.">
   <meta name="theme-color" content="#091120">
   <link rel="canonical" href="https://touchdeck.stolaris.dev/">
   <meta property="og:type" content="website">
@@ -53,7 +53,7 @@
         <section class="hero">
           <h1>Flash TouchDeck <span class="accent">straight from your browser.</span></h1>
           <p>A touch control deck for Home Assistant, live PC stats from the TouchDeck Companion and Bambu Lab printers, set up from a web portal on the device. No cloud, no accounts.</p>
-          <p>Two boards are supported: the Guition JC3248W535 (3.5&quot;) and the Waveshare ESP32-P4-WIFI6-Touch-LCD-7B (7&quot;, beta).</p>
+          <p>Two boards are supported: the Guition JC3248W535 (3.5&quot;) and the Waveshare ESP32-P4-WIFI6-Touch-LCD-7B (7&quot;).</p>
         </section>
 
         <section class="showcase" aria-labelledby="showcase-head">
@@ -83,7 +83,7 @@
             <li><strong>Desktop Chrome or Edge.</strong> Web Serial does not run on Firefox, Safari or mobile.</li>
             <li><strong>A real data USB-C cable.</strong> A power-only cable will not expose a serial port.</li>
             <li><strong>Guition JC3248W535.</strong> The ESP32-S3 N16R8 board. Find the <a href="https://makerworld.com/models/3463113" target="_blank" rel="noopener">printed case on MakerWorld</a>.</li>
-            <li><strong>Waveshare ESP32-P4-WIFI6-Touch-LCD-7B (beta).</strong> Only for P4 chip revision v3.x, tested on v3.2. Older v1.x boards are not supported and will not boot this image. Plug in the USB-C port marked <code>USB TO UART</code>. Board details on the <a href="https://docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-7B" target="_blank" rel="noopener">Waveshare wiki</a>, <a href="https://makerworld.com/en/models/3622177" target="_blank" rel="noopener">printed case on MakerWorld</a>. See the <a href="https://github.com/Keralots/TouchDeck/releases" target="_blank" rel="noopener">release notes</a> for known issues.</li>
+            <li><strong>Waveshare ESP32-P4-WIFI6-Touch-LCD-7B.</strong> Only for P4 chip revision v3.x, tested on v3.2. Older v1.x boards are not supported and will not boot this image. Plug in the USB-C port marked <code>USB TO UART</code>. Board details on the <a href="https://docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-7B" target="_blank" rel="noopener">Waveshare wiki</a>, <a href="https://makerworld.com/en/models/3622177" target="_blank" rel="noopener">printed case on MakerWorld</a>. See the <a href="https://github.com/Keralots/TouchDeck/releases" target="_blank" rel="noopener">release notes</a> for known issues.</li>
             <li><strong>One button for both.</strong> The installer reads the chip and flashes the matching image.</li>
             <li><strong>Stuck in a connect / disconnect loop?</strong> Hold <code>BOOT</code>, plug in USB while holding, then release. Or hold <code>BOOT</code>, tap <code>RESET</code>, then release both.</li>
             <li><strong>Close anything that holds the serial port.</strong> The TouchDeck Companion talks to the deck over the USB cable when plugged in. Close it, Arduino IDE, PlatformIO Monitor and the serial monitor below before flashing.</li>
@@ -93,10 +93,10 @@
 
         <section class="panel" id="panel-flash" aria-labelledby="flash-head">
           <header class="panel-head"><span class="num">01</span><h2 id="flash-head">Flash your deck</h2></header>
-          <p class="board-note">The Guition 3.5&quot; deck, ready to go: 16 MB flash, 8 MB PSRAM and a 3.5&quot; IPS QSPI panel with capacitive touch. The Waveshare 7&quot; P4 board is in beta.</p>
+          <p class="board-note">The Guition 3.5&quot; deck, ready to go: 16 MB flash, 8 MB PSRAM and a 3.5&quot; IPS QSPI panel with capacitive touch. The Waveshare 7&quot; P4 board is supported too.</p>
           <dl class="specs" aria-label="Board specs">
-            <div class="spec-row"><dt>chip</dt><dd id="spec-chip">ESP32-S3 / ESP32-P4 v3.x (beta)</dd></div>
-            <div class="spec-row"><dt>board</dt><dd>Guition JC3248W535 / Waveshare P4 7B (beta)</dd></div>
+            <div class="spec-row"><dt>chip</dt><dd id="spec-chip">ESP32-S3 / ESP32-P4 v3.x</dd></div>
+            <div class="spec-row"><dt>board</dt><dd>Guition JC3248W535 / Waveshare P4 7B</dd></div>
             <div class="spec-row"><dt>display</dt><dd>AXS15231B 320x480 / EK79007 1024x600</dd></div>
             <div class="spec-row"><dt>firmware</dt><dd id="spec-version">...</dd></div>
             <div class="spec-row"><dt>flash</dt><dd>bootloader + partitions, app at 0xe000 (settings kept)</dd></div>
@@ -219,7 +219,7 @@
           </ul>
         </section>
         <footer class="footer">
-          <span>TouchDeck - open-source touch control deck for the Guition JC3248W535 and, in beta, the Waveshare ESP32-P4 7B.</span>
+          <span>TouchDeck - open-source touch control deck for the Guition JC3248W535 and the Waveshare ESP32-P4 7B.</span>
           <span><a href="https://github.com/Keralots/TouchDeck" target="_blank" rel="noopener">source</a> / <a href="https://github.com/Keralots/TouchDeck/issues" target="_blank" rel="noopener">report a bug</a> / <a href="https://ko-fi.com/keralots" target="_blank" rel="noopener">support on Ko-fi</a></span>
         </footer>
       </main>

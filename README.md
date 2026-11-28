@@ -1,6 +1,6 @@
 # TouchDeck
 
-A touch control deck for two boards: the Guition JC3248W535 (3.5") and the Waveshare ESP32-P4-WIFI6-Touch-LCD-7B (7", beta). Pages of tiles switch and read Home Assistant entities, show live PC stats from the TouchDeck Companion and follow Bambu Lab printers. Everything is set up from a web portal on the device. No cloud, no accounts: it talks to Home Assistant over its local WebSocket API and receives PC metrics over UDP on the LAN.
+A touch control deck for two boards: the Guition JC3248W535 (3.5") and the Waveshare ESP32-P4-WIFI6-Touch-LCD-7B (7"). Pages of tiles switch and read Home Assistant entities, show live PC stats from the TouchDeck Companion and follow Bambu Lab printers. Everything is set up from a web portal on the device. No cloud, no accounts: it talks to Home Assistant over its local WebSocket API and receives PC metrics over UDP on the LAN.
 
 > A personal project built around my own desk setup, shared as is. Expect features that only make sense for that setup, and rough edges.
 
@@ -13,7 +13,7 @@ A touch control deck for two boards: the Guition JC3248W535 (3.5") and the Waves
 Two boards are supported. Nothing to wire on either.
 
 - **[Guition JC3248W535](https://aliexpress.com/item/1005007566315926.html):** 3.5" 320x480 IPS, ESP32-S3 with 16 MB flash and 8 MB PSRAM, AXS15231B panel over QSPI, AXS15231B touch on I2C. 3D printed case: [MakerWorld model 3463113](https://makerworld.com/models/3463113). USB-C cable I use: [AliExpress](https://aliexpress.com/item/1005007148475800.html).
-- **[Waveshare ESP32-P4-WIFI6-Touch-LCD-7B](https://docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-7B) (beta):** 7" 1024x600 MIPI-DSI, GT911 touch, ES8311 speaker, WiFi through the on-board ESP32-C6. Builds for P4 chip revision v3.x only, tested on v3.2. 3D printed case: [MakerWorld model 3622177](https://makerworld.com/en/models/3622177). Known issues and open checks are listed in the release notes.
+- **[Waveshare ESP32-P4-WIFI6-Touch-LCD-7B](https://docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-7B):** 7" 1024x600 MIPI-DSI, GT911 touch, ES8311 speaker, WiFi through the on-board ESP32-C6. Builds for P4 chip revision v3.x only, tested on v3.2. 3D printed case: [MakerWorld model 3622177](https://makerworld.com/en/models/3622177). Known issues and open checks are listed in the release notes.
 
 | | |
 |:---:|:---:|
