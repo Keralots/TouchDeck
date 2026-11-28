@@ -1,22 +1,28 @@
-// AXS15231B over QSPI (Guition JC3248W535): spi_master driven directly, CS
-// held by hand across a frame, chunks staged through two internal DMA bounce
-// buffers, every frame started on the TE rising edge.
+// QSPI panels with the DCS-over-QSPI framing: the Guition JC3248W535
+// (AXS15231B) and the Freenove FNK0104N (ST77922). spi_master driven
+// directly, CS held by hand across a frame, chunks staged through two internal
+// DMA bounce buffers, every frame started on the panel's sync edge (TE, or a
+// 60 Hz timer on boards that do not wire TE).
 //
-// Facts this rests on (measured in the Phase 0 spike, see the deck plan):
-// the panel only accepts full native 320x480 frames (no MADCTL rotation, the
-// CASET start column is ignored), 40 MHz is the clock ceiling, a full frame is
-// 15.4 ms on the wire against a 16.39 ms TE period, and the write is slower
-// than the scan, so a frame must start within ~1 ms of the TE rising edge.
+// Facts this rests on (measured in the Phase 0 spike on the Guition, see the
+// deck plan): the panel only accepts full native 320x480 frames (no MADCTL
+// rotation, the CASET start column is ignored), 40 MHz is the clock ceiling
+// there, a full frame is 15.4 ms on the wire against a 16.39 ms TE period, and
+// the write is slower than the scan, so a frame must start within ~1 ms of the
+// TE rising edge. The ST77922 runs at 80 MHz in Freenove's own driver, so a
+// frame there is ~7.7 ms; its command framing differs (see txCmd).
 #include "board.h"
-#if defined(BOARD_DISPLAY_AXS15231B_QSPI)
+#if defined(BOARD_DISPLAY_AXS15231B_QSPI) || defined(BOARD_DISPLAY_ST77922_QSPI)
 #include "deck_panel_int.h"
 #include <driver/gpio.h>
 #include <driver/spi_master.h>
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
+#if defined(BOARD_DISPLAY_AXS15231B_QSPI)
 // Only for axs15231b_180640_init_operations and its op-code enum; the
 // library's databus and panel classes are not used.
 #include <Arduino_GFX_Library.h>
+#endif
 
 namespace deck {
 namespace {
@@ -27,17 +33,26 @@ constexpr int PIN_D0 = BOARD_LCD_D0;
 constexpr int PIN_D1 = BOARD_LCD_D1;
 constexpr int PIN_D2 = BOARD_LCD_D2;
 constexpr int PIN_D3 = BOARD_LCD_D3;
+#if BOARD_LCD_TE >= 0
 constexpr int PIN_TE = BOARD_LCD_TE;
+#endif
 
 // Two staging buffers only: the next frame's first chunk is pre-built into
 // whichever one frees first.
 constexpr size_t CHUNK_BYTES = (size_t)NATIVE_W * PANEL_ROWS * 2;
 constexpr int NCHUNK = NATIVE_H / PANEL_ROWS;
 static_assert(NCHUNK % 2 == 0, "the last chunk must use s_bounce[1]");
+#if defined(BOARD_DISPLAY_ST77922_QSPI)
+constexpr uint32_t SPI_HZ = 80000000;  // Freenove runs this panel at 80 MHz
+// No TE line: the sync edge is a timer, so there is no scan to overtake and a
+// frame may start later than the edge without losing the bottom rows.
+constexpr int64_t TE_LATE_US = 4000;
+#else
 constexpr uint32_t SPI_HZ = 40000000;  // 80 MHz corrupts the image on this panel
 // The write (15.4 ms) is slower than the scan, so a frame that starts later
 // than this after the TE rising edge is overtaken near the bottom.
 constexpr int64_t TE_LATE_US = 900;
+#endif
 
 spi_device_handle_t s_dev = nullptr;
 uint16_t* s_bounce[2] = {nullptr, nullptr};
@@ -51,6 +66,7 @@ volatile int64_t s_teUs = 0;
 SemaphoreHandle_t s_teSem = nullptr;
 uint32_t s_teUsed = 0;
 
+#if BOARD_LCD_TE >= 0
 void IRAM_ATTR teIsr(void*) {
   portENTER_CRITICAL_ISR(&s_teMux);
   s_teUs = esp_timer_get_time();
@@ -60,6 +76,20 @@ void IRAM_ATTR teIsr(void*) {
   xSemaphoreGiveFromISR(s_teSem, &woken);
   if (woken) portYIELD_FROM_ISR();
 }
+#else
+// No TE pin on this board: a periodic timer plays the vertical blank, so the
+// compositor's frame clock and pacing stay on a steady ~60 Hz grid. Frames may
+// tear (there is no scan to lock to); a faster bus keeps the window small.
+esp_timer_handle_t s_teTimer = nullptr;
+
+void softTeTick(void*) {
+  portENTER_CRITICAL(&s_teMux);
+  s_teUs = esp_timer_get_time();
+  s_teSeq = s_teSeq + 1;
+  portEXIT_CRITICAL(&s_teMux);
+  xSemaphoreGive(s_teSem);
+}
+#endif
 
 inline void csLow() { gpio_set_level((gpio_num_t)PIN_CS, 0); }
 inline void csHigh() { gpio_set_level((gpio_num_t)PIN_CS, 1); }
@@ -68,6 +98,28 @@ inline void csHigh() { gpio_set_level((gpio_num_t)PIN_CS, 1); }
 // task (or panelBegin before it exists) may call this: polling transfers are
 // not allowed while queued transactions are pending.
 void txCmd(uint8_t c, const uint8_t* d, size_t n) {
+#if defined(BOARD_DISPLAY_ST77922_QSPI)
+  // Freenove's framing for this panel: command 0x02, an 8-bit command and a
+  // 24-bit address on one data line, then the parameters on one line. The
+  // VARIABLE_* flags take the phase lengths from the extended transaction.
+  spi_transaction_ext_t t = {};
+  t.base.flags = SPI_TRANS_VARIABLE_CMD | SPI_TRANS_VARIABLE_ADDR;
+  t.command_bits = 8;
+  t.address_bits = 24;
+  t.base.cmd = 0x02;
+  t.base.addr = ((uint32_t)c) << 8;
+  if (n > 0 && n <= 4) {
+    t.base.flags |= SPI_TRANS_USE_TXDATA;
+    memcpy(t.base.tx_data, d, n);
+  } else if (n > 0) {
+    memcpy(s_cmdbuf, d, n);
+    t.base.tx_buffer = s_cmdbuf;
+  }
+  t.base.length = n * 8;
+  csLow();
+  spi_device_polling_transmit(s_dev, (spi_transaction_t*)&t);
+  csHigh();
+#else
   spi_transaction_t t = {};
   t.flags = SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
   t.cmd = 0x02;
@@ -83,9 +135,96 @@ void txCmd(uint8_t c, const uint8_t* d, size_t n) {
   csLow();
   spi_device_polling_transmit(s_dev, &t);
   csHigh();
+#endif
 }
 
+#if defined(BOARD_DISPLAY_ST77922_QSPI)
+// Freenove's ST77922 init (Libraries/FNK0104N/TFT_eSPI_v2.5.43/ST77922.cpp),
+// flattened: 0xFF <cmd> <len> <data...> writes a command, 0xFE <ms> waits.
+// COLMOD 0x3A = 0x01 is RGB565 on this TDDI; INVON (0x21) is on, as there.
+static const uint8_t kSt77922Init[] = {
+    0xFF, 0xF1, 1, 0x00,
+    0xFF, 0x60, 3, 0x00, 0x00, 0x00,
+    0xFF, 0x65, 1, 0x80,
+    0xFF, 0x79, 1, 0x06,
+    0xFF, 0x7B, 3, 0x00, 0x08, 0x08,
+    0xFF, 0x80, 11, 0x55, 0x62, 0x2F, 0x17, 0xF0, 0x52, 0x70, 0xD2, 0x52, 0x62, 0xEA,
+    0xFF, 0x81, 4, 0x26, 0x52, 0x72, 0x27,
+    0xFF, 0x84, 2, 0x92, 0x25,
+    0xFF, 0x87, 6, 0x10, 0x10, 0x58, 0x00, 0x02, 0x3A,
+    0xFF, 0x88, 15, 0x00, 0x00, 0x2C, 0x10, 0x04, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x06,
+    0xFF, 0x89, 3, 0x00, 0x00, 0x00,
+    0xFF, 0x8A, 11, 0x13, 0x00, 0x2C, 0x00, 0x00, 0x2C, 0x10, 0x10, 0x00, 0x3E, 0x19,
+    0xFF, 0x8B, 9, 0x15, 0xB1, 0xB1, 0x44, 0x96, 0x2C, 0x10, 0x97, 0x8E,
+    0xFF, 0x8C, 13, 0x1D, 0xB1, 0xB1, 0x44, 0x96, 0x2C, 0x10, 0x50, 0x0F, 0x01, 0xC5, 0x12, 0x09,
+    0xFF, 0x8D, 1, 0x0C,
+    0xFF, 0x8E, 6, 0x33, 0x01, 0x0C, 0x13, 0x01, 0x01,
+    0xFF, 0xB3, 2, 0x00, 0x30,
+    0xFF, 0xF1, 1, 0x00,
+    0xFF, 0x71, 1, 0xD0,
+    0xFF, 0x66, 2, 0x02, 0x3F,
+    0xFF, 0xBE, 3, 0x26, 0x00, 0x9D,
+    0xFF, 0x70, 12, 0x01, 0xA0, 0x11, 0x40, 0xE0, 0x00, 0x11, 0x69, 0x11, 0x00, 0x00, 0x1A,
+    0xFF, 0x90, 9, 0x04, 0x04, 0x55, 0x74, 0x00, 0x40, 0x43, 0x27, 0x27,
+    0xFF, 0x91, 9, 0x04, 0x04, 0x55, 0x75, 0x00, 0x40, 0x42, 0x27, 0x27,
+    0xFF, 0x92, 10, 0x04, 0x44, 0x55, 0xC0, 0x06, 0x00, 0x07, 0x05, 0x90, 0x27,
+    0xFF, 0x93, 10, 0x04, 0x43, 0x11, 0x00, 0x00, 0x00, 0x00, 0x05, 0x90, 0x27,
+    0xFF, 0x94, 6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xFF, 0x95, 5, 0x96, 0x16, 0x00, 0x00, 0xFF,
+    0xFF, 0x96, 12, 0x44, 0x53, 0x03, 0x12, 0x23, 0x24, 0x06, 0x05, 0x94, 0x27, 0x00, 0x44,
+    0xFF, 0x97, 12, 0x44, 0x53, 0x47, 0x56, 0x20, 0x20, 0x02, 0x01, 0x94, 0x27, 0x00, 0x44,
+    0xFF, 0xBA, 5, 0x55, 0x94, 0x2D, 0x94, 0x27,
+    0xFF, 0x9A, 7, 0x40, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00,
+    0xFF, 0x9B, 7, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00,
+    0xFF, 0x9C, 13, 0x5C, 0x12, 0x00, 0x00, 0x10, 0x12, 0x00, 0x00, 0x10, 0x02, 0x00, 0x00, 0x00,
+    0xFF, 0x9D, 8, 0x8A, 0x51, 0x00, 0x00, 0x00, 0x80, 0x1E, 0x01,
+    0xFF, 0x9E, 7, 0x51, 0x00, 0x00, 0x00, 0x80, 0x1E, 0x01,
+    0xFF, 0xB4, 12, 0x1D, 0x1C, 0x1E, 0x0B, 0x14, 0x02, 0x13, 0x09, 0x1E, 0x00, 0x1E, 0x10,
+    0xFF, 0xB5, 12, 0x1D, 0x1C, 0x1E, 0x0A, 0x15, 0x03, 0x11, 0x08, 0x1E, 0x01, 0x1E, 0x12,
+    0xFF, 0xB6, 7, 0x77, 0x77, 0x00, 0x0A, 0xFF, 0x0A, 0xFF,
+    0xFF, 0x86, 14, 0xCD, 0x04, 0xB1, 0x02, 0x58, 0x12, 0x58, 0x0C, 0x13, 0x01, 0xA5, 0x00, 0xA5, 0xA5,
+    0xFF, 0xB7, 16, 0x07, 0x0A, 0x0E, 0x06, 0x05, 0x03, 0x2B, 0x03, 0x03, 0x42, 0x07, 0x10, 0x10, 0x2E, 0x3F, 0x0D,
+    0xFF, 0xB8, 16, 0x07, 0x0A, 0x0D, 0x05, 0x05, 0x02, 0x2B, 0x02, 0x03, 0x42, 0x06, 0x10, 0x0F, 0x2E, 0x3F, 0x0D,
+    0xFF, 0xB9, 2, 0x23, 0x23,
+    0xFF, 0xBF, 6, 0x10, 0x14, 0x14, 0x0B, 0x0B, 0x0B,
+    0xFF, 0xF2, 1, 0x00,
+    0xFF, 0x73, 5, 0x04, 0xDA, 0x12, 0x54, 0x47,
+    0xFF, 0x77, 5, 0x6B, 0x5B, 0xFD, 0xC3, 0xC5,
+    0xFF, 0x7A, 2, 0x15, 0x27,
+    0xFF, 0x7B, 2, 0x04, 0x57,
+    0xFF, 0x7E, 2, 0x01, 0x0E,
+    0xFF, 0xBF, 1, 0x36,
+    0xFF, 0xE3, 2, 0x40, 0x40,
+    0xFF, 0xF0, 1, 0x00,
+    0xFF, 0xD0, 1, 0x00,
+    0xFF, 0x2A, 4, 0x00, 0x00, 0x01, 0x3F,
+    0xFF, 0x2B, 4, 0x00, 0x00, 0x01, 0xDF,
+    0xFF, 0x21, 0,
+    0xFF, 0x11, 0,
+    0xFE, 120,
+    0xFF, 0x29, 0,
+    0xFF, 0x2C, 0,
+    0xFF, 0x3A, 1, 0x01,
+    0xFF, 0x36, 1, 0x00,
+    0xFF, 0x35, 1, 0x01,
+    0xFE, 20,
+};
+#endif
+
 void panelInitSequence() {
+#if defined(BOARD_DISPLAY_ST77922_QSPI)
+  for (size_t i = 0; i + 1 < sizeof(kSt77922Init);) {
+    const uint8_t op = kSt77922Init[i++];
+    if (op == 0xFE) {
+      delay(kSt77922Init[i++]);
+      continue;
+    }
+    const uint8_t c = kSt77922Init[i++];
+    const uint8_t n = kSt77922Init[i++];
+    txCmd(c, n ? &kSt77922Init[i] : nullptr, n);
+    i += n;
+  }
+#else
   txCmd(0x01, nullptr, 0);  // SWRESET
   delay(200);
   const uint8_t* op = axs15231b_180640_init_operations;
@@ -130,15 +269,23 @@ void panelInitSequence() {
   v = 0x00; txCmd(0x36, &v, 1);    // MADCTL: rotation is done in software
   v = 0x05; txCmd(0x3A, &v, 1);    // COLMOD RGB565
   v = 0x00; txCmd(0x35, &v, 1);    // TEON, V-blank only
+#endif
 }
 
-// Full-width window. RASET is deliberately not sent (QSPI quirk); RAMWR
-// restarts the frame at the top-left native pixel.
+// Full-width window. On the AXS panel RASET is deliberately not sent (QSPI
+// quirk); RAMWR restarts the frame at the top-left native pixel. The ST77922
+// needs both ranges, and its pixel stream carries the RAMWRC command itself.
 void setWindow() {
   const uint8_t ca[4] = {0, 0, (uint8_t)((NATIVE_W - 1) >> 8),
                          (uint8_t)((NATIVE_W - 1) & 0xFF)};
   txCmd(0x2A, ca, 4);
+#if defined(BOARD_DISPLAY_ST77922_QSPI)
+  const uint8_t ra[4] = {0, 0, (uint8_t)((NATIVE_H - 1) >> 8),
+                         (uint8_t)((NATIVE_H - 1) & 0xFF)};
+  txCmd(0x2B, ra, 4);
+#else
   txCmd(0x2C, nullptr, 0);
+#endif
 }
 
 void fillTr(spi_transaction_ext_t& t, bool first, const void* buf, size_t len) {
@@ -296,6 +443,7 @@ bool transportBegin() {
   csHigh();
 
   s_teSem = xSemaphoreCreateBinary();
+#if BOARD_LCD_TE >= 0
   gpio_config_t g = {};
   g.pin_bit_mask = 1ULL << PIN_TE;
   g.mode = GPIO_MODE_INPUT;
@@ -304,6 +452,16 @@ bool transportBegin() {
   esp_err_t e = gpio_install_isr_service(0);
   if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) return false;
   gpio_isr_handler_add((gpio_num_t)PIN_TE, teIsr, nullptr);
+#else
+  // No TE line: the panel's vertical blank is faked by a periodic timer so the
+  // compositor keeps its ~60 Hz frame clock. Frames can tear.
+  esp_timer_create_args_t ta = {};
+  ta.callback = softTeTick;
+  ta.dispatch_method = ESP_TIMER_TASK;
+  ta.name = "deck_te";
+  if (esp_timer_create(&ta, &s_teTimer) != ESP_OK) return false;
+  if (esp_timer_start_periodic(s_teTimer, PANEL_SYNC_PERIOD_US) != ESP_OK) return false;
+#endif
   return true;
 }
 
@@ -333,4 +491,4 @@ void transportTask(void*) {
 
 }  // namespace deck
 
-#endif  // BOARD_DISPLAY_AXS15231B_QSPI
+#endif  // AXS15231B or ST77922 QSPI panel
