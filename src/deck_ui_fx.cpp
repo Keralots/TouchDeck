@@ -1002,6 +1002,11 @@ void fxTileOn(TileRt& r, bool wasOn) {
   else if (fx().toggle == TOGGLE_ORBIT) startLap(r, on);
 }
 
+// Slider tiles have no CHECKED fill to animate: only Orbit, which draws on the edge.
+void fxLevelOn(TileRt& r, bool on) {
+  if (fx().toggle == TOGGLE_ORBIT && live(r)) startLap(r, on);
+}
+
 // Calm: the compositor flies the card picture out of the tile over the
 // dimmed page. Water: it reveals the card in a circle from the finger. Glass:
 // the card rises as a sheet. Then LVGL's frame with the real card takes over.
