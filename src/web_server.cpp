@@ -2027,7 +2027,6 @@ static void handleApiStatus() {
   doc["max_block"]    = ESP.getMaxAllocHeap();
   doc["internal_free"] = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
   doc["psram_free"]   = ESP.getFreePsram();
-  doc["psram_block"]  = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
   doc["reset_reason"] = resetReasonName();
   doc["last_crash"] = lastCrash();
   doc["wifi_disconnects"]     = wifiDisconnectCount();
